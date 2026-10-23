@@ -43,11 +43,11 @@ Referência de stack já dominada pelos agentes e por você: CAIS (Next.js 15 Ap
 
 | Opção | Avaliação |
 | --- | --- |
-| **A. Next.js 15 full-stack (App Router, server actions e route handlers) + worker Node no mesmo pacote** — *recomendada* | Um deployable, SSR nativo para navegação com contexto na URL (D39, D65), stack que os agentes já operam no CAIS, sem camada de contratos duplicada. O worker reutiliza os mesmos módulos. |
+| **A. Next.js 16 full-stack (App Router, server actions e route handlers) + worker Node no mesmo pacote** — *recomendada* | Um deployable, SSR nativo para navegação com contexto na URL (D39, D65), stack que os agentes já operam no CAIS, sem camada de contratos duplicada. O worker reutiliza os mesmos módulos. |
 | B. Separação API NestJS + web Next.js (modelo CAIS) | Dois serviços, contratos gerados, cliente tipado. Custo não se justifica para um painel administrativo interno com poucos usuários. Se o portal do cliente exigir uma API pública no futuro, a fronteira por módulo (abaixo) permite extrair. |
 | C. SPA React + Fastify | Perde SSR e estado na URL; exige mais código próprio de sessão e roteamento. |
 
-**Pilha fixa:** TypeScript strict · Next.js 15 · React 19 · Tailwind + shadcn/ui com tokens da Identidade Visual · Prisma + PostgreSQL 16 · Zod na borda · Vitest · Playwright · pino · pnpm · Docker Compose (`web`, `worker`, `postgres`). **Sem Redis, sem fila externa:** jobs e eventos de integração vivem em tabelas Postgres processadas pelo worker. **Sem Turborepo/monorepo** até existir um segundo pacote real.
+**Pilha fixa:** TypeScript strict · Next.js 16 · React 19 · Tailwind + shadcn/ui com tokens da Identidade Visual · Prisma + PostgreSQL 16 · Zod na borda · Vitest · Playwright · pino · pnpm · Docker Compose (`web`, `worker`, `postgres`). **Sem Redis, sem fila externa:** jobs e eventos de integração vivem em tabelas Postgres processadas pelo worker. **Sem Turborepo/monorepo** até existir um segundo pacote real.
 
 ### 2.2 Organização do código: módulos por capacidade, regra pura separada
 

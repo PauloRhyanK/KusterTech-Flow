@@ -4,9 +4,9 @@
 
 **Objetivo:** a Central de Operações sobe do zero com `docker compose up`, com login por conta local, papéis com escopo por cliente, autorização verificada no servidor e CI obrigatório, sem nenhuma tela de negócio ainda.
 
-**Arquitetura:** um único app Next.js 15 (App Router) com Prisma + PostgreSQL 16 e um processo worker do mesmo código. Regras puras (`autorizar`, política de tentativas) ficam em módulos sem framework com teste unitário; sessões em tabela Postgres com cookie HttpOnly; nenhum JWT, nenhum Redis.
+**Arquitetura:** um único app Next.js 16 (App Router) com Prisma + PostgreSQL 16 e um processo worker do mesmo código. Regras puras (`autorizar`, política de tentativas) ficam em módulos sem framework com teste unitário; sessões em tabela Postgres com cookie HttpOnly; nenhum JWT, nenhum Redis.
 
-**Pilha:** TypeScript strict · Next.js 15 / React 19 (versões atuais de `pnpm create next-app@latest`) · Tailwind (o que o template atual do shadcn instalar; shadcn é inicializado no 0b) · Prisma 6+ · PostgreSQL 16 · `@node-rs/argon2` · Zod · Vitest · Playwright · pino · pnpm 9 · Docker Compose · `tsx` para o worker e scripts.
+**Pilha:** TypeScript strict · Next.js 16 / React 19 (versões atuais de `pnpm create next-app@latest`; decisão do Paulo em 2026-10-23, antes a spec dizia 15) · Tailwind (o que o template atual do shadcn instalar; shadcn é inicializado no 0b) · Prisma 6+ · PostgreSQL 16 · `@node-rs/argon2` · Zod · Vitest · Playwright · pino · pnpm 9 · Docker Compose · `tsx` para o worker e scripts.
 
 **Spec:** [`docs/superpowers/specs/2026-10-23-central-de-operacoes-plano-tecnico-mvp.md`](../specs/2026-10-23-central-de-operacoes-plano-tecnico-mvp.md) §2.1, §2.2, §2.6, §2.7 e "Incremento 0a". Decisões: [`docs/decisoes-aprovadas.md`](../../decisoes-aprovadas.md) (A16, D31, D63, invariante 8 e 10).
 
@@ -26,7 +26,7 @@
 Casos que a spec implica e que um revisor deve verificar com teste (cada um está pinado na Task indicada):
 
 1. **E-mail com maiúsculas ou espaços** (`" Paulo@Exemplo.com "`) autentica a mesma conta cadastrada como `paulo@exemplo.com`; normalização única em `normalizarEmail`. (Task 3)
-2. **Sessão expirada ou inexistente no cookie** redireciona para `/entrar` sem tentar apagar o cookie no render (Next 15 só permite `cookies().set/delete` em Server Action ou Route Handler); o cookie é sobrescrito no próximo login e apagado em `POST /sair`. Nunca responde 500. (Task 4)
+2. **Sessão expirada ou inexistente no cookie** redireciona para `/entrar` sem tentar apagar o cookie no render (Next 16 só permite `cookies().set/delete` em Server Action ou Route Handler); o cookie é sobrescrito no próximo login e apagado em `POST /sair`. Nunca responde 500. (Task 4)
 3. **Usuário desativado (`ativo = false`) com sessão ainda válida** é tratado como sem sessão em `obterSessao`. (Task 3)
 4. **Janela de tentativas expirada zera a contagem**; bloqueio por conta responde a mesma mensagem genérica exista ou não a conta (não vaza existência de e-mail). (Tasks 1 e 3)
 5. **Cookie atrás de proxy TLS:** em `NODE_ENV=production` o cookie é sempre `Secure`; o Compose documenta que a aplicação só é servida via HTTPS (Traefik ou equivalente). (Task 3)
