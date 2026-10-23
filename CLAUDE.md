@@ -20,6 +20,25 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - Componentes não acessam o banco. Nenhum segredo entra no repositório (ele é público).
 - Nunca `git add -A`; adicione caminho por caminho. Nunca faça push em `main` fora de PR.
 
+## Comandos
+
+- `pnpm dev` — inicia o servidor de desenvolvimento Next.js
+- `pnpm build` — gera o build de produção
+- `pnpm start` — inicia o servidor de produção
+- `pnpm lint` — executa o ESLint
+- `pnpm format` — formata os arquivos com Prettier
+- `pnpm format:check` — verifica a formatação com Prettier
+- `pnpm typecheck` — executa a checagem de tipos do TypeScript (`tsc --noEmit`)
+- `pnpm test` — executa os testes unitários com Vitest
+- `pnpm test:integration` — executa os testes de integração (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm e2e` — executa os testes ponta a ponta com Playwright (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm worker` — inicia o processo worker (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm criar-admin` — executa o script de criação do administrador inicial (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm db:migrate` — aplica migrations do Prisma (`prisma migrate deploy`) (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm db:generate` — gera o Prisma Client (`prisma generate`) (disponível a partir das próximas tasks do Incremento 0a)
+
+**Regra de qualidade (testes antes do commit):** escreva testes antes da implementação (TDD) e garanta que `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` estejam verdes antes de cada commit.
+
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)
 <!-- seeds-onboard:v0.6.0 -->
