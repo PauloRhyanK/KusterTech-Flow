@@ -31,8 +31,14 @@ export function registrarFalha(
 
   const contagem = janelaExpirada ? 1 : estado.contagem + 1
   const janelaInicio = janelaExpirada ? agora : estado.janelaInicio
+  const bloqueioAnteriorAtivo =
+    estado?.bloqueadoAte && estado.bloqueadoAte.getTime() > agora.getTime()
+      ? estado.bloqueadoAte
+      : null
   const bloqueadoAte =
-    contagem >= limite ? new Date(agora.getTime() + POLITICA_TENTATIVAS.bloqueioMs) : null
+    contagem >= limite
+      ? new Date(agora.getTime() + POLITICA_TENTATIVAS.bloqueioMs)
+      : bloqueioAnteriorAtivo
 
   return {
     contagem,

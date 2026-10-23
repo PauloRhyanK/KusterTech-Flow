@@ -77,4 +77,29 @@ describe('autorizar', () => {
     ).not.toThrow()
     expect(() => exigirPermissao(admin, 'usuarios.gerenciar')).not.toThrow()
   })
+
+  test('sujeito com múltiplos papéis exige ação e cliente no mesmo papel', () => {
+    const multiPapel: Sujeito = {
+      usuarioId: 'u5',
+      papeis: [
+        { papel: 'TESTADOR', clienteId: null },
+        { papel: 'APROVADOR', clienteId: 'acme' },
+      ],
+    }
+
+    expect(autorizar(multiPapel, 'homologacao.aprovar', { clienteId: 'beta' })).toBe(false)
+    expect(autorizar(multiPapel, 'homologacao.aprovar', { clienteId: 'acme' })).toBe(true)
+    expect(autorizar(multiPapel, 'homologacao.comentar', { clienteId: 'beta' })).toBe(true)
+    expect(autorizar(multiPapel, 'publicacao.autorizar', { clienteId: 'acme' })).toBe(false)
+  })
+
+  test('admin com clienteId não nulo autoriza qualquer ação com ou sem escopo', () => {
+    const adminRestrito: Sujeito = {
+      usuarioId: 'u6',
+      papeis: [{ papel: 'ADMIN', clienteId: 'acme' }],
+    }
+
+    expect(autorizar(adminRestrito, 'homologacao.aprovar', { clienteId: 'beta' })).toBe(true)
+    expect(autorizar(adminRestrito, 'usuarios.gerenciar')).toBe(true)
+  })
 })

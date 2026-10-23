@@ -1,6 +1,6 @@
 # KusterTech Flow
 
-Repositório de documentação da **Central de Operações**.
+Central de Operações da KusterTech: painel administrativo self-hosted para clientes, projetos, entregas, homologação, infraestrutura e desenvolvimento com agentes.
 
 ## Documentos
 

@@ -30,12 +30,12 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - `pnpm format:check` — verifica a formatação com Prettier
 - `pnpm typecheck` — executa a checagem de tipos do TypeScript (`tsc --noEmit`)
 - `pnpm test` — executa os testes unitários com Vitest
-- `pnpm test:integration` — executa os testes de integração
-- `pnpm e2e` — executa os testes ponta a ponta com Playwright
-- `pnpm worker` — inicia o processo worker
-- `pnpm criar-admin` — executa o script de criação do administrador inicial
-- `pnpm db:migrate` — aplica migrations do Prisma (`prisma migrate deploy`)
-- `pnpm db:generate` — gera o Prisma Client (`prisma generate`)
+- `pnpm test:integration` — executa os testes de integração (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm e2e` — executa os testes ponta a ponta com Playwright (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm worker` — inicia o processo worker (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm criar-admin` — executa o script de criação do administrador inicial (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm db:migrate` — aplica migrations do Prisma (`prisma migrate deploy`) (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm db:generate` — gera o Prisma Client (`prisma generate`) (disponível a partir das próximas tasks do Incremento 0a)
 
 **Regra de qualidade (testes antes do commit):** escreva testes antes da implementação (TDD) e garanta que `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` estejam verdes antes de cada commit.
 

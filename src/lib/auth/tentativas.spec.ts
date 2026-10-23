@@ -71,6 +71,62 @@ describe('tentativas (parte pura)', () => {
     expect(e.bloqueadoAte).toBeNull()
   })
 
+  test('fronteira da janela: t0 + janelaMs zera e t0 + janelaMs - 1 incrementa', () => {
+    const estadoAnterior: EstadoTentativas = {
+      contagem: 4,
+      janelaInicio: t0,
+      bloqueadoAte: null,
+    }
+
+    const antesDoFimDaJanela = new Date(t0.getTime() + POLITICA_TENTATIVAS.janelaMs - 1)
+    const incrementado = registrarFalha(
+      estadoAnterior,
+      antesDoFimDaJanela,
+      POLITICA_TENTATIVAS.maxPorConta,
+    )
+    expect(incrementado.contagem).toBe(5)
+    expect(incrementado.janelaInicio).toEqual(t0)
+
+    const exatamenteNoFimDaJanela = new Date(t0.getTime() + POLITICA_TENTATIVAS.janelaMs)
+    const reiniciado = registrarFalha(
+      estadoAnterior,
+      exatamenteNoFimDaJanela,
+      POLITICA_TENTATIVAS.maxPorConta,
+    )
+    expect(reiniciado.contagem).toBe(1)
+    expect(reiniciado.janelaInicio).toEqual(exatamenteNoFimDaJanela)
+    expect(reiniciado.bloqueadoAte).toBeNull()
+  })
+
+  test('não descarta bloqueio ainda ativo ao abrir janela nova', () => {
+    const quintaFalhaEm = new Date(t0.getTime() + 14 * 60_000)
+    const bloqueadoAte = new Date(quintaFalhaEm.getTime() + POLITICA_TENTATIVAS.bloqueioMs)
+    const estadoBloqueado: EstadoTentativas = {
+      contagem: 5,
+      janelaInicio: t0,
+      bloqueadoAte,
+    }
+
+    const tentativaAposJanela = new Date(t0.getTime() + 16 * 60_000)
+    const atualizado = registrarFalha(
+      estadoBloqueado,
+      tentativaAposJanela,
+      POLITICA_TENTATIVAS.maxPorConta,
+    )
+    expect(atualizado.contagem).toBe(1)
+    expect(atualizado.janelaInicio).toEqual(tentativaAposJanela)
+    expect(atualizado.bloqueadoAte).toEqual(bloqueadoAte)
+
+    const tentativaAposBloqueio = new Date(bloqueadoAte.getTime())
+    const aposExpirarBloqueio = registrarFalha(
+      estadoBloqueado,
+      tentativaAposBloqueio,
+      POLITICA_TENTATIVAS.maxPorConta,
+    )
+    expect(aposExpirarBloqueio.contagem).toBe(1)
+    expect(aposExpirarBloqueio.bloqueadoAte).toBeNull()
+  })
+
   test('estado nulo é permitido', () => {
     expect(avaliarTentativa(null, t0)).toEqual({ permitido: true })
   })
