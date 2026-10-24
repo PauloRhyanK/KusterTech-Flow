@@ -46,6 +46,12 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - **Integração (`pnpm test:integration`):** exigem PostgreSQL ativo (`docker compose up -d postgres`) e `DATABASE_URL_TEST` exportada no ambiente (ex.: `set -a && source .env && set +a && pnpm test:integration`); o setup cria o banco de teste automaticamente e aplica as migrations.
 - **Ponta a ponta (`pnpm build && pnpm e2e`):** executam com Playwright nos projetos `desktop` e `mobile` sobre o build de produção (`pnpm start` na porta definida por `E2E_PORT`, padrão `3131`) usando `DATABASE_URL_TEST`; o `globalSetup` aplica as migrations, limpa tentativas e usuários de E2E anteriores e cria um administrador único para a execução.
 
+## Interface
+
+- **Tokens semânticos:** cores e temas vivem exclusivamente em `src/lib/ui/tokens.ts` e `src/app/globals.css`. Nenhum hex literal nem classe Tailwind de cor literal (`bg-blue-600`, `text-neutral-900`) deve ser usado fora desses arquivos.
+- **Primitivos e componentes base:** primitivos gerados pelo shadcn/ui ficam em `src/components/ui/` (sem edição manual); componentes base do produto ficam em `src/lib/ui/`.
+- **Convenção de testes:** `src/**/*.spec.ts` para testes unitários puros (projeto Vitest `unit` em `node`) e `src/**/*.test.tsx` para testes de componentes/DOM (projeto Vitest `componentes` em `jsdom` com Testing Library).
+
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)
 <!-- seeds-onboard:v0.6.0 -->
