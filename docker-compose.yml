@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
       POSTGRES_DB: ${POSTGRES_DB:-kustertech_flow}
     ports:
       - '${POSTGRES_PORT:-5440}:5432'
@@ -25,10 +25,10 @@ services:
   migrate:
     image: kustertech-flow:local
     build: .
-    command: pnpm prisma migrate deploy
+    command: ['node', 'node_modules/prisma/build/index.js', 'migrate', 'deploy']
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,12 +37,13 @@ services:
   web:
     image: kustertech-flow:local
     pull_policy: never
-    command: pnpm start
+    init: true
+    command: ['node', 'node_modules/next/dist/bin/next', 'start']
     ports:
       - '${WEB_PORT:-3000}:3000'
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       migrate:
@@ -52,10 +53,12 @@ services:
   worker:
     image: kustertech-flow:local
     pull_policy: never
-    command: pnpm worker
+    init: true
+    command: ['node', '--import', 'tsx', 'src/worker/main.ts']
+    stop_grace_period: 10s
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       migrate:

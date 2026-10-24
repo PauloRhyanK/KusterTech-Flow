@@ -30,6 +30,7 @@
     "tsx": "^4.23.15"
   },
   "devDependencies": {
+    "@prisma/driver-adapter-utils": "7.10.1",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^22.20.5",
     "@types/react": "^19",

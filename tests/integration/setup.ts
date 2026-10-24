@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { PrismaPg } from '@prisma/adapter-pg'
+import { DriverAdapterError } from '@prisma/driver-adapter-utils'
 
 function obterUrlBancoTeste(): string {
   const urlTeste = process.env.DATABASE_URL_TEST?.trim()
@@ -24,21 +25,13 @@ async function garantirBancoDeTeste(urlTeste: string): Promise<void> {
   try {
     await adapter.executeScript(`CREATE DATABASE "${nomeBanco}"`)
   } catch (erro) {
-    const mensagem = erro instanceof Error ? erro.message : String(erro)
-    if (
-      !mensagem.includes('already exists') &&
-      !mensagem.includes('DatabaseAlreadyExists') &&
-      !mensagem.includes('42P04')
-    ) {
+    if (!(erro instanceof DriverAdapterError && erro.cause.kind === 'DatabaseAlreadyExists')) {
       throw erro
     }
   } finally {
     await adapter.dispose()
   }
 }
-
-const urlBancoTeste = obterUrlBancoTeste()
-process.env.DATABASE_URL = urlBancoTeste
 
 export default async function setup(): Promise<void> {
   const urlTeste = obterUrlBancoTeste()
@@ -53,14 +46,4 @@ export default async function setup(): Promise<void> {
       DATABASE_URL: urlTeste,
     },
   })
-}
-
-export async function limparBanco(): Promise<void> {
-  const urlTeste = obterUrlBancoTeste()
-  process.env.DATABASE_URL = urlTeste
-
-  const { db } = await import('@/lib/db')
-  await db.$executeRawUnsafe(
-    'TRUNCATE TABLE "UsuarioPapel", "Sessao", "TentativaLogin", "Usuario" RESTART IDENTITY CASCADE',
-  )
 }

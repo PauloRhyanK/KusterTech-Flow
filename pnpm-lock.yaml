@@ -33,6 +33,9 @@ importers:
         specifier: ^4.23.15
         version: 4.23.15
     devDependencies:
+      '@prisma/driver-adapter-utils':
+        specifier: 7.10.1
+        version: 7.10.1
       '@tailwindcss/turbopack':
         specifier: ^4
         version: 4.3.3

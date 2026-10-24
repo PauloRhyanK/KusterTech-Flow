@@ -25,3 +25,8 @@ function encerrar(sinal: NodeJS.Signals): void {
 
 process.on('SIGTERM', () => encerrar('SIGTERM'))
 process.on('SIGINT', () => encerrar('SIGINT'))
+process.on('unhandledRejection', (erro) => {
+  log.error({ err: erro }, 'rejeição não tratada no worker')
+  log.flush()
+  process.exit(1)
+})

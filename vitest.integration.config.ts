@@ -11,6 +11,9 @@ export default defineConfig({
     include: ['tests/integration/**/*.spec.ts'],
     fileParallelism: false,
     globalSetup: ['./tests/integration/setup.ts'],
+    env: process.env.DATABASE_URL_TEST
+      ? { DATABASE_URL: process.env.DATABASE_URL_TEST }
+      : undefined,
     hookTimeout: 30_000,
     testTimeout: 30_000,
   },

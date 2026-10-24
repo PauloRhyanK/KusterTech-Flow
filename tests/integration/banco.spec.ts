@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, expect, test } from 'vitest'
-import { limparBanco } from './setup'
 import { db } from '@/lib/db'
+import { limparBanco } from './banco-de-teste'
 
 beforeEach(async () => {
   await limparBanco()
