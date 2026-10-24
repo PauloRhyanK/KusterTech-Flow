@@ -1,0 +1,147 @@
+import { Prisma } from '@prisma/client'
+import type { PapelAtribuido } from '@/lib/auth/autorizar'
+import { HASH_FICTICIO, hashSenha, verificarSenha } from '@/lib/auth/senha'
+import {
+  consultarBloqueio,
+  limparTentativas,
+  POLITICA_TENTATIVAS,
+  registrarFalhaPersistida,
+} from '@/lib/auth/tentativas'
+import { db } from '@/lib/db'
+
+const TAMANHO_MINIMO_SENHA = 12
+const TAMANHO_MAXIMO_SENHA = 1024
+const TAMANHO_MAXIMO_EMAIL = 254
+const FORMATO_MINIMO_EMAIL = /^[^\s@]+@[^\s@]+$/
+
+export type ResultadoAutenticacao =
+  | { ok: true; usuarioId: string }
+  | { ok: false; motivo: 'credenciais' }
+  | { ok: false; motivo: 'bloqueado'; bloqueadoAte: Date }
+
+export function normalizarEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+function deduplicarPapeis(papeis: readonly PapelAtribuido[]): PapelAtribuido[] {
+  const vistos = new Set<string>()
+  const unicos: PapelAtribuido[] = []
+
+  for (const atribuicao of papeis) {
+    const chave = JSON.stringify([atribuicao.papel, atribuicao.clienteId])
+    if (!vistos.has(chave)) {
+      vistos.add(chave)
+      unicos.push({
+        papel: atribuicao.papel,
+        clienteId: atribuicao.clienteId,
+      })
+    }
+  }
+
+  return unicos
+}
+
+export async function criarUsuario(dados: {
+  email: string
+  nome: string
+  senha: string
+  papeis: PapelAtribuido[]
+}): Promise<{ id: string }> {
+  const email = normalizarEmail(dados.email)
+  const nome = dados.nome.trim()
+
+  if (!email) {
+    throw new Error('O e-mail é obrigatório.')
+  }
+
+  if (email.length > TAMANHO_MAXIMO_EMAIL) {
+    throw new Error(`O e-mail não pode ter mais de ${TAMANHO_MAXIMO_EMAIL} caracteres.`)
+  }
+
+  if (!FORMATO_MINIMO_EMAIL.test(email)) {
+    throw new Error('Formato de e-mail inválido.')
+  }
+
+  if (!nome) {
+    throw new Error('O nome é obrigatório.')
+  }
+
+  if (dados.senha.length < TAMANHO_MINIMO_SENHA) {
+    throw new Error(`A senha deve ter pelo menos ${TAMANHO_MINIMO_SENHA} caracteres.`)
+  }
+
+  const papeisUnicos = deduplicarPapeis(dados.papeis)
+  const senhaHash = await hashSenha(dados.senha)
+
+  try {
+    const criado = await db.usuario.create({
+      data: {
+        email,
+        nome,
+        senhaHash,
+        papeis: {
+          create: papeisUnicos.map((item) => ({
+            papel: item.papel,
+            clienteId: item.clienteId,
+          })),
+        },
+      },
+      select: { id: true },
+    })
+
+    return { id: criado.id }
+  } catch (erro) {
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2002') {
+      throw new Error('Já existe um usuário com este e-mail.')
+    }
+    throw erro
+  }
+}
+
+export async function autenticar(
+  entrada: { email: string; senha: string; ip: string },
+  agora: Date = new Date(),
+): Promise<ResultadoAutenticacao> {
+  const email = normalizarEmail(entrada.email)
+
+  if (
+    !email ||
+    email.length > TAMANHO_MAXIMO_EMAIL ||
+    entrada.senha.length > TAMANHO_MAXIMO_SENHA
+  ) {
+    return { ok: false, motivo: 'credenciais' }
+  }
+
+  const ip = entrada.ip.trim() || 'desconhecido'
+  const chaveConta = `conta:${email}`
+  const chaveIp = `ip:${ip}`
+
+  const bloqueio = await consultarBloqueio([chaveConta, chaveIp], agora)
+  if (bloqueio.bloqueado && bloqueio.bloqueadoAte) {
+    return {
+      ok: false,
+      motivo: 'bloqueado',
+      bloqueadoAte: bloqueio.bloqueadoAte,
+    }
+  }
+
+  const usuario = await db.usuario.findUnique({
+    where: { email },
+  })
+
+  const usuarioAtivo = usuario && usuario.ativo ? usuario : null
+  const hashAlvo = usuarioAtivo ? usuarioAtivo.senhaHash : HASH_FICTICIO
+  const senhaCorreta = await verificarSenha(entrada.senha, hashAlvo)
+
+  if (!usuarioAtivo || !senhaCorreta) {
+    await db.$transaction(async (tx) => {
+      await registrarFalhaPersistida(chaveConta, POLITICA_TENTATIVAS.maxPorConta, agora, tx)
+      await registrarFalhaPersistida(chaveIp, POLITICA_TENTATIVAS.maxPorIp, agora, tx)
+    })
+
+    return { ok: false, motivo: 'credenciais' }
+  }
+
+  await limparTentativas([chaveConta])
+  return { ok: true, usuarioId: usuarioAtivo.id }
+}

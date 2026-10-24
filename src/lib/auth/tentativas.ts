@@ -1,3 +1,5 @@
+import type { Prisma, PrismaClient } from '@prisma/client'
+
 export const POLITICA_TENTATIVAS = {
   maxPorConta: 5,
   maxPorIp: 20,
@@ -45,4 +47,125 @@ export function registrarFalha(
     janelaInicio,
     bloqueadoAte,
   }
+}
+
+async function obterDb(): Promise<PrismaClient> {
+  const modulo = await import('@/lib/db')
+  return modulo.db
+}
+
+export async function consultarBloqueio(
+  chaves: string[],
+  agora: Date = new Date(),
+): Promise<{ bloqueado: boolean; bloqueadoAte?: Date }> {
+  if (chaves.length === 0) {
+    return { bloqueado: false }
+  }
+
+  const db = await obterDb()
+  const registros = await db.tentativaLogin.findMany({
+    where: { chave: { in: chaves } },
+  })
+
+  let maiorBloqueio: Date | undefined
+
+  for (const registro of registros) {
+    const avaliacao = avaliarTentativa(
+      {
+        contagem: registro.contagem,
+        janelaInicio: registro.janelaInicio,
+        bloqueadoAte: registro.bloqueadoAte,
+      },
+      agora,
+    )
+
+    if (!avaliacao.permitido) {
+      if (!maiorBloqueio || avaliacao.bloqueadoAte.getTime() > maiorBloqueio.getTime()) {
+        maiorBloqueio = avaliacao.bloqueadoAte
+      }
+    }
+  }
+
+  if (maiorBloqueio) {
+    return { bloqueado: true, bloqueadoAte: maiorBloqueio }
+  }
+
+  return { bloqueado: false }
+}
+
+interface LinhaTentativa {
+  chave: string
+  contagem: number
+  janelaInicio: Date
+  bloqueadoAte: Date | null
+}
+
+async function aplicarFalhaNaTransacao(
+  tx: Prisma.TransactionClient,
+  chave: string,
+  limite: number,
+  agora: Date,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${chave}))`
+  const linhas = await tx.$queryRaw<LinhaTentativa[]>`
+    SELECT "chave", "contagem", "janelaInicio", "bloqueadoAte"
+    FROM "TentativaLogin"
+    WHERE "chave" = ${chave}
+    FOR UPDATE
+  `
+  const atual = linhas[0] ?? null
+  const proximo = registrarFalha(
+    atual
+      ? {
+          contagem: atual.contagem,
+          janelaInicio: atual.janelaInicio,
+          bloqueadoAte: atual.bloqueadoAte,
+        }
+      : null,
+    agora,
+    limite,
+  )
+
+  await tx.tentativaLogin.upsert({
+    where: { chave },
+    create: {
+      chave,
+      contagem: proximo.contagem,
+      janelaInicio: proximo.janelaInicio,
+      bloqueadoAte: proximo.bloqueadoAte,
+    },
+    update: {
+      contagem: proximo.contagem,
+      janelaInicio: proximo.janelaInicio,
+      bloqueadoAte: proximo.bloqueadoAte,
+    },
+  })
+}
+
+export async function registrarFalhaPersistida(
+  chave: string,
+  limite: number,
+  agora: Date = new Date(),
+  tx?: Prisma.TransactionClient,
+): Promise<void> {
+  if (tx) {
+    await aplicarFalhaNaTransacao(tx, chave, limite, agora)
+    return
+  }
+
+  const db = await obterDb()
+  await db.$transaction(async (transacao) => {
+    await aplicarFalhaNaTransacao(transacao, chave, limite, agora)
+  })
+}
+
+export async function limparTentativas(chaves: string[]): Promise<void> {
+  if (chaves.length === 0) {
+    return
+  }
+
+  const db = await obterDb()
+  await db.tentativaLogin.deleteMany({
+    where: { chave: { in: chaves } },
+  })
 }
