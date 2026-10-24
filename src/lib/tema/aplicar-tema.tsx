@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 import { resolverTema, type Tema } from '@/lib/tema/tema'
 
 export function AplicadorDeTema({ tema }: { tema: Tema }) {
-  useEffect(() => {
+  useLayoutEffect(() => {
     const raiz = document.documentElement
     raiz.dataset.tema = tema
 
@@ -13,19 +13,28 @@ export function AplicadorDeTema({ tema }: { tema: Tema }) {
         ? window.matchMedia('(prefers-color-scheme: dark)')
         : null
 
-    const aplicar = (sistemaEscuro: boolean) => {
-      const resolvido = resolverTema(tema, sistemaEscuro)
-      raiz.classList.toggle('dark', resolvido === 'escuro')
-    }
+    const resolvido = resolverTema(tema, Boolean(media?.matches))
+    raiz.classList.toggle('dark', resolvido === 'escuro')
+  }, [tema])
 
-    aplicar(Boolean(media?.matches))
-
-    if (tema !== 'sistema' || !media) {
+  useEffect(() => {
+    if (tema !== 'sistema') {
       return
     }
 
+    const media =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null
+
+    if (!media) {
+      return
+    }
+
+    const raiz = document.documentElement
     const aoMudar = (evento: MediaQueryListEvent) => {
-      aplicar(evento.matches)
+      const resolvido = resolverTema('sistema', evento.matches)
+      raiz.classList.toggle('dark', resolvido === 'escuro')
     }
 
     media.addEventListener('change', aoMudar)

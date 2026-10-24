@@ -110,6 +110,10 @@ describe('alterarTema', () => {
       erro: 'Não foi possível salvar a preferência agora. Tente novamente em instantes.',
     })
     expect(logErrorMock).toHaveBeenCalledTimes(1)
+    expect(logErrorMock).toHaveBeenCalledWith(
+      { err: erroBanco },
+      'Erro inesperado ao salvar preferência de tema.',
+    )
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 })

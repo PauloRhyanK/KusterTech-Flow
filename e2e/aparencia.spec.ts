@@ -34,13 +34,25 @@ test('escolher Escuro aplica sem recarregar, persiste após reload e o HTML inic
   await expect(page.locator('html')).not.toHaveClass(/dark/)
 
   await page.getByLabel('Escuro').check()
+
+  await page.evaluate(() => {
+    ;(window as Window & { __e2eMarca?: boolean }).__e2eMarca = true
+  })
+
   await page.getByRole('button', { name: 'Salvar' }).click()
 
   await expect(page.getByRole('status')).toHaveText('Preferência salva.')
+  expect(await page.evaluate(() => (window as Window & { __e2eMarca?: boolean }).__e2eMarca)).toBe(
+    true,
+  )
+
+  await expect(page.locator('html')).toHaveAttribute('data-tema', 'escuro')
   await expect(page.locator('html')).toHaveClass(/dark/)
+  await expect(page.getByLabel('Escuro')).toBeChecked()
 
   await page.reload()
   await expect(page.locator('html')).toHaveClass(/dark/)
+  await expect(page.getByLabel('Escuro')).toBeChecked()
 
   const html = await (await page.request.get('/configuracoes/aparencia')).text()
   expect(html).toMatch(/<html[^>]*class="dark"/)
@@ -61,9 +73,11 @@ test('voltar para Sistema remove a classe quando o sistema está claro', async (
 
   await expect(page.getByRole('status')).toHaveText('Preferência salva.')
   await expect(page.locator('html')).not.toHaveClass(/dark/)
+  await expect(page.getByLabel('Sistema (padrão)')).toBeChecked()
 
   await page.reload()
   await expect(page.locator('html')).not.toHaveClass(/dark/)
+  await expect(page.getByLabel('Sistema (padrão)')).toBeChecked()
 })
 
 test('atalho Aparência no menu do usuário leva à página', async ({ page }) => {

@@ -23,7 +23,7 @@ export default async function PaginaConfiguracoes() {
       <CabecalhoDePagina
         trilhas={[{ rotulo: 'Configurações' }]}
         titulo="Configurações"
-        contexto="Preferências da aplicação, gerenciamento de acessos e integrações"
+        contexto="Preferências da conta e da aplicação."
       />
 
       <div className="grid gap-4 sm:grid-cols-2">

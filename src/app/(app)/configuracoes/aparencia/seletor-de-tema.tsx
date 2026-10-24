@@ -1,12 +1,10 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useState, useActionState } from 'react'
+import { useState, useActionState } from 'react'
 import { Button } from '@/components/ui/button'
 import { AplicadorDeTema } from '@/lib/tema/aplicar-tema'
-import { resolverTema, type Tema } from '@/lib/tema/tema'
+import type { Tema } from '@/lib/tema/tema'
 import { alterarTema } from './actions'
-
-const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 export interface SeletorDeTemaProps {
   temaAtual: Tema
@@ -22,44 +20,44 @@ const OPCOES_TEMA: readonly OpcaoTema[] = [
   {
     valor: 'claro',
     rotulo: 'Claro',
-    descricao: 'Cores claras sobre fundo Cloud, ideal para ambientes bem iluminados.',
+    descricao: 'Fundo claro, para ambientes bem iluminados.',
   },
   {
     valor: 'escuro',
     rotulo: 'Escuro',
-    descricao: 'Cores escuras sobre fundo Midnight, com menor cansaço visual.',
+    descricao: 'Fundo escuro, para ambientes com pouca luz.',
   },
   {
     valor: 'sistema',
     rotulo: 'Sistema (padrão)',
-    descricao: 'Acompanha automaticamente a preferência de tema do seu dispositivo.',
+    descricao: 'Acompanha a preferência de tema do seu dispositivo.',
   },
 ]
 
 export function SeletorDeTema({ temaAtual }: SeletorDeTemaProps) {
   const [estado, formAction, pendente] = useActionState(alterarTema, {})
+  const [prevEstado, setPrevEstado] = useState(estado)
   const [selecionado, setSelecionado] = useState<Tema>(temaAtual)
+  const [mostrarFeedback, setMostrarFeedback] = useState(false)
+
+  if (estado !== prevEstado) {
+    setPrevEstado(estado)
+    if (estado.salvo || estado.erro) {
+      setMostrarFeedback(true)
+    }
+    if (estado.tema) {
+      setSelecionado(estado.tema)
+    }
+  }
 
   const temaAtivo = estado.tema ?? temaAtual
-
-  useIsomorphicLayoutEffect(() => {
-    if (estado.tema) {
-      const raiz = document.documentElement
-      raiz.dataset.tema = estado.tema
-      const media =
-        typeof window.matchMedia === 'function'
-          ? window.matchMedia('(prefers-color-scheme: dark)')
-          : null
-      const resolvido = resolverTema(estado.tema, Boolean(media?.matches))
-      raiz.classList.toggle('dark', resolvido === 'escuro')
-    }
-  }, [estado.tema])
+  const exibirFeedback = mostrarFeedback && !pendente
 
   return (
     <>
       <AplicadorDeTema tema={temaAtivo} />
       <form action={formAction} className="space-y-6">
-        <fieldset className="space-y-3">
+        <fieldset key={temaAtivo} className="space-y-3">
           <legend className="text-sm font-semibold text-text-primary">Tema</legend>
           <div className="grid gap-3 sm:grid-cols-3">
             {OPCOES_TEMA.map((opcao) => {
@@ -68,53 +66,68 @@ export function SeletorDeTema({ temaAtual }: SeletorDeTemaProps) {
               const marcado = selecionado === opcao.valor
 
               return (
-                <label
+                <div
                   key={opcao.valor}
-                  htmlFor={id}
+                  onClick={() => {
+                    setSelecionado(opcao.valor)
+                    setMostrarFeedback(false)
+                  }}
                   className={`flex cursor-pointer flex-col justify-between rounded-compacto border p-4 transition-colors ${
                     marcado
-                      ? 'border-action-primary bg-surface shadow-xs'
+                      ? 'border-action-primary bg-surface'
                       : 'border-border bg-surface hover:border-border-strong'
                   }`}
                 >
                   <div className="space-y-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-text-primary">{opcao.rotulo}</span>
+                      <label
+                        htmlFor={id}
+                        className="cursor-pointer text-sm font-medium text-text-primary"
+                      >
+                        {opcao.rotulo}
+                      </label>
                       <input
                         id={id}
                         type="radio"
                         name="tema"
                         value={opcao.valor}
                         checked={marcado}
-                        onChange={() => setSelecionado(opcao.valor)}
+                        onChange={() => {
+                          setSelecionado(opcao.valor)
+                          setMostrarFeedback(false)
+                        }}
                         aria-describedby={descId}
-                        className="size-4 text-action-primary focus:ring-focus-ring"
+                        className="size-4 accent-action-primary focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
                       />
                     </div>
                     <p id={descId} className="text-xs text-text-secondary">
                       {opcao.descricao}
                     </p>
                   </div>
-                </label>
+                </div>
               )
             })}
           </div>
         </fieldset>
 
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={pendente} aria-busy={pendente}>
+          <Button
+            type="submit"
+            aria-busy={pendente}
+            onClick={(e) => {
+              if (pendente) {
+                e.preventDefault()
+              }
+            }}
+          >
             Salvar
           </Button>
-          {estado.salvo && (
-            <p role="status" className="text-sm font-medium text-sucesso">
-              Preferência salva.
-            </p>
-          )}
-          {estado.erro && (
-            <p role="alert" className="text-sm font-medium text-erro">
-              {estado.erro}
-            </p>
-          )}
+          <p role="status" aria-live="polite" className="text-sm font-medium text-sucesso">
+            {exibirFeedback && estado.salvo ? 'Preferência salva.' : ''}
+          </p>
+          <p role="alert" className="text-sm font-medium text-erro">
+            {exibirFeedback && estado.erro ? estado.erro : ''}
+          </p>
         </div>
       </form>
     </>

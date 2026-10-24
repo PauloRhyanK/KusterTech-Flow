@@ -32,7 +32,7 @@ export async function alterarTema(
     revalidatePath('/', 'layout')
     return { salvo: true, tema: temaBruto }
   } catch (erro) {
-    log.error({ erro }, 'Erro inesperado ao salvar preferência de tema.')
+    log.error({ err: erro }, 'Erro inesperado ao salvar preferência de tema.')
     return {
       erro: 'Não foi possível salvar a preferência agora. Tente novamente em instantes.',
     }
