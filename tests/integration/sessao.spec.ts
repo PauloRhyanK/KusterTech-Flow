@@ -78,6 +78,7 @@ describe('sessão (integração)', () => {
       id: usuarioId,
       nome: 'Carlos',
       email: 'carlos@exemplo.com',
+      tema: 'sistema',
     })
     expect(sessaoAntes?.sujeito.usuarioId).toBe(usuarioId)
     expect(sessaoAntes?.sujeito.papeis).toHaveLength(2)
