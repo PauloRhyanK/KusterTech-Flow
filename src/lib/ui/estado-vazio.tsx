@@ -40,7 +40,7 @@ export function EstadoVazio({ tipo, titulo, descricao, acao, className }: Estado
       <div className="mb-3 text-text-secondary">
         <Icone size={18} strokeWidth={1.75} aria-hidden="true" />
       </div>
-      <h3 className="text-base font-semibold text-text-primary">{titulo}</h3>
+      <p className="text-[15px] font-[600] leading-[1.4] text-text-primary">{titulo}</p>
       <p className="mt-1 max-w-md text-sm text-text-secondary">{descricao}</p>
       {acao && <div className="mt-4">{acao}</div>}
     </div>

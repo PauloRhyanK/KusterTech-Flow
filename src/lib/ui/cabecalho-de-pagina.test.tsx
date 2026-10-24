@@ -3,13 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { CabecalhoDePagina } from './cabecalho-de-pagina'
 
 describe('CabecalhoDePagina', () => {
-  it('renderiza título em h1 com tipografia Título 1 (24px / 650)', () => {
+  it('renderiza título em h1 com tipografia Título 1 responsiva (mobile 21px, desktop 24px, 650)', () => {
     render(<CabecalhoDePagina trilhas={[{ rotulo: 'Visão Geral' }]} titulo="Painel Principal" />)
 
     const heading = screen.getByRole('heading', { level: 1, name: 'Painel Principal' })
     expect(heading).toBeInTheDocument()
-    expect(heading).toHaveClass('text-[24px]')
-    expect(heading).toHaveClass('font-[650]')
+    expect(heading).toHaveClass('text-[21px]', 'md:text-[24px]', 'font-[650]')
     expect(heading).toHaveClass('text-text-primary')
   })
 

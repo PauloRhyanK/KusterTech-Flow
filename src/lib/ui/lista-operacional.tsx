@@ -59,7 +59,9 @@ export function ListaOperacional({
                 )}
               </div>
               {linha.contexto && (
-                <div className="shrink-0 text-xs text-text-secondary">{linha.contexto}</div>
+                <div className="min-w-0 truncate text-[13px] text-text-secondary">
+                  {linha.contexto}
+                </div>
               )}
             </div>
             <div className="flex shrink-0 items-center gap-3">

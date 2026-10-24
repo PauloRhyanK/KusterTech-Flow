@@ -31,13 +31,15 @@ describe('BadgeDeEstado', () => {
     expect(badge).toHaveClass('font-[650]')
   })
 
-  it('renderiza ícone quando fornecido', () => {
+  it('renderiza ícone quando fornecido e seu elemento wrapper tem aria-hidden="true"', () => {
     render(
       <BadgeDeEstado tom="atencao" icone={<span data-testid="icone-alerta" />}>
         Atenção
       </BadgeDeEstado>,
     )
-    expect(screen.getByTestId('icone-alerta')).toBeInTheDocument()
+    const icone = screen.getByTestId('icone-alerta')
+    expect(icone).toBeInTheDocument()
+    expect(icone.parentElement).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByText('Atenção')).toBeInTheDocument()
   })
 })

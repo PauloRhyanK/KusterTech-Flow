@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { EstadoVazio, type TipoDeEstadoVazio } from './estado-vazio'
 
 describe('EstadoVazio', () => {
-  it('tem role="status", exibe título e descrição e define data-tipo', () => {
-    render(
+  it('tem role="status", exibe título em parágrafo e descrição e define data-tipo', () => {
+    const { container } = render(
       <EstadoVazio
         tipo="nenhum-registro"
         titulo="Nenhum item encontrado"
@@ -15,28 +15,39 @@ describe('EstadoVazio', () => {
     const status = screen.getByRole('status')
     expect(status).toBeInTheDocument()
     expect(status).toHaveAttribute('data-tipo', 'nenhum-registro')
-    expect(screen.getByText('Nenhum item encontrado')).toBeInTheDocument()
+
+    // Título em <p> (não <h3>) com Título 3 (§8: text-[15px] font-[600] leading-[1.4])
+    const titulo = screen.getByText('Nenhum item encontrado')
+    expect(titulo.tagName.toLowerCase()).toBe('p')
+    expect(titulo).toHaveClass('text-[15px]', 'font-[600]', 'leading-[1.4]', 'text-text-primary')
+    expect(container.querySelector('h3')).toBeNull()
+
     expect(screen.getByText('Tente ajustar os filtros de busca.')).toBeInTheDocument()
   })
 
-  it('suporta os cinco tipos de estado vazio de D66 com seus ícones', () => {
-    const tipos: TipoDeEstadoVazio[] = [
-      'nenhum-registro',
-      'nao-configurado',
-      'falha-integracao',
-      'dados-desatualizados',
-      'sem-evidencia',
+  it('suporta os cinco tipos de estado vazio de D66 com ícones lucide específicos e nunca tom sucesso', () => {
+    const mapeamento: { tipo: TipoDeEstadoVazio; classeIcone: string }[] = [
+      { tipo: 'nenhum-registro', classeIcone: 'lucide-inbox' },
+      { tipo: 'nao-configurado', classeIcone: 'lucide-settings-2' },
+      { tipo: 'falha-integracao', classeIcone: 'lucide-plug-zap' },
+      { tipo: 'dados-desatualizados', classeIcone: 'lucide-clock' },
+      { tipo: 'sem-evidencia', classeIcone: 'lucide-file-question' },
     ]
 
-    for (const tipo of tipos) {
+    for (const { tipo, classeIcone } of mapeamento) {
       const { unmount } = render(
         <EstadoVazio tipo={tipo} titulo={`Título ${tipo}`} descricao={`Descrição ${tipo}`} />,
       )
       const elemento = screen.getByRole('status')
       expect(elemento).toHaveAttribute('data-tipo', tipo)
-      // Deve ter um svg com aria-hidden="true"
+
       const svg = elemento.querySelector('svg[aria-hidden="true"]')
       expect(svg).toBeInTheDocument()
+      expect(svg).toHaveClass(classeIcone)
+
+      // Nunca tom sucesso
+      expect(elemento.innerHTML).not.toMatch(/sucesso/)
+
       unmount()
     }
   })

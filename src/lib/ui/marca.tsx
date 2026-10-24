@@ -15,17 +15,23 @@ export interface SimboloDaMarcaProps {
 }
 
 const TAMANHOS_TEXTO: Record<TamanhoDaMarca, string> = {
-  sm: 'text-lg',
-  md: 'text-2xl',
-  lg: 'text-4xl',
+  sm: 'text-[22px]',
+  md: 'text-[30px]',
+  lg: 'text-[40px]',
 }
 
 const TAMANHOS_SIMBOLO: Record<TamanhoDaMarca, number> = {
-  sm: 18,
-  md: 24,
-  lg: 32,
+  sm: 20,
+  md: 28,
+  lg: 36,
 }
 
+/**
+ * Símbolo visual da marca KusterTech Flow composto por três losangos arredondados.
+ * Este elemento SVG é sempre `aria-hidden="true"`. Consumidores que utilizarem
+ * o símbolo fora do componente `Marca` devem fornecer nome acessível no contêiner
+ * (por exemplo, via `aria-label` ou texto contextual associado).
+ */
 export function SimboloDaMarca({ tamanho = 24, className }: SimboloDaMarcaProps) {
   return (
     <svg
@@ -101,13 +107,15 @@ export function Marca({ variante = 'compacta', tamanho = 'md', className }: Marc
           <span className="font-[600] text-marca-kuster">Kuster</span>
           <span className="font-[700] text-marca-tech">Tech</span>
         </div>
-        <div
-          aria-hidden="true"
-          data-marca-flow
-          className="text-[0.28em] font-[650] uppercase leading-tight tracking-[0.18em] text-marca-flow"
-        >
-          FLOW
-        </div>
+        {tamanho !== 'sm' && (
+          <div
+            aria-hidden="true"
+            data-marca-flow
+            className="text-[0.25em] font-[650] uppercase leading-none tracking-[0.18em] text-marca-flow"
+          >
+            FLOW
+          </div>
+        )}
       </div>
     )
   }
@@ -127,14 +135,18 @@ export function Marca({ variante = 'compacta', tamanho = 'md', className }: Marc
         <span className="font-[600] text-marca-kuster">Kuster</span>
         <span className="font-[700] text-marca-tech">Tech</span>
       </span>
-      <span aria-hidden="true" className="inline-block w-[1ch]" />
-      <span
-        aria-hidden="true"
-        data-marca-flow
-        className="text-[0.28em] font-[650] uppercase leading-none tracking-[0.18em] text-marca-flow"
-      >
-        FLOW
-      </span>
+      {tamanho !== 'sm' && (
+        <>
+          <span aria-hidden="true" className="inline-block w-[1ch]" />
+          <span
+            aria-hidden="true"
+            data-marca-flow
+            className="text-[0.25em] font-[650] uppercase leading-none tracking-[0.18em] text-marca-flow"
+          >
+            FLOW
+          </span>
+        </>
+      )}
     </div>
   )
 }

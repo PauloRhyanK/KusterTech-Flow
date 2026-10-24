@@ -24,7 +24,9 @@ export function CabecalhoDePagina({
       <Breadcrumbs trilhas={trilhas} />
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="space-y-1">
-          <h1 className="text-[24px] font-[650] leading-[1.25] text-text-primary">{titulo}</h1>
+          <h1 className="text-[21px] font-[650] leading-[1.3] tracking-[-0.01em] text-text-primary md:text-[24px] md:leading-[1.25]">
+            {titulo}
+          </h1>
           {contexto && <p className="text-sm text-text-secondary">{contexto}</p>}
           {situacao && <div className="pt-1">{situacao}</div>}
         </div>

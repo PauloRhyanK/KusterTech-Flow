@@ -30,7 +30,7 @@ describe('ListaOperacional', () => {
     expect(screen.getByTestId('estado-vazio')).toBeInTheDocument()
   })
 
-  it('renderiza <ul> com aria-label e cada linha com href envolve nome em link', () => {
+  it('renderiza <ul> com aria-label, filtros antes do ul e cada linha com href envolve nome em link', () => {
     const linhas: LinhaOperacional[] = [
       {
         id: '1',
@@ -57,8 +57,14 @@ describe('ListaOperacional', () => {
       />,
     )
 
+    const filtros = screen.getByTestId('filtros')
     const lista = screen.getByRole('list', { name: 'Lista de projetos' })
     expect(lista).toBeInTheDocument()
+
+    // (1) Filtros vem antes do ul via compareDocumentPosition
+    expect(Boolean(filtros.compareDocumentPosition(lista) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
+      true,
+    )
 
     // Linha 1 tem href -> vira link com o nome
     const linkAlpha = screen.getByRole('link', { name: 'Projeto Alpha' })
@@ -71,6 +77,15 @@ describe('ListaOperacional', () => {
     // Linha 2 não tem href -> não é link
     const textoBeta = screen.getByText('Projeto Beta')
     expect(textoBeta.closest('a')).toBeNull()
+
+    // Contexto tem text-[13px], text-text-secondary, truncate e min-w-0
+    const contextoClienteA = screen.getByText('Cliente A')
+    expect(contextoClienteA).toHaveClass(
+      'text-[13px]',
+      'text-text-secondary',
+      'truncate',
+      'min-w-0',
+    )
   })
 
   it('linhas possuem altura compacta (40-44px), corpo compacto (13px) e alternância só no escuro', () => {
@@ -88,9 +103,11 @@ describe('ListaOperacional', () => {
 
     for (const li of itens) {
       expect(li).toHaveClass('text-[13px]')
-      expect(li).toHaveClass('min-h-[40px]')
-      // Alternância sutil só no escuro
-      expect(li.className).toMatch(/dark:(even|odd):bg-/)
+      expect(li).toHaveClass('min-h-[40px]', 'md:min-h-[44px]')
+
+      // (2) Alternância existe com dark:even:bg- e NÃO contém even:bg- sem prefixo
+      expect(li.className).toContain('dark:even:bg-')
+      expect(li.className).not.toMatch(/(^|\s)even:bg-/)
     }
   })
 })

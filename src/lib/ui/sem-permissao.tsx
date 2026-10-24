@@ -17,7 +17,9 @@ export function SemPermissao({ className }: SemPermissaoProps = {}) {
       <div className="mb-3 text-text-secondary">
         <Lock size={18} strokeWidth={1.75} aria-hidden="true" />
       </div>
-      <h3 className="text-base font-semibold text-text-primary">Sem permissão para esta área.</h3>
+      <p className="text-[15px] font-[600] leading-[1.4] text-text-primary">
+        Sem permissão para esta área.
+      </p>
       <p className="mt-1 max-w-md text-sm text-text-secondary">
         Peça a um administrador o acesso necessário.
       </p>
