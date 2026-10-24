@@ -1,11 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { resolverTema, SCRIPT_APLICAR_TEMA, type Tema } from '@/lib/tema/tema'
-
-export function ScriptDeTema() {
-  return <script dangerouslySetInnerHTML={{ __html: SCRIPT_APLICAR_TEMA }} />
-}
+import { resolverTema, type Tema } from '@/lib/tema/tema'
 
 export function AplicadorDeTema({ tema }: { tema: Tema }) {
   useEffect(() => {

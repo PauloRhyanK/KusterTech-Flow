@@ -1,6 +1,7 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { AplicadorDeTema, ScriptDeTema } from '@/lib/tema/aplicar-tema'
+import { AplicadorDeTema } from '@/lib/tema/aplicar-tema'
+import { ScriptDeTema } from '@/lib/tema/script-de-tema'
 import { SCRIPT_APLICAR_TEMA } from '@/lib/tema/tema'
 
 const matchMediaOriginal = window.matchMedia
@@ -74,6 +75,34 @@ describe('AplicadorDeTema e ScriptDeTema', () => {
     unmount()
     expect(controle.removerSpy).toHaveBeenCalledWith('change', expect.any(Function))
     expect(controle.listeners.size).toBe(0)
+  })
+
+  test('preferência claro prevalece com o sistema em escuro; sistema volta a seguir o sistema', () => {
+    const controle = criarMatchMediaControlavel(true)
+
+    const { rerender } = render(<AplicadorDeTema tema="claro" />)
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(controle.listeners.size).toBe(0)
+
+    rerender(<AplicadorDeTema tema="sistema" />)
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(controle.listeners.size).toBe(1)
+  })
+
+  test('sair de sistema por rerender remove o listener e ignora mudanças do sistema', () => {
+    const controle = criarMatchMediaControlavel(false)
+
+    const { rerender } = render(<AplicadorDeTema tema="sistema" />)
+    expect(controle.listeners.size).toBe(1)
+
+    rerender(<AplicadorDeTema tema="claro" />)
+    expect(controle.removerSpy).toHaveBeenCalledWith('change', expect.any(Function))
+    expect(controle.listeners.size).toBe(0)
+
+    act(() => {
+      controle.alterarSistema(true)
+    })
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
   test('ScriptDeTema renderiza o script inline com SCRIPT_APLICAR_TEMA', () => {

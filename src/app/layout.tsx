@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { AplicadorDeTema, ScriptDeTema } from '@/lib/tema/aplicar-tema'
+import { AplicadorDeTema } from '@/lib/tema/aplicar-tema'
+import { ScriptDeTema } from '@/lib/tema/script-de-tema'
 import { obterTemaAtual } from '@/lib/tema/servidor'
 
 export const metadata: Metadata = {

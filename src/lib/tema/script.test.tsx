@@ -45,6 +45,16 @@ describe('SCRIPT_APLICAR_TEMA', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
+  test('preferência claro prevalece sobre o sistema em modo escuro', () => {
+    const executar = new Function(SCRIPT_APLICAR_TEMA)
+
+    mockarMatchMedia(true)
+    document.documentElement.classList.add('dark')
+    document.documentElement.dataset.tema = 'claro'
+    executar()
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
   test('script nunca lança se matchMedia não existir', () => {
     const executar = new Function(SCRIPT_APLICAR_TEMA)
     // @ts-expect-error simulando ambiente sem matchMedia

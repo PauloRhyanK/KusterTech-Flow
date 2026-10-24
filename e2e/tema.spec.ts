@@ -38,10 +38,10 @@ test('com preferência escuro no banco, o HTML inicial já vem com class="dark" 
   expect(html).toContain('data-tema="escuro"')
 })
 
-test('tema sistema segue prefers-color-scheme e muda sem recarregar', async ({ browser }) => {
-  const contexto = await browser.newContext({ colorScheme: 'dark' })
-  try {
-    const page = await contexto.newPage()
+test.describe('tema sistema com o sistema em modo escuro', () => {
+  test.use({ colorScheme: 'dark' })
+
+  test('tema sistema segue prefers-color-scheme e muda sem recarregar', async ({ page }) => {
     await page.goto('/entrar')
     await expect(page.locator('html')).toHaveClass(/dark/)
 
@@ -50,9 +50,7 @@ test('tema sistema segue prefers-color-scheme e muda sem recarregar', async ({ b
 
     await page.emulateMedia({ colorScheme: 'dark' })
     await expect(page.locator('html')).toHaveClass(/dark/)
-  } finally {
-    await contexto.close()
-  }
+  })
 })
 
 test('com reduced-motion, body não declara transição', async ({ page }) => {
