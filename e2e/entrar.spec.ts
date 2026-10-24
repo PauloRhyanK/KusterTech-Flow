@@ -30,7 +30,10 @@ test('senha errada mostra mensagem genérica e mantém o e-mail', async ({ page 
   await expect(page.getByLabel('E-mail')).toHaveValue(email)
 })
 
-test('login correto leva a / com o nome do admin; sair volta para /entrar', async ({ page }) => {
+test('login correto leva a / com o nome do admin; sair volta para /entrar', async ({
+  page,
+  baseURL,
+}) => {
   const { email, senha } = obterCredenciaisAdmin()
 
   await page.goto('/entrar')
@@ -44,6 +47,7 @@ test('login correto leva a / com o nome do admin; sair volta para /entrar', asyn
 
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page).toHaveURL(/\/entrar$/)
+  expect(new URL(page.url()).origin).toBe(new URL(baseURL ?? 'http://127.0.0.1:3131').origin)
 })
 
 test('cookie de sessão inválido não quebra: redireciona para /entrar', async ({
@@ -96,7 +100,6 @@ test('após sair, voltar a / redireciona para /entrar', async ({ page }) => {
 
 test('POST /sair sem cookie redireciona para /entrar sem erro 500', async ({ request }) => {
   const resposta = await request.post('/sair', { maxRedirects: 0 })
-  expect(resposta.status()).toBeGreaterThanOrEqual(300)
-  expect(resposta.status()).toBeLessThan(400)
-  expect(resposta.headers()['location']).toMatch(/\/entrar$/)
+  expect(resposta.status()).toBe(303)
+  expect(resposta.headers()['location']).toBe('/entrar')
 })

@@ -2,7 +2,10 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'KusterTech Flow',
+  title: {
+    default: 'KusterTech Flow',
+    template: '%s — KusterTech Flow',
+  },
   description: 'Central de Operações KusterTech',
 }
 

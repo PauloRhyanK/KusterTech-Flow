@@ -1,5 +1,10 @@
+import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { obterSessao } from '@/lib/auth/sessao'
+
+export const metadata: Metadata = {
+  title: 'Início',
+}
 
 export default async function PaginaInicial() {
   const sessao = await obterSessao()

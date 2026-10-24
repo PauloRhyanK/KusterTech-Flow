@@ -44,7 +44,7 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 
 - **Unitários (`pnpm test`):** executam com Vitest sobre regras puras (`src/**/*.spec.ts`), sem dependência de banco.
 - **Integração (`pnpm test:integration`):** exigem PostgreSQL ativo (`docker compose up -d postgres`) e `DATABASE_URL_TEST` exportada no ambiente (ex.: `set -a && source .env && set +a && pnpm test:integration`); o setup cria o banco de teste automaticamente e aplica as migrations.
-- **Ponta a ponta (`pnpm build && pnpm e2e`):** executam com Playwright nos projetos `desktop` e `mobile` sobre o build de produção (`pnpm start`) usando `DATABASE_URL_TEST`; o `globalSetup` aplica as migrations e cria um administrador único para a execução.
+- **Ponta a ponta (`pnpm build && pnpm e2e`):** executam com Playwright nos projetos `desktop` e `mobile` sobre o build de produção (`pnpm start` na porta definida por `E2E_PORT`, padrão `3131`) usando `DATABASE_URL_TEST`; o `globalSetup` aplica as migrations, limpa tentativas e usuários de E2E anteriores e cria um administrador único para a execução.
 
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)

@@ -65,9 +65,13 @@ export function FormularioEntrar() {
 
       <button
         type="submit"
-        disabled={pendente}
-        aria-disabled={pendente}
-        className="w-full rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 focus:outline-2 focus:outline-offset-2 focus:outline-neutral-900 disabled:opacity-60"
+        aria-busy={pendente}
+        onClick={(evento) => {
+          if (pendente) {
+            evento.preventDefault()
+          }
+        }}
+        className="w-full rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 focus:outline-2 focus:outline-offset-2 focus:outline-neutral-900 aria-busy:opacity-60"
       >
         {pendente ? 'Entrando...' : 'Entrar'}
       </button>

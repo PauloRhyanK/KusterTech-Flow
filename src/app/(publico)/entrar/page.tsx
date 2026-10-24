@@ -1,6 +1,11 @@
+import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { obterSessao } from '@/lib/auth/sessao'
 import { FormularioEntrar } from './formulario-entrar'
+
+export const metadata: Metadata = {
+  title: 'Entrar',
+}
 
 export default async function PaginaEntrar() {
   const sessao = await obterSessao()

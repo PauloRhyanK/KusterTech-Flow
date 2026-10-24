@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { PrismaPg } from '@prisma/adapter-pg'
-import { DriverAdapterError } from '@prisma/driver-adapter-utils'
+import { garantirBancoDeTeste } from '../../tests/support/banco-de-teste-compartilhado'
 
 function carregarEnvSeNecessario(): void {
   if (!process.env.DATABASE_URL_TEST && typeof process.loadEnvFile === 'function') {
@@ -10,29 +9,6 @@ function carregarEnvSeNecessario(): void {
     } catch {
       // Ignora se .env não existir (ex.: no CI)
     }
-  }
-}
-
-async function garantirBancoDeTeste(urlTeste: string): Promise<void> {
-  const parsed = new URL(urlTeste)
-  const nomeBanco = decodeURIComponent(parsed.pathname.replace(/^\//, ''))
-  if (!nomeBanco || !/^[a-zA-Z0-9_-]+$/.test(nomeBanco)) {
-    return
-  }
-
-  const urlManutencao = new URL(urlTeste)
-  urlManutencao.pathname = '/postgres'
-
-  const factory = new PrismaPg({ connectionString: urlManutencao.toString() })
-  const adapter = await factory.connect()
-  try {
-    await adapter.executeScript(`CREATE DATABASE "${nomeBanco}"`)
-  } catch (erro) {
-    if (!(erro instanceof DriverAdapterError && erro.cause.kind === 'DatabaseAlreadyExists')) {
-      throw erro
-    }
-  } finally {
-    await adapter.dispose()
   }
 }
 
@@ -55,6 +31,21 @@ export default async function globalSetup(): Promise<void> {
       DATABASE_URL: urlTeste,
     },
   })
+
+  const { db } = await import('@/lib/db')
+  try {
+    await db.tentativaLogin.deleteMany({})
+    await db.usuario.deleteMany({
+      where: {
+        email: {
+          startsWith: 'e2e+',
+          endsWith: '@local.test',
+        },
+      },
+    })
+  } finally {
+    await db.$disconnect()
+  }
 
   const email = `e2e+${Date.now()}@local.test`
   const senha = randomBytes(24).toString('base64url')

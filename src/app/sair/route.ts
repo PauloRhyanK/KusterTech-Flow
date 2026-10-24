@@ -1,20 +1,24 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { encerrarSessaoPorToken, NOME_COOKIE, opcoesDoCookie } from '@/lib/auth/sessao'
+import { log } from '@/lib/log'
 
-export async function POST(request: Request): Promise<NextResponse> {
+export async function POST(): Promise<NextResponse> {
   const cookieStore = await cookies()
   const token = cookieStore.get(NOME_COOKIE)?.value
 
   if (token) {
     try {
       await encerrarSessaoPorToken(token)
-    } catch {
-      // Ignora falha ao remover sessão no banco para nunca responder 500
+    } catch (erro) {
+      log.warn({ erro }, 'Falha ao encerrar sessão no banco durante saída.')
     }
   }
 
-  const resposta = NextResponse.redirect(new URL('/entrar', request.url), { status: 303 })
+  const resposta = new NextResponse(null, {
+    status: 303,
+    headers: { Location: '/entrar' },
+  })
   resposta.cookies.set(NOME_COOKIE, '', {
     ...opcoesDoCookie(new Date(0)),
     maxAge: 0,
