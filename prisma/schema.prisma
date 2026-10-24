@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Papel {
+  ADMIN
+  APROVADOR
+  TESTADOR
+}
+
+model Usuario {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  nome         String
+  senhaHash    String
+  ativo        Boolean        @default(true)
+  criadoEm     DateTime       @default(now())
+  atualizadoEm DateTime       @updatedAt
+  papeis       UsuarioPapel[]
+  sessoes      Sessao[]
+}
+
+// clienteId sem FK: a tabela Cliente nasce no Incremento 1, que adiciona a FK por migration.
+// Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
+// Decisão: não editar o SQL gerado; `criarUsuario` deduplica papéis antes de gravar, e o teste de unicidade usa clienteId não nulo.
+model UsuarioPapel {
+  id        String  @id @default(uuid())
+  usuarioId String
+  papel     Papel
+  clienteId String?
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, papel, clienteId])
+}
+
+model Sessao {
+  id          String   @id @default(uuid())
+  usuarioId   String
+  tokenHash   String   @unique
+  criadaEm    DateTime @default(now())
+  expiraEm    DateTime
+  ultimoUsoEm DateTime @default(now())
+  ip          String?
+  userAgent   String?
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+}
+
+// chave = "conta:<email normalizado>" ou "ip:<ip>"
+model TentativaLogin {
+  chave        String    @id
+  contagem     Int
+  janelaInicio DateTime
+  bloqueadoAte DateTime?
+}

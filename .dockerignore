@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+build
+coverage
+.git
+.env
+.env.*
+!.env.example
+.orquestracao
+.claude
+.serena
+.seeds
+docs
+*.log
+.DS_Store
