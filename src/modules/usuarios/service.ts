@@ -23,6 +23,15 @@ export function normalizarEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
+export function emailValido(email: string): boolean {
+  const normalizado = normalizarEmail(email)
+  return (
+    normalizado.length > 0 &&
+    normalizado.length <= TAMANHO_MAXIMO_EMAIL &&
+    FORMATO_MINIMO_EMAIL.test(normalizado)
+  )
+}
+
 function deduplicarPapeis(papeis: readonly PapelAtribuido[]): PapelAtribuido[] {
   const vistos = new Set<string>()
   const unicos: PapelAtribuido[] = []
@@ -58,7 +67,7 @@ export async function criarUsuario(dados: {
     throw new Error(`O e-mail não pode ter mais de ${TAMANHO_MAXIMO_EMAIL} caracteres.`)
   }
 
-  if (!FORMATO_MINIMO_EMAIL.test(email)) {
+  if (!emailValido(email)) {
     throw new Error('Formato de e-mail inválido.')
   }
 
@@ -104,11 +113,7 @@ export async function autenticar(
 ): Promise<ResultadoAutenticacao> {
   const email = normalizarEmail(entrada.email)
 
-  if (
-    !email ||
-    email.length > TAMANHO_MAXIMO_EMAIL ||
-    entrada.senha.length > TAMANHO_MAXIMO_SENHA
-  ) {
+  if (!emailValido(email) || entrada.senha.length > TAMANHO_MAXIMO_SENHA) {
     return { ok: false, motivo: 'credenciais' }
   }
 

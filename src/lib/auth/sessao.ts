@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { cookies } from 'next/headers'
+import { cache } from 'react'
 import type { PapelAtribuido, Sujeito } from '@/lib/auth/autorizar'
 import { converterPapelDoBanco } from '@/lib/auth/papel'
 import { db } from '@/lib/db'
@@ -134,14 +135,14 @@ export async function encerrarSessaoPorToken(token: string): Promise<void> {
   })
 }
 
-export async function obterSessao(): Promise<SessaoAtual | null> {
+export const obterSessao = cache(async (): Promise<SessaoAtual | null> => {
   const cookieStore = await cookies()
   const token = cookieStore.get(NOME_COOKIE)?.value
   if (!token) {
     return null
   }
   return obterSessaoPorToken(token)
-}
+})
 
 export function opcoesDoCookie(expiraEm: Date): {
   httpOnly: true

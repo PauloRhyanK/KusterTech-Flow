@@ -31,7 +31,7 @@ vi.mock('@/lib/db', () => ({
 import { HASH_FICTICIO, verificarSenha } from '@/lib/auth/senha'
 import { consultarBloqueio } from '@/lib/auth/tentativas'
 import { db } from '@/lib/db'
-import { autenticar, criarUsuario } from './service'
+import { autenticar, criarUsuario, emailValido } from './service'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -184,5 +184,15 @@ describe('criarUsuario — validação de formato e tamanho de e-mail (unitário
         papeis: [{ papel: 'ADMIN', clienteId: null }],
       }),
     ).rejects.toThrow(/254 caracteres/i)
+  })
+
+  test('emailValido aceita domínios locais e normais e rejeita inválidos ou > 254 chars', () => {
+    expect(emailValido('admin@localhost')).toBe(true)
+    expect(emailValido(' paulo@exemplo.com ')).toBe(true)
+    expect(emailValido('')).toBe(false)
+    expect(emailValido('sem-arroba')).toBe(false)
+    expect(emailValido('@dominio')).toBe(false)
+    expect(emailValido('usuario@')).toBe(false)
+    expect(emailValido(`${'a'.repeat(245)}@exemplo.com`)).toBe(false)
   })
 })
