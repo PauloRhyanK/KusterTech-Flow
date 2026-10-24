@@ -19,6 +19,7 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - Toda escrita passa por um `service` que chama `autorizar(...)` no servidor e revalida o estado atual.
 - Componentes não acessam o banco. Nenhum segredo entra no repositório (ele é público).
 - Nunca `git add -A`; adicione caminho por caminho. Nunca faça push em `main` fora de PR.
+- Seeds executadas por um executor Gemini (Antigravity CLI) sob orquestração do Claude seguem [`.agents/README.md`](.agents/README.md): worktree por seed, política de permissões com auditoria, revisão independente antes do PR.
 
 ## Comandos
 

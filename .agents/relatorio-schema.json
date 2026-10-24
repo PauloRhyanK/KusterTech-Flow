@@ -1,0 +1,81 @@
+{
+  "type": "object",
+  "required": [
+    "seed",
+    "resumo",
+    "arquivos",
+    "comandos",
+    "testes",
+    "criterios_aceite",
+    "dependencias_adicionadas",
+    "commits",
+    "limitacoes",
+    "conflitos_encontrados",
+    "nao_feito"
+  ],
+  "properties": {
+    "seed": { "type": "string" },
+    "resumo": { "type": "string" },
+    "arquivos": {
+      "type": "object",
+      "required": ["criados", "modificados", "removidos"],
+      "properties": {
+        "criados": { "type": "array", "items": { "type": "string" } },
+        "modificados": { "type": "array", "items": { "type": "string" } },
+        "removidos": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "comandos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["comando", "codigo_saida", "saida_relevante"],
+        "properties": {
+          "comando": { "type": "string" },
+          "codigo_saida": { "type": "integer" },
+          "saida_relevante": { "type": "string" }
+        }
+      }
+    },
+    "testes": {
+      "type": "object",
+      "required": ["saida_vermelha_inicial", "saida_verde_final", "total", "passaram", "falharam"],
+      "properties": {
+        "saida_vermelha_inicial": { "type": "string" },
+        "saida_verde_final": { "type": "string" },
+        "total": { "type": "integer" },
+        "passaram": { "type": "integer" },
+        "falharam": { "type": "integer" }
+      }
+    },
+    "criterios_aceite": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterio", "atendido", "evidencia"],
+        "properties": {
+          "criterio": { "type": "string" },
+          "atendido": { "type": "boolean" },
+          "evidencia": { "type": "string" }
+        }
+      }
+    },
+    "dependencias_adicionadas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pacote", "versao", "dev", "motivo"],
+        "properties": {
+          "pacote": { "type": "string" },
+          "versao": { "type": "string" },
+          "dev": { "type": "boolean" },
+          "motivo": { "type": "string" }
+        }
+      }
+    },
+    "commits": { "type": "array", "items": { "type": "string" } },
+    "limitacoes": { "type": "array", "items": { "type": "string" } },
+    "conflitos_encontrados": { "type": "array", "items": { "type": "string" } },
+    "nao_feito": { "type": "array", "items": { "type": "string" } }
+  }
+}
