@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { obterSessao } from '@/lib/auth/sessao'
+import { Marca } from '@/lib/ui/marca'
 import { FormularioEntrar } from './formulario-entrar'
 
 export const metadata: Metadata = {
@@ -19,8 +20,9 @@ export default async function PaginaEntrar() {
         data-superficie
         className="w-full max-w-sm space-y-6 rounded-padrao border border-border bg-surface p-6"
       >
-        <header className="space-y-1 text-center">
-          <h1 className="text-2xl font-semibold text-text-primary">KusterTech Flow</h1>
+        <header className="flex flex-col items-center space-y-3 text-center">
+          <h1 className="sr-only">Entrar</h1>
+          <Marca variante="principal" tamanho="lg" />
           <p className="text-sm text-text-secondary">Entre com sua conta para acessar o painel.</p>
         </header>
         <FormularioEntrar />
