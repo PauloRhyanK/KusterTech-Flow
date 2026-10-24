@@ -14,8 +14,8 @@ export default async function PaginaInicial() {
 
   return (
     <main className="space-y-2 p-6">
-      <h1 className="text-xl font-semibold text-neutral-900">Olá, {sessao.usuario.nome}</h1>
-      <p className="text-sm text-neutral-600">Nenhum módulo configurado ainda.</p>
+      <h1 className="text-xl font-semibold text-text-primary">Olá, {sessao.usuario.nome}</h1>
+      <p className="text-sm text-text-secondary">Nenhum módulo configurado ainda.</p>
     </main>
   )
 }

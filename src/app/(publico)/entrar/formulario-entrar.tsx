@@ -24,11 +24,7 @@ export function FormularioEntrar() {
           id="erro-entrar"
           role="alert"
           tabIndex={-1}
-          style={{
-            backgroundColor:
-              'color-mix(in srgb, var(--cor-erro) var(--tint-badge), var(--surface))',
-          }}
-          className="rounded-[var(--radius-compacto)] border border-erro p-3 text-sm text-erro focus:outline-none focus:ring-2 focus-visible:ring-2 ring-focus-ring ring-offset-2 ring-offset-surface"
+          className="rounded-compacto border border-erro bg-tonal-erro p-3 text-sm text-erro focus:outline-none focus:ring-2 focus:ring-focus-ring focus:ring-offset-2 focus:ring-offset-surface focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         >
           <span className="font-medium">Erro: </span>
           {estado.erro}
@@ -48,7 +44,7 @@ export function FormularioEntrar() {
           defaultValue={estado.email ?? ''}
           aria-invalid={Boolean(estado.erro)}
           aria-describedby={estado.erro ? 'erro-entrar' : undefined}
-          className="w-full rounded-[var(--radius-compacto)] border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 ring-focus-ring ring-offset-2 ring-offset-surface"
+          className="w-full rounded-compacto border border-input bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         />
       </div>
 
@@ -64,7 +60,7 @@ export function FormularioEntrar() {
           required
           aria-invalid={Boolean(estado.erro)}
           aria-describedby={estado.erro ? 'erro-entrar' : undefined}
-          className="w-full rounded-[var(--radius-compacto)] border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 ring-focus-ring ring-offset-2 ring-offset-surface"
+          className="w-full rounded-compacto border border-input bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         />
       </div>
 
@@ -76,7 +72,7 @@ export function FormularioEntrar() {
             evento.preventDefault()
           }
         }}
-        className="h-auto w-full rounded-[var(--radius-compacto)] bg-action-primary px-4 py-2 text-sm font-medium text-action-foreground hover:bg-action-hover focus-visible:ring-2 ring-focus-ring ring-offset-2 ring-offset-surface aria-busy:opacity-60"
+        className="h-auto w-full rounded-compacto bg-action-primary px-4 py-2 text-sm font-medium text-action-foreground hover:bg-action-hover focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface aria-busy:opacity-60"
       >
         {pendente ? 'Entrando...' : 'Entrar'}
       </Button>

@@ -11,6 +11,7 @@ function extrairRgb(hex: string): [number, number, number] {
 
 function linearizarCanal(valor: number): number {
   const srgb = valor / 255
+  // Limiar IEC 61966-2-1 / WCAG 2.1+ (0,04045; para canais inteiros de 8 bits é equivalente ao 0,03928 da WCAG 2.0, pois 10/255 ≈ 0,039216 <= ambos e 11/255 ≈ 0,043137 > ambos)
   return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4
 }
 

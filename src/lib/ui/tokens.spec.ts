@@ -3,19 +3,63 @@ import { expect, test } from 'vitest'
 import { compor, contraste } from './contraste'
 import { FUNCIONAIS, MARCA, TINT_BADGE, TOKENS, paresDeContraste } from './tokens'
 
+function paraKebab(chave: string): string {
+  return chave.replace(/[A-Z]/g, (letra) => `-${letra.toLowerCase()}`)
+}
+
+test('paresDeContraste gera exatamente os 48 pares esperados e identifica os 3 conhecidos', () => {
+  const pares = paresDeContraste()
+  expect(pares).toHaveLength(48)
+
+  const nomesBase = [
+    'actionForeground/actionHover',
+    'actionForeground/actionPrimary',
+    'actionPrimary/surface',
+    'borderStrong/surface',
+    'contextActive/surface',
+    'focusRing/surface',
+    'funcional:atencao/badge',
+    'funcional:atencao/surface',
+    'funcional:erro/badge',
+    'funcional:erro/surface',
+    'funcional:execucao/badge',
+    'funcional:execucao/surface',
+    'funcional:informacao/badge',
+    'funcional:informacao/surface',
+    'funcional:neutro/badge',
+    'funcional:neutro/surface',
+    'funcional:sucesso/badge',
+    'funcional:sucesso/surface',
+    'textLink/surface',
+    'textPrimary/background',
+    'textPrimary/surface',
+    'textPrimary/surfaceSubtle',
+    'textSecondary/surface',
+    'textTertiary/surface',
+  ]
+  const esperadosOrdenados = [
+    ...nomesBase.map((n) => `claro:${n}`),
+    ...nomesBase.map((n) => `escuro:${n}`),
+  ].sort()
+
+  expect(pares.map((p) => `${p.tema}:${p.nome}`).sort()).toEqual(esperadosOrdenados)
+
+  const conhecidos = pares.filter((p) => p.conhecido)
+  expect(conhecidos.map((p) => `${p.tema}:${p.nome}`).sort()).toEqual([
+    'claro:borderStrong/surface',
+    'escuro:actionForeground/actionHover',
+    'escuro:borderStrong/surface',
+  ])
+  for (const par of conhecidos) {
+    expect(contraste(par.frente, par.fundo), `${par.tema}: ${par.nome}`).toBeLessThan(par.minimo)
+  }
+})
+
 test('cada par de contraste não marcado como conhecido atinge o mínimo', () => {
   for (const par of paresDeContraste().filter((p) => !p.conhecido)) {
     expect(contraste(par.frente, par.fundo), `${par.tema}: ${par.nome}`).toBeGreaterThanOrEqual(
       par.minimo,
     )
-  }
-})
-
-test('pares marcados como conhecidos documentam desvios reais abaixo do mínimo', () => {
-  const conhecidos = paresDeContraste().filter((p) => p.conhecido)
-  expect(conhecidos.length).toBeGreaterThanOrEqual(3)
-  for (const par of conhecidos) {
-    expect(contraste(par.frente, par.fundo), `${par.tema}: ${par.nome}`).toBeLessThan(par.minimo)
   }
 })
 
@@ -70,11 +114,35 @@ test('valores de marca batem com a Identidade §2.5', () => {
   expect(MARCA.midnight).toBe('#0B1120')
 })
 
-test('globals.css contém cada hex dos dois temas e das cores funcionais', () => {
-  const css = readFileSync('src/app/globals.css', 'utf8').toUpperCase()
-  for (const tema of ['claro', 'escuro'] as const) {
-    for (const hex of [...Object.values(TOKENS[tema]), ...Object.values(FUNCIONAIS[tema])]) {
-      expect(css).toContain(hex.toUpperCase())
-    }
+test('globals.css declara cada token, cor funcional, tint-badge e raios nos blocos :root e .dark corretos', () => {
+  const css = readFileSync('src/app/globals.css', 'utf8')
+  const matchRoot = css.match(/^:root\s*\{([^}]+)\}/m)
+  const matchDark = css.match(/^\.dark\s*\{([^}]+)\}/m)
+
+  expect(matchRoot).not.toBeNull()
+  expect(matchDark).not.toBeNull()
+
+  const blocoRoot = matchRoot![1]!
+  const blocoDark = matchDark![1]!
+
+  for (const [chave, hex] of Object.entries(TOKENS.claro)) {
+    expect(blocoRoot).toContain(`--${paraKebab(chave)}: ${hex.toLowerCase()};`)
   }
+  for (const [chave, hex] of Object.entries(FUNCIONAIS.claro)) {
+    expect(blocoRoot).toContain(`--cor-${chave}: ${hex.toLowerCase()};`)
+  }
+  expect(blocoRoot).toContain(`--marca-midnight: ${MARCA.midnight.toLowerCase()};`)
+  expect(blocoRoot).toContain('--tint-badge: 5%;')
+  expect(blocoRoot).toContain('--radius: 12px;')
+  expect(blocoRoot).toContain('--radius-compacto: 8px;')
+  expect(blocoRoot).toContain('--radius-amplo: 16px;')
+
+  for (const [chave, hex] of Object.entries(TOKENS.escuro)) {
+    expect(blocoDark).toContain(`--${paraKebab(chave)}: ${hex.toLowerCase()};`)
+  }
+  for (const [chave, hex] of Object.entries(FUNCIONAIS.escuro)) {
+    expect(blocoDark).toContain(`--cor-${chave}: ${hex.toLowerCase()};`)
+  }
+  expect(blocoDark).toContain(`--marca-midnight: ${MARCA.midnight.toLowerCase()};`)
+  expect(blocoDark).toContain('--tint-badge: 22%;')
 })

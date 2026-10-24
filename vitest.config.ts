@@ -10,8 +10,6 @@ export default defineConfig({
     alias,
   },
   test: {
-    passWithNoTests: true,
-    reporters: ['verbose'],
     projects: [
       {
         resolve: {

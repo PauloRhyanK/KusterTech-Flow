@@ -6,14 +6,14 @@
  * - `text-tertiary` (#8290A1 no claro = 3,25:1 sobre surface; #7E8DA6 no escuro = 5,16:1):
  *   usar exclusivamente em texto desabilitado, placeholder ou texto grande (≥ 24 px).
  *   Conflito documentado entre Identidade §4 ("Informações auxiliares") e §6 (texto normal ≥ 4,5:1).
- * - `text-secondary` (#607083 no claro = 5,07:1 sobre surface, mas 4,49:1 sobre surface-subtle)
+ * - `text-secondary` (#607083 no claro = 5,06:1 sobre surface, mas 4,49:1 sobre surface-subtle)
  *   e cores funcionais nunca devem ser aplicados sobre `surface-subtle` no tema claro.
  *   `surface-subtle` serve para agrupar áreas, não para receber texto secundário ou funcional direto.
  * - Badges de estado (`BadgeDeEstado`) devem ser renderizados apenas sobre `surface`,
  *   com fundo misturado via `TINT_BADGE` (5% no claro, 22% no escuro), garantindo contraste ≥ 4,5:1.
  * - Pares conhecidos abaixo do mínimo da Identidade (preservados sem alterar os hex originais):
- *   1. `border-strong` sobre `surface` (1,54:1 no claro, 1,77:1 no escuro; mínimo gráfico 3:1).
- *   2. `action-foreground` (#FFFFFF) sobre `action-hover` no tema escuro (#3D7AF0 = 4,01:1; mínimo 4,5:1).
+ *   1. `border-strong` sobre `surface` (1,53:1 no claro, 1,76:1 no escuro; mínimo gráfico 3:1).
+ *   2. `action-foreground` (#FFFFFF) sobre `action-hover` no tema escuro (#3D7AF0 = 4,00:1; mínimo 4,5:1).
  * - `text-link` (#2D6BE4 no claro, #78A4FF no escuro) garante ≥ 4,5:1 para links textuais nos dois temas.
  */
 

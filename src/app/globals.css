@@ -36,8 +36,45 @@
   --radius: 12px;
   --radius-compacto: 8px;
   --radius-amplo: 16px;
+}
 
-  /* Variáveis do shadcn/ui apontando para os tokens semânticos */
+.dark {
+  --background: #0b1120;
+  --surface: #121a2c;
+  --surface-subtle: #0f1728;
+  --surface-elevated: #1a2338;
+  --text-primary: #e8efff;
+  --text-secondary: #a7b4c9;
+  --text-tertiary: #7e8da6;
+  --text-link: #78a4ff;
+  --border: #26334a;
+  --border-strong: #34445f;
+  --action-primary: #2d6be4;
+  --action-hover: #3d7af0;
+  --action-foreground: #ffffff;
+  --context-active: #72d9c3;
+  --focus-ring: #5b8ff9;
+  --marca-kuster: #e8efff;
+  --marca-tech: #5b8ff9;
+  --marca-flow: #72d9c3;
+  --marca-midnight: #0b1120;
+  --cor-sucesso: #72d9a2;
+  --cor-informacao: #78a4ff;
+  --cor-atencao: #f2b85b;
+  --cor-erro: #ff8585;
+  --cor-neutro: #a7b4c9;
+  --cor-execucao: #b49ae8;
+  --tint-badge: 22%;
+}
+
+/*
+ * Variáveis do shadcn/ui apontando para os tokens semânticos em :root e .dark
+ * (para que subárvores como <aside class="dark"> reavaliem os aliases no escopo escuro).
+ * Regra de contraste: --muted-foreground (--text-secondary) sobre --muted (--surface-subtle)
+ * resulta em 4,49:1 no tema claro (< 4,5:1); nunca usar text-muted-foreground sobre bg-muted no claro.
+ */
+:root,
+.dark {
   --foreground: var(--text-primary);
   --card: var(--surface);
   --card-foreground: var(--text-primary);
@@ -68,35 +105,6 @@
   --sidebar-accent-foreground: var(--text-primary);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--focus-ring);
-}
-
-.dark {
-  --background: #0b1120;
-  --surface: #121a2c;
-  --surface-subtle: #0f1728;
-  --surface-elevated: #1a2338;
-  --text-primary: #e8efff;
-  --text-secondary: #a7b4c9;
-  --text-tertiary: #7e8da6;
-  --text-link: #78a4ff;
-  --border: #26334a;
-  --border-strong: #34445f;
-  --action-primary: #2d6be4;
-  --action-hover: #3d7af0;
-  --action-foreground: #ffffff;
-  --context-active: #72d9c3;
-  --focus-ring: #5b8ff9;
-  --marca-kuster: #e8efff;
-  --marca-tech: #5b8ff9;
-  --marca-flow: #72d9c3;
-  --marca-midnight: #0b1120;
-  --cor-sucesso: #72d9a2;
-  --cor-informacao: #78a4ff;
-  --cor-atencao: #f2b85b;
-  --cor-erro: #ff8585;
-  --cor-neutro: #a7b4c9;
-  --cor-execucao: #b49ae8;
-  --tint-badge: 22%;
 }
 
 @theme inline {
@@ -173,9 +181,33 @@
   --radius-4xl: calc(var(--radius) * 2.5);
 }
 
+@utility bg-tonal-sucesso {
+  background-color: color-mix(in srgb, var(--cor-sucesso) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-informacao {
+  background-color: color-mix(in srgb, var(--cor-informacao) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-atencao {
+  background-color: color-mix(in srgb, var(--cor-atencao) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-erro {
+  background-color: color-mix(in srgb, var(--cor-erro) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-neutro {
+  background-color: color-mix(in srgb, var(--cor-neutro) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-execucao {
+  background-color: color-mix(in srgb, var(--cor-execucao) var(--tint-badge), var(--surface));
+}
+
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
 
   html {
