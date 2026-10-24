@@ -1,0 +1,16 @@
+{
+  "politica-executor-kustertech-flow": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ./politica-executor.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

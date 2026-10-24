@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": ["command(regex:.*)", "write_file(__WORKTREE__/)", "write_file(__WORKTREE__)"],
+    "deny": [
+      "command(git push)",
+      "command(git add -A)",
+      "command(git add --all)",
+      "command(git add .)",
+      "command(gh)",
+      "command(sd close)",
+      "command(sd update)",
+      "command(sd create)",
+      "command(sd sync)",
+      "command(sudo)",
+      "write_file(__HOME__/.gemini/)",
+      "write_file(__HOME__/.ssh/)",
+      "write_file(__HOME__/.claude/)"
+    ]
+  }
+}
