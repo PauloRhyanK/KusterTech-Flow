@@ -34,7 +34,7 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - `pnpm test:integration` — executa os testes de integração
 - `pnpm e2e` — executa os testes ponta a ponta com Playwright (disponível a partir das próximas tasks do Incremento 0a)
 - `pnpm worker` — inicia o processo worker
-- `pnpm criar-admin` — executa o script de criação do administrador inicial (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm criar-admin` — executa o script de criação do administrador inicial
 - `pnpm db:migrate` — aplica migrations do Prisma (`prisma migrate deploy`)
 - `pnpm db:generate` — gera o Prisma Client (`prisma generate`)
 
