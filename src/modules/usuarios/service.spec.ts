@@ -61,6 +61,7 @@ describe('autenticar — invariante de verificação constante e limites (unitá
       nome: 'Inativo',
       senhaHash: 'hash-real-do-inativo',
       ativo: false,
+      tema: 'SISTEMA',
       criadoEm: new Date(),
       atualizadoEm: new Date(),
     })
@@ -83,6 +84,7 @@ describe('autenticar — invariante de verificação constante e limites (unitá
       nome: 'Ativo',
       senhaHash: 'hash-real-do-ativo',
       ativo: true,
+      tema: 'SISTEMA',
       criadoEm: new Date(),
       atualizadoEm: new Date(),
     })

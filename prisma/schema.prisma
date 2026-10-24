@@ -12,12 +12,19 @@ enum Papel {
   TESTADOR
 }
 
+enum Tema {
+  SISTEMA
+  CLARO
+  ESCURO
+}
+
 model Usuario {
   id           String         @id @default(uuid())
   email        String         @unique
   nome         String
   senhaHash    String
   ativo        Boolean        @default(true)
+  tema         Tema           @default(SISTEMA)
   criadoEm     DateTime       @default(now())
   atualizadoEm DateTime       @updatedAt
   papeis       UsuarioPapel[]

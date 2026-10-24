@@ -4,6 +4,7 @@ import { cache } from 'react'
 import type { PapelAtribuido, Sujeito } from '@/lib/auth/autorizar'
 import { converterPapelDoBanco } from '@/lib/auth/papel'
 import { db } from '@/lib/db'
+import { temaDoBanco, type Tema } from '@/lib/tema/tema'
 
 export const NOME_COOKIE = 'flow_sessao'
 export const DURACAO_SESSAO_MS = 30 * 24 * 60 * 60_000
@@ -15,6 +16,7 @@ export interface SessaoAtual {
     id: string
     nome: string
     email: string
+    tema: Tema
   }
   sujeito: Sujeito
 }
@@ -72,6 +74,7 @@ export async function obterSessaoPorToken(
           nome: true,
           email: true,
           ativo: true,
+          tema: true,
           papeis: {
             select: {
               papel: true,
@@ -116,6 +119,7 @@ export async function obterSessaoPorToken(
       id: sessao.usuario.id,
       nome: sessao.usuario.nome,
       email: sessao.usuario.email,
+      tema: temaDoBanco(sessao.usuario.tema),
     },
     sujeito: {
       usuarioId: sessao.usuario.id,

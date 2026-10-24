@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client'
-import type { PapelAtribuido } from '@/lib/auth/autorizar'
+import type { PapelAtribuido, Sujeito } from '@/lib/auth/autorizar'
 import { HASH_FICTICIO, hashSenha, verificarSenha } from '@/lib/auth/senha'
 import {
   consultarBloqueio,
@@ -8,6 +8,7 @@ import {
   registrarFalhaPersistida,
 } from '@/lib/auth/tentativas'
 import { db } from '@/lib/db'
+import { ehTema, temaParaBanco, type Tema } from '@/lib/tema/tema'
 
 const TAMANHO_MINIMO_SENHA = 12
 const TAMANHO_MAXIMO_SENHA = 1024
@@ -149,4 +150,21 @@ export async function autenticar(
 
   await limparTentativas([chaveConta])
   return { ok: true, usuarioId: usuarioAtivo.id }
+}
+
+/**
+ * Exceção documentada à regra de `exigirPermissao` (A16): o tema é uma preferência do próprio
+ * usuário autenticado, então a função não consulta papéis. Quem chama deve obter o `sujeito` da
+ * sessão atual; o único registro alterado é o do `sujeito.usuarioId`, nunca o de outro usuário.
+ */
+export async function definirTema(sujeito: Sujeito, tema: Tema): Promise<void> {
+  if (!ehTema(tema)) {
+    throw new Error('Tema inválido.')
+  }
+
+  await db.usuario.update({
+    where: { id: sujeito.usuarioId },
+    data: { tema: temaParaBanco(tema) },
+    select: { id: true },
+  })
 }

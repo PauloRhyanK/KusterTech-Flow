@@ -63,6 +63,17 @@ export default async function globalSetup(): Promise<void> {
     },
   )
 
+  const { db: dbAdmin } = await import('@/lib/db')
+  try {
+    const admin = await dbAdmin.usuario.findUniqueOrThrow({
+      where: { email },
+      select: { id: true },
+    })
+    process.env.E2E_ADMIN_ID = admin.id
+  } finally {
+    await dbAdmin.$disconnect()
+  }
+
   process.env.E2E_ADMIN_EMAIL = email
   process.env.E2E_ADMIN_SENHA = senha
 }
