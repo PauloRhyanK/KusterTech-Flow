@@ -132,7 +132,7 @@ describe('autenticação e usuários (integração)', () => {
         senha: '11-caracter',
         papeis: [{ papel: 'TESTADOR', clienteId: null }],
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/12 caracteres/)
 
     await expect(
       criarUsuario({
@@ -141,7 +141,7 @@ describe('autenticação e usuários (integração)', () => {
         senha: 'senha-forte-123',
         papeis: [{ papel: 'ADMIN', clienteId: null }],
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/Já existe/)
 
     const novo = await criarUsuario({
       email: ' Maria@Exemplo.com ',
@@ -218,6 +218,49 @@ describe('autenticação e usuários (integração)', () => {
     expect(consulta).toEqual({
       bloqueado: true,
       bloqueadoAte: bloqueadoAteEsperado,
+    })
+  })
+
+  test('10 chamadas concorrentes a registrarFalhaPersistida na mesma chave resultam em contagem 10', async () => {
+    const t0 = new Date('2026-10-23T16:00:00Z')
+    const chave = 'conta:concorrente@exemplo.com'
+
+    await Promise.all(
+      Array.from({ length: 10 }, () =>
+        registrarFalhaPersistida(chave, POLITICA_TENTATIVAS.maxPorConta, t0),
+      ),
+    )
+
+    const registro = await db.tentativaLogin.findUnique({ where: { chave } })
+    expect(registro?.contagem).toBe(10)
+    expect(registro?.bloqueadoAte).toEqual(new Date(t0.getTime() + POLITICA_TENTATIVAS.bloqueioMs))
+  })
+
+  test('10 chamadas concorrentes a autenticar com senha errada deixam a conta com contagem 10 e bloqueada', async () => {
+    const t0 = new Date('2026-10-23T17:00:00Z')
+
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        autenticar({ email: 'paulo@exemplo.com', senha: 'errada', ip: `192.0.2.${i + 1}` }, t0),
+      ),
+    )
+
+    const registroConta = await db.tentativaLogin.findUnique({
+      where: { chave: 'conta:paulo@exemplo.com' },
+    })
+    expect(registroConta?.contagem).toBe(10)
+    expect(registroConta?.bloqueadoAte).toEqual(
+      new Date(t0.getTime() + POLITICA_TENTATIVAS.bloqueioMs),
+    )
+
+    const bloqueadoDepois = await autenticar(
+      { email: 'paulo@exemplo.com', senha: 'senha-forte-123', ip: '192.0.2.99' },
+      t0,
+    )
+    expect(bloqueadoDepois).toEqual({
+      ok: false,
+      motivo: 'bloqueado',
+      bloqueadoAte: new Date(t0.getTime() + POLITICA_TENTATIVAS.bloqueioMs),
     })
   })
 })

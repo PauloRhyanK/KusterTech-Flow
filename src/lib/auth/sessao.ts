@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
-import type { Papel as PapelPrisma } from '@prisma/client'
 import { cookies } from 'next/headers'
-import { PERMISSOES, type Papel, type PapelAtribuido, type Sujeito } from '@/lib/auth/autorizar'
+import type { PapelAtribuido, Sujeito } from '@/lib/auth/autorizar'
+import { converterPapelDoBanco } from '@/lib/auth/papel'
 import { db } from '@/lib/db'
 
 export const NOME_COOKIE = 'flow_sessao'
@@ -16,19 +16,6 @@ export interface SessaoAtual {
     email: string
   }
   sujeito: Sujeito
-}
-
-type VerificarPapelBancoParaDominio = PapelPrisma extends Papel ? true : never
-type VerificarPapelDominioParaBanco = Papel extends PapelPrisma ? true : never
-const _garantiaDeParidadeDePapel: [VerificarPapelBancoParaDominio, VerificarPapelDominioParaBanco] =
-  [true, true]
-void _garantiaDeParidadeDePapel
-
-export function converterPapelDoBanco(papel: PapelPrisma): Papel {
-  if (Object.prototype.hasOwnProperty.call(PERMISSOES, papel)) {
-    return papel
-  }
-  throw new Error(`Papel desconhecido no banco: ${String(papel)}`)
 }
 
 export function gerarToken(): string {
@@ -74,10 +61,22 @@ export async function obterSessaoPorToken(
   const tokenHash = hashDoToken(token)
   const sessao = await db.sessao.findUnique({
     where: { tokenHash },
-    include: {
+    select: {
+      id: true,
+      expiraEm: true,
+      ultimoUsoEm: true,
       usuario: {
-        include: {
-          papeis: true,
+        select: {
+          id: true,
+          nome: true,
+          email: true,
+          ativo: true,
+          papeis: {
+            select: {
+              papel: true,
+              clienteId: true,
+            },
+          },
         },
       },
     },

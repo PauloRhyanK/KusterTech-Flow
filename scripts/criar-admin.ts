@@ -11,26 +11,9 @@ function carregarEnvSeNecessario(): void {
   }
 }
 
-async function lerSenhaDoTerminal(): Promise<string> {
-  if (!process.stdin.isTTY) {
-    const rl = createInterface({ input: process.stdin, terminal: false })
-    return new Promise((resolve) => {
-      let resolvido = false
-      rl.once('line', (linha) => {
-        resolvido = true
-        rl.close()
-        resolve(linha)
-      })
-      rl.once('close', () => {
-        if (!resolvido) {
-          resolve('')
-        }
-      })
-    })
-  }
-
+function lerLinhaOculta(rotulo: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    process.stderr.write('Senha do administrador: ')
+    process.stderr.write(rotulo)
     const stdin = process.stdin
     const modoAnterior = stdin.isRaw
     stdin.setRawMode(true)
@@ -66,6 +49,34 @@ async function lerSenhaDoTerminal(): Promise<string> {
 
     stdin.on('data', aoReceberDados)
   })
+}
+
+async function lerSenhaDoTerminal(): Promise<string> {
+  if (!process.stdin.isTTY) {
+    const rl = createInterface({ input: process.stdin, terminal: false })
+    return new Promise((resolve) => {
+      let resolvido = false
+      rl.once('line', (linha) => {
+        resolvido = true
+        rl.close()
+        resolve(linha)
+      })
+      rl.once('close', () => {
+        if (!resolvido) {
+          resolve('')
+        }
+      })
+    })
+  }
+
+  const senha = await lerLinhaOculta('Senha do administrador: ')
+  const confirmacao = await lerLinhaOculta('Confirme a senha do administrador: ')
+  if (senha !== confirmacao) {
+    console.error('As senhas digitadas não coincidem.')
+    process.exit(1)
+  }
+
+  return senha
 }
 
 async function executar(): Promise<void> {
@@ -127,9 +138,7 @@ async function executar(): Promise<void> {
 
     console.log(`Administrador criado com sucesso: ${email} (${criado.id})`)
   } catch (erro) {
-    if (erro instanceof Error && erro.message.includes('Unique constraint')) {
-      console.error('Já existe um usuário com este e-mail.')
-    } else if (erro instanceof Error) {
+    if (erro instanceof Error) {
       console.error(erro.message)
     } else {
       console.error('Erro ao criar administrador.')

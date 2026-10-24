@@ -93,13 +93,27 @@ export async function consultarBloqueio(
   return { bloqueado: false }
 }
 
+interface LinhaTentativa {
+  chave: string
+  contagem: number
+  janelaInicio: Date
+  bloqueadoAte: Date | null
+}
+
 async function aplicarFalhaNaTransacao(
   tx: Prisma.TransactionClient,
   chave: string,
   limite: number,
   agora: Date,
 ): Promise<void> {
-  const atual = await tx.tentativaLogin.findUnique({ where: { chave } })
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${chave}))`
+  const linhas = await tx.$queryRaw<LinhaTentativa[]>`
+    SELECT "chave", "contagem", "janelaInicio", "bloqueadoAte"
+    FROM "TentativaLogin"
+    WHERE "chave" = ${chave}
+    FOR UPDATE
+  `
+  const atual = linhas[0] ?? null
   const proximo = registrarFalha(
     atual
       ? {

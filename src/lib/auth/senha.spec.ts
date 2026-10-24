@@ -1,13 +1,12 @@
-import { Papel as PapelPrisma } from '@prisma/client'
 import { describe, expect, test } from 'vitest'
-import { PERMISSOES } from './autorizar'
 import { HASH_FICTICIO, hashSenha, verificarSenha } from './senha'
 
 describe('senha (argon2id)', () => {
-  test('hash verifica e não é reversível', async () => {
+  test('hash verifica, não é reversível e explicita parâmetros m=19456,t=2,p=1', async () => {
     const h = await hashSenha('segredo-muito-longo')
     expect(h).not.toContain('segredo')
     expect(h.startsWith('$argon2id$')).toBe(true)
+    expect(h).toContain('m=19456,t=2,p=1')
     expect(await verificarSenha('segredo-muito-longo', h)).toBe(true)
     expect(await verificarSenha('outra', h)).toBe(false)
   })
@@ -20,12 +19,9 @@ describe('senha (argon2id)', () => {
     expect(await verificarSenha('mesma-senha-forte', h2)).toBe(true)
   })
 
-  test('HASH_FICTICIO é um hash argon2id válido e verificarSenha devolve false para senha arbitrária', async () => {
+  test('HASH_FICTICIO é um hash argon2id válido com m=19456,t=2,p=1 e verificarSenha devolve false para senha arbitrária', async () => {
     expect(HASH_FICTICIO.startsWith('$argon2id$')).toBe(true)
+    expect(HASH_FICTICIO).toContain('m=19456,t=2,p=1')
     expect(await verificarSenha('qualquer-senha-123', HASH_FICTICIO)).toBe(false)
-  })
-
-  test('conjunto de valores de Papel do domínio coincide com o enum Papel do Prisma', () => {
-    expect(Object.keys(PERMISSOES).sort()).toEqual(Object.values(PapelPrisma).sort())
   })
 })

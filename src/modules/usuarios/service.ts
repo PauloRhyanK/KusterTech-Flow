@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import type { PapelAtribuido } from '@/lib/auth/autorizar'
 import { HASH_FICTICIO, hashSenha, verificarSenha } from '@/lib/auth/senha'
 import {
@@ -9,6 +10,9 @@ import {
 import { db } from '@/lib/db'
 
 const TAMANHO_MINIMO_SENHA = 12
+const TAMANHO_MAXIMO_SENHA = 1024
+const TAMANHO_MAXIMO_EMAIL = 254
+const FORMATO_MINIMO_EMAIL = /^[^\s@]+@[^\s@]+$/
 
 export type ResultadoAutenticacao =
   | { ok: true; usuarioId: string }
@@ -50,6 +54,14 @@ export async function criarUsuario(dados: {
     throw new Error('O e-mail é obrigatório.')
   }
 
+  if (email.length > TAMANHO_MAXIMO_EMAIL) {
+    throw new Error(`O e-mail não pode ter mais de ${TAMANHO_MAXIMO_EMAIL} caracteres.`)
+  }
+
+  if (!FORMATO_MINIMO_EMAIL.test(email)) {
+    throw new Error('Formato de e-mail inválido.')
+  }
+
   if (!nome) {
     throw new Error('O nome é obrigatório.')
   }
@@ -61,22 +73,29 @@ export async function criarUsuario(dados: {
   const papeisUnicos = deduplicarPapeis(dados.papeis)
   const senhaHash = await hashSenha(dados.senha)
 
-  const criado = await db.usuario.create({
-    data: {
-      email,
-      nome,
-      senhaHash,
-      papeis: {
-        create: papeisUnicos.map((item) => ({
-          papel: item.papel,
-          clienteId: item.clienteId,
-        })),
+  try {
+    const criado = await db.usuario.create({
+      data: {
+        email,
+        nome,
+        senhaHash,
+        papeis: {
+          create: papeisUnicos.map((item) => ({
+            papel: item.papel,
+            clienteId: item.clienteId,
+          })),
+        },
       },
-    },
-    select: { id: true },
-  })
+      select: { id: true },
+    })
 
-  return { id: criado.id }
+    return { id: criado.id }
+  } catch (erro) {
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2002') {
+      throw new Error('Já existe um usuário com este e-mail.')
+    }
+    throw erro
+  }
 }
 
 export async function autenticar(
@@ -84,6 +103,15 @@ export async function autenticar(
   agora: Date = new Date(),
 ): Promise<ResultadoAutenticacao> {
   const email = normalizarEmail(entrada.email)
+
+  if (
+    !email ||
+    email.length > TAMANHO_MAXIMO_EMAIL ||
+    entrada.senha.length > TAMANHO_MAXIMO_SENHA
+  ) {
+    return { ok: false, motivo: 'credenciais' }
+  }
+
   const ip = entrada.ip.trim() || 'desconhecido'
   const chaveConta = `conta:${email}`
   const chaveIp = `ip:${ip}`
