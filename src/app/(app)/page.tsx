@@ -1,21 +1,24 @@
 import type { Metadata } from 'next'
-import { redirect } from 'next/navigation'
-import { obterSessao } from '@/lib/auth/sessao'
+import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
+import { EstadoVazio } from '@/lib/ui/estado-vazio'
 
 export const metadata: Metadata = {
-  title: 'Início',
+  title: 'Visão Geral',
 }
 
-export default async function PaginaInicial() {
-  const sessao = await obterSessao()
-  if (!sessao) {
-    redirect('/entrar')
-  }
-
+export default function PaginaVisaoGeral() {
   return (
-    <main className="space-y-2 p-6">
-      <h1 className="text-xl font-semibold text-text-primary">Olá, {sessao.usuario.nome}</h1>
-      <p className="text-sm text-text-secondary">Nenhum módulo configurado ainda.</p>
-    </main>
+    <div className="space-y-6">
+      <CabecalhoDePagina
+        trilhas={[{ rotulo: 'Visão Geral' }]}
+        titulo="Visão Geral"
+        contexto="Pendências prioritárias; resumos de projetos e infraestrutura"
+      />
+      <EstadoVazio
+        tipo="nao-configurado"
+        titulo="Pendências ainda não disponíveis."
+        descricao="Elas aparecem quando projetos, integrações e homologações estiverem configurados."
+      />
+    </div>
   )
 }

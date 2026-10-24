@@ -42,9 +42,9 @@ test('login correto leva a / com o nome do admin; sair volta para /entrar', asyn
   await page.getByRole('button', { name: 'Entrar' }).click()
 
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole('heading', { name: 'Olá, Admin E2E' })).toBeVisible()
-  await expect(page.getByText('Nenhum módulo configurado ainda.')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Visão Geral')
 
+  await page.getByRole('button', { name: 'Menu do usuário' }).click()
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page).toHaveURL(/\/entrar$/)
   expect(new URL(page.url()).origin).toBe(new URL(baseURL ?? 'http://127.0.0.1:3131').origin)
@@ -79,7 +79,7 @@ test('autenticado, /entrar redireciona para /', async ({ page }) => {
 
   await page.goto('/entrar')
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole('heading', { name: 'Olá, Admin E2E' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Visão Geral')
 })
 
 test('após sair, voltar a / redireciona para /entrar', async ({ page }) => {
@@ -91,6 +91,7 @@ test('após sair, voltar a / redireciona para /entrar', async ({ page }) => {
   await page.getByRole('button', { name: 'Entrar' }).click()
   await expect(page).toHaveURL(/\/$/)
 
+  await page.getByRole('button', { name: 'Menu do usuário' }).click()
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page).toHaveURL(/\/entrar$/)
 
