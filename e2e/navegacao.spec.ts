@@ -52,6 +52,7 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
     if (isMobile) {
       await page.getByRole('button', { name: 'Abrir navegação' }).click()
       await page.getByRole('dialog').getByRole('link', { name: m }).click()
+      await expect(page.getByRole('dialog')).toBeHidden()
     } else {
       await page
         .getByRole('navigation', { name: 'Navegação principal' })
@@ -81,13 +82,22 @@ test('no mobile, só por teclado: Pular para o conteúdo é o primeiro foco, Abr
   await page.getByRole('dialog').getByRole('link', { name: 'Projetos' }).focus()
   await page.keyboard.press('Enter')
 
+  await expect(page.getByRole('dialog')).toBeHidden()
   await expect(page).toHaveURL(/\/projetos$/)
 })
 
 test('menu do usuário mostra nome e Sair funciona', async ({ page }) => {
-  await page.getByRole('button', { name: 'Menu do usuário' }).click()
-  await expect(page.getByText('Admin E2E')).toBeVisible()
+  const gatilho = page.getByRole('button', { name: /Menu do usuário/ })
+  await gatilho.focus()
+  await page.keyboard.press('Enter')
 
-  await page.getByRole('button', { name: 'Sair' }).click()
+  const menu = page.getByRole('menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.getByText('Admin E2E')).toBeVisible()
+
+  const itemSair = page.getByRole('menuitem', { name: 'Sair' })
+  await itemSair.focus()
+  await page.keyboard.press('Enter')
+
   await expect(page).toHaveURL(/\/entrar$/)
 })

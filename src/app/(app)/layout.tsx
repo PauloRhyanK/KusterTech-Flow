@@ -14,6 +14,11 @@ export default async function AppLayout({
     redirect('/entrar')
   }
 
+  const usuario = {
+    nome: sessao.usuario.nome,
+    email: sessao.usuario.email,
+  }
+
   return (
     <div className="min-h-screen bg-background text-text-primary md:grid md:grid-cols-[256px_1fr]">
       <a
@@ -23,10 +28,10 @@ export default async function AppLayout({
         Pular para o conteúdo
       </a>
 
-      <NavegacaoLateral usuario={sessao.usuario} />
+      <NavegacaoLateral usuario={usuario} />
 
       <div className="flex min-h-screen flex-col">
-        <BarraSuperior usuario={sessao.usuario} />
+        <BarraSuperior usuario={usuario} />
         <main id="conteudo" tabIndex={-1} className="flex-1 p-6 outline-none">
           {children}
         </main>

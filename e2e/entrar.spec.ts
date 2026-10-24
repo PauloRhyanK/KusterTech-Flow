@@ -30,7 +30,7 @@ test('senha errada mostra mensagem genérica e mantém o e-mail', async ({ page 
   await expect(page.getByLabel('E-mail')).toHaveValue(email)
 })
 
-test('login correto leva a / com o nome do admin; sair volta para /entrar', async ({
+test('login correto leva a / com o título Visão Geral; sair volta para /entrar', async ({
   page,
   baseURL,
 }) => {
@@ -44,8 +44,8 @@ test('login correto leva a / com o nome do admin; sair volta para /entrar', asyn
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Visão Geral')
 
-  await page.getByRole('button', { name: 'Menu do usuário' }).click()
-  await page.getByRole('button', { name: 'Sair' }).click()
+  await page.getByRole('button', { name: /Menu do usuário/ }).click()
+  await page.getByRole('menuitem', { name: 'Sair' }).click()
   await expect(page).toHaveURL(/\/entrar$/)
   expect(new URL(page.url()).origin).toBe(new URL(baseURL ?? 'http://127.0.0.1:3131').origin)
 })
@@ -91,8 +91,8 @@ test('após sair, voltar a / redireciona para /entrar', async ({ page }) => {
   await page.getByRole('button', { name: 'Entrar' }).click()
   await expect(page).toHaveURL(/\/$/)
 
-  await page.getByRole('button', { name: 'Menu do usuário' }).click()
-  await page.getByRole('button', { name: 'Sair' }).click()
+  await page.getByRole('button', { name: /Menu do usuário/ }).click()
+  await page.getByRole('menuitem', { name: 'Sair' }).click()
   await expect(page).toHaveURL(/\/entrar$/)
 
   await page.goto('/')

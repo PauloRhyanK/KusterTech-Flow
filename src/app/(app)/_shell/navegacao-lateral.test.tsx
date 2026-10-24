@@ -55,7 +55,7 @@ describe('NavegacaoLateral', () => {
     expect(linkConfig).toHaveAttribute('href', '/configuracoes')
     expect(linkConfig).toHaveAttribute('aria-current', 'page')
 
-    const menuUsuario = screen.getByRole('button', { name: 'Menu do usuário' })
+    const menuUsuario = screen.getByRole('button', { name: /Menu do usuário/ })
     expect(menuUsuario).toBeInTheDocument()
   })
 })

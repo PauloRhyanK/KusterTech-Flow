@@ -46,7 +46,7 @@ export const MODULOS: readonly ItemDeNavegacao[] = [
     icone: Bot,
     descricao: 'Issues, PRs e execuções de agentes',
   },
-] as const
+]
 
 export const ENTRADAS_SECUNDARIAS: readonly ItemDeNavegacao[] = [
   {
@@ -55,7 +55,7 @@ export const ENTRADAS_SECUNDARIAS: readonly ItemDeNavegacao[] = [
     icone: Settings,
     descricao: 'Integrações, parâmetros e permissões administrativas',
   },
-] as const
+]
 
 export function itemAtivo(pathname: string): ItemDeNavegacao | undefined {
   const todosOsItens = [...MODULOS, ...ENTRADAS_SECUNDARIAS]
