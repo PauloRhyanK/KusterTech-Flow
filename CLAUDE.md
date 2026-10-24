@@ -32,13 +32,19 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - `pnpm typecheck` — executa a checagem de tipos do TypeScript (`tsc --noEmit`)
 - `pnpm test` — executa os testes unitários com Vitest
 - `pnpm test:integration` — executa os testes de integração
-- `pnpm e2e` — executa os testes ponta a ponta com Playwright (disponível a partir das próximas tasks do Incremento 0a)
+- `pnpm e2e` — executa os testes ponta a ponta com Playwright
 - `pnpm worker` — inicia o processo worker
 - `pnpm criar-admin` — executa o script de criação do administrador inicial
 - `pnpm db:migrate` — aplica migrations do Prisma (`prisma migrate deploy`)
 - `pnpm db:generate` — gera o Prisma Client (`prisma generate`)
 
 **Regra de qualidade (testes antes do commit):** escreva testes antes da implementação (TDD) e garanta que `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` estejam verdes antes de cada commit.
+
+## Como rodar os testes
+
+- **Unitários (`pnpm test`):** executam com Vitest sobre regras puras (`src/**/*.spec.ts`), sem dependência de banco.
+- **Integração (`pnpm test:integration`):** exigem PostgreSQL ativo (`docker compose up -d postgres`) e `DATABASE_URL_TEST` exportada no ambiente (ex.: `set -a && source .env && set +a && pnpm test:integration`); o setup cria o banco de teste automaticamente e aplica as migrations.
+- **Ponta a ponta (`pnpm build && pnpm e2e`):** executam com Playwright nos projetos `desktop` e `mobile` sobre o build de produção (`pnpm start`) usando `DATABASE_URL_TEST`; o `globalSetup` aplica as migrations e cria um administrador único para a execução.
 
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)

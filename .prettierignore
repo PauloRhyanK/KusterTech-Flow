@@ -3,6 +3,8 @@ node_modules/
 out/
 build/
 coverage/
+playwright-report/
+test-results/
 pnpm-lock.yaml
 next-env.d.ts
 .seeds/
