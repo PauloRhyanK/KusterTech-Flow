@@ -14,11 +14,14 @@ export default async function PaginaEntrar() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-4">
-      <div className="w-full max-w-sm space-y-6 rounded border border-neutral-200 p-6">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
+      <div
+        data-superficie
+        className="w-full max-w-sm space-y-6 rounded-padrao border border-border bg-surface p-6"
+      >
         <header className="space-y-1 text-center">
-          <h1 className="text-2xl font-semibold text-neutral-900">KusterTech Flow</h1>
-          <p className="text-sm text-neutral-600">Entre com sua conta para acessar o painel.</p>
+          <h1 className="text-2xl font-semibold text-text-primary">KusterTech Flow</h1>
+          <p className="text-sm text-text-secondary">Entre com sua conta para acessar o painel.</p>
         </header>
         <FormularioEntrar />
       </div>

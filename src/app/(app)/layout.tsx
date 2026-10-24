@@ -13,14 +13,14 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-neutral-200 px-6 py-4">
-        <span className="font-semibold text-neutral-900">KusterTech Flow</span>
+      <header className="flex items-center justify-between border-b border-border px-6 py-4">
+        <span className="font-semibold text-text-primary">KusterTech Flow</span>
         <div className="flex items-center gap-4">
-          <span className="text-sm text-neutral-700">{sessao.usuario.nome}</span>
+          <span className="text-sm text-text-secondary">{sessao.usuario.nome}</span>
           <form method="post" action="/sair">
             <button
               type="submit"
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100 focus:outline-2 focus:outline-offset-2 focus:outline-neutral-900"
+              className="rounded-compacto border border-border px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-surface-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               Sair
             </button>

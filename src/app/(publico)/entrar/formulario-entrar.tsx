@@ -1,6 +1,7 @@
 'use client'
 
 import { useActionState, useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
 import { type EstadoEntrar, entrar } from './actions'
 
 const estadoInicial: EstadoEntrar = {}
@@ -23,7 +24,7 @@ export function FormularioEntrar() {
           id="erro-entrar"
           role="alert"
           tabIndex={-1}
-          className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 focus:outline-2 focus:outline-offset-2 focus:outline-neutral-900"
+          className="rounded-compacto border border-erro bg-tonal-erro p-3 text-sm text-erro focus:outline-none focus:ring-2 focus:ring-focus-ring focus:ring-offset-2 focus:ring-offset-surface focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         >
           <span className="font-medium">Erro: </span>
           {estado.erro}
@@ -31,7 +32,7 @@ export function FormularioEntrar() {
       ) : null}
 
       <div className="space-y-1">
-        <label htmlFor="email" className="block text-sm font-medium text-neutral-900">
+        <label htmlFor="email" className="block text-sm font-medium text-text-primary">
           E-mail
         </label>
         <input
@@ -43,12 +44,12 @@ export function FormularioEntrar() {
           defaultValue={estado.email ?? ''}
           aria-invalid={Boolean(estado.erro)}
           aria-describedby={estado.erro ? 'erro-entrar' : undefined}
-          className="w-full rounded border border-neutral-300 px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-2 focus:outline-offset-0 focus:outline-neutral-900"
+          className="w-full rounded-compacto border border-input bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         />
       </div>
 
       <div className="space-y-1">
-        <label htmlFor="senha" className="block text-sm font-medium text-neutral-900">
+        <label htmlFor="senha" className="block text-sm font-medium text-text-primary">
           Senha
         </label>
         <input
@@ -59,11 +60,11 @@ export function FormularioEntrar() {
           required
           aria-invalid={Boolean(estado.erro)}
           aria-describedby={estado.erro ? 'erro-entrar' : undefined}
-          className="w-full rounded border border-neutral-300 px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-2 focus:outline-offset-0 focus:outline-neutral-900"
+          className="w-full rounded-compacto border border-input bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         />
       </div>
 
-      <button
+      <Button
         type="submit"
         aria-busy={pendente}
         onClick={(evento) => {
@@ -71,10 +72,10 @@ export function FormularioEntrar() {
             evento.preventDefault()
           }
         }}
-        className="w-full rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 focus:outline-2 focus:outline-offset-2 focus:outline-neutral-900 aria-busy:opacity-60"
+        className="h-auto w-full rounded-compacto bg-action-primary px-4 py-2 text-sm font-medium text-action-foreground hover:bg-action-hover focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface aria-busy:opacity-60"
       >
         {pendente ? 'Entrando...' : 'Entrar'}
-      </button>
+      </Button>
     </form>
   )
 }

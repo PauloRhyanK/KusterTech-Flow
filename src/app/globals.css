@@ -1,1 +1,244 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f5f7fa;
+  --surface: #ffffff;
+  --surface-subtle: #edf2f5;
+  --surface-elevated: #ffffff;
+  --text-primary: #172033;
+  --text-secondary: #607083;
+  --text-tertiary: #8290a1;
+  --text-link: #2d6be4;
+  --border: #dce4ea;
+  --border-strong: #c6d2dc;
+  --action-primary: #2d6be4;
+  --action-hover: #2358be;
+  --action-foreground: #ffffff;
+  --context-active: #138d82;
+  --focus-ring: #5b8ff9;
+  --marca-kuster: #172033;
+  --marca-tech: #2d6be4;
+  --marca-flow: #138d82;
+  --marca-midnight: #0b1120;
+  --cor-sucesso: #287a50;
+  --cor-informacao: #2d6be4;
+  --cor-atencao: #a96011;
+  --cor-erro: #b34343;
+  --cor-neutro: #607083;
+  --cor-execucao: #7157a6;
+  --tint-badge: 5%;
+  --radius: 12px;
+  --radius-compacto: 8px;
+  --radius-amplo: 16px;
+}
+
+.dark {
+  --background: #0b1120;
+  --surface: #121a2c;
+  --surface-subtle: #0f1728;
+  --surface-elevated: #1a2338;
+  --text-primary: #e8efff;
+  --text-secondary: #a7b4c9;
+  --text-tertiary: #7e8da6;
+  --text-link: #78a4ff;
+  --border: #26334a;
+  --border-strong: #34445f;
+  --action-primary: #2d6be4;
+  --action-hover: #3d7af0;
+  --action-foreground: #ffffff;
+  --context-active: #72d9c3;
+  --focus-ring: #5b8ff9;
+  --marca-kuster: #e8efff;
+  --marca-tech: #5b8ff9;
+  --marca-flow: #72d9c3;
+  --marca-midnight: #0b1120;
+  --cor-sucesso: #72d9a2;
+  --cor-informacao: #78a4ff;
+  --cor-atencao: #f2b85b;
+  --cor-erro: #ff8585;
+  --cor-neutro: #a7b4c9;
+  --cor-execucao: #b49ae8;
+  --tint-badge: 22%;
+}
+
+/*
+ * Variáveis do shadcn/ui apontando para os tokens semânticos em :root e .dark
+ * (para que subárvores como <aside class="dark"> reavaliem os aliases no escopo escuro).
+ * Regra de contraste: --muted-foreground (--text-secondary) sobre --muted (--surface-subtle)
+ * resulta em 4,49:1 no tema claro (< 4,5:1); nunca usar text-muted-foreground sobre bg-muted no claro.
+ */
+:root,
+.dark {
+  --foreground: var(--text-primary);
+  --card: var(--surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-elevated);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--action-primary);
+  --primary-foreground: var(--action-foreground);
+  --secondary: var(--surface-subtle);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-subtle);
+  --muted-foreground: var(--text-secondary);
+  --accent: var(--surface-subtle);
+  --accent-foreground: var(--text-primary);
+  --destructive: var(--cor-erro);
+  --destructive-foreground: var(--action-foreground);
+  --input: var(--border-strong);
+  --ring: var(--focus-ring);
+  --chart-1: var(--action-primary);
+  --chart-2: var(--context-active);
+  --chart-3: var(--focus-ring);
+  --chart-4: var(--cor-execucao);
+  --chart-5: var(--cor-atencao);
+  --sidebar: var(--marca-midnight);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--action-primary);
+  --sidebar-primary-foreground: var(--action-foreground);
+  --sidebar-accent: var(--surface-subtle);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--focus-ring);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', monospace;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-link: var(--text-link);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-action-primary: var(--action-primary);
+  --color-action-hover: var(--action-hover);
+  --color-action-foreground: var(--action-foreground);
+  --color-context-active: var(--context-active);
+  --color-focus-ring: var(--focus-ring);
+  --color-marca-kuster: var(--marca-kuster);
+  --color-marca-tech: var(--marca-tech);
+  --color-marca-flow: var(--marca-flow);
+  --color-marca-midnight: var(--marca-midnight);
+  --color-sucesso: var(--cor-sucesso);
+  --color-informacao: var(--cor-informacao);
+  --color-atencao: var(--cor-atencao);
+  --color-erro: var(--cor-erro);
+  --color-neutro: var(--cor-neutro);
+  --color-execucao: var(--cor-execucao);
+
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-compacto: var(--radius-compacto);
+  --radius-padrao: var(--radius);
+  --radius-amplo: var(--radius-amplo);
+  --radius-sm: var(--radius-compacto);
+  --radius-md: var(--radius-compacto);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius-amplo);
+  --radius-2xl: calc(var(--radius) * 1.5);
+  --radius-3xl: calc(var(--radius) * 2);
+  --radius-4xl: calc(var(--radius) * 2.5);
+}
+
+@utility bg-tonal-sucesso {
+  background-color: color-mix(in srgb, var(--cor-sucesso) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-informacao {
+  background-color: color-mix(in srgb, var(--cor-informacao) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-atencao {
+  background-color: color-mix(in srgb, var(--cor-atencao) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-erro {
+  background-color: color-mix(in srgb, var(--cor-erro) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-neutro {
+  background-color: color-mix(in srgb, var(--cor-neutro) var(--tint-badge), var(--surface));
+}
+
+@utility bg-tonal-execucao {
+  background-color: color-mix(in srgb, var(--cor-execucao) var(--tint-badge), var(--surface));
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring;
+  }
+
+  html {
+    @apply font-sans;
+  }
+
+  body {
+    @apply bg-background text-text-primary;
+  }
+}
+
+body,
+[data-superficie] {
+  transition:
+    background-color 180ms,
+    border-color 180ms,
+    color 180ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  .dark {
+    --border: var(--border-strong);
+  }
+}
