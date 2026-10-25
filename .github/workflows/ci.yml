@@ -81,6 +81,15 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kustertech_flow_test
         run: pnpm e2e
 
+      - name: Publicar capturas E2E
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturas-e2e
+          path: e2e/capturas/
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Publicar relatório do Playwright
         if: always()
         uses: actions/upload-artifact@v4

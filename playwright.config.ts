@@ -14,6 +14,7 @@ const urlBancoTeste = process.env.DATABASE_URL_TEST ?? ''
 
 export default defineConfig({
   testDir: './e2e',
+  outputDir: 'e2e/resultados',
   fullyParallel: false,
   workers: 1,
   retries: 0,

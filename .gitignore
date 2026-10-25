@@ -19,6 +19,8 @@ node_modules/
 /coverage
 playwright-report/
 test-results/
+e2e/capturas/
+e2e/resultados/
 
 # next.js
 /.next/
