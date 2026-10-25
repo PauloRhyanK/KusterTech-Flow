@@ -181,7 +181,11 @@ export interface UsuarioResumo {
   nome: string
   email: string
   ativo: boolean
-  papeis: readonly PapelAtribuido[]
+  papeis: readonly {
+    papel: Papel
+    clienteId: string | null
+    clienteNome: string | null
+  }[]
   criadoEm: Date
 }
 
@@ -190,6 +194,7 @@ export interface DadosNovoUsuario {
   nome: string
   senha: string
   papel: Papel
+  clienteId?: string | null
 }
 
 export async function listarUsuarios(sujeito: Sujeito): Promise<UsuarioResumo[]> {
@@ -207,6 +212,11 @@ export async function listarUsuarios(sujeito: Sujeito): Promise<UsuarioResumo[]>
         select: {
           papel: true,
           clienteId: true,
+          cliente: {
+            select: {
+              nome: true,
+            },
+          },
         },
       },
     },
@@ -221,6 +231,7 @@ export async function listarUsuarios(sujeito: Sujeito): Promise<UsuarioResumo[]>
     papeis: u.papeis.map((p) => ({
       papel: converterPapelDoBanco(p.papel),
       clienteId: p.clienteId,
+      clienteNome: p.cliente?.nome ?? null,
     })),
   }))
 }
@@ -231,11 +242,27 @@ export async function criarUsuarioComoAdmin(
 ): Promise<{ id: string }> {
   exigirPermissao(sujeito, 'usuarios.gerenciar')
 
+  const clienteId = dados.clienteId ?? null
+
+  if (dados.papel === 'ADMIN' && clienteId !== null) {
+    throw new ErroDeDominio('Administradores não têm escopo por cliente.')
+  }
+
+  if (clienteId !== null) {
+    const cliente = await db.cliente.findUnique({
+      where: { id: clienteId },
+      select: { id: true },
+    })
+    if (!cliente) {
+      throw new ErroDeDominio('Cliente não encontrado.')
+    }
+  }
+
   return criarUsuario({
     email: dados.email,
     nome: dados.nome,
     senha: dados.senha,
-    papeis: [{ papel: dados.papel, clienteId: null }],
+    papeis: [{ papel: dados.papel, clienteId }],
   })
 }
 

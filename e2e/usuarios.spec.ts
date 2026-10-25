@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
-import { contarUsuarios, existeUsuarioPorEmail } from './support/banco'
+import {
+  contarUsuarios,
+  criarClienteNoBanco,
+  existeUsuarioPorEmail,
+  nomeDeTeste,
+} from './support/banco'
 
 function obterAdmin(): { id: string; email: string; senha: string } {
   const id = process.env.E2E_ADMIN_ID
@@ -181,4 +186,43 @@ test('POST forjado da action de criar por não-admin não cria usuário', async 
   } finally {
     await testadorContext.close()
   }
+})
+
+test('admin cria um aprovador escopado ao cliente A e a lista de usuários mostra "APROVADOR (<nome de A>)"; ADMIN com cliente é recusado', async ({
+  page,
+}) => {
+  const { email: adminEmail, senha: adminSenha } = obterAdmin()
+  await fazerLogin(page, adminEmail, adminSenha)
+
+  const nomeCliente = nomeDeTeste('Cliente Aprovador')
+  const cliente = await criarClienteNoBanco(nomeCliente)
+
+  await page.goto('/configuracoes/usuarios')
+
+  const emailAprovador = `e2e+aprovador-escopado-${Date.now()}@local.test`
+  await page.getByLabel('E-mail').fill(emailAprovador)
+  await page.getByLabel('Nome').fill('Aprovador Escopado')
+  await page.getByLabel('Senha').fill('senha-segura-123')
+  await page.getByLabel('Papel').selectOption('APROVADOR')
+  await page.getByLabel('Cliente').selectOption(cliente.id)
+  await page.getByRole('button', { name: 'Criar usuário' }).click()
+
+  await expect(page.getByRole('status').filter({ hasText: 'Usuário criado.' })).toBeVisible()
+
+  const linha = page.locator('li', { hasText: emailAprovador })
+  await expect(linha).toBeVisible()
+  await expect(linha.getByText(`APROVADOR (${nomeCliente})`)).toBeVisible()
+
+  // ADMIN com cliente é recusado
+  const emailAdminInvalido = `e2e+admin-invalido-${Date.now()}@local.test`
+  await page.getByLabel('E-mail').fill(emailAdminInvalido)
+  await page.getByLabel('Nome').fill('Admin Com Cliente')
+  await page.getByLabel('Senha').fill('senha-segura-123')
+  await page.getByLabel('Papel').selectOption('ADMIN')
+  await page.getByLabel('Cliente').selectOption(cliente.id)
+  await page.getByRole('button', { name: 'Criar usuário' }).click()
+
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'Administradores não têm escopo por cliente.' }),
+  ).toBeVisible()
 })

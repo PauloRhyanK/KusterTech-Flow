@@ -32,6 +32,9 @@ export default async function globalSetup(): Promise<void> {
     },
   })
 
+  const sufixo = `${Date.now()}-${randomBytes(4).toString('hex')}`
+  process.env.E2E_SUFIXO = sufixo
+
   const { db } = await import('@/lib/db')
   try {
     await db.tentativaLogin.deleteMany({})
@@ -41,6 +44,31 @@ export default async function globalSetup(): Promise<void> {
           startsWith: 'e2e+',
           endsWith: '@local.test',
         },
+      },
+    })
+    await db.usuarioPapel.deleteMany({
+      where: {
+        cliente: {
+          nome: { startsWith: 'E2E ' },
+        },
+      },
+    })
+    await db.projetoCliente.deleteMany({
+      where: {
+        OR: [
+          { projeto: { nome: { startsWith: 'E2E ' } } },
+          { cliente: { nome: { startsWith: 'E2E ' } } },
+        ],
+      },
+    })
+    await db.projeto.deleteMany({
+      where: {
+        nome: { startsWith: 'E2E ' },
+      },
+    })
+    await db.cliente.deleteMany({
+      where: {
+        nome: { startsWith: 'E2E ' },
       },
     })
   } finally {

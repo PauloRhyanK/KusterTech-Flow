@@ -61,8 +61,20 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
     }
 
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(m)
-    await expect(page.getByRole('status')).toBeVisible()
     await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
+
+    if (m === 'Clientes') {
+      const lista = page.getByRole('list', { name: 'Lista de clientes' })
+      const vazio = page.locator('[data-tipo="nenhum-registro"]')
+      await expect(lista.or(vazio)).toBeVisible()
+    } else if (m === 'Projetos') {
+      const lista = page.getByRole('list', { name: 'Lista de projetos' })
+      const vazio = page.locator('[data-tipo="nenhum-registro"]')
+      const naoConfigurado = page.locator('[data-tipo="nao-configurado"]')
+      await expect(lista.or(vazio).or(naoConfigurado)).toBeVisible()
+    } else {
+      await expect(page.getByRole('status')).toBeVisible()
+    }
   }
 })
 
