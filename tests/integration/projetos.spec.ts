@@ -79,6 +79,15 @@ describe('projetos (integração)', () => {
     const tela = await listarProjetosParaTela(adminSujeito)
     expect(tela).toHaveLength(1)
     expect(tela[0]?.configuracaoPendente).toBe(false)
+
+    // 5. listarProjetosParaTela com projeto sem clientes devolve configuracaoPendente = true
+    const { id: projSemClientesId } = await criarProjeto(adminSujeito, {
+      nome: 'Projeto Sem Clientes',
+    })
+    const telaAposNovo = await listarProjetosParaTela(adminSujeito)
+    const semClientesNaTela = telaAposNovo.find((p) => p.id === projSemClientesId)
+    expect(semClientesNaTela).toBeDefined()
+    expect(semClientesNaTela?.configuracaoPendente).toBe(true)
   })
 
   test('TESTADOR de A: listarProjetos → ErroDeAutorizacao; obterProjeto global → ErroDeAutorizacao; contexto A de projeto só de B → "Projeto não encontrado."; contexto A de projeto [A, B] → devolve o projeto', async () => {
@@ -127,13 +136,22 @@ describe('projetos (integração)', () => {
       obterProjeto(adminSujeito, projSoBId, { tipo: 'cliente', clienteId: idA }),
     ).rejects.toThrow(new ErroDeDominio('Projeto não associado a este cliente.'))
 
-    // 5. TESTADOR de A no contexto do cliente A abrindo projeto de A e B → devolve com sucesso
+    // 5. TESTADOR de A no contexto do cliente A abrindo projeto de A e B → devolve com sucesso,
+    // com clientes contendo APENAS os clientes visíveis ao usuário (no caso, apenas idA)
     const obtido = await obterProjeto(testadorSujeitoA, projABId, {
       tipo: 'cliente',
       clienteId: idA,
     })
     expect(obtido.id).toBe(projABId)
     expect(obtido.nome).toBe('Projeto Compartilhado A e B')
+    expect(obtido.clientes.map((c) => c.id)).toEqual([idA])
+
+    // ADMIN no mesmo contexto de cliente A recebe todos os clientes do projeto [idA, idB]
+    const obtidoAdminContextoA = await obterProjeto(adminSujeito, projABId, {
+      tipo: 'cliente',
+      clienteId: idA,
+    })
+    expect(obtidoAdminContextoA.clientes.map((c) => c.id).sort()).toEqual([idA, idB].sort())
   })
 
   test('associar duas vezes → ErroDeDominio; desassociar remove só o vínculo, projeto e cliente permanecem (invariante 1); desassociar não associado → ErroDeDominio', async () => {
@@ -168,6 +186,12 @@ describe('projetos (integração)', () => {
     const { id: p2Id } = await criarProjeto(adminSujeito, { nome: 'Portal Secundário' })
 
     expect(p1Id).toBeDefined()
+
+    // Tentativa de duplicata na criação após Portal Principal já existir
+    await expect(criarProjeto(adminSujeito, { nome: ' PORTAL  PRINCIPÁL ' })).rejects.toThrow(
+      'Já existe um projeto com este nome.',
+    )
+    expect(await db.projeto.count()).toBe(2)
 
     // Tentativa de duplicata na renomeação com variação de caixa e espaços
     await expect(
@@ -207,8 +231,8 @@ describe('projetos (integração)', () => {
       clientesIds: [idA, idB],
     })
 
-    // 1. obterProjetoParaResumo devolve contagens corretas
-    const resumo = await obterProjetoParaResumo(adminSujeito, projetoId, { tipo: 'global' })
+    // 1. obterProjetoParaResumo devolve contagens corretas (visão global com clienteId === null)
+    const resumo = await obterProjetoParaResumo(adminSujeito, projetoId, null)
     expect(resumo.id).toBe(projetoId)
     expect(resumo.contagens).toEqual({
       clientes: 2,
@@ -216,6 +240,21 @@ describe('projetos (integração)', () => {
       ambientes: 0,
       milestones: 0,
     })
+
+    // TESTADOR escopado ao cliente A no contexto do cliente A: contagens.clientes = 1 para projeto [A, B]
+    const usuarioTestador = await criarUsuario({
+      email: 'testador-resumo@local.test',
+      nome: 'Testador Resumo A',
+      senha: 'senha-super-segura-123',
+      papeis: [{ papel: 'TESTADOR', clienteId: idA }],
+    })
+    const sujeitoTestadorA: Sujeito = {
+      usuarioId: usuarioTestador.id,
+      papeis: [{ papel: 'TESTADOR', clienteId: idA }],
+    }
+    const resumoTestador = await obterProjetoParaResumo(sujeitoTestadorA, projetoId, idA)
+    expect(resumoTestador.id).toBe(projetoId)
+    expect(resumoTestador.contagens.clientes).toBe(1)
 
     // 2. obterProjetoParaConfiguracao exclui clientes já associados (A e B) e cliente arquivado (D)
     const config = await obterProjetoParaConfiguracao(adminSujeito, projetoId)

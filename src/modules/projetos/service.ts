@@ -32,6 +32,33 @@ function validarDescricao(descricao?: string | null): string | null {
   return aparada
 }
 
+function selecaoDeProjeto(ids: readonly string[] | null) {
+  return {
+    id: true,
+    nome: true,
+    descricao: true,
+    arquivadoEm: true,
+    criadoEm: true,
+    clientes: {
+      where: ids === null ? undefined : { clienteId: { in: [...ids] } },
+      select: {
+        cliente: {
+          select: {
+            id: true,
+            nome: true,
+            arquivadoEm: true,
+          },
+        },
+      },
+      orderBy: {
+        cliente: {
+          nome: 'asc' as const,
+        },
+      },
+    },
+  }
+}
+
 export async function listarProjetos(
   sujeito: Sujeito,
   filtro?: { busca?: string },
@@ -42,12 +69,7 @@ export async function listarProjetos(
     throw new ErroDeAutorizacao('projetos.ler')
   }
 
-  const ids = idsVisiveis(sujeito)
   const where: Prisma.ProjetoWhereInput = {}
-
-  if (ids !== null) {
-    where.clientes = { some: { clienteId: { in: [...ids] } } }
-  }
 
   if (filtro?.busca) {
     const buscaNormalizada = normalizarNome(filtro.busca).slice(0, 120)
@@ -59,29 +81,7 @@ export async function listarProjetos(
   const projetos = await db.projeto.findMany({
     where,
     orderBy: { nome: 'asc' },
-    select: {
-      id: true,
-      nome: true,
-      descricao: true,
-      arquivadoEm: true,
-      criadoEm: true,
-      clientes: {
-        select: {
-          cliente: {
-            select: {
-              id: true,
-              nome: true,
-              arquivadoEm: true,
-            },
-          },
-        },
-        orderBy: {
-          cliente: {
-            nome: 'asc',
-          },
-        },
-      },
-    },
+    select: selecaoDeProjeto(null),
   })
 
   return projetos.map((p) => ({
@@ -108,29 +108,7 @@ export async function obterProjeto(
 
     const projeto = await db.projeto.findUnique({
       where: { id: projetoId },
-      select: {
-        id: true,
-        nome: true,
-        descricao: true,
-        arquivadoEm: true,
-        criadoEm: true,
-        clientes: {
-          select: {
-            cliente: {
-              select: {
-                id: true,
-                nome: true,
-                arquivadoEm: true,
-              },
-            },
-          },
-          orderBy: {
-            cliente: {
-              nome: 'asc',
-            },
-          },
-        },
-      },
+      select: selecaoDeProjeto(null),
     })
 
     if (!projeto) {
@@ -150,31 +128,11 @@ export async function obterProjeto(
   // Contexto de cliente
   exigirPermissao(sujeito, 'clientes.ler', { clienteId: contexto.clienteId })
 
+  const ids = idsVisiveis(sujeito)
+
   const projeto = await db.projeto.findUnique({
     where: { id: projetoId },
-    select: {
-      id: true,
-      nome: true,
-      descricao: true,
-      arquivadoEm: true,
-      criadoEm: true,
-      clientes: {
-        select: {
-          cliente: {
-            select: {
-              id: true,
-              nome: true,
-              arquivadoEm: true,
-            },
-          },
-        },
-        orderBy: {
-          cliente: {
-            nome: 'asc',
-          },
-        },
-      },
-    },
+    select: selecaoDeProjeto(ids),
   })
 
   if (!projeto) {
@@ -213,26 +171,26 @@ export async function criarProjeto(
   const nomeValido = validarNomeDeProjeto(dados.nome)
   const descricao = validarDescricao(dados.descricao)
   const nomeNormalizado = normalizarNome(nomeValido)
-
   const clientesIdsUnicos = [...new Set(dados.clientesIds ?? [])]
-  if (clientesIdsUnicos.length > 0) {
-    const clientesEncontrados = await db.cliente.findMany({
-      where: { id: { in: clientesIdsUnicos } },
-      select: { id: true, arquivadoEm: true },
-    })
-
-    if (clientesEncontrados.length !== clientesIdsUnicos.length) {
-      throw new ErroDeDominio('Cliente não encontrado.')
-    }
-
-    const clienteArquivado = clientesEncontrados.find((c) => c.arquivadoEm !== null)
-    if (clienteArquivado) {
-      throw new ErroDeDominio('Cliente arquivado não pode ser associado.')
-    }
-  }
 
   try {
     return await db.$transaction(async (tx) => {
+      if (clientesIdsUnicos.length > 0) {
+        const clientesEncontrados = await tx.cliente.findMany({
+          where: { id: { in: clientesIdsUnicos } },
+          select: { id: true, arquivadoEm: true },
+        })
+
+        if (clientesEncontrados.length !== clientesIdsUnicos.length) {
+          throw new ErroDeDominio('Cliente não encontrado.')
+        }
+
+        const clienteArquivado = clientesEncontrados.find((c) => c.arquivadoEm !== null)
+        if (clienteArquivado) {
+          throw new ErroDeDominio('Cliente arquivado não pode ser associado.')
+        }
+      }
+
       const criado = await tx.projeto.create({
         data: {
           nome: nomeValido,

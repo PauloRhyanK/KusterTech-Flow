@@ -35,8 +35,10 @@ export const obterProjetoParaResumo = cache(
   async (
     sujeito: Sujeito,
     projetoId: string,
-    contexto: Contexto,
+    clienteId: string | null,
   ): Promise<ProjetoResumo & { contagens: ContagensDoProjeto }> => {
+    const contexto: Contexto =
+      clienteId === null ? { tipo: 'global' } : { tipo: 'cliente', clienteId }
     const projeto = await obterProjeto(sujeito, projetoId, contexto)
 
     const contagens: ContagensDoProjeto = {

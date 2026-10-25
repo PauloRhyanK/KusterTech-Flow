@@ -6,6 +6,9 @@ const { mockTx, mockDb } = vi.hoisted(() => {
       create: vi.fn(),
       update: vi.fn(),
     },
+    cliente: {
+      findMany: vi.fn(),
+    },
     projetoCliente: {
       create: vi.fn(),
       createMany: vi.fn(),
@@ -139,10 +142,58 @@ describe('projetos / service (unitário com mocks)', () => {
       obterProjeto(testadorA, 'proj-b', { tipo: 'cliente', clienteId: 'cli-a' }),
     ).rejects.toThrow(new ErroDeDominio('Projeto não encontrado.'))
 
-    // Caso 3: Projeto associado a A: ambos recebem com sucesso
-    const projetoComClienteA = {
-      id: 'proj-a',
-      nome: 'Projeto de A',
+    // Caso 3: Projeto associado a A e B
+    // Para ADMIN: select relacional de clientes não tem filtro where (where: undefined), retornando todos os clientes [A, B]
+    const projetoComClientesAB = {
+      id: 'proj-ab',
+      nome: 'Projeto de A e B',
+      descricao: null,
+      arquivadoEm: null,
+      criadoEm: new Date(),
+      clientes: [
+        {
+          cliente: {
+            id: 'cli-a',
+            nome: 'Cliente A',
+            arquivadoEm: null,
+          },
+        },
+        {
+          cliente: {
+            id: 'cli-b',
+            nome: 'Cliente B',
+            arquivadoEm: null,
+          },
+        },
+      ],
+    }
+    vi.mocked(db.projeto.findUnique).mockResolvedValueOnce(projetoComClientesAB as never)
+
+    const obtidoAdmin = await obterProjeto(adminSujeito, 'proj-ab', {
+      tipo: 'cliente',
+      clienteId: 'cli-a',
+    })
+    expect(obtidoAdmin.id).toBe('proj-ab')
+    expect(obtidoAdmin.clientes).toEqual([
+      { id: 'cli-a', nome: 'Cliente A', arquivadoEm: null },
+      { id: 'cli-b', nome: 'Cliente B', arquivadoEm: null },
+    ])
+    expect(db.projeto.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: 'proj-ab' },
+        select: expect.objectContaining({
+          clientes: expect.objectContaining({
+            where: undefined,
+          }),
+        }),
+      }),
+    )
+
+    // Para TESTADOR de A: select relacional de clientes usa where com clienteId in [A],
+    // logo o Prisma filtra e devolve apenas [A] (nunca outros clientes como B)
+    const projetoFiltradoParaTestadorA = {
+      id: 'proj-ab',
+      nome: 'Projeto de A e B',
       descricao: null,
       arquivadoEm: null,
       criadoEm: new Date(),
@@ -156,20 +207,24 @@ describe('projetos / service (unitário com mocks)', () => {
         },
       ],
     }
-    vi.mocked(db.projeto.findUnique).mockResolvedValue(projetoComClienteA as never)
+    vi.mocked(db.projeto.findUnique).mockResolvedValueOnce(projetoFiltradoParaTestadorA as never)
 
-    const obtidoAdmin = await obterProjeto(adminSujeito, 'proj-a', {
+    const obtidoTestador = await obterProjeto(testadorA, 'proj-ab', {
       tipo: 'cliente',
       clienteId: 'cli-a',
     })
-    expect(obtidoAdmin.id).toBe('proj-a')
-    expect(obtidoAdmin.clientes).toEqual([{ id: 'cli-a', nome: 'Cliente A', arquivadoEm: null }])
-
-    const obtidoTestador = await obterProjeto(testadorA, 'proj-a', {
-      tipo: 'cliente',
-      clienteId: 'cli-a',
-    })
-    expect(obtidoTestador.id).toBe('proj-a')
+    expect(obtidoTestador.id).toBe('proj-ab')
+    expect(obtidoTestador.clientes).toEqual([{ id: 'cli-a', nome: 'Cliente A', arquivadoEm: null }])
+    expect(db.projeto.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: 'proj-ab' },
+        select: expect.objectContaining({
+          clientes: expect.objectContaining({
+            where: { clienteId: { in: ['cli-a'] } },
+          }),
+        }),
+      }),
+    )
   })
 
   test('associarCliente: cliente arquivado → ErroDeDominio; P2002 → "Cliente já associado a este projeto."', async () => {
@@ -222,11 +277,11 @@ describe('projetos / service (unitário com mocks)', () => {
   })
 
   test('criarProjeto com clientesIds grava projeto e vínculos na mesma transação (tx) e devolve { id }', async () => {
-    // Pré-consulta de clientes encontra os 2 ativos
-    vi.mocked(db.cliente.findMany).mockResolvedValue([
+    // Pré-consulta de clientes dentro de tx encontra os 2 ativos
+    mockTx.cliente.findMany.mockResolvedValue([
       { id: 'cli-1', arquivadoEm: null },
       { id: 'cli-2', arquivadoEm: null },
-    ] as never)
+    ])
 
     mockTx.projeto.create.mockResolvedValue({ id: 'proj-novo' })
     mockTx.projetoCliente.createMany.mockResolvedValue({ count: 2 })
@@ -239,14 +294,15 @@ describe('projetos / service (unitário com mocks)', () => {
 
     expect(resultado).toEqual({ id: 'proj-novo' })
 
-    // Confere pré-consulta no db
-    expect(db.cliente.findMany).toHaveBeenCalledWith({
+    // Confere que $transaction foi chamado
+    expect(db.$transaction).toHaveBeenCalled()
+
+    // Confere pré-consulta dentro da transação tx e NÃO no db diretamente
+    expect(mockTx.cliente.findMany).toHaveBeenCalledWith({
       where: { id: { in: ['cli-1', 'cli-2'] } },
       select: { id: true, arquivadoEm: true },
     })
-
-    // Confere que $transaction foi chamado
-    expect(db.$transaction).toHaveBeenCalled()
+    expect(db.cliente.findMany).not.toHaveBeenCalled()
 
     // Confere que as escritas usaram o `tx` distinto e NÃO o `db` diretamente
     expect(mockTx.projeto.create).toHaveBeenCalledWith({
@@ -266,6 +322,7 @@ describe('projetos / service (unitário com mocks)', () => {
       ],
     })
     expect(db.projetoCliente.create).not.toHaveBeenCalled()
+    expect(mockDb.projetoCliente.createMany).not.toHaveBeenCalled()
   })
 
   test('criarProjeto: validações de clientes pré-consulta e tamanho de descrição', async () => {
@@ -278,7 +335,7 @@ describe('projetos / service (unitário com mocks)', () => {
     ).rejects.toThrow(new ErroDeDominio('A descrição não pode ter mais de 2000 caracteres.'))
 
     // Cliente inexistente na pré-consulta
-    vi.mocked(db.cliente.findMany).mockResolvedValue([{ id: 'cli-1', arquivadoEm: null }] as never)
+    mockTx.cliente.findMany.mockResolvedValue([{ id: 'cli-1', arquivadoEm: null }])
     await expect(
       criarProjeto(adminSujeito, {
         nome: 'Proj',
@@ -287,15 +344,26 @@ describe('projetos / service (unitário com mocks)', () => {
     ).rejects.toThrow(new ErroDeDominio('Cliente não encontrado.'))
 
     // Cliente arquivado na pré-consulta
-    vi.mocked(db.cliente.findMany).mockResolvedValue([
-      { id: 'cli-1', arquivadoEm: new Date() },
-    ] as never)
+    mockTx.cliente.findMany.mockResolvedValue([{ id: 'cli-1', arquivadoEm: new Date() }])
     await expect(
       criarProjeto(adminSujeito, {
         nome: 'Proj',
         clientesIds: ['cli-1'],
       }),
     ).rejects.toThrow(new ErroDeDominio('Cliente arquivado não pode ser associado.'))
+  })
+
+  test('criarProjeto com nome duplicado mapeia P2002 na transação para ErroDeDominio', async () => {
+    mockTx.projeto.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.10.1',
+      }),
+    )
+
+    await expect(criarProjeto(adminSujeito, { nome: 'Projeto Duplicado' })).rejects.toThrow(
+      new ErroDeDominio('Já existe um projeto com este nome.'),
+    )
   })
 
   test('editarProjeto: recalcula nomeNormalizado, trata P2002 e P2025', async () => {
