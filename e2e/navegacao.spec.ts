@@ -70,8 +70,7 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
     } else if (m === 'Projetos') {
       const lista = page.getByRole('list', { name: 'Lista de projetos' })
       const vazio = page.locator('[data-tipo="nenhum-registro"]')
-      const naoConfigurado = page.locator('[data-tipo="nao-configurado"]')
-      await expect(lista.or(vazio).or(naoConfigurado)).toBeVisible()
+      await expect(lista.or(vazio)).toBeVisible()
     } else {
       await expect(page.getByRole('status')).toBeVisible()
     }
