@@ -31,6 +31,8 @@ model Usuario {
   sessoes      Sessao[]
 }
 
+// Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
+// Decisão: não editar o SQL gerado; `criarUsuario` deduplica papéis antes de gravar, e o teste de unicidade usa clienteId não nulo.
 model UsuarioPapel {
   id        String   @id @default(uuid())
   usuarioId String

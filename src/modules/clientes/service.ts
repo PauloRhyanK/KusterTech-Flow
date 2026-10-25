@@ -145,53 +145,53 @@ export async function editarCliente(
 export async function arquivarCliente(sujeito: Sujeito, clienteId: string): Promise<void> {
   exigirPermissao(sujeito, 'clientes.gerenciar')
 
-  try {
-    const cliente = await db.cliente.findUnique({
-      where: { id: clienteId },
-      select: { id: true, arquivadoEm: true },
-    })
+  const cliente = await db.cliente.findUnique({
+    where: { id: clienteId },
+    select: { id: true, arquivadoEm: true },
+  })
 
-    if (!cliente) {
-      throw new ErroDeDominio('Cliente não encontrado.')
-    }
+  if (!cliente) {
+    throw new ErroDeDominio('Cliente não encontrado.')
+  }
 
-    if (cliente.arquivadoEm === null) {
+  if (cliente.arquivadoEm === null) {
+    try {
       await db.cliente.update({
         where: { id: clienteId },
         data: { arquivadoEm: new Date() },
       })
+    } catch (erro) {
+      if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2025') {
+        throw new ErroDeDominio('Cliente não encontrado.')
+      }
+      throw erro
     }
-  } catch (erro) {
-    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2025') {
-      throw new ErroDeDominio('Cliente não encontrado.')
-    }
-    throw erro
   }
 }
 
 export async function desarquivarCliente(sujeito: Sujeito, clienteId: string): Promise<void> {
   exigirPermissao(sujeito, 'clientes.gerenciar')
 
-  try {
-    const cliente = await db.cliente.findUnique({
-      where: { id: clienteId },
-      select: { id: true, arquivadoEm: true },
-    })
+  const cliente = await db.cliente.findUnique({
+    where: { id: clienteId },
+    select: { id: true, arquivadoEm: true },
+  })
 
-    if (!cliente) {
-      throw new ErroDeDominio('Cliente não encontrado.')
-    }
+  if (!cliente) {
+    throw new ErroDeDominio('Cliente não encontrado.')
+  }
 
-    if (cliente.arquivadoEm !== null) {
+  if (cliente.arquivadoEm !== null) {
+    try {
       await db.cliente.update({
         where: { id: clienteId },
         data: { arquivadoEm: null },
       })
+    } catch (erro) {
+      if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2025') {
+        throw new ErroDeDominio('Cliente não encontrado.')
+      }
+      throw erro
     }
-  } catch (erro) {
-    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2025') {
-      throw new ErroDeDominio('Cliente não encontrado.')
-    }
-    throw erro
   }
 }

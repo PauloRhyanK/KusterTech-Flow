@@ -81,6 +81,8 @@ describe('clientes (integração)', () => {
     await expect(editarCliente(adminSujeito, betaId, { nome: '  acme  ltda  ' })).rejects.toThrow(
       'Já existe um cliente com este nome.',
     )
+    expect((await db.cliente.findUnique({ where: { id: betaId } }))?.nome).toBe('Beta Corp')
+    expect(await db.cliente.count()).toBe(2)
 
     // 5. Renomear com sucesso e atualizar observações
     await editarCliente(adminSujeito, betaId, {
