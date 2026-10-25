@@ -45,3 +45,11 @@ export function clientesVisiveis(sujeito: Sujeito): Visibilidade {
 export function podeVerVisaoGlobal(sujeito: Sujeito): boolean {
   return clientesVisiveis(sujeito) === 'todos'
 }
+
+export function idsVisiveis(sujeito: Sujeito): readonly string[] | null {
+  const visibilidade = clientesVisiveis(sujeito)
+  if (visibilidade === 'todos') {
+    return null
+  }
+  return visibilidade
+}

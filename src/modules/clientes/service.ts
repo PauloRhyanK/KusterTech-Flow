@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
-import { clientesVisiveis, normalizarNome, validarNomeDeCliente } from './model'
+import { idsVisiveis, normalizarNome, validarNomeDeCliente } from './model'
 
 export interface ClienteResumo {
   id: string
@@ -18,11 +18,11 @@ export async function listarClientes(
 ): Promise<ClienteResumo[]> {
   exigirPermissao(sujeito, 'clientes.ler')
 
-  const visibilidade = clientesVisiveis(sujeito)
+  const ids = idsVisiveis(sujeito)
   const where: Prisma.ClienteWhereInput = {}
 
-  if (visibilidade !== 'todos') {
-    where.id = { in: [...visibilidade] }
+  if (ids !== null) {
+    where.id = { in: [...ids] }
   }
 
   if (filtro?.busca) {
