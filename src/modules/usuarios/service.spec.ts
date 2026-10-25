@@ -18,20 +18,36 @@ vi.mock('@/lib/auth/tentativas', () => ({
   limparTentativas: vi.fn(async () => undefined),
 }))
 
-vi.mock('@/lib/db', () => ({
-  db: {
-    usuario: {
-      findUnique: vi.fn(async () => null),
-      create: vi.fn(async () => ({ id: 'u-1' })),
-    },
-    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})),
-  },
-}))
+vi.mock('@/lib/db', () => {
+  const mockUsuario = {
+    findUnique: vi.fn(async () => null),
+    create: vi.fn(async () => ({ id: 'u-1' })),
+    findMany: vi.fn(async () => []),
+    update: vi.fn(async () => ({})),
+  }
+  const mockSessao = {
+    deleteMany: vi.fn(async () => ({ count: 0 })),
+  }
+  const mockDb = {
+    usuario: mockUsuario,
+    sessao: mockSessao,
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb)),
+  }
+  return { db: mockDb }
+})
 
+import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { HASH_FICTICIO, verificarSenha } from '@/lib/auth/senha'
 import { consultarBloqueio } from '@/lib/auth/tentativas'
 import { db } from '@/lib/db'
-import { autenticar, criarUsuario, emailValido } from './service'
+import {
+  alterarAtivo,
+  autenticar,
+  criarUsuario,
+  criarUsuarioComoAdmin,
+  emailValido,
+  listarUsuarios,
+} from './service'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -196,5 +212,176 @@ describe('criarUsuario — validação de formato e tamanho de e-mail (unitário
     expect(emailValido('@dominio')).toBe(false)
     expect(emailValido('usuario@')).toBe(false)
     expect(emailValido(`${'a'.repeat(245)}@exemplo.com`)).toBe(false)
+  })
+})
+
+describe('listarUsuarios — autorização e listagem (unitário)', () => {
+  const sujeitoAdmin: Sujeito = {
+    usuarioId: 'admin-1',
+    papeis: [{ papel: 'ADMIN', clienteId: null }],
+  }
+  const sujeitoTestador: Sujeito = {
+    usuarioId: 'testador-1',
+    papeis: [{ papel: 'TESTADOR', clienteId: null }],
+  }
+
+  test('listarUsuarios lança ErroDeAutorizacao para TESTADOR e não consulta o banco', async () => {
+    await expect(listarUsuarios(sujeitoTestador)).rejects.toThrow(ErroDeAutorizacao)
+    expect(db.usuario.findMany).not.toHaveBeenCalled()
+  })
+
+  test('listarUsuarios retorna usuários com papéis convertidos ordenados por nome para ADMIN', async () => {
+    const dataCriacao = new Date('2026-10-24T12:00:00Z')
+    vi.mocked(db.usuario.findMany).mockResolvedValueOnce([
+      {
+        id: 'u-1',
+        nome: 'Alice',
+        email: 'alice@exemplo.com',
+        ativo: true,
+        criadoEm: dataCriacao,
+        papeis: [{ papel: 'ADMIN', clienteId: null }],
+      },
+    ] as never)
+
+    const resultado = await listarUsuarios(sujeitoAdmin)
+
+    expect(db.usuario.findMany).toHaveBeenCalledWith({
+      orderBy: { nome: 'asc' },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        ativo: true,
+        criadoEm: true,
+        papeis: {
+          select: {
+            papel: true,
+            clienteId: true,
+          },
+        },
+      },
+    })
+    expect(resultado).toEqual([
+      {
+        id: 'u-1',
+        nome: 'Alice',
+        email: 'alice@exemplo.com',
+        ativo: true,
+        papeis: [{ papel: 'ADMIN', clienteId: null }],
+        criadoEm: dataCriacao,
+      },
+    ])
+  })
+})
+
+describe('criarUsuarioComoAdmin — autorização e delegação (unitário)', () => {
+  const sujeitoAdmin: Sujeito = {
+    usuarioId: 'admin-1',
+    papeis: [{ papel: 'ADMIN', clienteId: null }],
+  }
+  const sujeitoTestador: Sujeito = {
+    usuarioId: 'testador-1',
+    papeis: [{ papel: 'TESTADOR', clienteId: null }],
+  }
+
+  test('criarUsuarioComoAdmin lança ErroDeAutorizacao para TESTADOR e não cria usuário', async () => {
+    await expect(
+      criarUsuarioComoAdmin(sujeitoTestador, {
+        email: 'novo@exemplo.com',
+        nome: 'Novo Usuário',
+        senha: 'senha-segura-123',
+        papel: 'APROVADOR',
+      }),
+    ).rejects.toThrow(ErroDeAutorizacao)
+    expect(db.usuario.create).not.toHaveBeenCalled()
+  })
+
+  test('criarUsuarioComoAdmin cria usuário com papel especificado e clienteId null', async () => {
+    vi.mocked(db.usuario.create).mockResolvedValueOnce({ id: 'u-criado' } as never)
+
+    const resultado = await criarUsuarioComoAdmin(sujeitoAdmin, {
+      email: 'novo@exemplo.com',
+      nome: 'Novo Usuário',
+      senha: 'senha-segura-123',
+      papel: 'TESTADOR',
+    })
+
+    expect(resultado).toEqual({ id: 'u-criado' })
+    expect(db.usuario.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: 'novo@exemplo.com',
+          nome: 'Novo Usuário',
+          papeis: {
+            create: [{ papel: 'TESTADOR', clienteId: null }],
+          },
+        }),
+      }),
+    )
+  })
+})
+
+describe('alterarAtivo — autorização, proteções e transação (unitário)', () => {
+  const sujeitoAdmin: Sujeito = {
+    usuarioId: 'admin-1',
+    papeis: [{ papel: 'ADMIN', clienteId: null }],
+  }
+  const sujeitoTestador: Sujeito = {
+    usuarioId: 'testador-1',
+    papeis: [{ papel: 'TESTADOR', clienteId: null }],
+  }
+
+  test('alterarAtivo lança ErroDeAutorizacao para TESTADOR', async () => {
+    await expect(alterarAtivo(sujeitoTestador, 'u-outro', false)).rejects.toThrow(ErroDeAutorizacao)
+    expect(db.usuario.findUnique).not.toHaveBeenCalled()
+  })
+
+  test('alterarAtivo recusa desativar a própria conta', async () => {
+    await expect(alterarAtivo(sujeitoAdmin, 'admin-1', false)).rejects.toThrow(
+      'Você não pode desativar a própria conta.',
+    )
+    expect(db.usuario.findUnique).not.toHaveBeenCalled()
+  })
+
+  test('alterarAtivo lança quando usuário não existe', async () => {
+    vi.mocked(db.usuario.findUnique).mockResolvedValueOnce(null)
+
+    await expect(alterarAtivo(sujeitoAdmin, 'u-fantasma', false)).rejects.toThrow(
+      'Usuário não encontrado.',
+    )
+  })
+
+  test('alterarAtivo desativa usuário e apaga suas sessões em transação', async () => {
+    vi.mocked(db.usuario.findUnique).mockResolvedValueOnce({
+      id: 'u-2',
+      ativo: true,
+    } as never)
+
+    await alterarAtivo(sujeitoAdmin, 'u-2', false)
+
+    expect(db.$transaction).toHaveBeenCalled()
+    expect(db.usuario.update).toHaveBeenCalledWith({
+      where: { id: 'u-2' },
+      data: { ativo: false },
+    })
+    expect(db.sessao.deleteMany).toHaveBeenCalledWith({
+      where: { usuarioId: 'u-2' },
+    })
+  })
+
+  test('alterarAtivo reativa usuário sem apagar sessões', async () => {
+    vi.mocked(db.usuario.findUnique).mockResolvedValueOnce({
+      id: 'u-2',
+      ativo: false,
+    } as never)
+
+    await alterarAtivo(sujeitoAdmin, 'u-2', true)
+
+    expect(db.$transaction).toHaveBeenCalled()
+    expect(db.usuario.update).toHaveBeenCalledWith({
+      where: { id: 'u-2' },
+      data: { ativo: true },
+    })
+    expect(db.sessao.deleteMany).not.toHaveBeenCalled()
   })
 })

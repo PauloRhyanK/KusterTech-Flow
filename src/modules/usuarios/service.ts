@@ -1,5 +1,11 @@
 import { Prisma } from '@prisma/client'
-import type { PapelAtribuido, Sujeito } from '@/lib/auth/autorizar'
+import {
+  exigirPermissao,
+  type Papel,
+  type PapelAtribuido,
+  type Sujeito,
+} from '@/lib/auth/autorizar'
+import { converterPapelDoBanco } from '@/lib/auth/papel'
 import { HASH_FICTICIO, hashSenha, verificarSenha } from '@/lib/auth/senha'
 import {
   consultarBloqueio,
@@ -166,5 +172,102 @@ export async function definirTema(sujeito: Sujeito, tema: Tema): Promise<void> {
     where: { id: sujeito.usuarioId },
     data: { tema: temaParaBanco(tema) },
     select: { id: true },
+  })
+}
+
+export interface UsuarioResumo {
+  id: string
+  nome: string
+  email: string
+  ativo: boolean
+  papeis: readonly PapelAtribuido[]
+  criadoEm: Date
+}
+
+export interface DadosNovoUsuario {
+  email: string
+  nome: string
+  senha: string
+  papel: Papel
+}
+
+export async function listarUsuarios(sujeito: Sujeito): Promise<UsuarioResumo[]> {
+  exigirPermissao(sujeito, 'usuarios.gerenciar')
+
+  const usuarios = await db.usuario.findMany({
+    orderBy: { nome: 'asc' },
+    select: {
+      id: true,
+      nome: true,
+      email: true,
+      ativo: true,
+      criadoEm: true,
+      papeis: {
+        select: {
+          papel: true,
+          clienteId: true,
+        },
+      },
+    },
+  })
+
+  return usuarios.map((u) => ({
+    id: u.id,
+    nome: u.nome,
+    email: u.email,
+    ativo: u.ativo,
+    criadoEm: u.criadoEm,
+    papeis: u.papeis.map((p) => ({
+      papel: converterPapelDoBanco(p.papel),
+      clienteId: p.clienteId,
+    })),
+  }))
+}
+
+export async function criarUsuarioComoAdmin(
+  sujeito: Sujeito,
+  dados: DadosNovoUsuario,
+): Promise<{ id: string }> {
+  exigirPermissao(sujeito, 'usuarios.gerenciar')
+
+  return criarUsuario({
+    email: dados.email,
+    nome: dados.nome,
+    senha: dados.senha,
+    papeis: [{ papel: dados.papel, clienteId: null }],
+  })
+}
+
+export async function alterarAtivo(
+  sujeito: Sujeito,
+  usuarioId: string,
+  ativo: boolean,
+): Promise<void> {
+  exigirPermissao(sujeito, 'usuarios.gerenciar')
+
+  if (sujeito.usuarioId === usuarioId && !ativo) {
+    throw new Error('Você não pode desativar a própria conta.')
+  }
+
+  const usuario = await db.usuario.findUnique({
+    where: { id: usuarioId },
+    select: { id: true },
+  })
+
+  if (!usuario) {
+    throw new Error('Usuário não encontrado.')
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.usuario.update({
+      where: { id: usuarioId },
+      data: { ativo },
+    })
+
+    if (!ativo) {
+      await tx.sessao.deleteMany({
+        where: { usuarioId },
+      })
+    }
   })
 }
