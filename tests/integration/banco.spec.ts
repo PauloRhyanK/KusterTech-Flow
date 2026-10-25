@@ -2,8 +2,17 @@ import { afterAll, beforeEach, expect, test } from 'vitest'
 import { db } from '@/lib/db'
 import { limparBanco } from './banco-de-teste'
 
+let clienteAcmeId = ''
+
 beforeEach(async () => {
   await limparBanco()
+  const cliente = await db.cliente.create({
+    data: {
+      nome: 'Acme',
+      nomeNormalizado: 'acme',
+    },
+  })
+  clienteAcmeId = cliente.id
 })
 
 afterAll(async () => {
@@ -26,7 +35,7 @@ test('UsuarioPapel não repete (usuario, papel, clienteId) com clienteId não nu
     data: {
       usuarioId: usuario.id,
       papel: 'APROVADOR',
-      clienteId: 'acme',
+      clienteId: clienteAcmeId,
     },
   })
 
@@ -35,7 +44,7 @@ test('UsuarioPapel não repete (usuario, papel, clienteId) com clienteId não nu
       data: {
         usuarioId: usuario.id,
         papel: 'APROVADOR',
-        clienteId: 'acme',
+        clienteId: clienteAcmeId,
       },
     }),
   ).rejects.toThrow()

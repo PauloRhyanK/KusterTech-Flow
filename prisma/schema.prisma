@@ -31,17 +31,16 @@ model Usuario {
   sessoes      Sessao[]
 }
 
-// clienteId sem FK: a tabela Cliente nasce no Incremento 1, que adiciona a FK por migration.
-// Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
-// Decisão: não editar o SQL gerado; `criarUsuario` deduplica papéis antes de gravar, e o teste de unicidade usa clienteId não nulo.
 model UsuarioPapel {
-  id        String  @id @default(uuid())
+  id        String   @id @default(uuid())
   usuarioId String
   papel     Papel
   clienteId String?
-  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  cliente   Cliente? @relation(fields: [clienteId], references: [id], onDelete: Restrict)
 
   @@unique([usuarioId, papel, clienteId])
+  @@index([clienteId])
 }
 
 model Sessao {
@@ -64,4 +63,38 @@ model TentativaLogin {
   contagem     Int
   janelaInicio DateTime
   bloqueadoAte DateTime?
+}
+
+model Cliente {
+  id              String           @id @default(uuid())
+  nome            String
+  nomeNormalizado String           @unique
+  observacoes     String?
+  arquivadoEm     DateTime?
+  criadoEm        DateTime         @default(now())
+  atualizadoEm    DateTime         @updatedAt
+  projetos        ProjetoCliente[]
+  papeis          UsuarioPapel[]
+}
+
+model Projeto {
+  id              String           @id @default(uuid())
+  nome            String
+  nomeNormalizado String           @unique
+  descricao       String?
+  arquivadoEm     DateTime?
+  criadoEm        DateTime         @default(now())
+  atualizadoEm    DateTime         @updatedAt
+  clientes        ProjetoCliente[]
+}
+
+model ProjetoCliente {
+  projetoId String
+  clienteId String
+  criadoEm  DateTime @default(now())
+  projeto   Projeto  @relation(fields: [projetoId], references: [id], onDelete: Cascade)
+  cliente   Cliente  @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+
+  @@id([projetoId, clienteId])
+  @@index([clienteId])
 }
