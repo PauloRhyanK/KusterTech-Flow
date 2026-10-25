@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { ErroDeDominio } from '@/lib/erros'
-import { clientesVisiveis, normalizarNome, podeVerVisaoGlobal, validarNomeDeCliente } from './model'
+import {
+  clientesVisiveis,
+  idsVisiveis,
+  normalizarNome,
+  podeVerVisaoGlobal,
+  validarNomeDeCliente,
+} from './model'
 
 describe('clientes / model (unitário)', () => {
   test('normalizarNome: " Acmé  Ltda " → "acme ltda"; "ACME" e "acme" iguais; "São João" → "sao joao"', () => {
@@ -97,5 +103,28 @@ describe('clientes / model (unitário)', () => {
     }
     expect(clientesVisiveis(misto)).toBe('todos')
     expect(podeVerVisaoGlobal(misto)).toBe(true)
+  })
+
+  test('idsVisiveis: sujeito global → null; sujeito escopado → lista de ids; sem papéis → lista vazia', () => {
+    const admin: Sujeito = {
+      usuarioId: 'u-admin',
+      papeis: [{ papel: 'ADMIN', clienteId: null }],
+    }
+    expect(idsVisiveis(admin)).toBeNull()
+
+    const testador: Sujeito = {
+      usuarioId: 'u-test',
+      papeis: [
+        { papel: 'TESTADOR', clienteId: 'c-1' },
+        { papel: 'TESTADOR', clienteId: 'c-2' },
+      ],
+    }
+    expect(idsVisiveis(testador)).toEqual(['c-1', 'c-2'])
+
+    const semPapeis: Sujeito = {
+      usuarioId: 'u-vazio',
+      papeis: [],
+    }
+    expect(idsVisiveis(semPapeis)).toEqual([])
   })
 })

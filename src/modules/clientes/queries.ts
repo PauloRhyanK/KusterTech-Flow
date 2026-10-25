@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import { clientesVisiveis } from './model'
+import { idsVisiveis } from './model'
 import { type ClienteResumo, listarClientes, obterCliente } from './service'
 
 export async function listarClientesParaTela(
@@ -75,13 +75,13 @@ export async function listarClientesParaSelecao(
 ): Promise<{ id: string; nome: string }[]> {
   exigirPermissao(sujeito, 'clientes.ler')
 
-  const visibilidade = clientesVisiveis(sujeito)
+  const ids = idsVisiveis(sujeito)
   const where: Prisma.ClienteWhereInput = {
     arquivadoEm: null,
   }
 
-  if (visibilidade !== 'todos') {
-    where.id = { in: [...visibilidade] }
+  if (ids !== null) {
+    where.id = { in: [...ids] }
   }
 
   return db.cliente.findMany({
