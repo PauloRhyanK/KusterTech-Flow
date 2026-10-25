@@ -14,6 +14,7 @@ import {
   registrarFalhaPersistida,
 } from '@/lib/auth/tentativas'
 import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
 import { ehTema, temaParaBanco, type Tema } from '@/lib/tema/tema'
 
 const TAMANHO_MINIMO_SENHA = 12
@@ -67,23 +68,23 @@ export async function criarUsuario(dados: {
   const nome = dados.nome.trim()
 
   if (!email) {
-    throw new Error('O e-mail é obrigatório.')
+    throw new ErroDeDominio('O e-mail é obrigatório.')
   }
 
   if (email.length > TAMANHO_MAXIMO_EMAIL) {
-    throw new Error(`O e-mail não pode ter mais de ${TAMANHO_MAXIMO_EMAIL} caracteres.`)
+    throw new ErroDeDominio(`O e-mail não pode ter mais de ${TAMANHO_MAXIMO_EMAIL} caracteres.`)
   }
 
   if (!emailValido(email)) {
-    throw new Error('Formato de e-mail inválido.')
+    throw new ErroDeDominio('Formato de e-mail inválido.')
   }
 
   if (!nome) {
-    throw new Error('O nome é obrigatório.')
+    throw new ErroDeDominio('O nome é obrigatório.')
   }
 
   if (dados.senha.length < TAMANHO_MINIMO_SENHA) {
-    throw new Error(`A senha deve ter pelo menos ${TAMANHO_MINIMO_SENHA} caracteres.`)
+    throw new ErroDeDominio(`A senha deve ter pelo menos ${TAMANHO_MINIMO_SENHA} caracteres.`)
   }
 
   const papeisUnicos = deduplicarPapeis(dados.papeis)
@@ -108,7 +109,7 @@ export async function criarUsuario(dados: {
     return { id: criado.id }
   } catch (erro) {
     if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2002') {
-      throw new Error('Já existe um usuário com este e-mail.')
+      throw new ErroDeDominio('Já existe um usuário com este e-mail.')
     }
     throw erro
   }
@@ -246,23 +247,21 @@ export async function alterarAtivo(
   exigirPermissao(sujeito, 'usuarios.gerenciar')
 
   if (sujeito.usuarioId === usuarioId && !ativo) {
-    throw new Error('Você não pode desativar a própria conta.')
-  }
-
-  const usuario = await db.usuario.findUnique({
-    where: { id: usuarioId },
-    select: { id: true },
-  })
-
-  if (!usuario) {
-    throw new Error('Usuário não encontrado.')
+    throw new ErroDeDominio('Você não pode desativar a própria conta.')
   }
 
   await db.$transaction(async (tx) => {
-    await tx.usuario.update({
-      where: { id: usuarioId },
-      data: { ativo },
-    })
+    try {
+      await tx.usuario.update({
+        where: { id: usuarioId },
+        data: { ativo },
+      })
+    } catch (erro) {
+      if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2025') {
+        throw new ErroDeDominio('Usuário não encontrado.')
+      }
+      throw erro
+    }
 
     if (!ativo) {
       await tx.sessao.deleteMany({

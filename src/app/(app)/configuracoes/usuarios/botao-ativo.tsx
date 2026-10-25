@@ -15,7 +15,7 @@ export function BotaoAtivo({ usuarioId, ativo, ehProprioUsuario }: BotaoAtivoPro
 
   if (ehProprioUsuario) {
     return (
-      <Button variant="secondary" size="sm" disabled aria-disabled="true">
+      <Button variant="outline" size="sm" disabled aria-disabled="true">
         Sua conta
       </Button>
     )
@@ -25,9 +25,22 @@ export function BotaoAtivo({ usuarioId, ativo, ehProprioUsuario }: BotaoAtivoPro
     <form action={formAction} className="inline-flex flex-col items-end gap-1">
       <input type="hidden" name="usuarioId" value={usuarioId} />
       <input type="hidden" name="ativo" value={ativo ? 'false' : 'true'} />
-      <Button type="submit" variant="secondary" size="sm" disabled={pendente}>
+      <Button
+        type="submit"
+        variant="outline"
+        size="sm"
+        aria-busy={pendente}
+        onClick={(e) => {
+          if (pendente) {
+            e.preventDefault()
+          }
+        }}
+      >
         {ativo ? 'Desativar' : 'Reativar'}
       </Button>
+      <span role="status" className="sr-only">
+        {estado.sucesso ?? ''}
+      </span>
       {estado.erro && (
         <span role="alert" className="text-xs text-erro">
           {estado.erro}

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import type { SessaoAtual } from '@/lib/auth/sessao'
+import { ErroDeDominio } from '@/lib/erros'
 
 const {
   redirectMock,
@@ -119,6 +120,13 @@ describe('actions de gestão de usuários (unitário)', () => {
   })
 
   describe('criarUsuarioAction', () => {
+    test('form vazio devolve Dados inválidos.', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      const res = await criarUsuarioAction({}, new FormData())
+      expect(res).toEqual({ erro: 'Dados inválidos.' })
+      expect(criarUsuarioComoAdminMock).not.toHaveBeenCalled()
+    })
+
     test('validação Zod rejeita e-mail inválido, nome vazio, senha curta ou papel inválido', async () => {
       obterSessaoMock.mockResolvedValue(sessaoMock)
 
@@ -155,10 +163,10 @@ describe('actions de gestão de usuários (unitário)', () => {
       expect(revalidatePathMock).toHaveBeenCalledWith('/configuracoes/usuarios')
     })
 
-    test('erro de domínio é repassado ao estado de erro', async () => {
+    test('erro de domínio é repassado ao estado de erro sem log', async () => {
       obterSessaoMock.mockResolvedValue(sessaoMock)
       criarUsuarioComoAdminMock.mockRejectedValueOnce(
-        new Error('Já existe um usuário com este e-mail.'),
+        new ErroDeDominio('Já existe um usuário com este e-mail.'),
       )
 
       const form = new FormData()
@@ -169,10 +177,53 @@ describe('actions de gestão de usuários (unitário)', () => {
 
       const res = await criarUsuarioAction({}, form)
       expect(res).toEqual({ erro: 'Já existe um usuário com este e-mail.' })
+      expect(logErrorMock).not.toHaveBeenCalled()
+    })
+
+    test('erro inesperado mascara detalhe interno e registra log', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      criarUsuarioComoAdminMock.mockRejectedValueOnce(new Error('detalhe interno'))
+
+      const form = new FormData()
+      form.append('email', 'novo@kustertech.com.br')
+      form.append('nome', 'Novo')
+      form.append('senha', 'senha-super-segura-123')
+      form.append('papel', 'ADMIN')
+
+      const res = await criarUsuarioAction({}, form)
+      expect(res).toEqual({
+        erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.',
+      })
+      expect(res.erro).not.toContain('detalhe interno')
+      expect(logErrorMock).toHaveBeenCalledTimes(1)
     })
   })
 
   describe('alterarAtivoAction', () => {
+    test('form vazio devolve Dados inválidos.', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      const res = await alterarAtivoAction({}, new FormData())
+      expect(res).toEqual({ erro: 'Dados inválidos.' })
+      expect(alterarAtivoMock).not.toHaveBeenCalled()
+    })
+
+    test('sem ativo ou com ativo diferente de true/false devolve Dados inválidos.', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+
+      const formSemAtivo = new FormData()
+      formSemAtivo.append('usuarioId', randomUUID())
+      const resSemAtivo = await alterarAtivoAction({}, formSemAtivo)
+      expect(resSemAtivo).toEqual({ erro: 'Dados inválidos.' })
+
+      const formAtivoInvalido = new FormData()
+      formAtivoInvalido.append('usuarioId', randomUUID())
+      formAtivoInvalido.append('ativo', 'yes')
+      const resAtivoInvalido = await alterarAtivoAction({}, formAtivoInvalido)
+      expect(resAtivoInvalido).toEqual({ erro: 'Dados inválidos.' })
+
+      expect(alterarAtivoMock).not.toHaveBeenCalled()
+    })
+
     test('validação Zod rejeita usuarioId não uuid', async () => {
       obterSessaoMock.mockResolvedValue(sessaoMock)
 
@@ -201,9 +252,11 @@ describe('actions de gestão de usuários (unitário)', () => {
       expect(revalidatePathMock).toHaveBeenCalledWith('/configuracoes/usuarios')
     })
 
-    test('erro de domínio ao desativar a si mesmo é repassado ao estado', async () => {
+    test('erro de domínio ao desativar a si mesmo é repassado ao estado sem log', async () => {
       obterSessaoMock.mockResolvedValue(sessaoMock)
-      alterarAtivoMock.mockRejectedValueOnce(new Error('Você não pode desativar a própria conta.'))
+      alterarAtivoMock.mockRejectedValueOnce(
+        new ErroDeDominio('Você não pode desativar a própria conta.'),
+      )
 
       const form = new FormData()
       form.append('usuarioId', adminId)
@@ -211,6 +264,36 @@ describe('actions de gestão de usuários (unitário)', () => {
 
       const res = await alterarAtivoAction({}, form)
       expect(res).toEqual({ erro: 'Você não pode desativar a própria conta.' })
+      expect(logErrorMock).not.toHaveBeenCalled()
+    })
+
+    test('service rejeitando com ErroDeDominio Usuario nao encontrado repassa sem log', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      alterarAtivoMock.mockRejectedValueOnce(new ErroDeDominio('Usuário não encontrado.'))
+
+      const form = new FormData()
+      form.append('usuarioId', randomUUID())
+      form.append('ativo', 'false')
+
+      const res = await alterarAtivoAction({}, form)
+      expect(res).toEqual({ erro: 'Usuário não encontrado.' })
+      expect(logErrorMock).not.toHaveBeenCalled()
+    })
+
+    test('erro inesperado ao alterar ativo mascara detalhe interno e registra log', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      alterarAtivoMock.mockRejectedValueOnce(new Error('falha de conexao banco'))
+
+      const form = new FormData()
+      form.append('usuarioId', randomUUID())
+      form.append('ativo', 'false')
+
+      const res = await alterarAtivoAction({}, form)
+      expect(res).toEqual({
+        erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.',
+      })
+      expect(res.erro).not.toContain('falha de conexao')
+      expect(logErrorMock).toHaveBeenCalledTimes(1)
     })
   })
 })

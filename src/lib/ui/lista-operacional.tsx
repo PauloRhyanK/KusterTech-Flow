@@ -64,7 +64,7 @@ export function ListaOperacional({
                 </div>
               )}
             </div>
-            <div className="flex shrink-0 items-center gap-3">
+            <div className="flex shrink-0 basis-full items-center gap-3 sm:basis-auto">
               {linha.indicador && <div>{linha.indicador}</div>}
               {linha.estado && <div>{linha.estado}</div>}
               {linha.acoes && <div>{linha.acoes}</div>}

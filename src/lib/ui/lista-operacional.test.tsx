@@ -74,6 +74,10 @@ describe('ListaOperacional', () => {
     expect(screen.getByText('95%')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Editar' })).toBeInTheDocument()
 
+    const containerAcoes = screen.getByRole('button', { name: 'Editar' }).parentElement
+      ?.parentElement
+    expect(containerAcoes).toHaveClass('basis-full', 'sm:basis-auto')
+
     // Linha 2 não tem href -> não é link
     const textoBeta = screen.getByText('Projeto Beta')
     expect(textoBeta.closest('a')).toBeNull()

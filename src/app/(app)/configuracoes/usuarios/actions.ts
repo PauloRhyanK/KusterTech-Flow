@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { ErroDeAutorizacao, PERMISSOES, type Papel } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { alterarAtivo, criarUsuarioComoAdmin, emailValido } from '@/modules/usuarios/service'
 
@@ -17,29 +18,24 @@ const papeisPermitidos = Object.keys(PERMISSOES) as [Papel, ...Papel[]]
 
 const criarUsuarioSchema = z.object({
   email: z
-    .string()
+    .string({ error: 'Dados inválidos.' })
     .trim()
     .refine((val) => emailValido(val), {
       message: 'Formato de e-mail inválido.',
     }),
-  nome: z.string().trim().min(1, 'O nome é obrigatório.'),
+  nome: z.string({ error: 'Dados inválidos.' }).trim().min(1, 'O nome é obrigatório.'),
   senha: z
-    .string()
+    .string({ error: 'Dados inválidos.' })
     .min(12, 'A senha deve ter pelo menos 12 caracteres.')
     .max(1024, 'A senha é muito longa.'),
   papel: z.enum(papeisPermitidos, {
-    message: 'Papel inválido.',
+    error: 'Dados inválidos.',
   }),
 })
 
 const alterarAtivoSchema = z.object({
-  usuarioId: z.string().uuid('Identificador de usuário inválido.'),
-  ativo: z.preprocess((val) => {
-    if (typeof val === 'string') {
-      return val === 'true'
-    }
-    return Boolean(val)
-  }, z.boolean()),
+  usuarioId: z.string({ error: 'Dados inválidos.' }).uuid('Identificador de usuário inválido.'),
+  ativo: z.enum(['true', 'false'], { error: 'Dados inválidos.' }).transform((v) => v === 'true'),
 })
 
 export async function criarUsuarioAction(
@@ -70,7 +66,7 @@ export async function criarUsuarioAction(
     if (erro instanceof ErroDeAutorizacao) {
       return { erro: 'Sem permissão para gerenciar usuários.' }
     }
-    if (erro instanceof Error) {
+    if (erro instanceof ErroDeDominio) {
       return { erro: erro.message }
     }
     log.error({ err: erro }, 'Erro inesperado ao criar usuário.')
@@ -104,7 +100,7 @@ export async function alterarAtivoAction(
     if (erro instanceof ErroDeAutorizacao) {
       return { erro: 'Sem permissão para gerenciar usuários.' }
     }
-    if (erro instanceof Error) {
+    if (erro instanceof ErroDeDominio) {
       return { erro: erro.message }
     }
     log.error({ err: erro }, 'Erro inesperado ao alterar estado do usuário.')

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { contarUsuarios } from './support/banco'
+import { contarUsuarios, existeUsuarioPorEmail } from './support/banco'
 
 function obterAdmin(): { id: string; email: string; senha: string } {
   const id = process.env.E2E_ADMIN_ID
@@ -40,7 +40,7 @@ test('admin cria um testador, vê na lista com Ativo, desativa e vê Desativado'
   await page.getByLabel('Papel').selectOption('TESTADOR')
   await page.getByRole('button', { name: 'Criar usuário' }).click()
 
-  await expect(page.getByRole('status')).toHaveText('Usuário criado.')
+  await expect(page.getByRole('status').filter({ hasText: 'Usuário criado.' })).toBeVisible()
 
   const linha = page.locator('li', { hasText: emailTestador })
   await expect(linha).toBeVisible()
@@ -72,7 +72,7 @@ test('testador acessa /configuracoes/usuarios e vê Sem permissão, sem lista', 
   await page.getByLabel('Papel').selectOption('TESTADOR')
   await page.getByRole('button', { name: 'Criar usuário' }).click()
 
-  await expect(page.getByRole('status')).toHaveText('Usuário criado.')
+  await expect(page.getByRole('status').filter({ hasText: 'Usuário criado.' })).toBeVisible()
 
   const testadorContext = await browser.newContext()
   const testadorPage = await testadorContext.newPage()
@@ -105,7 +105,7 @@ test('POST forjado da action de criar por não-admin não cria usuário', async 
   await page.getByLabel('Senha').fill(senhaTestador)
   await page.getByLabel('Papel').selectOption('TESTADOR')
   await page.getByRole('button', { name: 'Criar usuário' }).click()
-  await expect(page.getByRole('status')).toHaveText('Usuário criado.')
+  await expect(page.getByRole('status').filter({ hasText: 'Usuário criado.' })).toBeVisible()
 
   const emailInvasor = `e2e+invasor-${Date.now()}@local.test`
   await page.getByLabel('E-mail').fill(emailInvasor)
@@ -113,16 +113,48 @@ test('POST forjado da action de criar por não-admin não cria usuário', async 
   await page.getByLabel('Senha').fill('senha-invasor-123')
   await page.getByLabel('Papel').selectOption('ADMIN')
 
-  const requestPromise = page.waitForRequest(
-    (req) => req.method() === 'POST' && Boolean(req.headers()['next-action']),
-  )
-  await page.getByRole('button', { name: 'Criar usuário' }).click()
-  const requestReal = await requestPromise
-  await expect(page.getByRole('status')).toHaveText('Usuário criado.')
+  let capturada: { url: string; headers: Record<string, string>; body: Buffer } | null = null
 
-  const url = requestReal.url()
-  const headers = requestReal.headers()
-  const postData = requestReal.postDataBuffer()
+  await page.route('**/configuracoes/usuarios', async (rota) => {
+    const req = rota.request()
+    if (req.method() === 'POST' && req.headers()['next-action']) {
+      capturada = {
+        url: req.url(),
+        headers: req.headers(),
+        body: req.postDataBuffer()!,
+      }
+      return rota.abort()
+    }
+    return rota.continue()
+  })
+
+  await page.getByRole('button', { name: 'Criar usuário' }).click()
+  await expect.poll(() => capturada !== null).toBe(true)
+  await page.unroute('**/configuracoes/usuarios')
+
+  expect(await existeUsuarioPorEmail(emailInvasor)).toBe(false)
+
+  // Controle positivo: replay com o request do próprio contexto do admin
+  const totalAntesPositivo = await contarUsuarios()
+  const respPositiva = await page.request.post(capturada!.url, {
+    headers: {
+      'next-action': capturada!.headers['next-action']!,
+      'content-type': capturada!.headers['content-type']!,
+    },
+    data: capturada!.body,
+  })
+  expect(respPositiva.ok()).toBe(true)
+
+  const totalAposPositivo = await contarUsuarios()
+  expect(totalAposPositivo).toBe(totalAntesPositivo + 1)
+  expect(await existeUsuarioPorEmail(emailInvasor)).toBe(true)
+
+  // Controle negativo: replay com e-mail alterado no contexto do testador
+  const emailInvasor2 = `e2e+invasor2-${Date.now()}@local.test`
+  const bodyReplay = Buffer.from(
+    capturada!.body.toString('latin1').replace(emailInvasor, emailInvasor2),
+    'latin1',
+  )
 
   const testadorContext = await browser.newContext()
   const testadorPage = await testadorContext.newPage()
@@ -130,18 +162,22 @@ test('POST forjado da action de criar por não-admin não cria usuário', async 
   try {
     await fazerLogin(testadorPage, emailTestador, senhaTestador)
 
-    const totalAntes = await contarUsuarios()
+    const totalAntesNegativo = await contarUsuarios()
 
-    await testadorContext.request.post(url, {
+    const respNegativa = await testadorContext.request.post(capturada!.url, {
       headers: {
-        'next-action': headers['next-action']!,
-        'content-type': headers['content-type']!,
+        'next-action': capturada!.headers['next-action']!,
+        'content-type': capturada!.headers['content-type']!,
       },
-      data: postData!,
+      data: bodyReplay,
     })
 
-    const totalDepois = await contarUsuarios()
-    expect(totalDepois).toBe(totalAntes)
+    const totalAposNegativo = await contarUsuarios()
+    expect(totalAposNegativo).toBe(totalAntesNegativo)
+    expect(await existeUsuarioPorEmail(emailInvasor2)).toBe(false)
+
+    const textoResp = await respNegativa.text()
+    expect(textoResp).not.toContain('Usuário criado.')
   } finally {
     await testadorContext.close()
   }

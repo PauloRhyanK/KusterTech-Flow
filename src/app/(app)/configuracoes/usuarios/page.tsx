@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
-import { autorizar } from '@/lib/auth/autorizar'
+import { autorizar, type PapelAtribuido } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
@@ -14,13 +14,13 @@ export const metadata: Metadata = {
   title: 'Usuários',
 }
 
-function formatarPapeis(papeis: readonly { papel: string; clienteId: string | null }[]): string {
+function formatarPapeis(papeis: readonly PapelAtribuido[]): string {
   return papeis
     .map((p) =>
       p.papel === 'ADMIN'
         ? 'ADMIN'
         : p.clienteId
-          ? `${p.papel} (${p.clienteId})`
+          ? `${p.papel} (cliente)`
           : `${p.papel} (todos os clientes)`,
     )
     .join(', ')

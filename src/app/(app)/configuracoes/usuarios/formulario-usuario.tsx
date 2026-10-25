@@ -1,24 +1,17 @@
 'use client'
 
-import { useActionState, useEffect, useRef } from 'react'
+import { useActionState } from 'react'
 import { Button } from '@/components/ui/button'
 import { criarUsuarioAction } from './actions'
 
 export function FormularioUsuario() {
   const [estado, formAction, pendente] = useActionState(criarUsuarioAction, {})
-  const formRef = useRef<HTMLFormElement>(null)
-
-  useEffect(() => {
-    if (estado.sucesso) {
-      formRef.current?.reset()
-    }
-  }, [estado.sucesso])
 
   return (
     <div className="rounded-padrao border border-border bg-surface p-6">
       <h2 className="mb-4 text-[18px] font-[600] leading-[1.3] text-text-primary">Novo usuário</h2>
 
-      <form ref={formRef} action={formAction} className="space-y-4 max-w-md">
+      <form action={formAction} className="space-y-4 max-w-md">
         {estado.sucesso && (
           <div
             role="status"
@@ -76,9 +69,12 @@ export function FormularioUsuario() {
             required
             minLength={12}
             autoComplete="new-password"
+            aria-describedby="ajuda-senha"
             className="w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           />
-          <p className="text-xs text-text-secondary">Mínimo de 12 caracteres.</p>
+          <p id="ajuda-senha" className="text-xs text-text-secondary">
+            Mínimo de 12 caracteres.
+          </p>
         </div>
 
         <div className="space-y-1">
@@ -90,17 +86,28 @@ export function FormularioUsuario() {
             name="papel"
             required
             defaultValue="TESTADOR"
+            aria-describedby="ajuda-papel"
             className="w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           >
             <option value="ADMIN">ADMIN</option>
             <option value="APROVADOR">APROVADOR</option>
             <option value="TESTADOR">TESTADOR</option>
           </select>
-          <p className="text-xs text-text-secondary">válido para todos os clientes</p>
+          <p id="ajuda-papel" className="text-xs text-text-secondary">
+            Válido para todos os clientes.
+          </p>
         </div>
 
         <div className="pt-2">
-          <Button type="submit" disabled={pendente}>
+          <Button
+            type="submit"
+            aria-busy={pendente}
+            onClick={(e) => {
+              if (pendente) {
+                e.preventDefault()
+              }
+            }}
+          >
             Criar usuário
           </Button>
         </div>

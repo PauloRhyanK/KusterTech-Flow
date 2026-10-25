@@ -36,10 +36,12 @@ vi.mock('@/lib/db', () => {
   return { db: mockDb }
 })
 
+import { Prisma } from '@prisma/client'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { HASH_FICTICIO, verificarSenha } from '@/lib/auth/senha'
 import { consultarBloqueio } from '@/lib/auth/tentativas'
 import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
 import {
   alterarAtivo,
   autenticar,
@@ -171,7 +173,7 @@ describe('criarUsuario — validação de formato e tamanho de e-mail (unitário
         senha: 'senha-forte-123',
         papeis: [{ papel: 'ADMIN', clienteId: null }],
       }),
-    ).rejects.toThrow(/e-mail inválido/i)
+    ).rejects.toThrow(ErroDeDominio)
 
     await expect(
       criarUsuario({
@@ -180,7 +182,7 @@ describe('criarUsuario — validação de formato e tamanho de e-mail (unitário
         senha: 'senha-forte-123',
         papeis: [{ papel: 'ADMIN', clienteId: null }],
       }),
-    ).rejects.toThrow(/e-mail inválido/i)
+    ).rejects.toThrow(ErroDeDominio)
 
     await expect(
       criarUsuario({
@@ -189,7 +191,7 @@ describe('criarUsuario — validação de formato e tamanho de e-mail (unitário
         senha: 'senha-forte-123',
         papeis: [{ papel: 'ADMIN', clienteId: null }],
       }),
-    ).rejects.toThrow(/e-mail inválido/i)
+    ).rejects.toThrow(ErroDeDominio)
   })
 
   test('rejeita e-mail com mais de 254 caracteres', async () => {
@@ -201,7 +203,54 @@ describe('criarUsuario — validação de formato e tamanho de e-mail (unitário
         senha: 'senha-forte-123',
         papeis: [{ papel: 'ADMIN', clienteId: null }],
       }),
-    ).rejects.toThrow(/254 caracteres/i)
+    ).rejects.toThrow(ErroDeDominio)
+  })
+
+  test('rejeita nome vazio, e-mail vazio ou senha menor que 12 caracteres', async () => {
+    await expect(
+      criarUsuario({
+        email: '',
+        nome: 'Teste',
+        senha: 'senha-forte-123',
+        papeis: [{ papel: 'ADMIN', clienteId: null }],
+      }),
+    ).rejects.toThrow(ErroDeDominio)
+
+    await expect(
+      criarUsuario({
+        email: 'teste@exemplo.com',
+        nome: '',
+        senha: 'senha-forte-123',
+        papeis: [{ papel: 'ADMIN', clienteId: null }],
+      }),
+    ).rejects.toThrow(ErroDeDominio)
+
+    await expect(
+      criarUsuario({
+        email: 'teste@exemplo.com',
+        nome: 'Teste',
+        senha: 'curta',
+        papeis: [{ papel: 'ADMIN', clienteId: null }],
+      }),
+    ).rejects.toThrow(ErroDeDominio)
+  })
+
+  test('quando banco lança P2002, lança ErroDeDominio de e-mail existente', async () => {
+    vi.mocked(db.usuario.create).mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.10.1',
+      }),
+    )
+
+    await expect(
+      criarUsuario({
+        email: 'duplicado@exemplo.com',
+        nome: 'Duplicado',
+        senha: 'senha-forte-123',
+        papeis: [{ papel: 'ADMIN', clienteId: null }],
+      }),
+    ).rejects.toThrow(ErroDeDominio)
   })
 
   test('emailValido aceita domínios locais e normais e rejeita inválidos ou > 254 chars', () => {
@@ -333,28 +382,34 @@ describe('alterarAtivo — autorização, proteções e transação (unitário)'
 
   test('alterarAtivo lança ErroDeAutorizacao para TESTADOR', async () => {
     await expect(alterarAtivo(sujeitoTestador, 'u-outro', false)).rejects.toThrow(ErroDeAutorizacao)
-    expect(db.usuario.findUnique).not.toHaveBeenCalled()
+    expect(db.usuario.update).not.toHaveBeenCalled()
   })
 
   test('alterarAtivo recusa desativar a própria conta', async () => {
+    await expect(alterarAtivo(sujeitoAdmin, 'admin-1', false)).rejects.toThrow(ErroDeDominio)
     await expect(alterarAtivo(sujeitoAdmin, 'admin-1', false)).rejects.toThrow(
       'Você não pode desativar a própria conta.',
     )
-    expect(db.usuario.findUnique).not.toHaveBeenCalled()
+    expect(db.usuario.update).not.toHaveBeenCalled()
   })
 
   test('alterarAtivo lança quando usuário não existe', async () => {
-    vi.mocked(db.usuario.findUnique).mockResolvedValueOnce(null)
-
-    await expect(alterarAtivo(sujeitoAdmin, 'u-fantasma', false)).rejects.toThrow(
-      'Usuário não encontrado.',
+    vi.mocked(db.usuario.update).mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Record not found', {
+        code: 'P2025',
+        clientVersion: '7.10.1',
+      }),
     )
+
+    const chamada = alterarAtivo(sujeitoAdmin, 'u-fantasma', false)
+    await expect(chamada).rejects.toThrow(ErroDeDominio)
+    await expect(chamada).rejects.toThrow('Usuário não encontrado.')
   })
 
   test('alterarAtivo desativa usuário e apaga suas sessões em transação', async () => {
-    vi.mocked(db.usuario.findUnique).mockResolvedValueOnce({
+    vi.mocked(db.usuario.update).mockResolvedValueOnce({
       id: 'u-2',
-      ativo: true,
+      ativo: false,
     } as never)
 
     await alterarAtivo(sujeitoAdmin, 'u-2', false)
@@ -370,9 +425,9 @@ describe('alterarAtivo — autorização, proteções e transação (unitário)'
   })
 
   test('alterarAtivo reativa usuário sem apagar sessões', async () => {
-    vi.mocked(db.usuario.findUnique).mockResolvedValueOnce({
+    vi.mocked(db.usuario.update).mockResolvedValueOnce({
       id: 'u-2',
-      ativo: false,
+      ativo: true,
     } as never)
 
     await alterarAtivo(sujeitoAdmin, 'u-2', true)
