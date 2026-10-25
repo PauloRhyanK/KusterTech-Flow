@@ -149,7 +149,7 @@ export default async function PaginaProjetos({ searchParams }: PaginaProjetosPro
   const linhas = projetos.map((projeto) => ({
     id: projeto.id,
     nome: projeto.nome,
-    href: `/projetos/${projeto.id}/configuracao`,
+    href: `/projetos/${projeto.id}`,
     contexto:
       projeto.clientes.length === 0
         ? 'Sem clientes'
