@@ -12,3 +12,11 @@ export async function definirTemaNoBanco(usuarioId: string, tema: Tema): Promise
 export async function contarUsuarios(): Promise<number> {
   return db.usuario.count()
 }
+
+export async function existeUsuarioPorEmail(email: string): Promise<boolean> {
+  const usuario = await db.usuario.findUnique({
+    where: { email },
+    select: { id: true },
+  })
+  return Boolean(usuario)
+}

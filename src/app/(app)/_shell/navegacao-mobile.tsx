@@ -51,8 +51,8 @@ export function NavegacaoMobile({ usuario }: NavegacaoMobileProps) {
           <SheetTitle>Navegação</SheetTitle>
         </SheetHeader>
 
-        <div className="flex h-14 shrink-0 items-center justify-between px-6">
-          <Marca variante="compacta" />
+        <div className="flex h-14 shrink-0 items-center justify-between px-4">
+          <Marca variante="compacta" tamanho="sm" />
           <SheetClose
             aria-label="Fechar navegação"
             className="flex size-8 items-center justify-center rounded-compacto text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--marca-midnight)]"

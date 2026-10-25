@@ -17,6 +17,7 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - Use as skills Superpowers: TDD, revisão independente e verificação antes de declarar concluído.
 - Regras de negócio críticas são funções puras em `src/modules/<m>/model.ts`, com teste unitário escrito antes.
 - Toda escrita passa por um `service` que chama `autorizar(...)` no servidor e revalida o estado atual.
+- Autorização no servidor (A16): Server Actions validam sessão nula com `redirect('/entrar')` e delegam toda escrita ao `service`, que chama `exigirPermissao(...)` e revalida o estado atual.
 - Componentes não acessam o banco. Nenhum segredo entra no repositório (ele é público).
 - Nunca `git add -A`; adicione caminho por caminho. Nunca faça push em `main` fora de PR.
 - Seeds executadas por um executor Gemini (Antigravity CLI) sob orquestração do Claude seguem [`.agents/README.md`](.agents/README.md): worktree por seed, política de permissões com auditoria, revisão independente antes do PR.
@@ -42,7 +43,7 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 
 ## Como rodar os testes
 
-- **Unitários (`pnpm test`):** executam com Vitest sobre regras puras (`src/**/*.spec.ts`), sem dependência de banco.
+- **Unitários e de componentes (`pnpm test`):** executam com Vitest sobre regras puras no projeto `unit` (`src/**/*.spec.ts` em ambiente `node`) e testes de interface no projeto `componentes` (`src/**/*.test.tsx` em ambiente `jsdom` com Testing Library), sem dependência de banco.
 - **Integração (`pnpm test:integration`):** exigem PostgreSQL ativo (`docker compose up -d postgres`) e `DATABASE_URL_TEST` exportada no ambiente (ex.: `set -a && source .env && set +a && pnpm test:integration`); o setup cria o banco de teste automaticamente e aplica as migrations.
 - **Ponta a ponta (`pnpm build && pnpm e2e`):** executam com Playwright nos projetos `desktop` e `mobile` sobre o build de produção (`pnpm start` na porta definida por `E2E_PORT`, padrão `3131`) usando `DATABASE_URL_TEST`; o `globalSetup` aplica as migrations, limpa tentativas e usuários de E2E anteriores e cria um administrador único para a execução.
 
