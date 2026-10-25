@@ -11,8 +11,17 @@ import { db } from '@/lib/db'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
 
+let clienteAcmeId = ''
+
 beforeEach(async () => {
   await limparBanco()
+  const cliente = await db.cliente.create({
+    data: {
+      nome: 'Acme',
+      nomeNormalizado: 'acme',
+    },
+  })
+  clienteAcmeId = cliente.id
 })
 
 afterAll(async () => {
@@ -52,7 +61,7 @@ describe('sessão (integração)', () => {
       nome: 'Carlos',
       senha: 'senha-forte-123',
       papeis: [
-        { papel: 'APROVADOR', clienteId: 'acme' },
+        { papel: 'APROVADOR', clienteId: clienteAcmeId },
         { papel: 'TESTADOR', clienteId: null },
       ],
     })
@@ -84,7 +93,7 @@ describe('sessão (integração)', () => {
     expect(sessaoAntes?.sujeito.papeis).toHaveLength(2)
     expect(sessaoAntes?.sujeito.papeis).toEqual(
       expect.arrayContaining([
-        { papel: 'APROVADOR', clienteId: 'acme' },
+        { papel: 'APROVADOR', clienteId: clienteAcmeId },
         { papel: 'TESTADOR', clienteId: null },
       ]),
     )
@@ -112,7 +121,7 @@ describe('sessão (integração)', () => {
       email: 'bruna@exemplo.com',
       nome: 'Bruna',
       senha: 'senha-forte-123',
-      papeis: [{ papel: 'TESTADOR', clienteId: 'acme' }],
+      papeis: [{ papel: 'TESTADOR', clienteId: clienteAcmeId }],
     })
 
     const { token } = await criarSessao(usuarioId, {})

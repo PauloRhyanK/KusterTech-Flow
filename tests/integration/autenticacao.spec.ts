@@ -9,9 +9,28 @@ import { autenticar, criarUsuario, normalizarEmail } from '@/modules/usuarios/se
 import { limparBanco } from './banco-de-teste'
 
 let usuarioPauloId = ''
+let clienteAcmeId = ''
+let clienteBetaId = ''
 
 beforeEach(async () => {
   await limparBanco()
+
+  const acme = await db.cliente.create({
+    data: {
+      nome: 'Acme',
+      nomeNormalizado: 'acme',
+    },
+  })
+  clienteAcmeId = acme.id
+
+  const beta = await db.cliente.create({
+    data: {
+      nome: 'Beta',
+      nomeNormalizado: 'beta',
+    },
+  })
+  clienteBetaId = beta.id
+
   const criado = await criarUsuario({
     email: 'paulo@exemplo.com',
     nome: 'Paulo',
@@ -150,9 +169,9 @@ describe('autenticação e usuários (integração)', () => {
       papeis: [
         { papel: 'ADMIN', clienteId: null },
         { papel: 'ADMIN', clienteId: null },
-        { papel: 'APROVADOR', clienteId: 'acme' },
-        { papel: 'APROVADOR', clienteId: 'acme' },
-        { papel: 'APROVADOR', clienteId: 'beta' },
+        { papel: 'APROVADOR', clienteId: clienteAcmeId },
+        { papel: 'APROVADOR', clienteId: clienteAcmeId },
+        { papel: 'APROVADOR', clienteId: clienteBetaId },
       ],
     })
 
