@@ -4,7 +4,11 @@ import { useActionState } from 'react'
 import { Button } from '@/components/ui/button'
 import { criarUsuarioAction } from './actions'
 
-export function FormularioUsuario() {
+export interface FormularioUsuarioProps {
+  clientes: { id: string; nome: string }[]
+}
+
+export function FormularioUsuario({ clientes }: FormularioUsuarioProps) {
   const [estado, formAction, pendente] = useActionState(criarUsuarioAction, {})
 
   return (
@@ -86,15 +90,35 @@ export function FormularioUsuario() {
             name="papel"
             required
             defaultValue="TESTADOR"
-            aria-describedby="ajuda-papel"
             className="w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           >
             <option value="ADMIN">ADMIN</option>
             <option value="APROVADOR">APROVADOR</option>
             <option value="TESTADOR">TESTADOR</option>
           </select>
-          <p id="ajuda-papel" className="text-xs text-text-secondary">
-            Válido para todos os clientes.
+        </div>
+
+        <div className="space-y-1">
+          <label htmlFor="clienteId" className="block text-sm font-medium text-text-primary">
+            Cliente
+          </label>
+          <select
+            id="clienteId"
+            name="clienteId"
+            defaultValue=""
+            aria-describedby="ajuda-cliente"
+            className="w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <option value="">Todos os clientes</option>
+            {clientes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nome}
+              </option>
+            ))}
+          </select>
+          <p id="ajuda-cliente" className="text-xs text-text-secondary">
+            Aprovadores e testadores podem ser limitados a um cliente. Administradores são sempre
+            globais.
           </p>
         </div>
 

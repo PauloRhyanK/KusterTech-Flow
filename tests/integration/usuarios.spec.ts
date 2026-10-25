@@ -62,13 +62,58 @@ describe('gestão de usuários (integração)', () => {
 
     const adminNaLista = lista.find((u) => u.email === 'admin@local.test')
     expect(adminNaLista).toBeDefined()
-    expect(adminNaLista?.papeis).toEqual([{ papel: 'ADMIN', clienteId: null }])
+    expect(adminNaLista?.papeis).toEqual([{ papel: 'ADMIN', clienteId: null, clienteNome: null }])
 
     const aprovadorNaLista = lista.find((u) => u.email === 'aprovador@local.test')
     expect(aprovadorNaLista).toBeDefined()
-    expect(aprovadorNaLista?.papeis).toEqual([{ papel: 'APROVADOR', clienteId: null }])
+    expect(aprovadorNaLista?.papeis).toEqual([
+      { papel: 'APROVADOR', clienteId: null, clienteNome: null },
+    ])
 
     await expect(listarUsuarios(aprovadorSujeito)).rejects.toThrow(ErroDeAutorizacao)
+  })
+
+  test('criarUsuarioComoAdmin cria escopado por cliente e ADMIN com cliente é recusado', async () => {
+    const cliente = await db.cliente.create({
+      data: {
+        nome: 'Acme Corp',
+        nomeNormalizado: 'acme corp',
+      },
+    })
+
+    const criado = await criarUsuarioComoAdmin(adminSujeito, {
+      email: 'aprovador-acme@local.test',
+      nome: 'Aprovador Acme',
+      senha: 'senha-segura-123',
+      papel: 'APROVADOR',
+      clienteId: cliente.id,
+    })
+
+    const lista = await listarUsuarios(adminSujeito)
+    const escopadoNaLista = lista.find((u) => u.id === criado.id)
+    expect(escopadoNaLista?.papeis).toEqual([
+      { papel: 'APROVADOR', clienteId: cliente.id, clienteNome: 'Acme Corp' },
+    ])
+
+    await expect(
+      criarUsuarioComoAdmin(adminSujeito, {
+        email: 'admin-escopado@local.test',
+        nome: 'Admin Invalido',
+        senha: 'senha-segura-123',
+        papel: 'ADMIN',
+        clienteId: cliente.id,
+      }),
+    ).rejects.toThrow('Administradores não têm escopo por cliente.')
+
+    await expect(
+      criarUsuarioComoAdmin(adminSujeito, {
+        email: 'fantasma@local.test',
+        nome: 'Fantasma',
+        senha: 'senha-segura-123',
+        papel: 'APROVADOR',
+        clienteId: '00000000-0000-0000-0000-000000000000',
+      }),
+    ).rejects.toThrow('Cliente não encontrado.')
   })
 
   test('criarUsuarioComoAdmin cria com papel e clienteId null; testador não cria', async () => {

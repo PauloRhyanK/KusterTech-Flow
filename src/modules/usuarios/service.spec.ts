@@ -28,9 +28,13 @@ vi.mock('@/lib/db', () => {
   const mockSessao = {
     deleteMany: vi.fn(async () => ({ count: 0 })),
   }
+  const mockCliente = {
+    findUnique: vi.fn(async () => null),
+  }
   const mockDb = {
     usuario: mockUsuario,
     sessao: mockSessao,
+    cliente: mockCliente,
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb)),
   }
   return { db: mockDb }
@@ -288,7 +292,7 @@ describe('listarUsuarios — autorização e listagem (unitário)', () => {
         email: 'alice@exemplo.com',
         ativo: true,
         criadoEm: dataCriacao,
-        papeis: [{ papel: 'ADMIN', clienteId: null }],
+        papeis: [{ papel: 'ADMIN', clienteId: null, cliente: null }],
       },
     ] as never)
 
@@ -306,6 +310,11 @@ describe('listarUsuarios — autorização e listagem (unitário)', () => {
           select: {
             papel: true,
             clienteId: true,
+            cliente: {
+              select: {
+                nome: true,
+              },
+            },
           },
         },
       },
@@ -316,7 +325,7 @@ describe('listarUsuarios — autorização e listagem (unitário)', () => {
         nome: 'Alice',
         email: 'alice@exemplo.com',
         ativo: true,
-        papeis: [{ papel: 'ADMIN', clienteId: null }],
+        papeis: [{ papel: 'ADMIN', clienteId: null, clienteNome: null }],
         criadoEm: dataCriacao,
       },
     ])
@@ -363,6 +372,58 @@ describe('criarUsuarioComoAdmin — autorização e delegação (unitário)', ()
           nome: 'Novo Usuário',
           papeis: {
             create: [{ papel: 'TESTADOR', clienteId: null }],
+          },
+        }),
+      }),
+    )
+  })
+
+  test('criarUsuarioComoAdmin com ADMIN e clienteId não nulo lança ErroDeDominio', async () => {
+    await expect(
+      criarUsuarioComoAdmin(sujeitoAdmin, {
+        email: 'admin2@exemplo.com',
+        nome: 'Admin Escopado',
+        senha: 'senha-segura-123',
+        papel: 'ADMIN',
+        clienteId: 'cli-1',
+      }),
+    ).rejects.toThrow('Administradores não têm escopo por cliente.')
+    expect(db.usuario.create).not.toHaveBeenCalled()
+  })
+
+  test('criarUsuarioComoAdmin com clienteId inexistente lança ErroDeDominio', async () => {
+    vi.mocked(db.cliente.findUnique).mockResolvedValueOnce(null)
+
+    await expect(
+      criarUsuarioComoAdmin(sujeitoAdmin, {
+        email: 'testador@exemplo.com',
+        nome: 'Testador Escopado',
+        senha: 'senha-segura-123',
+        papel: 'TESTADOR',
+        clienteId: 'cli-fantasma',
+      }),
+    ).rejects.toThrow('Cliente não encontrado.')
+    expect(db.usuario.create).not.toHaveBeenCalled()
+  })
+
+  test('criarUsuarioComoAdmin com TESTADOR e clienteId existente grava papel com clienteId', async () => {
+    vi.mocked(db.cliente.findUnique).mockResolvedValueOnce({ id: 'cli-1' } as never)
+    vi.mocked(db.usuario.create).mockResolvedValueOnce({ id: 'u-escopado' } as never)
+
+    const resultado = await criarUsuarioComoAdmin(sujeitoAdmin, {
+      email: 'testador@exemplo.com',
+      nome: 'Testador Escopado',
+      senha: 'senha-segura-123',
+      papel: 'TESTADOR',
+      clienteId: 'cli-1',
+    })
+
+    expect(resultado).toEqual({ id: 'u-escopado' })
+    expect(db.usuario.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          papeis: {
+            create: [{ papel: 'TESTADOR', clienteId: 'cli-1' }],
           },
         }),
       }),

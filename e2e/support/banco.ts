@@ -1,5 +1,84 @@
+import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
+import { normalizarNome, validarNomeDeCliente } from '@/modules/clientes/model'
+import { validarNomeDeProjeto } from '@/modules/projetos/model'
+import { criarUsuario } from '@/modules/usuarios/service'
+
+export function nomeDeTeste(base: string): string {
+  const sufixo = process.env.E2E_SUFIXO || 'teste'
+  const idUnico = Math.random().toString(36).slice(2, 8)
+  return `E2E ${base} ${sufixo}-${idUnico}`
+}
+
+export async function criarUsuarioNoBanco(dados: {
+  email: string
+  nome: string
+  senha: string
+  papel: Papel
+  clienteId?: string | null
+}): Promise<{ id: string }> {
+  return criarUsuario({
+    email: dados.email,
+    nome: dados.nome,
+    senha: dados.senha,
+    papeis: [{ papel: dados.papel, clienteId: dados.clienteId ?? null }],
+  })
+}
+
+export async function criarClienteNoBanco(
+  nome: string,
+  observacoes?: string | null,
+): Promise<{ id: string; nome: string }> {
+  const nomeValido = validarNomeDeCliente(nome)
+  const nomeNormalizado = normalizarNome(nomeValido)
+  return db.cliente.create({
+    data: {
+      nome: nomeValido,
+      nomeNormalizado,
+      observacoes: observacoes?.trim() || null,
+    },
+    select: { id: true, nome: true },
+  })
+}
+
+export async function criarProjetoNoBanco(
+  nome: string,
+  clientesIds?: string[],
+): Promise<{ id: string; nome: string }> {
+  const nomeValido = validarNomeDeProjeto(nome)
+  const nomeNormalizado = normalizarNome(nomeValido)
+  return db.projeto.create({
+    data: {
+      nome: nomeValido,
+      nomeNormalizado,
+      clientes:
+        clientesIds && clientesIds.length > 0
+          ? {
+              create: clientesIds.map((clienteId) => ({ clienteId })),
+            }
+          : undefined,
+    },
+    select: { id: true, nome: true },
+  })
+}
+
+export async function associarNoBanco(projetoId: string, clienteId: string): Promise<void> {
+  await db.projetoCliente.create({
+    data: {
+      projetoId,
+      clienteId,
+    },
+  })
+}
+
+export async function contarClientes(): Promise<number> {
+  return db.cliente.count()
+}
+
+export async function contarProjetos(): Promise<number> {
+  return db.projeto.count()
+}
 
 export async function definirTemaNoBanco(usuarioId: string, tema: Tema): Promise<void> {
   await db.usuario.update({

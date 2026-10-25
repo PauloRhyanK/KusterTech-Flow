@@ -1,11 +1,12 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
-import { autorizar, type PapelAtribuido } from '@/lib/auth/autorizar'
+import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { listarClientesParaSelecao } from '@/modules/clientes/queries'
 import { listarUsuariosParaTela } from '@/modules/usuarios/queries'
 import { BotaoAtivo } from './botao-ativo'
 import { FormularioUsuario } from './formulario-usuario'
@@ -14,13 +15,15 @@ export const metadata: Metadata = {
   title: 'Usuários',
 }
 
-function formatarPapeis(papeis: readonly PapelAtribuido[]): string {
+function formatarPapeis(
+  papeis: readonly { papel: string; clienteId: string | null; clienteNome: string | null }[],
+): string {
   return papeis
     .map((p) =>
       p.papel === 'ADMIN'
         ? 'ADMIN'
-        : p.clienteId
-          ? `${p.papel} (cliente)`
+        : p.clienteNome
+          ? `${p.papel} (${p.clienteNome})`
           : `${p.papel} (todos os clientes)`,
     )
     .join(', ')
@@ -45,7 +48,10 @@ export default async function PaginaUsuarios() {
     )
   }
 
-  const usuarios = await listarUsuariosParaTela(sessao.sujeito)
+  const [usuarios, clientes] = await Promise.all([
+    listarUsuariosParaTela(sessao.sujeito),
+    listarClientesParaSelecao(sessao.sujeito),
+  ])
 
   const linhas = usuarios.map((u) => ({
     id: u.id,
@@ -85,7 +91,7 @@ export default async function PaginaUsuarios() {
         />
       </section>
 
-      <FormularioUsuario />
+      <FormularioUsuario clientes={clientes} />
     </div>
   )
 }

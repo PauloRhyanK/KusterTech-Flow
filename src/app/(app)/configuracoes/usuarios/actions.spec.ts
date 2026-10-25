@@ -159,8 +159,62 @@ describe('actions de gestão de usuários (unitário)', () => {
         nome: 'Novo Usuário',
         senha: 'senha-super-segura-123',
         papel: 'TESTADOR',
+        clienteId: null,
       })
       expect(revalidatePathMock).toHaveBeenCalledWith('/configuracoes/usuarios')
+    })
+
+    test('clienteId uuid é repassado ao service; string vazia vira null', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      criarUsuarioComoAdminMock.mockResolvedValue({ id: 'u-escopado' })
+
+      const clienteId = randomUUID()
+      const form = new FormData()
+      form.append('email', 'escopado@kustertech.com.br')
+      form.append('nome', 'Escopado')
+      form.append('senha', 'senha-super-segura-123')
+      form.append('papel', 'APROVADOR')
+      form.append('clienteId', clienteId)
+
+      await criarUsuarioAction({}, form)
+      expect(criarUsuarioComoAdminMock).toHaveBeenCalledWith(sujeitoMock, {
+        email: 'escopado@kustertech.com.br',
+        nome: 'Escopado',
+        senha: 'senha-super-segura-123',
+        papel: 'APROVADOR',
+        clienteId,
+      })
+
+      const formVazio = new FormData()
+      formVazio.append('email', 'global@kustertech.com.br')
+      formVazio.append('nome', 'Global')
+      formVazio.append('senha', 'senha-super-segura-123')
+      formVazio.append('papel', 'TESTADOR')
+      formVazio.append('clienteId', '')
+
+      await criarUsuarioAction({}, formVazio)
+      expect(criarUsuarioComoAdminMock).toHaveBeenCalledWith(sujeitoMock, {
+        email: 'global@kustertech.com.br',
+        nome: 'Global',
+        senha: 'senha-super-segura-123',
+        papel: 'TESTADOR',
+        clienteId: null,
+      })
+    })
+
+    test('clienteId inválido rejeita sem chamar o service', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+
+      const form = new FormData()
+      form.append('email', 'novo@kustertech.com.br')
+      form.append('nome', 'Novo')
+      form.append('senha', 'senha-super-segura-123')
+      form.append('papel', 'TESTADOR')
+      form.append('clienteId', 'nao-e-uuid')
+
+      const res = await criarUsuarioAction({}, form)
+      expect(res.erro).toBe('Identificador de cliente inválido.')
+      expect(criarUsuarioComoAdminMock).not.toHaveBeenCalled()
     })
 
     test('erro de domínio é repassado ao estado de erro sem log', async () => {

@@ -31,6 +31,12 @@ const criarUsuarioSchema = z.object({
   papel: z.enum(papeisPermitidos, {
     error: 'Dados inválidos.',
   }),
+  clienteId: z
+    .string({ error: 'Dados inválidos.' })
+    .uuid('Identificador de cliente inválido.')
+    .optional()
+    .or(z.literal(''))
+    .transform((val) => (val && val.length > 0 ? val : null)),
 })
 
 const alterarAtivoSchema = z.object({
@@ -52,6 +58,7 @@ export async function criarUsuarioAction(
     nome: form.get('nome'),
     senha: form.get('senha'),
     papel: form.get('papel'),
+    clienteId: form.get('clienteId') ?? undefined,
   })
 
   if (!parse.success) {
