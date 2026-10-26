@@ -60,6 +60,11 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      GITHUB_FONTE: ${GITHUB_FONTE:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_INTERVALO_MS: ${GITHUB_INTERVALO_MS:-}
+      GITHUB_API_URL: ${GITHUB_API_URL:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

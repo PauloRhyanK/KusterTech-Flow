@@ -177,7 +177,7 @@ export function obterFonteGitHub(
   env: Readonly<Record<string, string | undefined>>,
   fetchImpl: typeof fetch = fetch,
 ): FonteGitHub | null {
-  const modo = env.GITHUB_FONTE
+  const modo = env.GITHUB_FONTE || undefined // o Compose passa variável vazia quando não definida
   if (modo === 'fixtures') {
     return criarFonteFixtures()
   }

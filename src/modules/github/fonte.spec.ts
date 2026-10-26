@@ -137,4 +137,14 @@ describe('obterFonteGitHub', () => {
     })
     expect(fonte?.tipo).toBe('app')
   })
+
+  test('GITHUB_FONTE vazia (como o Compose repassa) equivale a ausente', () => {
+    const fonte = obterFonteGitHub({
+      GITHUB_FONTE: '',
+      GITHUB_APP_ID: '1',
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+    })
+    expect(fonte?.tipo).toBe('app')
+    expect(obterFonteGitHub({ GITHUB_FONTE: '' })).toBeNull()
+  })
 })
