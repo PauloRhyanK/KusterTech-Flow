@@ -1,0 +1,40 @@
+[
+  {
+    "id": 8001006,
+    "number": 6,
+    "title": "Nova funcionalidade em api",
+    "body": "Trabalho em andamento.",
+    "state": "open",
+    "draft": false,
+    "user": {
+      "login": "exemplo-bia",
+      "id": 200002
+    },
+    "html_url": "https://github.com/kustertech-exemplo/api/pull/6",
+    "head": {
+      "ref": "feature/nova",
+      "sha": "2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "updated_at": "2026-10-20T09:00:00Z",
+    "merged_at": null
+  },
+  {
+    "id": 8001005,
+    "number": 5,
+    "title": "Corrige item 2 de api",
+    "body": "Closes #2",
+    "state": "closed",
+    "draft": false,
+    "user": {
+      "login": "exemplo-bia",
+      "id": 200002
+    },
+    "html_url": "https://github.com/kustertech-exemplo/api/pull/5",
+    "head": {
+      "ref": "correcao/item-2",
+      "sha": "2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "updated_at": "2026-10-15T09:00:00Z",
+    "merged_at": "2026-10-15T09:00:00Z"
+  }
+]

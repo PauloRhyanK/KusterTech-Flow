@@ -1,0 +1,54 @@
+{
+  "total_count": 4,
+  "repository_selection": "all",
+  "repositories": [
+    {
+      "id": 5001,
+      "name": "portal",
+      "full_name": "kustertech-exemplo/portal",
+      "private": false,
+      "archived": false,
+      "html_url": "https://github.com/kustertech-exemplo/portal",
+      "owner": {
+        "login": "kustertech-exemplo",
+        "id": 100001
+      }
+    },
+    {
+      "id": 5002,
+      "name": "api",
+      "full_name": "kustertech-exemplo/api",
+      "private": true,
+      "archived": false,
+      "html_url": "https://github.com/kustertech-exemplo/api",
+      "owner": {
+        "login": "kustertech-exemplo",
+        "id": 100001
+      }
+    },
+    {
+      "id": 5003,
+      "name": "site",
+      "full_name": "kustertech-exemplo/site",
+      "private": false,
+      "archived": false,
+      "html_url": "https://github.com/kustertech-exemplo/site",
+      "owner": {
+        "login": "kustertech-exemplo",
+        "id": 100001
+      }
+    },
+    {
+      "id": 5004,
+      "name": "app-mobile",
+      "full_name": "kustertech-exemplo/app-mobile",
+      "private": true,
+      "archived": false,
+      "html_url": "https://github.com/kustertech-exemplo/app-mobile",
+      "owner": {
+        "login": "kustertech-exemplo",
+        "id": 100001
+      }
+    }
+  ]
+}
