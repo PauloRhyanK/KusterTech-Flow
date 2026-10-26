@@ -1,7 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test'
-import { nomeDeTeste } from './support/banco'
+import {
+  liberarRepositoriosNoBanco,
+  nomeDeTeste,
+  obterIssueNoBanco,
+  repositoriosDoProjetoE2E,
+} from './support/banco'
+import { rodarWorkerUmaVez } from './support/worker'
 
 function obterAdmin(): { id: string; email: string; senha: string } {
   const id = process.env.E2E_ADMIN_ID
@@ -32,6 +38,8 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
   browser,
 }, testInfo) => {
   const { email: adminEmail, senha: adminSenha } = obterAdmin()
+  const [repoUm, repoDois] = repositoriosDoProjetoE2E(testInfo.project.name)
+  await liberarRepositoriosNoBanco([repoUm, repoDois])
   await fazerLogin(page, adminEmail, adminSenha)
 
   const nomeProjeto = nomeDeTeste('Portal do Cliente')
@@ -194,6 +202,52 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
     await capturar(page, testInfo, '4-admin-contexto-cliente-acme.png')
   })
 
+  // 4b. Vincula os dois repositórios pela tela, roda o worker e confere Resumo, Entregas e issue
+  let issueId = ''
+  await test.step('4b. Admin vincula os repositórios do GitHub, o worker sincroniza e Entregas mostra as issues', async () => {
+    await page.goto(`/projetos/${projetoId}/configuracao#repositorios`)
+    const secao = page.locator('#repositorios')
+    await expect(secao.getByText('Dados de teste (fixtures)')).toBeVisible()
+
+    for (const repo of [repoUm, repoDois]) {
+      await secao.getByLabel('Repositório', { exact: true }).selectOption({ label: repo })
+      await secao.getByRole('button', { name: 'Vincular', exact: true }).click()
+      await expect(secao.getByRole('link', { name: repo })).toBeVisible()
+    }
+    await expect(secao.getByText('Aguardando a primeira sincronização')).toHaveCount(2)
+
+    rodarWorkerUmaVez()
+
+    await page.reload()
+    await expect(secao.getByText('Conectada')).toHaveCount(2)
+    await capturar(page, testInfo, '4-admin-repositorios.png')
+
+    // Resumo: GitHub concluído; Ambientes e Milestones seguem "Ainda não disponível"
+    await page.goto(`/projetos/${projetoId}`)
+    const itemGitHub = page
+      .getByRole('list', { name: 'Configuração do projeto' })
+      .locator('li', { hasText: 'GitHub' })
+    await expect(itemGitHub).toContainText('2 repositórios vinculados')
+    await expect(itemGitHub.getByText('Concluído')).toBeVisible()
+
+    // Entregas: issues dos dois repositórios, sem milestone
+    await page.goto(`/projetos/${projetoId}/entregas`)
+    const lista = page.getByRole('list', { name: 'Issues sem milestone' })
+    await expect(lista.getByRole('listitem')).toHaveCount(6)
+    await capturar(page, testInfo, '4-admin-entregas.png')
+
+    // Issue #2 do primeiro repositório, com PR e checks
+    const issue = await obterIssueNoBanco(repoUm, 2)
+    issueId = issue.id
+    await lista
+      .getByRole('link', { name: new RegExp(`#2 Item 2 de ${repoUm.split('/')[1]}`) })
+      .click()
+    await expect(page).toHaveURL(`/projetos/${projetoId}/entregas/issues/${issueId}`)
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Item 2')
+    await expect(page.getByText('Sem evidência de versão ou ambiente.')).toBeVisible()
+    await capturar(page, testInfo, '4-admin-issue.png')
+  })
+
   const testador = {
     contexto: null as BrowserContext | null,
     pagina: null as Page | null,
@@ -252,6 +306,13 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
       ).toBeVisible()
 
       await capturar(testador.pagina, testInfo, '5-testador-resumo-contexto-acme.png')
+
+      // Issues são dado técnico da visão global: no contexto de Acme a aba Entregas continua sem elas
+      await testador.pagina.goto(`/clientes/${clienteAcmeId}/projetos/${projetoId}/entregas`)
+      await expect(
+        testador.pagina.getByText('Milestones e entregas chegam no Incremento 3.'),
+      ).toBeVisible()
+      await expect(testador.pagina.getByText(/Item \d de /)).toHaveCount(0)
     })
 
     // 6. Com o testador: /clientes/<Beta> e /projetos
@@ -279,6 +340,18 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
       await expect(testador.pagina.getByText(nomeBeta)).toHaveCount(0)
 
       await capturar(testador.pagina, testInfo, '6-testador-projetos-orientacao.png')
+
+      // Entregas globais e a página da issue: sem permissão, sem vazar issues (A16, UX-18)
+      for (const rota of [
+        `/projetos/${projetoId}/entregas`,
+        `/projetos/${projetoId}/entregas/issues/${issueId}`,
+      ]) {
+        await testador.pagina.goto(rota)
+        await expect(
+          testador.pagina.getByRole('status').filter({ hasText: 'Sem permissão para esta área.' }),
+        ).toBeVisible()
+        await expect(testador.pagina.getByText(/Item \d de /)).toHaveCount(0)
+      }
     })
   } finally {
     if (testador.contexto) {
