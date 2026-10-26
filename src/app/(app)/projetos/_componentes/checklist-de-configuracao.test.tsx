@@ -87,4 +87,27 @@ describe('ChecklistDeConfiguracao', () => {
     expect(badgeConcluido.closest('[data-tom]')).toHaveAttribute('data-tom', 'sucesso')
     expect(document.querySelectorAll('[data-tom="sucesso"]')).toHaveLength(1)
   })
+
+  test('falha mostra "Com falha" em tom erro, o texto e o link; nunca só cor', () => {
+    const itens: readonly ItemChecklist[] = [
+      {
+        chave: 'github',
+        titulo: 'GitHub',
+        descricao: 'Integração indisponível; os dados podem estar desatualizados.',
+        estado: 'falha',
+        acao: { rotulo: 'Ver repositórios', href: '/projetos/p1/configuracao#repositorios' },
+      },
+    ]
+    render(<ChecklistDeConfiguracao itens={itens} />)
+
+    const badge = screen.getByText('Com falha')
+    expect(badge.closest('[data-tom]')).toHaveAttribute('data-tom', 'erro')
+    expect(
+      screen.getByText('Integração indisponível; os dados podem estar desatualizados.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver repositórios' })).toHaveAttribute(
+      'href',
+      '/projetos/p1/configuracao#repositorios',
+    )
+  })
 })

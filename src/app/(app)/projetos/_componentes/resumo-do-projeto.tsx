@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { cn } from '@/lib/utils'
+import type { EstadoIntegracao } from '@/modules/github/model'
 import { calcularChecklist, type ContagensDoProjeto, type Contexto } from '@/modules/projetos/model'
 import type { ProjetoResumo } from '@/modules/projetos/service'
 import { ChecklistDeConfiguracao } from './checklist-de-configuracao'
@@ -9,6 +10,7 @@ import { ChecklistDeConfiguracao } from './checklist-de-configuracao'
 export interface ResumoDoProjetoProps {
   projeto: ProjetoResumo
   contagens: ContagensDoProjeto
+  estadoGitHub?: EstadoIntegracao
   contexto: Contexto
   podeGerenciar: boolean
   cliente?: { id: string; nome: string }
@@ -18,6 +20,7 @@ export interface ResumoDoProjetoProps {
 export function ResumoDoProjeto({
   projeto,
   contagens,
+  estadoGitHub = 'nao-configurada',
   contexto,
   podeGerenciar,
   cliente,
@@ -39,6 +42,7 @@ export function ResumoDoProjeto({
             itens={calcularChecklist(
               contagens,
               podeGerenciar ? `/projetos/${projeto.id}/configuracao` : null,
+              estadoGitHub,
             )}
           />
         ) : (

@@ -91,7 +91,7 @@ test('admin: /projetos/<P> mostra cinco abas, trilha Projetos › P e checklist 
   await expect(linkVerGlobal).toHaveAttribute('href', `/projetos/${projetoP.id}`)
 })
 
-test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "Associar clientes" → /projetos/<p>/configuracao; GitHub, Ambientes e Milestones "Ainda não disponível"; editar e associar funcionam (UX-03, A13)', async ({
+test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "Associar clientes" → /projetos/<p>/configuracao; GitHub pendente, Ambientes e Milestones "Ainda não disponível"; editar e associar funcionam (UX-03, A13)', async ({
   page,
 }) => {
   const { email, senha } = obterAdmin()
@@ -108,15 +108,17 @@ test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "
   // Checklist
   const listaChecklist = page.getByRole('list', { name: 'Configuração do projeto' })
   await expect(listaChecklist.getByText('Nenhum cliente associado')).toBeVisible()
-  await expect(listaChecklist.getByText('Pendente')).toBeVisible()
+  // Clientes e GitHub (sem repositórios) pendentes
+  await expect(listaChecklist.getByText('Pendente')).toHaveCount(2)
+  await expect(listaChecklist.getByText('Nenhum repositório vinculado')).toBeVisible()
 
   const linkAssociar = listaChecklist.getByRole('link', { name: 'Associar clientes' })
   await expect(linkAssociar).toBeVisible()
   await expect(linkAssociar).toHaveAttribute('href', `/projetos/${projeto.id}/configuracao`)
 
-  // GitHub, Ambientes e Milestones: "Ainda não disponível"
+  // Ambientes e Milestones: "Ainda não disponível"
   const badgesIndisponivel = listaChecklist.getByText('Ainda não disponível')
-  await expect(badgesIndisponivel).toHaveCount(3)
+  await expect(badgesIndisponivel).toHaveCount(2)
 
   // Clica em "Associar clientes" e vai para /projetos/<p>/configuracao
   await linkAssociar.click()

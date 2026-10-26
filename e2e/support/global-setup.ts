@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { rodarWorkerUmaVez } from './worker'
 import { garantirBancoDeTeste } from '../../tests/support/banco-de-teste-compartilhado'
 
 function carregarEnvSeNecessario(): void {
@@ -37,6 +38,19 @@ export default async function globalSetup(): Promise<void> {
 
   const { db } = await import('@/lib/db')
   try {
+    const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
+    await db.repositorioGitHub.updateMany({
+      where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
+      data: { projetoId: null, vinculadoEm: null },
+    })
+    await db.pullRequestGitHub.deleteMany({ where: dosExemplos })
+    await db.issueGitHub.deleteMany({ where: dosExemplos })
+    await db.repositorioGitHub.deleteMany({
+      where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
+    })
+    // Sem esta linha o worker considera o catálogo recente e não recataloga os repositórios apagados.
+    await db.integracaoGitHub.deleteMany({})
+
     await db.tentativaLogin.deleteMany({})
     await db.usuario.deleteMany({
       where: {
@@ -74,6 +88,9 @@ export default async function globalSetup(): Promise<void> {
   } finally {
     await db.$disconnect()
   }
+
+  // Recataloga os repositórios de exemplo (fixtures) para que o E2E os encontre sem projeto.
+  rodarWorkerUmaVez()
 
   const email = `e2e+${Date.now()}@local.test`
   const senha = randomBytes(24).toString('base64url')

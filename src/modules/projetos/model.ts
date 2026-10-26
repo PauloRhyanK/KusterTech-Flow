@@ -1,4 +1,5 @@
 import { ErroDeDominio } from '@/lib/erros'
+import type { EstadoIntegracao } from '@/modules/github/model'
 
 export function validarNomeDeProjeto(nome: string): string {
   const aparado = nome.trim()
@@ -22,13 +23,47 @@ export interface ItemChecklist {
   chave: 'clientes' | 'github' | 'ambientes' | 'milestones'
   titulo: string
   descricao: string
-  estado: 'concluido' | 'pendente' | 'indisponivel'
+  estado: 'concluido' | 'pendente' | 'falha' | 'indisponivel'
   acao?: { rotulo: string; href: string }
+}
+
+function calcularItemGitHub(
+  repositorios: number,
+  hrefConfiguracao: string | null,
+  estadoGitHub: EstadoIntegracao,
+): ItemChecklist {
+  const base = { chave: 'github', titulo: 'GitHub' } as const
+  const acaoPara = (rotulo: string) =>
+    hrefConfiguracao !== null ? { acao: { rotulo, href: `${hrefConfiguracao}#repositorios` } } : {}
+
+  if (repositorios === 0) {
+    return {
+      ...base,
+      descricao: 'Nenhum repositório vinculado',
+      estado: 'pendente',
+      ...acaoPara('Vincular repositórios'),
+    }
+  }
+  if (estadoGitHub === 'indisponivel') {
+    return {
+      ...base,
+      descricao: 'Integração indisponível; os dados podem estar desatualizados.',
+      estado: 'falha',
+      ...acaoPara('Ver repositórios'),
+    }
+  }
+  return {
+    ...base,
+    descricao:
+      repositorios === 1 ? '1 repositório vinculado' : `${repositorios} repositórios vinculados`,
+    estado: 'concluido',
+  }
 }
 
 export function calcularChecklist(
   contagens: ContagensDoProjeto,
   hrefConfiguracao: string | null,
+  estadoGitHub: EstadoIntegracao,
 ): readonly ItemChecklist[] {
   const itemClientes: ItemChecklist =
     contagens.clientes > 0
@@ -55,12 +90,7 @@ export function calcularChecklist(
 
   return [
     itemClientes,
-    {
-      chave: 'github',
-      titulo: 'GitHub',
-      descricao: 'A integração com o GitHub chega no Incremento 2.',
-      estado: 'indisponivel',
-    },
+    calcularItemGitHub(contagens.repositorios, hrefConfiguracao, estadoGitHub),
     {
       chave: 'ambientes',
       titulo: 'Ambientes',
