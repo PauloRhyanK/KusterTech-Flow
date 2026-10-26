@@ -15,6 +15,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "e2e": "playwright test",
     "worker": "tsx src/worker/main.ts",
+    "worker:uma-vez": "tsx src/worker/main.ts --uma-vez",
     "criar-admin": "node --import tsx scripts/criar-admin.ts",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate"
