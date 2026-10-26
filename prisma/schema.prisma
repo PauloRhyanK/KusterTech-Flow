@@ -88,6 +88,7 @@ model Projeto {
   criadoEm        DateTime         @default(now())
   atualizadoEm    DateTime         @updatedAt
   clientes        ProjetoCliente[]
+  repositorios    RepositorioGitHub[]
 }
 
 model ProjetoCliente {
@@ -99,4 +100,103 @@ model ProjetoCliente {
 
   @@id([projetoId, clienteId])
   @@index([clienteId])
+}
+
+enum EstadoIssueGitHub {
+  ABERTA
+  FECHADA
+}
+
+enum EstadoPullRequestGitHub {
+  ABERTO
+  FECHADO
+  MERGEADO
+}
+
+enum ResumoDeChecks {
+  SUCESSO
+  FALHA
+  PENDENTE
+  SEM_CHECKS
+}
+
+// Linha única (id = "github"), gravada pelo worker.
+model IntegracaoGitHub {
+  id                     String    @id
+  fonte                  String
+  configurada            Boolean
+  catalogoSincronizadoEm DateTime?
+  ultimaFalhaEm          DateTime?
+  ultimaFalhaMotivo      String?
+  atualizadoEm           DateTime  @updatedAt
+}
+
+model RepositorioGitHub {
+  id                        String              @id @default(uuid())
+  githubId                  BigInt              @unique
+  instalacaoId              BigInt
+  nomeCompleto              String
+  urlHtml                   String
+  privado                   Boolean
+  arquivadoNoGitHub         Boolean             @default(false)
+  removidoDaInstalacaoEm    DateTime?
+  projetoId                 String?
+  vinculadoEm               DateTime?
+  sincronizadoEm            DateTime?
+  sincronizacaoSolicitadaEm DateTime?
+  ultimaFalhaEm             DateTime?
+  ultimaFalhaMotivo         String?
+  falhasConsecutivas        Int                 @default(0)
+  cursorIssues              DateTime?
+  cursorPullRequests        DateTime?
+  catalogadoEm              DateTime
+  projeto                   Projeto?            @relation(fields: [projetoId], references: [id], onDelete: SetNull)
+  issues                    IssueGitHub[]
+  pullRequests              PullRequestGitHub[]
+
+  @@index([projetoId])
+}
+
+model IssueGitHub {
+  id                 String            @id @default(uuid())
+  githubId           BigInt            @unique
+  repositorioId      String
+  numero             Int
+  titulo             String
+  corpo              String?
+  estado             EstadoIssueGitHub
+  autor              String?
+  responsaveis       String[]
+  rotulos            String[]
+  urlHtml            String
+  criadaNoGitHub     DateTime
+  atualizadaNoGitHub DateTime
+  fechadaNoGitHub    DateTime?
+  sincronizadaEm     DateTime
+  repositorio        RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+
+  @@unique([repositorioId, numero])
+}
+
+model PullRequestGitHub {
+  id                  String                  @id @default(uuid())
+  githubId            BigInt                  @unique
+  repositorioId       String
+  numero              Int
+  titulo              String
+  estado              EstadoPullRequestGitHub
+  rascunho            Boolean
+  autor               String?
+  urlHtml             String
+  branch              String
+  shaHead             String
+  issuesReferenciadas Int[]
+  checks              ResumoDeChecks          @default(SEM_CHECKS)
+  checksAtualizadosEm DateTime?
+  atualizadoNoGitHub  DateTime
+  mergeadoNoGitHub    DateTime?
+  sincronizadoEm      DateTime
+  repositorio         RepositorioGitHub       @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+
+  @@unique([repositorioId, numero])
 }
