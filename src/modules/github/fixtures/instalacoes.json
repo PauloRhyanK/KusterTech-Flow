@@ -1,0 +1,11 @@
+[
+  {
+    "id": 900001,
+    "account": {
+      "login": "kustertech-exemplo",
+      "id": 100001
+    },
+    "app_id": 123456,
+    "target_type": "Organization"
+  }
+]

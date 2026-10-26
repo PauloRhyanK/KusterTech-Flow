@@ -1,0 +1,73 @@
+import { mapearCheck, mapearIssue, mapearPullRequest, mapearRepositorio } from './fonte'
+import type { FonteGitHub, RefRepositorio } from './fonte'
+import { ErroDeIntegracao } from './erros'
+import checks1a from './fixtures/checks/1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
+import checks1b from './fixtures/checks/1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
+import checks2a from './fixtures/checks/2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
+import checks2b from './fixtures/checks/2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
+import checks3a from './fixtures/checks/3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
+import checks3b from './fixtures/checks/3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
+import checks4a from './fixtures/checks/4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
+import checks4b from './fixtures/checks/4bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
+import issues_portal from './fixtures/kustertech-exemplo__portal/issues.json'
+import pulls_portal from './fixtures/kustertech-exemplo__portal/pulls.json'
+import issues_api from './fixtures/kustertech-exemplo__api/issues.json'
+import pulls_api from './fixtures/kustertech-exemplo__api/pulls.json'
+import issues_site from './fixtures/kustertech-exemplo__site/issues.json'
+import pulls_site from './fixtures/kustertech-exemplo__site/pulls.json'
+import issues_app_mobile from './fixtures/kustertech-exemplo__app-mobile/issues.json'
+import pulls_app_mobile from './fixtures/kustertech-exemplo__app-mobile/pulls.json'
+import instalacoes from './fixtures/instalacoes.json'
+import repositorios from './fixtures/repositorios.json'
+
+const POR_REPOSITORIO: Record<string, { issues: unknown[]; pulls: unknown[] }> = {
+  'kustertech-exemplo/portal': { issues: issues_portal, pulls: pulls_portal },
+  'kustertech-exemplo/api': { issues: issues_api, pulls: pulls_api },
+  'kustertech-exemplo/site': { issues: issues_site, pulls: pulls_site },
+  'kustertech-exemplo/app-mobile': { issues: issues_app_mobile, pulls: pulls_app_mobile },
+}
+
+const CHECKS_POR_SHA: Record<string, { check_runs: unknown[] }> = {
+  '1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks1a,
+  '1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks1b,
+  '2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks2a,
+  '2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks2b,
+  '3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks3a,
+  '3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks3b,
+  '4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks4a,
+  '4bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks4b,
+}
+
+function desdeFiltro<T extends { updated_at: string }>(itens: T[], desde: Date | null): T[] {
+  return desde ? itens.filter((i) => new Date(i.updated_at) >= desde) : itens
+}
+
+export function criarFonteFixtures(): FonteGitHub {
+  const dados = (repo: RefRepositorio) => {
+    const d = POR_REPOSITORIO[repo.nomeCompleto]
+    if (!d) {
+      throw new ErroDeIntegracao('sem-acesso')
+    }
+    return d
+  }
+
+  return {
+    tipo: 'fixtures',
+    async listarRepositorios() {
+      const instalacaoId = BigInt(instalacoes[0]!.id)
+      return repositorios.repositories.map((r) => mapearRepositorio(r, instalacaoId))
+    },
+    async listarIssuesAtualizadas(repo, desde) {
+      const itens = dados(repo).issues as { updated_at: string }[]
+      return desdeFiltro(itens, desde).flatMap((b) => mapearIssue(b) ?? [])
+    },
+    async listarPullRequestsAtualizados(repo, desde) {
+      const itens = dados(repo).pulls as { updated_at: string }[]
+      return desdeFiltro(itens, desde).map(mapearPullRequest)
+    },
+    async listarChecks(repo, sha) {
+      dados(repo)
+      return (CHECKS_POR_SHA[sha]?.check_runs ?? []).map(mapearCheck)
+    },
+  }
+}
