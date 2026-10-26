@@ -15,6 +15,9 @@ const {
   desarquivarProjetoMock,
   associarClienteMock,
   desassociarClienteMock,
+  vincularRepositorioMock,
+  desvincularRepositorioMock,
+  solicitarSincronizacaoMock,
 } = vi.hoisted(() => ({
   redirectMock: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`)
@@ -28,6 +31,9 @@ const {
   desarquivarProjetoMock: vi.fn(),
   associarClienteMock: vi.fn(),
   desassociarClienteMock: vi.fn(),
+  vincularRepositorioMock: vi.fn(),
+  desvincularRepositorioMock: vi.fn(),
+  solicitarSincronizacaoMock: vi.fn(),
 }))
 
 vi.mock('next/navigation', () => ({
@@ -57,12 +63,21 @@ vi.mock('@/modules/projetos/service', () => ({
   desassociarCliente: desassociarClienteMock,
 }))
 
+vi.mock('@/modules/github/service', () => ({
+  vincularRepositorio: vincularRepositorioMock,
+  desvincularRepositorio: desvincularRepositorioMock,
+  solicitarSincronizacao: solicitarSincronizacaoMock,
+}))
+
 import {
   alternarArquivamentoDoProjetoAction,
   associarClienteAction,
   criarProjetoAction,
   desassociarClienteAction,
+  desvincularRepositorioAction,
   editarProjetoAction,
+  solicitarSincronizacaoAction,
+  vincularRepositorioAction,
 } from './actions'
 
 describe('actions de projetos (unitário)', () => {
@@ -316,6 +331,94 @@ describe('actions de projetos (unitário)', () => {
 
       const res = await associarClienteAction({}, form)
       expect(res.erro).toBe('Sem permissão para gerenciar projetos.')
+    })
+  })
+
+  describe('repositórios do GitHub', () => {
+    const projetoId = randomUUID()
+    const repositorioId = randomUUID()
+
+    function formDoVinculo(): FormData {
+      const form = new FormData()
+      form.append('projetoId', projetoId)
+      form.append('repositorioId', repositorioId)
+      return form
+    }
+
+    test('sem sessão redireciona sem chamar o service (vincular, desvincular, sincronizar)', async () => {
+      obterSessaoMock.mockResolvedValue(null)
+
+      await expect(vincularRepositorioAction({}, formDoVinculo())).rejects.toThrow(
+        'NEXT_REDIRECT:/entrar',
+      )
+      await expect(desvincularRepositorioAction({}, formDoVinculo())).rejects.toThrow(
+        'NEXT_REDIRECT:/entrar',
+      )
+      await expect(solicitarSincronizacaoAction({}, formDoVinculo())).rejects.toThrow(
+        'NEXT_REDIRECT:/entrar',
+      )
+      expect(vincularRepositorioMock).not.toHaveBeenCalled()
+      expect(desvincularRepositorioMock).not.toHaveBeenCalled()
+      expect(solicitarSincronizacaoMock).not.toHaveBeenCalled()
+    })
+
+    test('ids inválidos não chegam ao service', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      const form = new FormData()
+      form.append('projetoId', 'nao-e-uuid')
+      form.append('repositorioId', repositorioId)
+
+      const resultado = await vincularRepositorioAction({}, form)
+      expect(resultado.erro).toBe('Identificador de projeto inválido.')
+      expect(vincularRepositorioMock).not.toHaveBeenCalled()
+    })
+
+    test('sucesso chama o service com o sujeito da sessão e revalida a configuração e o Resumo', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+      vincularRepositorioMock.mockResolvedValue(undefined)
+      desvincularRepositorioMock.mockResolvedValue(undefined)
+      solicitarSincronizacaoMock.mockResolvedValue(undefined)
+
+      expect((await vincularRepositorioAction({}, formDoVinculo())).sucesso).toBeDefined()
+      expect(vincularRepositorioMock).toHaveBeenCalledWith(sujeitoMock, projetoId, repositorioId)
+
+      expect((await desvincularRepositorioAction({}, formDoVinculo())).sucesso).toBe(
+        'Repositório desvinculado.',
+      )
+      expect(desvincularRepositorioMock).toHaveBeenCalledWith(sujeitoMock, projetoId, repositorioId)
+
+      const formSync = new FormData()
+      formSync.append('projetoId', projetoId)
+      expect((await solicitarSincronizacaoAction({}, formSync)).sucesso).toBe(
+        'Sincronização solicitada; o worker atende em até 30 s.',
+      )
+      expect(solicitarSincronizacaoMock).toHaveBeenCalledWith(sujeitoMock, projetoId)
+
+      expect(revalidatePathMock).toHaveBeenCalledWith(`/projetos/${projetoId}/configuracao`)
+      expect(revalidatePathMock).toHaveBeenCalledWith(`/projetos/${projetoId}`)
+    })
+
+    test('ErroDeAutorizacao, ErroDeDominio e erro inesperado viram mensagens sem vazar detalhes', async () => {
+      obterSessaoMock.mockResolvedValue(sessaoMock)
+
+      vincularRepositorioMock.mockRejectedValue(new ErroDeAutorizacao('projetos.gerenciar'))
+      expect((await vincularRepositorioAction({}, formDoVinculo())).erro).toBe(
+        'Sem permissão para gerenciar projetos.',
+      )
+
+      vincularRepositorioMock.mockRejectedValue(
+        new ErroDeDominio('Este repositório já está vinculado a outro projeto.'),
+      )
+      expect((await vincularRepositorioAction({}, formDoVinculo())).erro).toBe(
+        'Este repositório já está vinculado a outro projeto.',
+      )
+
+      desvincularRepositorioMock.mockRejectedValue(new Error('segredo do banco'))
+      const resultado = await desvincularRepositorioAction({}, formDoVinculo())
+      expect(resultado.erro).toBe(
+        'Não foi possível completar a operação agora. Tente novamente em instantes.',
+      )
+      expect(logErrorMock).toHaveBeenCalled()
     })
   })
 })

@@ -75,10 +75,25 @@ describe('projetos (integração)', () => {
     expect(clienteBComProjetos.projetos[0]?.id).toBe(projetoId)
     expect(clienteBComProjetos.projetos[0]?.nome).toBe('Projeto Compartilhado Alpha-Beta')
 
-    // 4. listarProjetosParaTela devolve configuracaoPendente = false
+    // 4. listarProjetosParaTela: com clientes mas sem repositório GitHub a configuração segue pendente;
+    // com um repositório vinculado deixa de estar
     const tela = await listarProjetosParaTela(adminSujeito)
     expect(tela).toHaveLength(1)
-    expect(tela[0]?.configuracaoPendente).toBe(false)
+    expect(tela[0]?.configuracaoPendente).toBe(true)
+
+    await db.repositorioGitHub.create({
+      data: {
+        githubId: BigInt(1),
+        instalacaoId: BigInt(1),
+        nomeCompleto: 'kustertech-exemplo/portal',
+        urlHtml: 'https://github.com/kustertech-exemplo/portal',
+        privado: false,
+        catalogadoEm: new Date(),
+        projetoId,
+      },
+    })
+    const telaComRepositorio = await listarProjetosParaTela(adminSujeito)
+    expect(telaComRepositorio[0]?.configuracaoPendente).toBe(false)
 
     // 5. listarProjetosParaTela com projeto sem clientes devolve configuracaoPendente = true
     const { id: projSemClientesId } = await criarProjeto(adminSujeito, {

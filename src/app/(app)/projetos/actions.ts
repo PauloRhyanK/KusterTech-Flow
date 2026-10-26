@@ -8,6 +8,11 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import {
+  desvincularRepositorio,
+  solicitarSincronizacao,
+  vincularRepositorio,
+} from '@/modules/github/service'
+import {
   arquivarProjeto,
   associarCliente,
   criarProjeto,
@@ -57,6 +62,17 @@ const associacaoSchema = z.object({
 const alternarArquivamentoSchema = z.object({
   projetoId: z.string({ error: 'Dados inválidos.' }).uuid('Identificador de projeto inválido.'),
   arquivar: z.enum(['true', 'false'], { error: 'Dados inválidos.' }),
+})
+
+const vinculoSchema = z.object({
+  projetoId: z.string({ error: 'Dados inválidos.' }).uuid('Identificador de projeto inválido.'),
+  repositorioId: z
+    .string({ error: 'Dados inválidos.' })
+    .uuid('Identificador de repositório inválido.'),
+})
+
+const sincronizacaoSchema = z.object({
+  projetoId: z.string({ error: 'Dados inválidos.' }).uuid('Identificador de projeto inválido.'),
 })
 
 function revalidarCaminhosDoProjeto(projetoId: string): void {
@@ -265,5 +281,103 @@ export async function alternarArquivamentoDoProjetoAction(
     }
     log.error({ err: erro }, 'Erro inesperado ao alternar arquivamento do projeto.')
     return { erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.' }
+  }
+}
+
+function revalidarConfiguracaoDoProjeto(projetoId: string): void {
+  revalidatePath(`/projetos/${projetoId}/configuracao`)
+  revalidatePath(`/projetos/${projetoId}`)
+}
+
+function estadoDeErro(erro: unknown, contexto: string): EstadoProjeto {
+  if (erro instanceof ErroDeAutorizacao) {
+    return { erro: 'Sem permissão para gerenciar projetos.' }
+  }
+  if (erro instanceof ErroDeDominio) {
+    return { erro: erro.message }
+  }
+  log.error({ err: erro }, contexto)
+  return { erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.' }
+}
+
+export async function vincularRepositorioAction(
+  _estado: EstadoProjeto,
+  form: FormData,
+): Promise<EstadoProjeto> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = vinculoSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    repositorioId: form.get('repositorioId'),
+  })
+  if (!parse.success) {
+    return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  }
+
+  try {
+    await vincularRepositorio(sessao.sujeito, parse.data.projetoId, parse.data.repositorioId)
+    revalidarConfiguracaoDoProjeto(parse.data.projetoId)
+    return { sucesso: 'Repositório vinculado; a primeira sincronização é solicitada ao worker.' }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao vincular repositório ao projeto.')
+  }
+}
+
+export async function desvincularRepositorioAction(
+  estadoOuForm: EstadoProjeto | FormData,
+  talvezForm?: FormData,
+): Promise<EstadoProjeto> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const form =
+    talvezForm instanceof FormData
+      ? talvezForm
+      : estadoOuForm instanceof FormData
+        ? estadoOuForm
+        : new FormData()
+
+  const parse = vinculoSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    repositorioId: form.get('repositorioId'),
+  })
+  if (!parse.success) {
+    return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  }
+
+  try {
+    await desvincularRepositorio(sessao.sujeito, parse.data.projetoId, parse.data.repositorioId)
+    revalidarConfiguracaoDoProjeto(parse.data.projetoId)
+    return { sucesso: 'Repositório desvinculado.' }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao desvincular repositório do projeto.')
+  }
+}
+
+export async function solicitarSincronizacaoAction(
+  _estado: EstadoProjeto,
+  form: FormData,
+): Promise<EstadoProjeto> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = sincronizacaoSchema.safeParse({ projetoId: form.get('projetoId') })
+  if (!parse.success) {
+    return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  }
+
+  try {
+    await solicitarSincronizacao(sessao.sujeito, parse.data.projetoId)
+    revalidarConfiguracaoDoProjeto(parse.data.projetoId)
+    return { sucesso: 'Sincronização solicitada; o worker atende em até 30 s.' }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao solicitar sincronização do projeto.')
   }
 }

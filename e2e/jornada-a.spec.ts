@@ -138,14 +138,14 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
     await page.goto(`/projetos/${projetoId}`)
     await expect(page.getByRole('heading', { level: 1, name: nomeProjeto })).toBeVisible()
 
-    // Checklist com "Clientes" Concluído e os demais "Ainda não disponível"
+    // Checklist com "Clientes" Concluído, GitHub pendente e os demais "Ainda não disponível"
     const listaChecklist = page.getByRole('list', { name: 'Configuração do projeto' })
     await expect(listaChecklist.getByText('Clientes', { exact: true })).toBeVisible()
     await expect(listaChecklist.getByText('Concluído')).toBeVisible()
     await expect(listaChecklist.getByText('GitHub', { exact: true })).toBeVisible()
     await expect(listaChecklist.getByText('Ambientes', { exact: true })).toBeVisible()
     await expect(listaChecklist.getByText('Milestones', { exact: true })).toBeVisible()
-    await expect(listaChecklist.getByText('Ainda não disponível')).toHaveCount(3)
+    await expect(listaChecklist.getByText('Ainda não disponível')).toHaveCount(2)
 
     // Cinco abas
     const navAbasGlobal = page.getByRole('navigation', { name: 'Seções do projeto' })

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { ErroDeDominio } from '@/lib/erros'
+import type { EstadoIntegracao } from '@/modules/github/model'
 import {
   abasDoContexto,
   calcularChecklist,
@@ -8,7 +9,7 @@ import {
 } from './model'
 
 describe('projetos / model (unitário)', () => {
-  test('calcularChecklist: sem clientes → clientes pendente com ação para o href; com clientes → concluido; href null → pendente sem ação; github/ambientes/milestones sempre indisponivel; nunca concluido sem contagem; ordem fixa', () => {
+  test('calcularChecklist: sem clientes → clientes pendente com ação para o href; com clientes → concluido; href null → pendente sem ação; github pelo estado real; ambientes/milestones sempre indisponivel; nunca concluido sem contagem; ordem fixa', () => {
     const contagensSemClientes: ContagensDoProjeto = {
       clientes: 0,
       repositorios: 0,
@@ -16,7 +17,11 @@ describe('projetos / model (unitário)', () => {
       milestones: 0,
     }
 
-    const checklistComHref = calcularChecklist(contagensSemClientes, '/projetos/p-1/configuracao')
+    const checklistComHref = calcularChecklist(
+      contagensSemClientes,
+      '/projetos/p-1/configuracao',
+      'nao-configurada',
+    )
 
     // Ordem fixa: clientes, github, ambientes, milestones
     expect(checklistComHref.map((item) => item.chave)).toEqual([
@@ -38,12 +43,16 @@ describe('projetos / model (unitário)', () => {
       },
     })
 
-    // GitHub, Ambientes, Milestones sempre indisponíveis com suas mensagens específicas
+    // GitHub sem repositórios é pendente; Ambientes e Milestones seguem indisponíveis
     expect(checklistComHref[1]).toEqual({
       chave: 'github',
       titulo: 'GitHub',
-      descricao: 'A integração com o GitHub chega no Incremento 2.',
-      estado: 'indisponivel',
+      descricao: 'Nenhum repositório vinculado',
+      estado: 'pendente',
+      acao: {
+        rotulo: 'Vincular repositórios',
+        href: '/projetos/p-1/configuracao#repositorios',
+      },
     })
     expect(checklistComHref[2]).toEqual({
       chave: 'ambientes',
@@ -59,7 +68,7 @@ describe('projetos / model (unitário)', () => {
     })
 
     // Sem clientes e com href null → pendente sem ação
-    const checklistSemHref = calcularChecklist(contagensSemClientes, null)
+    const checklistSemHref = calcularChecklist(contagensSemClientes, null, 'nao-configurada')
     expect(checklistSemHref[0]).toEqual({
       chave: 'clientes',
       titulo: 'Clientes',
@@ -75,7 +84,11 @@ describe('projetos / model (unitário)', () => {
       ambientes: 0,
       milestones: 0,
     }
-    const checklistConcluido = calcularChecklist(contagensComClientes, '/projetos/p-1/configuracao')
+    const checklistConcluido = calcularChecklist(
+      contagensComClientes,
+      '/projetos/p-1/configuracao',
+      'nao-configurada',
+    )
     expect(checklistConcluido[0]).toEqual({
       chave: 'clientes',
       titulo: 'Clientes',
@@ -91,10 +104,46 @@ describe('projetos / model (unitário)', () => {
       ambientes: 3,
       milestones: 2,
     }
-    const checklistAltas = calcularChecklist(contagensAltas, null)
-    expect(checklistAltas[1]?.estado).toBe('indisponivel')
+    const checklistAltas = calcularChecklist(contagensAltas, null, 'conectada')
+    expect(checklistAltas[1]?.estado).toBe('concluido')
     expect(checklistAltas[2]?.estado).toBe('indisponivel')
     expect(checklistAltas[3]?.estado).toBe('indisponivel')
+  })
+
+  test('calcularChecklist github: pendente sem repositórios com ação #repositorios; falha com indisponível; concluído com "2 repositórios vinculados"; sem href não há ação', () => {
+    const base: ContagensDoProjeto = { clientes: 1, repositorios: 0, ambientes: 0, milestones: 0 }
+    const href = '/projetos/p-1/configuracao'
+    const github = (c: ContagensDoProjeto, h: string | null, e: EstadoIntegracao) =>
+      calcularChecklist(c, h, e).find((i) => i.chave === 'github')
+
+    expect(github(base, href, 'nao-configurada')).toEqual({
+      chave: 'github',
+      titulo: 'GitHub',
+      descricao: 'Nenhum repositório vinculado',
+      estado: 'pendente',
+      acao: { rotulo: 'Vincular repositórios', href: `${href}#repositorios` },
+    })
+    expect(github(base, null, 'nao-configurada')?.acao).toBeUndefined()
+
+    const falha = github({ ...base, repositorios: 2 }, href, 'indisponivel')
+    expect(falha).toEqual({
+      chave: 'github',
+      titulo: 'GitHub',
+      descricao: 'Integração indisponível; os dados podem estar desatualizados.',
+      estado: 'falha',
+      acao: { rotulo: 'Ver repositórios', href: `${href}#repositorios` },
+    })
+
+    expect(github({ ...base, repositorios: 2 }, href, 'conectada')).toEqual({
+      chave: 'github',
+      titulo: 'GitHub',
+      descricao: '2 repositórios vinculados',
+      estado: 'concluido',
+    })
+    expect(github({ ...base, repositorios: 1 }, href, 'sem-dados-recentes')?.descricao).toBe(
+      '1 repositório vinculado',
+    )
+    expect(github({ ...base, repositorios: 1 }, null, 'indisponivel')?.acao).toBeUndefined()
   })
 
   test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/...; cliente tem 3 com /clientes/[c]/projetos/[p]/...; só Resumo disponivel', () => {

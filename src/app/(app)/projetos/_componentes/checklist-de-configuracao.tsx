@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Circle, CircleCheck, CircleDashed } from 'lucide-react'
+import { Circle, CircleAlert, CircleCheck, CircleDashed } from 'lucide-react'
 import { buttonVariants } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { cn } from '@/lib/utils'
@@ -31,6 +31,14 @@ export function ChecklistDeConfiguracao({ itens, className }: ChecklistDeConfigu
               {item.estado === 'pendente' && (
                 <Circle size={18} strokeWidth={1.75} aria-hidden="true" className="text-atencao" />
               )}
+              {item.estado === 'falha' && (
+                <CircleAlert
+                  size={18}
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                  className="text-erro"
+                />
+              )}
               {item.estado === 'indisponivel' && (
                 <CircleDashed
                   size={18}
@@ -49,6 +57,7 @@ export function ChecklistDeConfiguracao({ itens, className }: ChecklistDeConfigu
           <div className="flex items-center gap-3 self-end sm:self-center">
             {item.estado === 'concluido' && <BadgeDeEstado tom="sucesso">Concluído</BadgeDeEstado>}
             {item.estado === 'pendente' && <BadgeDeEstado tom="atencao">Pendente</BadgeDeEstado>}
+            {item.estado === 'falha' && <BadgeDeEstado tom="erro">Com falha</BadgeDeEstado>}
             {item.estado === 'indisponivel' && (
               <BadgeDeEstado tom="neutro">Ainda não disponível</BadgeDeEstado>
             )}

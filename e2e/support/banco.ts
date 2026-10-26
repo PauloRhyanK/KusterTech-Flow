@@ -99,3 +99,48 @@ export async function existeUsuarioPorEmail(email: string): Promise<boolean> {
   })
   return Boolean(usuario)
 }
+
+export function repositoriosDoProjetoE2E(projectName: string): [string, string] {
+  return projectName === 'mobile'
+    ? ['kustertech-exemplo/site', 'kustertech-exemplo/app-mobile']
+    : ['kustertech-exemplo/portal', 'kustertech-exemplo/api']
+}
+
+export async function vincularNoBanco(projetoId: string, nomeCompleto: string): Promise<void> {
+  const agora = new Date()
+  await db.repositorioGitHub.updateMany({
+    where: { nomeCompleto },
+    data: { projetoId, vinculadoEm: agora, sincronizacaoSolicitadaEm: agora },
+  })
+}
+
+export async function liberarRepositoriosNoBanco(nomes: readonly string[]): Promise<void> {
+  await db.repositorioGitHub.updateMany({
+    where: { nomeCompleto: { in: [...nomes] } },
+    data: { projetoId: null, vinculadoEm: null },
+  })
+}
+
+export async function definirSituacaoDoRepositorio(
+  nomeCompleto: string,
+  situacao: {
+    sincronizadoEm?: Date | null
+    ultimaFalhaEm?: Date | null
+    ultimaFalhaMotivo?: string | null
+  },
+): Promise<void> {
+  await db.repositorioGitHub.updateMany({ where: { nomeCompleto }, data: situacao })
+}
+
+export async function obterRepositorioNoBanco(
+  nomeCompleto: string,
+): Promise<{ id: string; projetoId: string | null }> {
+  return db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto },
+    select: { id: true, projetoId: true },
+  })
+}
+
+export async function contarIssues(): Promise<number> {
+  return db.issueGitHub.count()
+}

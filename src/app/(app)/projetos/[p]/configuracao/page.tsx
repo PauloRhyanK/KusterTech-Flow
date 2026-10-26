@@ -8,9 +8,11 @@ import { ErroDeDominio } from '@/lib/erros'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { obterRepositoriosDoProjeto } from '@/modules/github/queries'
 import { obterProjetoParaConfiguracao } from '@/modules/projetos/queries'
 import { AssociacaoDeClientes } from '../../_componentes/associacao-de-clientes'
 import { FormularioProjeto } from '../../_componentes/formulario-projeto'
+import { RepositoriosDoProjeto } from '../../_componentes/repositorios-do-projeto'
 import { alternarArquivamentoDoProjetoAction, editarProjetoAction } from '../../actions'
 
 export interface PaginaConfiguracaoProjetoProps {
@@ -44,8 +46,10 @@ export default async function PaginaConfiguracaoProjeto({
   const { p } = await params
 
   let projeto: Awaited<ReturnType<typeof obterProjetoParaConfiguracao>>
+  let github: Awaited<ReturnType<typeof obterRepositoriosDoProjeto>>
   try {
     projeto = await obterProjetoParaConfiguracao(sessao.sujeito, p)
+    github = await obterRepositoriosDoProjeto(sessao.sujeito, p)
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return (
@@ -100,12 +104,13 @@ export default async function PaginaConfiguracaoProjeto({
         />
       </section>
 
-      <section className="space-y-3">
+      <section id="repositorios" className="space-y-3">
         <h2 className="text-lg font-semibold text-text-primary">GitHub</h2>
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="GitHub"
-          descricao="A integração com o GitHub chega no Incremento 2."
+        <RepositoriosDoProjeto
+          projetoId={projeto.id}
+          situacao={github.situacao}
+          vinculados={github.vinculados}
+          disponiveis={github.disponiveis}
         />
       </section>
 

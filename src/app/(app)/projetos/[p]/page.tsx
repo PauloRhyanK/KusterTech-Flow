@@ -52,6 +52,7 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
     <ResumoDoProjeto
       projeto={projetoComContagens}
       contagens={projetoComContagens.contagens}
+      estadoGitHub={projetoComContagens.estadoGitHub}
       contexto={{ tipo: 'global' }}
       podeGerenciar={podeGerenciar}
     />
