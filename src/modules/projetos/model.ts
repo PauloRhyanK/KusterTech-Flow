@@ -118,7 +118,7 @@ export function abasDoContexto(projetoId: string, contexto: Contexto): readonly 
   if (contexto.tipo === 'global') {
     return [
       { rotulo: 'Resumo', href: `/projetos/${projetoId}`, disponivel: true },
-      { rotulo: 'Entregas', href: `/projetos/${projetoId}/entregas`, disponivel: false },
+      { rotulo: 'Entregas', href: `/projetos/${projetoId}/entregas`, disponivel: true },
       { rotulo: 'Homologação', href: `/projetos/${projetoId}/homologacao`, disponivel: false },
       { rotulo: 'Saúde e Erros', href: `/projetos/${projetoId}/saude`, disponivel: false },
       { rotulo: 'Recursos', href: `/projetos/${projetoId}/recursos`, disponivel: false },
