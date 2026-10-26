@@ -146,14 +146,14 @@ describe('projetos / model (unitário)', () => {
     expect(github({ ...base, repositorios: 1 }, null, 'indisponivel')?.acao).toBeUndefined()
   })
 
-  test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/...; cliente tem 3 com /clientes/[c]/projetos/[p]/...; só Resumo disponivel', () => {
+  test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/... e Entregas disponível; cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas indisponível', () => {
     const projetoId = 'proj-123'
 
     // Contexto global
     const abasGlobal = abasDoContexto(projetoId, { tipo: 'global' })
     expect(abasGlobal).toEqual([
       { rotulo: 'Resumo', href: '/projetos/proj-123', disponivel: true },
-      { rotulo: 'Entregas', href: '/projetos/proj-123/entregas', disponivel: false },
+      { rotulo: 'Entregas', href: '/projetos/proj-123/entregas', disponivel: true },
       { rotulo: 'Homologação', href: '/projetos/proj-123/homologacao', disponivel: false },
       { rotulo: 'Saúde e Erros', href: '/projetos/proj-123/saude', disponivel: false },
       { rotulo: 'Recursos', href: '/projetos/proj-123/recursos', disponivel: false },

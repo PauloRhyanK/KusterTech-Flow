@@ -144,3 +144,13 @@ export async function obterRepositorioNoBanco(
 export async function contarIssues(): Promise<number> {
   return db.issueGitHub.count()
 }
+
+export async function obterIssueNoBanco(
+  nomeCompleto: string,
+  numero: number,
+): Promise<{ id: string }> {
+  return db.issueGitHub.findFirstOrThrow({
+    where: { numero, repositorio: { nomeCompleto } },
+    select: { id: true },
+  })
+}

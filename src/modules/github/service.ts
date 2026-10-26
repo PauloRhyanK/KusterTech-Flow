@@ -32,14 +32,14 @@ export function intervaloDaIntegracao(): number {
   return Number(process.env.GITHUB_INTERVALO_MS) || INTERVALO_PADRAO_MS
 }
 
-function exigirLeituraGlobal(sujeito: Sujeito): void {
+export function exigirLeituraGlobal(sujeito: Sujeito): void {
   exigirPermissao(sujeito, 'projetos.ler')
   if (!podeVerVisaoGlobal(sujeito)) {
     throw new ErroDeAutorizacao('projetos.ler')
   }
 }
 
-async function lerSituacao(projetoId: string, agora: Date) {
+export async function lerSituacao(projetoId: string, agora: Date) {
   const [integracao, repositorios] = await Promise.all([
     db.integracaoGitHub.findUnique({ where: { id: ID_INTEGRACAO } }),
     db.repositorioGitHub.findMany({ where: { projetoId }, orderBy: { nomeCompleto: 'asc' } }),
