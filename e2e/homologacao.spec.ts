@@ -112,7 +112,7 @@ test('com #2 disponibilizada por disponibilizarNoBanco, aprovador de Acme aprova
         .getByRole('status')
         .filter({ hasText: `Aprovação registrada para ${c.acme.nome}.` }),
     ).toBeVisible()
-    await expect(aprovador.page.getByText('Aprovada', { exact: true })).toBeVisible()
+    await expect(aprovador.page.getByText('Aprovada', { exact: true }).first()).toBeVisible()
     const depois = await obterItemDeHomologacaoNoBanco(c.acme.id, c.milestone.id, c.repoUm, 2)
     expect(depois?.estado).toBe('APROVADA')
   } finally {
