@@ -56,4 +56,18 @@ describe('AvisoDeIntegracao', () => {
       '/projetos/p1/configuracao#repositorios',
     )
   })
+
+  test('hrefConfiguracao null não mostra o link "Vincular repositórios"', () => {
+    render(
+      <AvisoDeIntegracao
+        situacao={{ ...base, estadoDoProjeto: 'nao-configurada' }}
+        sincronizadoEm={null}
+        hrefConfiguracao={null}
+      />,
+    )
+    expect(
+      screen.getByText('O GitHub ainda não está configurado neste projeto.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Vincular repositórios' })).not.toBeInTheDocument()
+  })
 })

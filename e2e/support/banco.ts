@@ -167,3 +167,61 @@ export async function obterIssueNoBanco(
     select: { id: true },
   })
 }
+
+export async function criarMilestoneNoBanco(
+  projetoId: string,
+  titulo: string,
+  clientesIds: string[] = [],
+): Promise<{ id: string; titulo: string }> {
+  return db.milestone.create({
+    data: {
+      projetoId,
+      titulo,
+      tituloNormalizado: normalizarNome(titulo),
+      clientes: { create: clientesIds.map((clienteId) => ({ clienteId })) },
+    },
+    select: { id: true, titulo: true },
+  })
+}
+
+export async function vincularIssuesNoBanco(
+  milestoneId: string,
+  issueIds: readonly string[],
+): Promise<void> {
+  await db.milestoneIssue.createMany({
+    data: issueIds.map((issueId) => ({ milestoneId, issueId, origem: 'MANUAL' as const })),
+    skipDuplicates: true,
+  })
+}
+
+export async function desvincularIssuesNoBanco(milestoneId: string): Promise<void> {
+  await db.milestoneIssue.deleteMany({ where: { milestoneId } })
+}
+
+export async function obterMilestoneIssueNoBanco(
+  milestoneId: string,
+  issueId: string,
+): Promise<{
+  origem: string
+  foraDoEscopo: boolean
+  justificativaForaDoEscopo: string | null
+} | null> {
+  return db.milestoneIssue.findUnique({
+    where: { milestoneId_issueId: { milestoneId, issueId } },
+    select: { origem: true, foraDoEscopo: true, justificativaForaDoEscopo: true },
+  })
+}
+
+export async function contarMilestones(projetoId: string): Promise<number> {
+  return db.milestone.count({ where: { projetoId } })
+}
+
+// Apaga as correções registradas entre issues dos repositórios (original ou correção).
+export async function limparVinculosDeIssuesNoBanco(
+  nomesDeRepositorio: readonly string[],
+): Promise<void> {
+  const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomesDeRepositorio] } } }
+  await db.issueVinculo.deleteMany({
+    where: { OR: [{ original: dosRepositorios }, { correcao: dosRepositorios }] },
+  })
+}

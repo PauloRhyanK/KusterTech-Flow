@@ -54,7 +54,7 @@ test('Entregas lista as issues abertas dos dois repositórios, filtra por fechad
   const [nomeUm, nomeDois] = [repoUm, repoDois].map((r) => r.split('/')[1] as string)
 
   await page.goto(`/projetos/${projeto.id}/entregas`)
-  await expect(page.getByText('Milestones chegam no Incremento 3.')).toBeVisible()
+  await expect(page.getByText('Nenhuma milestone criada.')).toBeVisible()
 
   const lista = page.getByRole('list', { name: 'Issues sem milestone' })
   await expect(lista.getByRole('listitem')).toHaveCount(6)
