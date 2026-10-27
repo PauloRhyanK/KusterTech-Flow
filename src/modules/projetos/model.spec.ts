@@ -216,7 +216,7 @@ describe('projetos / model (unitário)', () => {
     expect(github({ ...base, repositorios: 1 }, null, 'indisponivel')?.acao).toBeUndefined()
   })
 
-  test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/... e Entregas disponível; cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas disponível', () => {
+  test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/... e Entregas e Homologação disponíveis; cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas e Homologação disponíveis', () => {
     const projetoId = 'proj-123'
 
     // Contexto global
@@ -224,7 +224,7 @@ describe('projetos / model (unitário)', () => {
     expect(abasGlobal).toEqual([
       { rotulo: 'Resumo', href: '/projetos/proj-123', disponivel: true },
       { rotulo: 'Entregas', href: '/projetos/proj-123/entregas', disponivel: true },
-      { rotulo: 'Homologação', href: '/projetos/proj-123/homologacao', disponivel: false },
+      { rotulo: 'Homologação', href: '/projetos/proj-123/homologacao', disponivel: true },
       { rotulo: 'Saúde e Erros', href: '/projetos/proj-123/saude', disponivel: false },
       { rotulo: 'Recursos', href: '/projetos/proj-123/recursos', disponivel: false },
     ])
@@ -241,7 +241,7 @@ describe('projetos / model (unitário)', () => {
       {
         rotulo: 'Homologação',
         href: '/clientes/cli-456/projetos/proj-123/homologacao',
-        disponivel: false,
+        disponivel: true,
       },
     ])
   })

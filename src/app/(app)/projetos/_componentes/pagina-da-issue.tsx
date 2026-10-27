@@ -10,6 +10,7 @@ import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { obterCliente } from '@/modules/clientes/service'
 import { obterIssueNoContexto } from '@/modules/entregas/queries'
 import { obterRepositoriosDoProjeto } from '@/modules/github/service'
+import { lerRetornoDaFila } from '@/modules/homologacao/model'
 import {
   listarHomologacaoDaIssuePorCliente,
   obterHomologacaoDaIssue,
@@ -96,6 +97,15 @@ export async function PaginaDaIssue({
   const rotas = rotasDoProjeto(projetoId, contexto)
   const podeGerenciar = admin && projeto.arquivadoEm === null
   const verNaGlobal = !global && podeVerVisaoGlobal(sujeito)
+  // A fila global só é prefixo aceito para quem pode ver a visão global (D65).
+  const hrefDeRetorno =
+    clienteId === null
+      ? null
+      : lerRetornoDaFila(primeiro(searchParams.retorno) || undefined, [
+          ...(podeVerVisaoGlobal(sujeito) ? [`/projetos/${projetoId}/homologacao`] : []),
+          `/clientes/${clienteId}/projetos/${projetoId}/homologacao`,
+          `/clientes/${clienteId}/projetos/${projetoId}/entregas/milestones/`,
+        ])
 
   const lateral = (
     <>
@@ -166,6 +176,7 @@ export async function PaginaDaIssue({
             <HomologacaoDaIssueNoCliente
               dados={homologacaoNoCliente}
               projetoId={projetoId}
+              hrefDeRetorno={hrefDeRetorno}
               issue={{ id: issue.id, numero: issue.numero, repositorio: issue.repositorio }}
               hrefDaMilestone={(milestoneId) => rotas.issue(issue.id, milestoneId)}
             />

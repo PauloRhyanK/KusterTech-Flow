@@ -3,7 +3,9 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
+import { hrefDaFila, type FiltrosDaFila } from '@/modules/homologacao/model'
 import {
+  listarFilaDoProjeto,
   listarHomologacaoDaIssuePorCliente,
   obterHomologacaoDaIssue,
 } from '@/modules/homologacao/queries'
@@ -234,5 +236,155 @@ describe('homologação da issue por cliente (visão global)', () => {
         '00000000-0000-4000-8000-000000000000',
       ),
     ).rejects.toBeInstanceOf(ErroDeDominio)
+  })
+})
+
+describe('fila de homologação do projeto (integração)', () => {
+  const todos: FiltrosDaFila = { filtro: 'todos', clienteId: null, milestoneId: null }
+
+  async function aprovarA1() {
+    await disponibilizar(c.clienteAId, 1)
+    await disponibilizar(c.clienteAId, 2)
+    const item = await db.homologacaoItem.findFirstOrThrow({
+      where: { issue: { numero: 1 }, homologacao: { clienteId: c.clienteAId } },
+    })
+    await registrarAcaoDeHomologacao(c.aprovadorA, {
+      acao: 'APROVAR',
+      itemId: item.id,
+      clienteId: c.clienteAId,
+      milestoneId: c.milestoneId,
+      issueId: c.issuePorNumero[1]!,
+      versaoId: c.versoes.v1,
+      ultimoEventoId: item.ultimoEventoId,
+      texto: null,
+      visibilidade: 'COMPARTILHAVEL',
+    })
+  }
+
+  test('testadorA no cliente A: contagens {requer 1, aguardando-outros 0, aprovados 1, todos 2}', async () => {
+    await aprovarA1()
+    const fila = await listarFilaDoProjeto(
+      c.testadorA,
+      c.projetoId,
+      { tipo: 'cliente', clienteId: c.clienteAId },
+      todos,
+    )
+    expect(fila.contagens).toEqual({
+      'requer-minha-acao': 1,
+      'aguardando-outros': 0,
+      aprovados: 1,
+      todos: 2,
+    })
+    expect(fila.situacao).toBe('com-itens')
+    expect(fila.integracao).toBeNull()
+    expect(fila.grupos).toHaveLength(1)
+    expect(fila.grupos[0]!.milestone).toEqual({ id: c.milestoneId, titulo: 'Release 1' })
+    expect(fila.grupos[0]!.itens.map((i) => [i.issueNumero, i.estado, i.clienteNome])).toEqual([
+      [1, 'APROVADA', 'Cliente A'],
+      [2, 'PENDENTE_DE_TESTE', 'Cliente A'],
+    ])
+    expect(fila.grupos[0]!.itens[0]).toMatchObject({
+      repositorio: 'kustertech-exemplo/portal',
+      versaoRotulo: 'v1',
+    })
+
+    const requer = await listarFilaDoProjeto(
+      c.testadorA,
+      c.projetoId,
+      { tipo: 'cliente', clienteId: c.clienteAId },
+      { ...todos, filtro: 'requer-minha-acao' },
+    )
+    expect(requer.grupos[0]!.itens.map((i) => i.issueNumero)).toEqual([2])
+    expect(requer.contagens.todos).toBe(2)
+  })
+
+  test('admin global: {requer 3, aguardando-outros 0, aprovados 1, todos 4}; cliente=B → todos 2', async () => {
+    await aprovarA1()
+    const global = { tipo: 'global' } as const
+    const fila = await listarFilaDoProjeto(c.admin, c.projetoId, global, todos)
+    expect(fila.contagens).toEqual({
+      'requer-minha-acao': 3,
+      'aguardando-outros': 0,
+      aprovados: 1,
+      todos: 4,
+    })
+    expect(fila.integracao).not.toBeNull()
+    expect(fila.clientes.map((x) => x.nome)).toEqual(['Cliente A', 'Cliente B'])
+    expect(fila.milestones).toEqual([{ id: c.milestoneId, titulo: 'Release 1' }])
+
+    const deB = await listarFilaDoProjeto(c.admin, c.projetoId, global, {
+      ...todos,
+      clienteId: c.clienteBId,
+    })
+    expect(deB.contagens.todos).toBe(2)
+    expect(deB.grupos[0]!.itens.map((i) => i.clienteNome)).toEqual(['Cliente B', 'Cliente B'])
+  })
+
+  test('aprovadorB no cliente B: todos 0 e situacao sem-itens (itens de B ocultos); aprovadorB no cliente A → ErroDeAutorizacao; testadorA na global → ErroDeAutorizacao', async () => {
+    const deB = await listarFilaDoProjeto(
+      c.aprovadorB,
+      c.projetoId,
+      { tipo: 'cliente', clienteId: c.clienteBId },
+      todos,
+    )
+    expect(deB.contagens.todos).toBe(0)
+    expect(deB.situacao).toBe('sem-itens')
+    expect(deB.grupos).toEqual([])
+
+    await expect(
+      listarFilaDoProjeto(
+        c.aprovadorB,
+        c.projetoId,
+        { tipo: 'cliente', clienteId: c.clienteAId },
+        todos,
+      ),
+    ).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    await expect(
+      listarFilaDoProjeto(c.testadorA, c.projetoId, { tipo: 'global' }, todos),
+    ).rejects.toBeInstanceOf(ErroDeAutorizacao)
+  })
+
+  test('situações sem-ambiente-qa e sem-milestones-com-cliente; milestone arquivada fica fora', async () => {
+    const global = { tipo: 'global' } as const
+    await db.milestone.update({ where: { id: c.milestoneId }, data: { arquivadaEm: new Date() } })
+    expect((await listarFilaDoProjeto(c.admin, c.projetoId, global, todos)).situacao).toBe(
+      'sem-milestones-com-cliente',
+    )
+    await db.milestone.update({ where: { id: c.milestoneId }, data: { arquivadaEm: null } })
+
+    await db.milestoneCliente.deleteMany({ where: { clienteId: c.clienteBId } })
+    const semB = await listarFilaDoProjeto(c.admin, c.projetoId, global, todos)
+    expect(semB.contagens.todos).toBe(2)
+
+    await db.evidenciaDeploy.deleteMany({ where: { ambienteId: c.ambienteQaId } })
+    await db.ambiente.delete({ where: { id: c.ambienteQaId } })
+    expect((await listarFilaDoProjeto(c.admin, c.projetoId, global, todos)).situacao).toBe(
+      'sem-ambiente-qa',
+    )
+  })
+
+  test('href leva milestone e retorno com filtro e #item-<id>', async () => {
+    const filtros: FiltrosDaFila = {
+      filtro: 'requer-minha-acao',
+      clienteId: c.clienteAId,
+      milestoneId: null,
+    }
+    const fila = await listarFilaDoProjeto(c.admin, c.projetoId, { tipo: 'global' }, filtros)
+    const item = fila.grupos[0]!.itens[0]!
+    expect(item.clienteNome).toBe('Cliente A')
+    const retorno = `${hrefDaFila(`/projetos/${c.projetoId}/homologacao`, filtros)}#item-${item.id}`
+    expect(item.href).toBe(
+      `/clientes/${c.clienteAId}/projetos/${c.projetoId}/entregas/issues/${c.issuePorNumero[item.issueNumero]}?milestone=${c.milestoneId}&retorno=${encodeURIComponent(retorno)}`,
+    )
+
+    const doCliente = await listarFilaDoProjeto(
+      c.admin,
+      c.projetoId,
+      { tipo: 'cliente', clienteId: c.clienteAId },
+      filtros,
+    )
+    expect(doCliente.grupos[0]!.itens[0]!.href).toContain(
+      encodeURIComponent(`/clientes/${c.clienteAId}/projetos/${c.projetoId}/homologacao?`),
+    )
   })
 })

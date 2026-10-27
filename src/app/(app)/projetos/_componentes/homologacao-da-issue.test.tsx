@@ -31,10 +31,11 @@ function dados(o: Partial<HomologacaoDaIssue> = {}): HomologacaoDaIssue {
   }
 }
 
-function renderizar(d: HomologacaoDaIssue) {
+function renderizar(d: HomologacaoDaIssue, hrefDeRetorno: string | null = null) {
   return render(
     <HomologacaoDaIssueNoCliente
       dados={d}
+      hrefDeRetorno={hrefDeRetorno}
       projetoId={projetoId}
       issue={issue}
       hrefDaMilestone={(id) => `/issue?milestone=${id}`}
@@ -109,6 +110,20 @@ describe('HomologacaoDaIssueNoCliente', () => {
     expect(screen.getByText('Pendente de teste')).toBeInTheDocument()
     expect(screen.getByText('Nenhum evento registrado.')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Ações de homologação' })).toBeInTheDocument()
+  })
+})
+
+describe('Voltar à fila', () => {
+  const retorno = '/clientes/c-1/projetos/p-1/homologacao?filtro=todos#item-5'
+
+  test('com retorno válido mostra o link no topo da seção', () => {
+    renderizar(dados(), retorno)
+    expect(screen.getByRole('link', { name: 'Voltar à fila' })).toHaveAttribute('href', retorno)
+  })
+
+  test('sem retorno não mostra o link', () => {
+    renderizar(dados())
+    expect(screen.queryByRole('link', { name: 'Voltar à fila' })).toBeNull()
   })
 })
 
