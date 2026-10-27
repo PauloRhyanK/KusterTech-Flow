@@ -3,6 +3,7 @@ import path from 'node:path'
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test'
 import {
   liberarRepositoriosNoBanco,
+  limparImplantacaoDosRepositoriosNoBanco,
   nomeDeTeste,
   obterIssueNoBanco,
   repositoriosDoProjetoE2E,
@@ -40,6 +41,7 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
   const { email: adminEmail, senha: adminSenha } = obterAdmin()
   const [repoUm, repoDois] = repositoriosDoProjetoE2E(testInfo.project.name)
   await liberarRepositoriosNoBanco([repoUm, repoDois])
+  await limparImplantacaoDosRepositoriosNoBanco([repoUm, repoDois])
   await fazerLogin(page, adminEmail, adminSenha)
 
   const nomeProjeto = nomeDeTeste('Portal do Cliente')
@@ -249,14 +251,73 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
     await capturar(page, testInfo, '4-admin-issue.png')
   })
 
+  // 5. Ambientes: DEV/QA/PROD, token de PROD, deploy pelo endpoint e Versões
+  await test.step('5. Admin configura DEV, QA e PROD, gera o token de PROD e envia um deploy de v1.4.0 pelo endpoint', async () => {
+    const regiao = (tipo: 'DEV' | 'QA' | 'PROD') =>
+      page.getByRole('region', { name: tipo, exact: true })
+
+    await page.goto(`/projetos/${projetoId}/configuracao#ambientes`)
+    for (const [tipo, nome] of [
+      ['DEV', 'dev'],
+      ['QA', 'qa'],
+      ['PROD', 'production'],
+    ] as const) {
+      const secao = regiao(tipo)
+      await secao.getByLabel('Nome do environment no GitHub').fill(nome)
+      await secao.getByRole('button', { name: 'Salvar ambiente' }).click()
+      await expect(secao.getByText(`Ambiente ${tipo} salvo.`)).toBeVisible()
+    }
+
+    const prod = regiao('PROD')
+    await prod.getByRole('button', { name: 'Gerar token' }).click()
+    const campoDoToken = prod.getByTestId('token-de-evidencia')
+    await expect(campoDoToken).toBeVisible()
+    const token = (await campoDoToken.textContent()) ?? ''
+    expect(token).toMatch(/^fle_[A-Za-z0-9_-]{43}$/)
+    await capturar(page, testInfo, '5-admin-ambientes.png')
+
+    // SHA da versão V2 das fixtures: n + 'e' × 39, com n = 1 (portal) ou 3 (site).
+    const commitSha = `${repoUm.endsWith('/portal') ? 1 : 3}${'e'.repeat(39)}`
+    const resposta = await page.request.post('/api/evidencias/deploy', {
+      headers: { authorization: `Bearer ${token}` },
+      data: {
+        repositorio: repoUm,
+        commitSha,
+        versao: 'v1.4.0',
+        idExterno: `jornada-a-${Date.now()}`,
+      },
+    })
+    expect(resposta.status()).toBe(201)
+
+    rodarWorkerUmaVez()
+
+    await page.goto(`/projetos/${projetoId}`)
+    const itemAmbientes = page
+      .getByRole('list', { name: 'Configuração do projeto' })
+      .locator('li', { hasText: 'Ambientes' })
+    await expect(itemAmbientes).toContainText('DEV, QA e PROD configurados')
+    await expect(itemAmbientes.getByText('Concluído')).toBeVisible()
+
+    await page.goto(`/projetos/${projetoId}/versoes`)
+    await expect(page.getByRole('heading', { level: 1, name: 'Versões' })).toBeVisible()
+    const prodDoRepoUm = page
+      .getByRole('list', { name: 'Em cada ambiente' })
+      .getByRole('listitem')
+      .filter({ hasText: 'PROD' })
+      .filter({ hasText: repoUm })
+    await expect(prodDoRepoUm).toContainText('v1.4.0')
+    await expect(prodDoRepoUm).toContainText('Endpoint')
+    await capturar(page, testInfo, '5-admin-versoes.png')
+  })
+
   const testador = {
     contexto: null as BrowserContext | null,
     pagina: null as Page | null,
   }
 
   try {
-    // 5. Cria testador escopado a Acme pela tela /configuracoes/usuarios
-    await test.step('5. Cria testador escopado a Acme e navega no contexto de Acme sem ver Beta nem ações administrativas', async () => {
+    // 5b. Cria testador escopado a Acme pela tela /configuracoes/usuarios
+    await test.step('5b. Cria testador escopado a Acme e navega no contexto de Acme sem ver Beta nem ações administrativas', async () => {
       await page.goto('/configuracoes/usuarios')
       await expect(page.getByRole('heading', { level: 1, name: 'Usuários' })).toBeVisible()
 

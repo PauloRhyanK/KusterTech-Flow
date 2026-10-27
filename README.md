@@ -87,5 +87,44 @@ O Incremento 3 organiza as issues espelhadas em milestones do próprio painel e 
 - **Registrar correção:** na página da issue de correção, "Esta issue corrige" recebe o repositório e o número da original. A correção entra nas milestones ativas em que a original está no escopo ("Correção registrada. A issue entrou em 1 milestone da original.") e passa a contar no progresso (1 de 4 · 25%). O vínculo não é desfeito neste incremento.
 - **Fora do escopo:** uma correção herdada pode ser marcada "Fora do escopo" com justificativa obrigatória (até 500 caracteres); ela continua listada com o badge, deixa de contar e volta ao escopo com "Voltar ao escopo".
 - **Contexto de cliente:** em `/clientes/[c]/projetos/[p]/entregas` aparecem só as milestones ativas associadas ao cliente e as issues delas. Milestone → issue e a trilha de volta mantêm o prefixo `/clientes/[c]`; a issue no contexto de cliente não mostra pull requests, checks, autor, responsáveis, rótulos nem o link do GitHub. Usuário escopado a outro cliente recebe "Sem permissão para esta área.".
-- **Homologação da milestone:** até a chegada dos ambientes, a aba mostra "Ambientes não configurados.". Que uma issue esteja fechada no GitHub não é evidência de versão em QA ou produção.
+- **Homologação da milestone:** sem ambientes configurados, a aba mostra "Ambientes não configurados.". Que uma issue esteja fechada no GitHub não é evidência de versão em QA ou produção; a presença por ambiente vem da seção abaixo.
 - **Verificação:** `e2e/jornada-b.spec.ts` percorre este fluxo no desktop e no mobile e grava capturas em `e2e/capturas/<desktop|mobile>/` (ignoradas pelo git).
+
+## Ambientes e evidência
+
+O Incremento 4 mostra em que versão cada ambiente (DEV, QA e PROD) está e se cada issue já chegou nele. Fechar uma issue no GitHub não prova presença: sem evidência a issue aparece como "Sem evidência" ou "Verificação necessária".
+
+- **Configurar:** Projeto → Configuração → Ambientes. O nome do ambiente no GitHub é o `environment:` do workflow. A tela mostra a última leitura de deployments de cada repositório e separa falha de leitura de configuração pendente.
+- **Três fontes de evidência:**
+  1. **GitHub Deployments:** lido pelo worker pela GitHub App, para ambientes com nome no GitHub (permissões em [`docs/github-app.md`](docs/github-app.md)).
+  2. **Endpoint:** `POST /api/evidencias/deploy` para ambientes sem Deployments.
+  3. **Registro manual:** Versões → "Registrar deploy manual" (autor e data ficam gravados).
+- **Token do endpoint:** em Configuração → Ambientes, "Gerar token" na região do ambiente. O token é mostrado uma única vez (`fle_…`), guardado só como hash, e gerar outro invalida o anterior; "Revogar token" o desativa. Guarde-o apenas em segredo do pipeline.
+- **Corpo do endpoint** (`Authorization: Bearer <token>`, JSON até 16 KB):
+
+  ```json
+  {
+    "repositorio": "org/repo",
+    "commitSha": "<40 caracteres hexadecimais>",
+    "versao": "v1.4.0",
+    "situacao": "sucesso",
+    "ocorridaEm": "2026-10-27T12:00:00Z",
+    "idExterno": "run-123"
+  }
+  ```
+
+  Obrigatórios: `repositorio` e `commitSha`. Opcionais: `versao` (rótulo), `situacao` (`sucesso`, `falha` ou `em_andamento`; padrão `sucesso`), `ocorridaEm`, `idExterno`, `ambiente` e `origem`.
+
+- **Respostas:**
+
+  | Status | Quando                                                                                             |
+  | ------ | -------------------------------------------------------------------------------------------------- |
+  | `201`  | evidência gravada                                                                                  |
+  | `200`  | mesmo `idExterno` já registrado (`duplicada: true`), nada novo é gravado                           |
+  | `400`  | JSON ou campos inválidos                                                                           |
+  | `401`  | token inválido ou revogado; nada é gravado                                                         |
+  | `413`  | corpo maior que 16 KB                                                                              |
+  | `422`  | repositório não vinculado ao projeto, token de outro ambiente, projeto arquivado ou data no futuro |
+
+- **Versões:** a página `/projetos/[p]/versoes` (visão global) mostra a versão vigente por ambiente e repositório e a origem da evidência. Deploy que falha ou chega fora de ordem não troca a versão vigente.
+- **Verificação:** `e2e/jornada-a.spec.ts` (passo 5) e `e2e/jornada-b.spec.ts` (passo 6) percorrem este fluxo e gravam capturas em `e2e/capturas/` (ignoradas pelo git).

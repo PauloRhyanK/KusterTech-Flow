@@ -21,13 +21,15 @@ Somente **permissões de repositório**. Nenhuma permissão de organização ou 
 | Permissão | Acesso | Por quê |
 | --- | --- | --- |
 | Metadata | Leitura | obrigatória; catálogo de repositórios da instalação |
-| Contents | Leitura | usada pelos Incrementos 4 e 9 (versões e evidência de código) |
+| Contents | Leitura | comparação de commits para saber se o merge de um PR está numa versão (Incremento 4) e leitura de arquivos (Incremento 9) |
 | Issues | Leitura e escrita | leitura espelha as issues; escrita é para a triagem de correção do Incremento 5b (D32) |
 | Pull requests | Leitura | PRs e vínculo PR → issue |
 | Checks | Leitura | resumo de checks dos PRs |
-| Deployments | Leitura | usada pelos Incrementos 4 e 9 (evidência de ambiente) |
+| Deployments | Leitura | evidência de deploy lida pelo worker (Incremento 4) |
 
 Este incremento **não escreve** no GitHub; a escrita em Issues é concedida agora para evitar reautorizar a instalação depois.
+
+As permissões não mudam com o Incremento 4 (Contents e Deployments já estavam previstas) e os eventos continuam **nenhum**.
 
 ## 2. Instalar
 
@@ -80,3 +82,19 @@ Os dados já espelhados continuam visíveis, marcados como possivelmente desatua
 | GitHub fora do ar | Aguardar; a recuperação é automática no próximo ciclo bem-sucedido |
 
 Os dados ficam "Sem dados recentes" após 3 intervalos sem sincronização bem-sucedida.
+
+## 8. Ambientes
+
+Cada projeto tem até três ambientes (DEV, QA e PROD), configurados em Projeto → Configuração → Ambientes.
+
+- **GitHub Deployments:** o `nomeNoGitHub` do ambiente é o `environment:` do job do workflow (por exemplo `qa` ou `production`). O worker lê os Deployments desse nome e seus status pela App (permissão Deployments: leitura) e grava a evidência; a leitura é periódica, sem webhooks.
+- **Ambientes sem Deployments:** o pipeline envia a evidência pelo endpoint `POST /api/evidencias/deploy` com o token do ambiente (gerado em Configuração → Ambientes, mostrado uma única vez), ou um administrador registra o deploy manualmente em Versões.
+
+```bash
+curl -sS -X POST "$FLOW_URL/api/evidencias/deploy" \
+  -H "Authorization: Bearer $FLOW_TOKEN_QA" \
+  -H "Content-Type: application/json" \
+  -d '{"repositorio":"org/repo","commitSha":"<sha de 40 caracteres>","versao":"v1.4.0","idExterno":"<id da execução>"}'
+```
+
+O token fica **somente** em segredo do pipeline (por exemplo, GitHub Actions secrets): nunca no repositório, em log ou em chat. Gerar um novo token invalida o anterior; "Revogar token" encerra o envio.
