@@ -76,3 +76,16 @@ O Incremento 2 espelha issues, pull requests e resultado de checks dos repositó
 - **Reconciliação periódica, sem webhooks:** `pnpm worker` sincroniza em laço; `pnpm worker:uma-vez` roda um ciclo e sai (usado pelo E2E).
 - **Falhas não apagam dados:** issues e PRs já espelhados continuam visíveis, marcados como possivelmente desatualizados (invariante 9).
 - **Roteiro para criar e ligar a GitHub App** (permissões, webhook desativado, chave, `.env`): [`docs/github-app.md`](docs/github-app.md).
+
+## Entregas e milestones
+
+O Incremento 3 organiza as issues espelhadas em milestones do próprio painel e acompanha o desenvolvimento por entrega. O progresso é de desenvolvimento (issues fechadas), nunca de QA, aprovação ou entrega ao cliente.
+
+- **Criar milestone:** em `Entregas` do projeto, "Nova milestone" pede título (até 120 caracteres, único no projeto) e aceita descrição, prazo e clientes. Nada disso é obrigatório além do título: a milestone nasce sem clientes e sem issues ("Nenhuma issue vinculada"). Milestone arquiva, não se exclui.
+- **Associar clientes:** só clientes associados ao projeto e não arquivados. Um cliente presente em alguma milestone do projeto não pode ser desassociado do projeto.
+- **Vincular issues:** "Adicionar issues" na milestone aceita issues dos repositórios vinculados ao projeto, de vários repositórios, sem duplicar a mesma issue. O progresso mostra "1 de 3 issues fechadas · 33%". Issues sem milestone ativa ficam em "Issues sem milestone" na visão global.
+- **Registrar correção:** na página da issue de correção, "Esta issue corrige" recebe o repositório e o número da original. A correção entra nas milestones ativas em que a original está no escopo ("Correção registrada. A issue entrou em 1 milestone da original.") e passa a contar no progresso (1 de 4 · 25%). O vínculo não é desfeito neste incremento.
+- **Fora do escopo:** uma correção herdada pode ser marcada "Fora do escopo" com justificativa obrigatória (até 500 caracteres); ela continua listada com o badge, deixa de contar e volta ao escopo com "Voltar ao escopo".
+- **Contexto de cliente:** em `/clientes/[c]/projetos/[p]/entregas` aparecem só as milestones ativas associadas ao cliente e as issues delas. Milestone → issue e a trilha de volta mantêm o prefixo `/clientes/[c]`; a issue no contexto de cliente não mostra pull requests, checks, autor, responsáveis, rótulos nem o link do GitHub. Usuário escopado a outro cliente recebe "Sem permissão para esta área.".
+- **Homologação da milestone:** até a chegada dos ambientes, a aba mostra "Ambientes não configurados.". Que uma issue esteja fechada no GitHub não é evidência de versão em QA ou produção.
+- **Verificação:** `e2e/jornada-b.spec.ts` percorre este fluxo no desktop e no mobile e grava capturas em `e2e/capturas/<desktop|mobile>/` (ignoradas pelo git).
