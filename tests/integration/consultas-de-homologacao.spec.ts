@@ -156,7 +156,7 @@ describe('consultas de homologação da issue (integração)', () => {
     expect(escolher.milestone).toBeNull()
 
     // milestone forjada (de outro cliente ou inexistente) é ignorada como se não houvesse parâmetro
-    const forjada = await ler(c.admin, c.clienteAId, 1, segunda.id.replace(/.$/, '0'))
+    const forjada = await ler(c.admin, c.clienteAId, 1, '00000000-0000-4000-8000-000000000001')
     expect(forjada.situacao).toBe('escolher-milestone')
 
     const escolhida = await ler(c.admin, c.clienteAId, 1, segunda.id)

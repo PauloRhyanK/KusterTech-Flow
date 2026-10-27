@@ -91,7 +91,7 @@ export function Timeline({ eventos, versaoCorrenteId, rotulo, vazio }: TimelineP
   if (eventos.length === 0) {
     return (
       <section aria-label={rotulo}>
-        <p className="text-sm text-text-secondary">{vazio}</p>
+        <div className="text-sm text-text-secondary">{vazio}</div>
       </section>
     )
   }
@@ -122,11 +122,13 @@ export function Timeline({ eventos, versaoCorrenteId, rotulo, vazio }: TimelineP
   return (
     <section aria-label={rotulo} className="space-y-3">
       {corrente && (
-        <details open className="rounded-padrao border border-border bg-surface">
+        <details
+          open
+          data-versao-corrente="true"
+          className="rounded-padrao border border-l-2 border-border border-l-context-active bg-surface"
+        >
           <summary className="cursor-pointer px-4 py-3 text-sm font-[600] text-text-primary">
-            <span data-versao-corrente="true" className="border-l-2 border-context-active pl-3">
-              Versão atual em QA · {corrente.titulo}
-            </span>
+            Versão atual em QA · {corrente.titulo}
           </summary>
           <div className="px-4 pb-4">
             <ListaDeEventos eventos={corrente.eventos} />

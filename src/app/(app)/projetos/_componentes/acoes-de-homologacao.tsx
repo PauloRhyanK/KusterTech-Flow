@@ -50,10 +50,12 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
   const [texto, setTexto] = useState('')
   const [erroLocal, setErroLocal] = useState<string | null>(null)
   const [estadoVisto, setEstadoVisto] = useState(estado)
+  const [sucessoOculto, setSucessoOculto] = useState(false)
 
   // Depois de um sucesso o formulário volta ao início (nada otimista: só após a resposta).
   if (estado !== estadoVisto) {
     setEstadoVisto(estado)
+    setSucessoOculto(false)
     if (estado.sucesso) {
       setAberta(null)
       setRevisando(false)
@@ -68,6 +70,7 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
     setAberta((atual) => (atual === acao ? null : acao))
     setRevisando(false)
     setTexto('')
+    setSucessoOculto(true)
     setErroLocal(null)
   }
 
@@ -88,7 +91,12 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
 
   return (
     <form action={enviar} aria-busy={pendente} className="space-y-4">
-      <MensagensDeEstado estado={{ erro: erroLocal ?? estado.erro, sucesso: estado.sucesso }} />
+      <MensagensDeEstado
+        estado={{
+          erro: erroLocal ?? estado.erro,
+          sucesso: sucessoOculto ? undefined : estado.sucesso,
+        }}
+      />
       {recusa && (
         <p role="status" className="text-sm text-text-secondary">
           {recusa}

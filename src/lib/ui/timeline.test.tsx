@@ -34,7 +34,9 @@ describe('Timeline', () => {
     )
     const corrente = container.querySelector('[data-versao-corrente="true"]')
     expect(corrente).not.toBeNull()
-    expect(corrente?.closest('details')?.open).toBe(true)
+    expect(corrente?.tagName).toBe('DETAILS')
+    expect((corrente as HTMLDetailsElement).open).toBe(true)
+    expect(corrente).toHaveClass('border-l-context-active')
     expect(within(corrente as HTMLElement).getByText('Versão atual em QA · v1')).toBeInTheDocument()
 
     const anterior = screen.getByText('Versão v0 · 2 eventos').closest('details')
@@ -54,7 +56,7 @@ describe('Timeline', () => {
     )
     expect(screen.getByText('Versão v0 · 1 evento')).toBeInTheDocument()
     const grupos = [...container.querySelectorAll('details')]
-    expect(grupos[0]?.querySelector('[data-versao-corrente="true"]')).not.toBeNull()
+    expect(grupos[0]).toHaveAttribute('data-versao-corrente', 'true')
   })
 
   test('evento de sistema mostra "Sistema"; humano mostra o autor; ordem crescente', () => {

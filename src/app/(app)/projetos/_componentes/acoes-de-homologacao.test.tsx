@@ -130,6 +130,36 @@ describe('AcoesDeHomologacao', () => {
     expect(screen.getByRole('button', { name: 'Registrar comentário' })).toBeEnabled()
   })
 
+  test('enquanto a action responde, o botão fica com aria-busy=true, segue habilitado e não envia de novo', async () => {
+    let concluir: (valor: object) => void = () => undefined
+    registrar.mockReturnValue(new Promise((resolver) => (concluir = resolver)))
+    renderizar(['COMENTAR'])
+    await userEvent.click(screen.getByRole('button', { name: 'Comentário' }))
+    await userEvent.type(screen.getByLabelText('Comentário'), 'Primeiro envio.')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar comentário' }))
+
+    const enviar = screen.getByRole('button', { name: 'Registrar comentário' })
+    expect(enviar).toHaveAttribute('aria-busy', 'true')
+    expect(enviar).toBeEnabled()
+    await userEvent.click(enviar)
+    expect(registrar).toHaveBeenCalledTimes(1)
+
+    concluir({ sucesso: 'Comentário registrado.' })
+    expect(await screen.findByText('Comentário registrado.')).toBeInTheDocument()
+  })
+
+  test('a mensagem de sucesso some ao abrir outra ação', async () => {
+    registrar.mockResolvedValue({ sucesso: 'Comentário registrado.' })
+    renderizar(['SOLICITAR_CORRECAO', 'COMENTAR'])
+    await userEvent.click(screen.getByRole('button', { name: 'Comentário' }))
+    await userEvent.type(screen.getByLabelText('Comentário'), 'Tudo certo por aqui.')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar comentário' }))
+    expect(await screen.findByText('Comentário registrado.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Solicitar correção' }))
+    expect(screen.queryByText('Comentário registrado.')).toBeNull()
+  })
+
   test('recusa do servidor aparece como nota de status; sem recusa a nota não existe', () => {
     const { unmount } = renderizar(['COMENTAR'], {
       recusa: 'Há uma correção solicitada. A aprovação volta a ficar disponível no reteste.',

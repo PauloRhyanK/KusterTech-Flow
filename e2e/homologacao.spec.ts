@@ -173,7 +173,9 @@ test('com #1 disponibilizada por disponibilizarNoBanco, testador de Acme não v�
 
     for (const intruso of [testador, aprovadorBeta]) {
       const resposta = await intruso.page.context().request.post(capturada!.url, requisicao)
-      expect(await resposta.text()).not.toContain('Aprovação registrada')
+      const corpo = await resposta.text()
+      expect(corpo).toContain('Sem permissão para esta ação de homologação.')
+      expect(corpo).not.toContain('Aprovação registrada')
       expect(await obterItemDeHomologacaoNoBanco(c.acme.id, c.milestone.id, c.repoUm, 1)).toEqual(
         antes.item,
       )
