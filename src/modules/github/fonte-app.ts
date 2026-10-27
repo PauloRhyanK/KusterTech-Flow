@@ -3,16 +3,20 @@ import { z } from 'zod'
 import { ErroDeIntegracao } from './erros'
 import {
   mapearCheck,
+  mapearComparacao,
+  mapearDeployment,
   mapearIssue,
   mapearPullRequest,
   mapearRepositorio,
+  type ComparacaoDaFonte,
+  type DeploymentDaFonte,
   type FonteGitHub,
   type IssueDaFonte,
   type PullRequestDaFonte,
   type RefRepositorio,
   type RepositorioDaFonte,
 } from './fonte'
-import type { CheckDaFonte } from './model'
+import type { CategoriaDeFalha, CheckDaFonte } from './model'
 
 export interface ConfigDaApp {
   appId: string
@@ -94,6 +98,7 @@ export function criarFonteApp(
     metodo: 'GET' | 'POST',
     url: string,
     autorizacao: string,
+    em404?: CategoriaDeFalha,
   ): Promise<{ corpo: unknown; link: string | null }> {
     let resposta: Response
     try {
@@ -109,7 +114,7 @@ export function criarFonteApp(
       throw new ErroDeIntegracao('rede')
     }
     if (!resposta.ok) {
-      throw falhaDe(resposta)
+      throw resposta.status === 404 && em404 ? new ErroDeIntegracao(em404) : falhaDe(resposta)
     }
     try {
       return { corpo: await resposta.json(), link: resposta.headers.get('link') }
@@ -254,6 +259,38 @@ export function criarFonteApp(
         },
       )
       return brutas.map(mapearCheck)
+    },
+
+    async listarDeployments(repo, desde): Promise<DeploymentDaFonte[]> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const criadoEm = (b: unknown) => mapearDeployment(b, null).criadoEm
+      const brutas = await paginas(
+        `${caminhoDoRepo(repo)}/deployments?per_page=100`,
+        token,
+        lista,
+        // Mais novo primeiro: a página com item anterior a `desde` é a última necessária.
+        (pagina) => desde === null || pagina.every((b) => criadoEm(b) >= desde),
+      )
+      const recentes = desde ? brutas.filter((b) => criadoEm(b) >= desde) : brutas
+      const itens: DeploymentDaFonte[] = []
+      for (const bruto of recentes) {
+        const { githubId } = mapearDeployment(bruto, null)
+        const { corpo } = await chamar(
+          'GET',
+          `${apiUrl}${caminhoDoRepo(repo)}/deployments/${githubId}/statuses?per_page=1`,
+          token,
+        )
+        itens.push(mapearDeployment(bruto, lista(corpo)[0] ?? null))
+      }
+      return itens
+    },
+
+    async compararCommits(repo, base, cabeca): Promise<ComparacaoDaFonte> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const caminho = `${caminhoDoRepo(repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(cabeca)}?per_page=100`
+      // 404 do compare é commit que o GitHub não conhece, não perda de acesso ao repositório.
+      const { corpo } = await chamar('GET', `${apiUrl}${caminho}`, token, 'commit-desconhecido')
+      return mapearComparacao(corpo)
     },
   }
 }

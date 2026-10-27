@@ -16,7 +16,8 @@
       "sha": "2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "updated_at": "2026-10-20T09:00:00Z",
-    "merged_at": null
+    "merged_at": null,
+    "merge_commit_sha": null
   },
   {
     "id": 8001005,
@@ -35,6 +36,7 @@
       "sha": "2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     "updated_at": "2026-10-15T09:00:00Z",
-    "merged_at": "2026-10-15T09:00:00Z"
+    "merged_at": "2026-10-15T09:00:00Z",
+    "merge_commit_sha": "2ccccccccccccccccccccccccccccccccccccccc"
   }
 ]

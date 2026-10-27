@@ -148,6 +148,7 @@ export async function sincronizarRepositorio(
           issuesReferenciadas: p.issuesReferenciadas,
           atualizadoNoGitHub: p.atualizadoEm,
           mergeadoNoGitHub: p.mergeadoEm,
+          shaMerge: p.shaMerge,
           sincronizadoEm: agora,
         }
         await tx.pullRequestGitHub.upsert({

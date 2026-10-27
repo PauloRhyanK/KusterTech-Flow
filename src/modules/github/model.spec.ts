@@ -300,6 +300,7 @@ describe('mensagemDeFalha e ErroDeIntegracao', () => {
     'sem-acesso',
     'resposta-invalida',
     'desconhecida',
+    'commit-desconhecido',
   ]
 
   test('textos fixos', () => {
@@ -311,6 +312,9 @@ describe('mensagemDeFalha e ErroDeIntegracao', () => {
     expect(mensagemDeFalha('sem-acesso')).toBe('A Central não tem mais acesso a este repositório.')
     expect(mensagemDeFalha('resposta-invalida')).toBe('O GitHub respondeu em formato inesperado.')
     expect(mensagemDeFalha('desconhecida')).toBe('Falha inesperada na sincronização.')
+    expect(mensagemDeFalha('commit-desconhecido')).toBe(
+      'O GitHub não encontrou um dos commits comparados.',
+    )
   })
 
   test('ErroDeIntegracao.message nunca repete o texto do erro original', () => {

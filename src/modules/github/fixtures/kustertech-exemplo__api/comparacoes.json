@@ -1,0 +1,23 @@
+{
+  "2ccccccccccccccccccccccccccccccccccccccc...2ddddddddddddddddddddddddddddddddddddddd": {
+    "status": "behind",
+    "ahead_by": 0,
+    "behind_by": 2,
+    "total_commits": 0,
+    "commits": []
+  },
+  "2ccccccccccccccccccccccccccccccccccccccc...2eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+    "status": "ahead",
+    "ahead_by": 1,
+    "behind_by": 0,
+    "total_commits": 1,
+    "commits": [{ "sha": "2eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }]
+  },
+  "2ccccccccccccccccccccccccccccccccccccccc...2fffffffffffffffffffffffffffffffffffffff": {
+    "status": "diverged",
+    "ahead_by": 1,
+    "behind_by": 1,
+    "total_commits": 1,
+    "commits": [{ "sha": "2fffffffffffffffffffffffffffffffffffffff" }]
+  }
+}

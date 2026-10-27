@@ -141,7 +141,13 @@ export function repositorioDevido(
 }
 
 export type CategoriaDeFalha =
-  'autenticacao' | 'limite' | 'rede' | 'sem-acesso' | 'resposta-invalida' | 'desconhecida'
+  | 'autenticacao'
+  | 'limite'
+  | 'rede'
+  | 'sem-acesso'
+  | 'resposta-invalida'
+  | 'desconhecida'
+  | 'commit-desconhecido'
 
 const MENSAGENS_DE_FALHA: Record<CategoriaDeFalha, string> = {
   autenticacao: 'A GitHub App recusou as credenciais.',
@@ -150,6 +156,7 @@ const MENSAGENS_DE_FALHA: Record<CategoriaDeFalha, string> = {
   'sem-acesso': 'A Central não tem mais acesso a este repositório.',
   'resposta-invalida': 'O GitHub respondeu em formato inesperado.',
   desconhecida: 'Falha inesperada na sincronização.',
+  'commit-desconhecido': 'O GitHub não encontrou um dos commits comparados.',
 }
 
 export function mensagemDeFalha(c: CategoriaDeFalha): string {
