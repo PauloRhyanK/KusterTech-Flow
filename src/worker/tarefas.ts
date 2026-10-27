@@ -4,6 +4,7 @@ import { calcularPresencas } from '@/modules/ambientes/presencas'
 import { obterFonteGitHub, type FonteGitHub } from '@/modules/github/fonte'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
+import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 
 export interface TarefaDoWorker {
   nome: string
@@ -45,6 +46,7 @@ export function criarTarefasDoCiclo(d: {
         }
       },
     },
+    tarefaAtualizarFila,
   ]
 }
 

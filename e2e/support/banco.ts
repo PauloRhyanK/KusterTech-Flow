@@ -264,12 +264,25 @@ export async function contarEvidencias(projetoId: string): Promise<number> {
   return db.evidenciaDeploy.count({ where: { ambiente: { projetoId } } })
 }
 
+// Apaga a homologação das issues dos repositórios, na ordem das FKs: solicitações → itens →
+// eventos → homologações sem itens. A tarefa do worker recria os itens a partir das presenças.
+export async function limparHomologacaoDosRepositoriosNoBanco(
+  nomes: readonly string[],
+): Promise<void> {
+  const dasIssues = { issue: { repositorio: { nomeCompleto: { in: [...nomes] } } } }
+  await db.solicitacaoDeCorrecao.deleteMany({ where: { item: dasIssues } })
+  await db.homologacaoItem.deleteMany({ where: dasIssues })
+  await db.eventoTimeline.deleteMany({ where: dasIssues })
+  await db.homologacao.deleteMany({ where: { itens: { none: {} } } })
+}
+
 // Apaga presenças, evidências e versões dos repositórios e devolve a leitura de deployments
 // ao estado de recém-catalogado.
 export async function limparImplantacaoDosRepositoriosNoBanco(
   nomes: readonly string[],
 ): Promise<void> {
   const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomes] } } }
+  await limparHomologacaoDosRepositoriosNoBanco(nomes)
   await db.presencaIssueVersao.deleteMany({ where: { versao: dosRepositorios } })
   await db.evidenciaDeploy.deleteMany({ where: { versao: dosRepositorios } })
   await db.versao.deleteMany({ where: dosRepositorios })
