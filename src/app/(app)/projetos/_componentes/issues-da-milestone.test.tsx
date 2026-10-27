@@ -81,4 +81,40 @@ describe('IssuesDaMilestone', () => {
     )
     expect(screen.getByText('Nenhuma issue com estes filtros.')).toBeInTheDocument()
   })
+
+  test('coluna QA: badge da presença com prefixo "QA:"; sem a presença ou com QA não configurado nada aparece', () => {
+    const qa = (estado: 'PRESENCA_CONFIRMADA' | 'VERIFICACAO_NECESSARIA', configurado = true) => ({
+      tipo: 'QA' as const,
+      configurado,
+      estado,
+      motivo: '',
+      versao: null,
+      origem: null,
+      ocorridaEm: null,
+      commitCurto: null,
+      confirmadaPor: null,
+      autorDoDeploy: null,
+    })
+    const { container } = render(
+      <IssuesDaMilestone
+        projetoId="p-1"
+        milestoneId="m-1"
+        rotas={rotas}
+        issues={[issue({}), issue({ id: 'i-2', numero: 2 }), issue({ id: 'i-3', numero: 3 })]}
+        podeGerenciar={false}
+        comFiltros={false}
+        presencaEmQA={
+          new Map([
+            ['i-1', qa('PRESENCA_CONFIRMADA')],
+            ['i-2', qa('VERIFICACAO_NECESSARIA')],
+            ['i-3', qa('PRESENCA_CONFIRMADA', false)],
+          ])
+        }
+      />,
+    )
+    expect(screen.getByText('Presença confirmada')).toBeInTheDocument()
+    expect(screen.getByText('Verificação necessária')).toBeInTheDocument()
+    expect(screen.getAllByText('QA:')).toHaveLength(2)
+    expect(container.querySelector('[data-tom="sucesso"]')).toBeNull()
+  })
 })

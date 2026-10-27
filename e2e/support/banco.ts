@@ -283,3 +283,23 @@ export async function limparImplantacaoDosRepositoriosNoBanco(
     },
   })
 }
+
+// Estado da presença de uma issue na versão de rótulo `rotulo` (null quando a linha não existe).
+export async function estadoDePresencaNoBanco(
+  issueId: string,
+  rotulo: string,
+): Promise<string | null> {
+  const linha = await db.presencaIssueVersao.findFirst({
+    where: { issueId, versao: { rotulo } },
+    select: { estado: true },
+  })
+  return linha?.estado ?? null
+}
+
+// Desfaz as confirmações manuais de presença: a linha volta a "Verificação necessária".
+export async function desfazerConfirmacaoDePresencaNoBanco(issueId: string): Promise<void> {
+  await db.presencaIssueVersao.updateMany({
+    where: { issueId, confirmadaPorId: { not: null } },
+    data: { estado: 'VERIFICACAO_NECESSARIA', confirmadaPorId: null },
+  })
+}

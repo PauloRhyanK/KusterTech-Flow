@@ -5,6 +5,7 @@ import { autorizar, ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar
 import { ErroDeDominio } from '@/lib/erros'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { obterImplantacaoDaIssue } from '@/modules/ambientes/queries'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { obterCliente } from '@/modules/clientes/service'
 import { obterIssueNoContexto } from '@/modules/entregas/queries'
@@ -43,6 +44,7 @@ export async function PaginaDaIssue({
 
   let projeto: Awaited<ReturnType<typeof obterProjetoParaResumo>>
   let dados: Awaited<ReturnType<typeof obterIssueNoContexto>>
+  let implantacao: Awaited<ReturnType<typeof obterImplantacaoDaIssue>>
   let cliente: { id: string; nome: string } | null = null
   let repositorios: { id: string; nomeCompleto: string }[] = []
   try {
@@ -54,6 +56,7 @@ export async function PaginaDaIssue({
       contexto,
       primeiro(searchParams.milestone) || null,
     )
+    implantacao = await obterImplantacaoDaIssue(sujeito, projetoId, issueId, contexto)
     if (clienteId !== null) {
       const encontrado = await obterCliente(sujeito, clienteId)
       cliente = { id: encontrado.id, nome: encontrado.nome }
@@ -137,7 +140,13 @@ export async function PaginaDaIssue({
         sincronizadoEm={dados.sincronizadoEm}
         hrefConfiguracao={global ? `/projetos/${projetoId}/configuracao#repositorios` : null}
       />
-      <DetalheDaIssue issue={issue} modo={global ? 'global' : 'cliente'} lateral={lateral} />
+      <DetalheDaIssue
+        projetoId={projetoId}
+        issue={issue}
+        implantacao={implantacao}
+        modo={global ? 'global' : 'cliente'}
+        lateral={lateral}
+      />
     </div>
   )
 }

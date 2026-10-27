@@ -163,7 +163,7 @@ test('Jornada B de ponta a ponta: milestone, issues, correção, contexto de Acm
       .getByRole('link', { name: new RegExp(`#4 Item 4 de ${nomeUm}`) })
       .click()
     await expect(page.getByText('Fechada').first()).toBeVisible()
-    await expect(page.getByText('Sem evidência de versão ou ambiente.')).toBeVisible()
+    await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
 
     await page.goto(`/projetos/${projeto.id}/entregas/milestones/${milestoneId}?aba=homologacao`)
     await expect(page.getByText('Ambientes não configurados.')).toBeVisible()

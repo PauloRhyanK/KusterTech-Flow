@@ -245,7 +245,7 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
       .click()
     await expect(page).toHaveURL(`/projetos/${projetoId}/entregas/issues/${issueId}`)
     await expect(page.getByRole('heading', { level: 1, name: /Item 2/ })).toBeVisible()
-    await expect(page.getByText('Sem evidência de versão ou ambiente.')).toBeVisible()
+    await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
     await capturar(page, testInfo, '4-admin-issue.png')
   })
 

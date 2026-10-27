@@ -3,6 +3,8 @@ import { removerIssueDaMilestoneAction } from '@/app/(app)/projetos/_acoes/entre
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional, type LinhaOperacional } from '@/lib/ui/lista-operacional'
+import { apresentarImplantacao } from '@/modules/ambientes/model'
+import type { ImplantacaoNaTela } from '@/modules/ambientes/queries'
 import type { IssueDaMilestone } from '@/modules/entregas/queries'
 import type { RotasDoProjeto } from '@/modules/projetos/model'
 
@@ -13,6 +15,21 @@ export interface IssuesDaMilestoneProps {
   issues: readonly IssueDaMilestone[]
   podeGerenciar: boolean
   comFiltros: boolean
+  presencaEmQA?: ReadonlyMap<string, ImplantacaoNaTela>
+}
+
+// Coluna QA: o rótulo fica visível também no mobile, onde as colunas se empilham.
+function indicadorDeQA(qa: ImplantacaoNaTela | undefined) {
+  if (!qa?.configurado) {
+    return undefined
+  }
+  const { texto, tom } = apresentarImplantacao(qa)
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-xs text-text-secondary">QA:</span>
+      <BadgeDeEstado tom={tom}>{texto}</BadgeDeEstado>
+    </span>
+  )
 }
 
 export function IssuesDaMilestone({
@@ -22,12 +39,14 @@ export function IssuesDaMilestone({
   issues,
   podeGerenciar,
   comFiltros,
+  presencaEmQA,
 }: IssuesDaMilestoneProps) {
   const linhas: LinhaOperacional[] = issues.map((issue) => ({
     id: issue.id,
     href: rotas.issue(issue.id, milestoneId),
     nome: `#${issue.numero} ${issue.titulo}`,
     contexto: issue.repositorio,
+    indicador: indicadorDeQA(presencaEmQA?.get(issue.id)),
     estado: (
       <span className="flex flex-wrap items-center gap-1.5">
         {issue.estado === 'ABERTA' ? (

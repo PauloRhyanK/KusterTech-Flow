@@ -1,7 +1,29 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import type { ImplantacaoDaIssueNaTela } from '@/modules/ambientes/queries'
 import type { IssueDetalhada } from '@/modules/github/queries'
+
+vi.mock('../ambientes-actions', () => ({ confirmarPresencaManualAction: vi.fn() }))
+
 import { DetalheDaIssue } from './detalhe-da-issue'
+
+const semAmbientes: ImplantacaoDaIssueNaTela = {
+  ambientes: (['DEV', 'QA', 'PROD'] as const).map((tipo) => ({
+    tipo,
+    configurado: false,
+    estado: 'SEM_EVIDENCIA' as const,
+    motivo: 'Ambiente não configurado.',
+    versao: null,
+    origem: null,
+    ocorridaEm: null,
+    commitCurto: null,
+    confirmadaPor: null,
+    autorDoDeploy: null,
+  })),
+  nenhumConfigurado: true,
+  leituras: [],
+  podeConfirmar: false,
+}
 
 const issue = (o: Partial<IssueDetalhada> = {}): IssueDetalhada => ({
   id: 'i-1',
@@ -35,6 +57,8 @@ describe('DetalheDaIssue', () => {
   test('renderiza corpo com <script> como texto', () => {
     const { container } = render(
       <DetalheDaIssue
+        projetoId="p-1"
+        implantacao={semAmbientes}
         issue={issue({ corpo: '<script>alert(1)</script> olá' })}
         modo="global"
         lateral={null}
@@ -44,14 +68,20 @@ describe('DetalheDaIssue', () => {
     expect(screen.getByText('<script>alert(1)</script> olá')).toBeInTheDocument()
   })
 
-  test('issue fechada: só "Fechada"; PR com checks; sem evidência de versão; sem corpo → Sem descrição', () => {
+  test('issue fechada: só "Fechada"; PR com checks; sem ambientes configurados; sem corpo → Sem descrição', () => {
     const { container } = render(
-      <DetalheDaIssue issue={issue({ corpo: null })} modo="global" lateral={null} />,
+      <DetalheDaIssue
+        projetoId="p-1"
+        implantacao={semAmbientes}
+        issue={issue({ corpo: null })}
+        modo="global"
+        lateral={null}
+      />,
     )
     expect(screen.getByText('Fechada')).toBeInTheDocument()
     expect(screen.getByText('Sem descrição.')).toBeInTheDocument()
     expect(screen.getByText('Sucesso')).toBeInTheDocument()
-    expect(screen.getByText('Sem evidência de versão ou ambiente.')).toBeInTheDocument()
+    expect(screen.getByText('Ambientes não configurados.')).toBeInTheDocument()
     expect(
       screen.getByText('A timeline de homologação chega no Incremento 5a.'),
     ).toBeInTheDocument()
@@ -64,7 +94,13 @@ describe('DetalheDaIssue', () => {
 
   test('modo cliente não tem heading "Pull requests" nem link "Abrir no GitHub"; modo global tem', () => {
     const { unmount } = render(
-      <DetalheDaIssue issue={issue({})} modo="global" lateral={<p>Lateral de teste</p>} />,
+      <DetalheDaIssue
+        projetoId="p-1"
+        implantacao={semAmbientes}
+        issue={issue({})}
+        modo="global"
+        lateral={<p>Lateral de teste</p>}
+      />,
     )
     expect(screen.getByRole('heading', { name: 'Pull requests' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Abrir no GitHub' })).toBeInTheDocument()
@@ -72,7 +108,15 @@ describe('DetalheDaIssue', () => {
     expect(screen.getByText('Lateral de teste')).toBeInTheDocument()
     unmount()
 
-    render(<DetalheDaIssue issue={issue({})} modo="cliente" lateral={<p>Lateral de teste</p>} />)
+    render(
+      <DetalheDaIssue
+        projetoId="p-1"
+        implantacao={semAmbientes}
+        issue={issue({})}
+        modo="cliente"
+        lateral={<p>Lateral de teste</p>}
+      />,
+    )
     expect(screen.queryByRole('heading', { name: 'Pull requests' })).toBeNull()
     expect(screen.queryByRole('link', { name: 'Abrir no GitHub' })).toBeNull()
     for (const rotulo of ['Autor', 'Responsáveis', 'Rótulos']) {
@@ -80,5 +124,22 @@ describe('DetalheDaIssue', () => {
     }
     expect(screen.getByText('Lateral de teste')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Versão e ambiente' })).toBeInTheDocument()
+  })
+})
+
+describe('DetalheDaIssue — versão e ambiente', () => {
+  test('sem ambientes mostra "Ambientes não configurados."', () => {
+    render(
+      <DetalheDaIssue
+        projetoId="p-1"
+        implantacao={semAmbientes}
+        issue={issue({})}
+        modo="cliente"
+        lateral={null}
+      />,
+    )
+    expect(screen.getByRole('heading', { name: 'Versão e ambiente' })).toBeInTheDocument()
+    expect(screen.getByText('Ambientes não configurados.')).toBeInTheDocument()
+    expect(screen.queryByText('Sem evidência de versão ou ambiente.')).toBeNull()
   })
 })

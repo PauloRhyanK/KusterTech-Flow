@@ -1,7 +1,9 @@
 import { formatarDataHora } from '@/lib/data'
 import { BadgeDeEstado, type TomDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
+import type { ImplantacaoDaIssueNaTela } from '@/modules/ambientes/queries'
 import type { IssueDetalhada } from '@/modules/github/queries'
+import { ImplantacaoDaIssue } from './implantacao-da-issue'
 
 type Pr = IssueDetalhada['pullRequests'][number]
 
@@ -28,13 +30,21 @@ function Dado({ rotulo, children }: { rotulo: string; children: React.ReactNode 
 }
 
 export interface DetalheDaIssueProps {
+  projetoId: string
   issue: IssueDetalhada
+  implantacao: ImplantacaoDaIssueNaTela
   modo: 'global' | 'cliente'
   lateral: React.ReactNode
 }
 
 // No modo cliente os dados técnicos internos ficam de fora (decisão 8 do Incremento 3).
-export function DetalheDaIssue({ issue, modo, lateral }: DetalheDaIssueProps) {
+export function DetalheDaIssue({
+  projetoId,
+  issue,
+  implantacao,
+  modo,
+  lateral,
+}: DetalheDaIssueProps) {
   const global = modo === 'global'
 
   return (
@@ -133,10 +143,11 @@ export function DetalheDaIssue({ issue, modo, lateral }: DetalheDaIssueProps) {
 
         <section className="space-y-3">
           <h2 className="text-[15px] font-[600] text-text-primary">Versão e ambiente</h2>
-          <EstadoVazio
-            tipo="sem-evidencia"
-            titulo="Sem evidência de versão ou ambiente."
-            descricao="Presença em DEV, QA e PROD chega no Incremento 4."
+          <ImplantacaoDaIssue
+            projetoId={projetoId}
+            issueId={issue.id}
+            modo={modo}
+            dados={implantacao}
           />
         </section>
       </aside>
