@@ -6,6 +6,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { listarMilestonesDoProjeto } from '@/modules/entregas/queries'
 import { lerFiltrosDeIssues, listarIssuesDoProjeto } from '@/modules/github/queries'
+import { resumoDeHomologacaoPorMilestone } from '@/modules/homologacao/queries'
 import { rotasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { AvisoDeIntegracao } from '@/app/(app)/projetos/_componentes/aviso-de-integracao'
@@ -51,10 +52,12 @@ export default async function PaginaEntregasProjeto({
   let projeto: Awaited<ReturnType<typeof obterProjetoParaResumo>>
   let dados: Awaited<ReturnType<typeof listarIssuesDoProjeto>>
   let milestones: Awaited<ReturnType<typeof listarMilestonesDoProjeto>>
+  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
   try {
     projeto = await obterProjetoParaResumo(sessao.sujeito, p, null)
     dados = await listarIssuesDoProjeto(sessao.sujeito, p, filtros)
     milestones = await listarMilestonesDoProjeto(sessao.sujeito, p, { tipo: 'global' })
+    homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, { tipo: 'global' })
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -96,7 +99,7 @@ export default async function PaginaEntregasProjeto({
             </div>
           </details>
         )}
-        <ListaDeMilestones rotas={rotas} milestones={milestones.ativas} />
+        <ListaDeMilestones rotas={rotas} milestones={milestones.ativas} homologacao={homologacao} />
         {milestones.arquivadas.length > 0 && (
           <details className="space-y-3">
             <summary className="cursor-pointer text-sm font-medium text-text-primary">
@@ -106,6 +109,7 @@ export default async function PaginaEntregasProjeto({
               <ListaDeMilestones
                 rotas={rotas}
                 milestones={milestones.arquivadas}
+                homologacao={homologacao}
                 rotulo="Milestones arquivadas"
               />
             </div>

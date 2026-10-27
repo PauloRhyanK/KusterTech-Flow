@@ -153,7 +153,7 @@ test('aba Issues: Abertas → 2, Fechadas → 1, Todas + repositório repoDois �
   await expect(page.getByText('1 de 2 issues fechadas · 50%').first()).toBeVisible()
 })
 
-test('aba Homologação mostra "Ambientes não configurados." com "Configurar ambientes" na global e sem o link no contexto de A', async ({
+test('aba Homologação: a global lista Entrega 1 por cliente e o contexto de A, sem QA, mostra "O ambiente QA ainda não está configurado neste projeto." sem o link de configuração', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -162,12 +162,15 @@ test('aba Homologação mostra "Ambientes não configurados." com "Configurar am
   const milestone = await criarMilestoneNoBanco(projeto.id, 'Entrega 1', [clienteA.id])
 
   await page.goto(`/projetos/${projeto.id}/entregas/milestones/${milestone.id}?aba=homologacao`)
-  await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Configurar ambientes' })).toHaveAttribute(
+  const lista = page.getByRole('list', { name: 'Homologação por cliente' })
+  await expect(lista.getByText('Nenhuma issue em homologação')).toBeVisible()
+  await expect(
+    lista.getByRole('link', { name: `Abrir homologação de ${clienteA.nome}` }),
+  ).toHaveAttribute(
     'href',
-    `/projetos/${projeto.id}/configuracao#ambientes`,
+    `/clientes/${clienteA.id}/projetos/${projeto.id}/entregas/milestones/${milestone.id}?aba=homologacao`,
   )
-  await expect(page.getByRole('link', { name: 'Homologação' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'Homologação', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   )
@@ -176,7 +179,9 @@ test('aba Homologação mostra "Ambientes não configurados." com "Configurar am
   await page.goto(
     `/clientes/${clienteA.id}/projetos/${projeto.id}/entregas/milestones/${milestone.id}?aba=homologacao`,
   )
-  await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
+  await expect(
+    page.getByText('O ambiente QA ainda não está configurado neste projeto.'),
+  ).toBeVisible()
   await expect(page.getByRole('link', { name: 'Configurar ambientes' })).toHaveCount(0)
   await expect(
     page.getByText(`Você está vendo esta milestone no contexto de ${clienteA.nome}.`),

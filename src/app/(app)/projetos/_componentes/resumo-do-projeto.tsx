@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
-import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { cn } from '@/lib/utils'
 import type { EstadoIntegracao } from '@/modules/github/model'
+import type { PendenciaDeHomologacao, ResumoApresentado } from '@/modules/homologacao/queries'
 import { buttonVariants } from '@/components/ui/button'
 import type { obterEntregasParaResumo } from '@/modules/entregas/queries'
 import {
@@ -14,12 +14,15 @@ import {
 import type { ProjetoResumo } from '@/modules/projetos/service'
 import { ChecklistDeConfiguracao } from './checklist-de-configuracao'
 import { ListaDeMilestones } from './lista-de-milestones'
+import { PendenciasDeHomologacao } from './pendencias-de-homologacao'
 
 export interface ResumoDoProjetoProps {
   projeto: ProjetoResumo
   contagens: ContagensDoProjeto
   entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
   estadoGitHub?: EstadoIntegracao
+  homologacao?: ReadonlyMap<string, ResumoApresentado>
+  pendencias?: readonly PendenciaDeHomologacao[]
   contexto: Contexto
   podeGerenciar: boolean
   cliente?: { id: string; nome: string }
@@ -31,6 +34,8 @@ export function ResumoDoProjeto({
   contagens,
   entregas,
   estadoGitHub = 'nao-configurada',
+  homologacao,
+  pendencias = [],
   contexto,
   podeGerenciar,
   cliente,
@@ -60,19 +65,33 @@ export function ResumoDoProjeto({
       <section className="space-y-3">
         <h2 className="text-[18px] font-[600] leading-[1.3] text-text-primary">Próximas ações</h2>
         {contexto.tipo === 'global' ? (
-          <ChecklistDeConfiguracao
-            itens={calcularChecklist(
-              contagens,
-              podeGerenciar ? `/projetos/${projeto.id}/configuracao` : null,
-              estadoGitHub,
-              podeGerenciar ? rotas.entregas : null,
-            )}
-          />
+          <>
+            <ChecklistDeConfiguracao
+              itens={calcularChecklist(
+                contagens,
+                podeGerenciar ? `/projetos/${projeto.id}/configuracao` : null,
+                estadoGitHub,
+                podeGerenciar ? rotas.entregas : null,
+              )}
+            />
+            <h3 className="text-[15px] font-[600] text-text-primary">Homologações pendentes</h3>
+            <PendenciasDeHomologacao
+              pendencias={pendencias}
+              contexto="cliente"
+              vazio={{
+                titulo: 'Nenhuma homologação pendente.',
+                descricao: 'Issues entram em homologação quando a presença em QA é confirmada.',
+              }}
+            />
+          </>
         ) : (
-          <EstadoVazio
-            tipo="nao-configurado"
-            titulo="Nenhuma ação pendente para este cliente."
-            descricao="Ações de homologação chegam no Incremento 5a."
+          <PendenciasDeHomologacao
+            pendencias={pendencias}
+            contexto={null}
+            vazio={{
+              titulo: 'Nenhuma ação pendente para este cliente.',
+              descricao: 'Issues entram em homologação quando a presença em QA é confirmada.',
+            }}
           />
         )}
       </section>
@@ -83,6 +102,7 @@ export function ResumoDoProjeto({
         <ListaDeMilestones
           rotas={rotas}
           milestones={entregas.milestones}
+          homologacao={homologacao}
           rotulo="Milestones ativas"
           vazio={vazio}
         />

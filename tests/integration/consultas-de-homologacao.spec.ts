@@ -5,9 +5,14 @@ import { ErroDeDominio } from '@/lib/erros'
 import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
 import { hrefDaFila, type FiltrosDaFila } from '@/modules/homologacao/model'
 import {
+  consolidadoDaMilestone,
+  homologacaoDaMilestoneNoCliente,
   listarFilaDoProjeto,
   listarHomologacaoDaIssuePorCliente,
   obterHomologacaoDaIssue,
+  pendenciasDoCliente,
+  pendenciasDoProjeto,
+  resumoDeHomologacaoPorMilestone,
 } from '@/modules/homologacao/queries'
 import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
 import { limparBanco } from './banco-de-teste'
@@ -386,5 +391,184 @@ describe('fila de homologação do projeto (integração)', () => {
     expect(doCliente.grupos[0]!.itens[0]!.href).toContain(
       encodeURIComponent(`/clientes/${c.clienteAId}/projetos/${c.projetoId}/homologacao?`),
     )
+  })
+})
+
+describe('homologação na milestone, em Entregas, no cliente e no resumo do projeto (integração)', () => {
+  async function acao(
+    sujeito: Cenario['admin'],
+    tipo: 'DISPONIBILIZAR' | 'APROVAR' | 'SOLICITAR_CORRECAO',
+    numero: number,
+    texto: string | null = null,
+  ) {
+    const item = await db.homologacaoItem.findFirstOrThrow({
+      where: { issue: { numero }, homologacao: { clienteId: c.clienteAId } },
+    })
+    await registrarAcaoDeHomologacao(sujeito, {
+      acao: tipo,
+      itemId: item.id,
+      clienteId: c.clienteAId,
+      milestoneId: c.milestoneId,
+      issueId: c.issuePorNumero[numero]!,
+      versaoId: c.versoes.v1,
+      ultimoEventoId: item.ultimoEventoId,
+      texto,
+      visibilidade: 'COMPARTILHAVEL',
+    })
+  }
+
+  // Cenário: A#1 aprovada, A#2 com correção solicitada, B#1 e B#2 aguardando disponibilização.
+  beforeEach(async () => {
+    await acao(c.admin, 'DISPONIBILIZAR', 1)
+    await acao(c.admin, 'DISPONIBILIZAR', 2)
+    await acao(c.testadorA, 'SOLICITAR_CORRECAO', 2, 'O botão não responde ao toque.')
+    await acao(c.aprovadorA, 'APROVAR', 1)
+  })
+
+  const global = { tipo: 'global' } as const
+
+  test('consolidadoDaMilestone: A "1 correção solicitada · 1 aprovada" atencao; B "2 aguardando disponibilização" neutro', async () => {
+    const { clientes } = await consolidadoDaMilestone(c.admin, c.projetoId, c.milestoneId)
+    expect(clientes).toEqual([
+      {
+        clienteId: c.clienteAId,
+        nome: 'Cliente A',
+        resumo: { texto: '1 correção solicitada · 1 aprovada', tom: 'atencao' },
+        href: `/clientes/${c.clienteAId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`,
+      },
+      {
+        clienteId: c.clienteBId,
+        nome: 'Cliente B',
+        resumo: { texto: '2 aguardando disponibilização', tom: 'neutro' },
+        href: `/clientes/${c.clienteBId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`,
+      },
+    ])
+    await expect(
+      consolidadoDaMilestone(c.aprovadorA, c.projetoId, c.milestoneId),
+    ).rejects.toBeInstanceOf(ErroDeAutorizacao)
+  })
+
+  test('resumoDeHomologacaoPorMilestone global: "2 clientes · 1 correção solicitada · 2 aguardando disponibilização · 1 aprovada"', async () => {
+    const global_ = await resumoDeHomologacaoPorMilestone(c.admin, c.projetoId, global)
+    expect(global_.get(c.milestoneId)).toEqual({
+      texto: '2 clientes · 1 correção solicitada · 2 aguardando disponibilização · 1 aprovada',
+      tom: 'atencao',
+    })
+
+    const doCliente = await resumoDeHomologacaoPorMilestone(c.aprovadorA, c.projetoId, {
+      tipo: 'cliente',
+      clienteId: c.clienteAId,
+    })
+    expect(doCliente.get(c.milestoneId)).toEqual({
+      texto: '1 correção solicitada · 1 aprovada',
+      tom: 'atencao',
+    })
+
+    const semClientes = await db.milestone.create({
+      data: { projetoId: c.projetoId, titulo: 'Sem clientes', tituloNormalizado: 'sem clientes' },
+    })
+    const de = await resumoDeHomologacaoPorMilestone(c.admin, c.projetoId, global)
+    expect(de.get(semClientes.id)).toEqual({ texto: 'Sem clientes associados', tom: 'neutro' })
+  })
+
+  test('pendenciasDoCliente(A) tem 1 linha com "1 correção solicitada"; pendenciasDoCliente(B) para aprovadorB → [] e para admin → 1 linha', async () => {
+    const deA = await pendenciasDoCliente(c.aprovadorA, c.clienteAId)
+    expect(deA).toHaveLength(1)
+    expect(deA[0]).toMatchObject({
+      projetoId: c.projetoId,
+      projetoNome: 'Projeto H',
+      milestoneId: c.milestoneId,
+      milestoneTitulo: 'Release 1',
+      clienteId: c.clienteAId,
+      clienteNome: 'Cliente A',
+      resumo: { texto: '1 correção solicitada', tom: 'atencao' },
+    })
+    expect(deA[0]!.href).toBe(
+      hrefDaFila(`/clientes/${c.clienteAId}/projetos/${c.projetoId}/homologacao`, {
+        filtro: 'todos',
+        clienteId: null,
+        milestoneId: c.milestoneId,
+      }),
+    )
+
+    expect(await pendenciasDoCliente(c.aprovadorB, c.clienteBId)).toEqual([])
+    const deB = await pendenciasDoCliente(c.admin, c.clienteBId)
+    expect(deB).toHaveLength(1)
+    expect(deB[0]!.resumo).toEqual({ texto: '2 aguardando disponibilização', tom: 'neutro' })
+
+    await expect(pendenciasDoCliente(c.aprovadorB, c.clienteAId)).rejects.toBeInstanceOf(
+      ErroDeAutorizacao,
+    )
+  })
+
+  test('pendenciasDoProjeto: global lista A e B com link por cliente; escopado só o seu; global para escopado → ErroDeAutorizacao', async () => {
+    const todas = await pendenciasDoProjeto(c.admin, c.projetoId, global)
+    expect(todas.map((p) => p.clienteNome)).toEqual(['Cliente A', 'Cliente B'])
+    expect(todas[0]!.href).toBe(
+      hrefDaFila(`/projetos/${c.projetoId}/homologacao`, {
+        filtro: 'todos',
+        clienteId: c.clienteAId,
+        milestoneId: c.milestoneId,
+      }),
+    )
+
+    const doTestador = await pendenciasDoProjeto(c.testadorA, c.projetoId, {
+      tipo: 'cliente',
+      clienteId: c.clienteAId,
+    })
+    expect(doTestador.map((p) => p.clienteNome)).toEqual(['Cliente A'])
+
+    await expect(pendenciasDoProjeto(c.testadorA, c.projetoId, global)).rejects.toBeInstanceOf(
+      ErroDeAutorizacao,
+    )
+  })
+
+  test('aprovadorB em homologacaoDaMilestoneNoCliente(A) → ErroDeAutorizacao', async () => {
+    await expect(
+      homologacaoDaMilestoneNoCliente(c.aprovadorB, c.clienteAId, c.projetoId, c.milestoneId),
+    ).rejects.toBeInstanceOf(ErroDeAutorizacao)
+  })
+
+  test('linha de #4 tem estado null e presenca SEM_EVIDENCIA; versões e resumo do cliente; milestone de outro cliente não existe', async () => {
+    const dados = await homologacaoDaMilestoneNoCliente(
+      c.admin,
+      c.clienteAId,
+      c.projetoId,
+      c.milestoneId,
+    )
+    expect(dados.semAmbienteQa).toBe(false)
+    expect(dados.resumo).toEqual({ texto: '1 correção solicitada · 1 aprovada', tom: 'atencao' })
+    expect(dados.versoes).toEqual([{ repositorio: 'kustertech-exemplo/portal', rotulo: 'v1' }])
+    expect(dados.linhas.map((l) => [l.numero, l.estado, l.presenca])).toEqual([
+      [1, 'APROVADA', 'PRESENCA_CONFIRMADA'],
+      [2, 'CORRECAO_SOLICITADA', 'CONFIRMACAO_MANUAL'],
+      [4, null, 'SEM_EVIDENCIA'],
+    ])
+    expect(dados.linhas[0]!.href).toBe(
+      `/clientes/${c.clienteAId}/projetos/${c.projetoId}/entregas/issues/${c.issuePorNumero[1]}?milestone=${c.milestoneId}&retorno=${encodeURIComponent(`/clientes/${c.clienteAId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`)}`,
+    )
+
+    const outra = await db.milestone.create({
+      data: { projetoId: c.projetoId, titulo: 'Outra', tituloNormalizado: 'outra' },
+    })
+    await expect(
+      homologacaoDaMilestoneNoCliente(c.admin, c.clienteAId, c.projetoId, outra.id),
+    ).rejects.toThrow('Milestone não encontrada.')
+  })
+
+  test('escopado não vê o item aguardando disponibilização: estado null e oculta, sem link; resumo sem ele', async () => {
+    const dados = await homologacaoDaMilestoneNoCliente(
+      c.aprovadorB,
+      c.clienteBId,
+      c.projetoId,
+      c.milestoneId,
+    )
+    expect(dados.resumo).toEqual({ texto: 'Nenhuma issue em homologação', tom: 'neutro' })
+    const ocultas = dados.linhas.filter((l) => l.oculta)
+    expect(ocultas.map((l) => [l.numero, l.estado])).toEqual([
+      [1, null],
+      [2, null],
+    ])
+    expect(dados.linhas.find((l) => l.numero === 4)!.oculta).toBe(false)
   })
 })

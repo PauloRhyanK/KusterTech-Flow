@@ -17,6 +17,10 @@ import {
   listarIssuesParaAdicionar,
   obterMilestone,
 } from '@/modules/entregas/queries'
+import {
+  consolidadoDaMilestone,
+  homologacaoDaMilestoneNoCliente,
+} from '@/modules/homologacao/queries'
 import { type Contexto, rotasDoProjeto, trilhasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { AbasDaMilestone } from './abas-da-milestone'
@@ -63,6 +67,9 @@ export async function PaginaDaMilestone({
   let cliente: { id: string; nome: string } | null = null
   let candidatas: Awaited<ReturnType<typeof listarIssuesParaAdicionar>> | null = null
   let presencaEmQA: Awaited<ReturnType<typeof listarPresencaEmQA>> | undefined
+  let homologacaoNoCliente: Awaited<ReturnType<typeof homologacaoDaMilestoneNoCliente>> | null =
+    null
+  let consolidado: Awaited<ReturnType<typeof consolidadoDaMilestone>> | null = null
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
     dados = await obterMilestone(sujeito, projetoId, milestoneId, contexto, filtros)
@@ -73,6 +80,18 @@ export async function PaginaDaMilestone({
         dados.milestone.issues.map((i) => i.id),
         contexto,
       )
+    }
+    if (filtros.aba === 'homologacao') {
+      if (clienteId === null) {
+        consolidado = await consolidadoDaMilestone(sujeito, projetoId, milestoneId)
+      } else {
+        homologacaoNoCliente = await homologacaoDaMilestoneNoCliente(
+          sujeito,
+          clienteId,
+          projetoId,
+          milestoneId,
+        )
+      }
     }
     if (clienteId !== null) {
       const encontrado = await obterCliente(sujeito, clienteId)
@@ -187,9 +206,20 @@ export async function PaginaDaMilestone({
       />
 
       {filtros.aba === 'homologacao' ? (
-        <HomologacaoDaMilestone
-          hrefAmbientes={admin ? `/projetos/${projetoId}/configuracao#ambientes` : null}
-        />
+        cliente && homologacaoNoCliente ? (
+          <HomologacaoDaMilestone
+            contexto="cliente"
+            cliente={cliente}
+            dados={homologacaoNoCliente}
+            hrefAmbientes={null}
+          />
+        ) : consolidado ? (
+          <HomologacaoDaMilestone
+            contexto="global"
+            consolidado={consolidado}
+            hrefAmbientes={admin ? `/projetos/${projetoId}/configuracao#ambientes` : null}
+          />
+        ) : null
       ) : (
         <div className="space-y-4">
           <AvisoDeIntegracao

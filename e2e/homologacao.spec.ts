@@ -298,3 +298,47 @@ test('mobile: fila e issue sem rolagem horizontal (scrollWidth ≤ innerWidth)',
   await expect(page.getByRole('heading', { name: `Homologação de ${c.acme.nome}` })).toBeVisible()
   expect(await semRolagem()).toBe(true)
 })
+
+test('após disponibilizar #1 para Acme: aba Homologação global mostra Acme "1 pendente de teste · 1 aguardando disponibilização" e Beta "2 aguardando disponibilização"; Entregas mostra "Homologação: 2 clientes · …"; /clientes/<acme> lista E2E Release 1 em Homologações pendentes; Resumo do Projeto lista a pendência', async ({
+  page,
+}, testInfo) => {
+  const admin = obterAdmin()
+  await fazerLogin(page, admin.email, admin.senha)
+  const c = await prepararCenarioDeHomologacaoE2E(testInfo.project.name, admin.id)
+  const item = await obterItemDeHomologacaoNoBanco(c.acme.id, c.milestone.id, c.repoUm, 1)
+  await disponibilizarNoBanco(item!.id, admin.id)
+
+  await page.goto(`/projetos/${c.projeto.id}/entregas/milestones/${c.milestone.id}?aba=homologacao`)
+  const porCliente = page.getByRole('list', { name: 'Homologação por cliente' })
+  await expect(porCliente.getByRole('listitem').filter({ hasText: c.acme.nome })).toContainText(
+    '1 pendente de teste · 1 aguardando disponibilização',
+  )
+  await expect(porCliente.getByRole('listitem').filter({ hasText: c.beta.nome })).toContainText(
+    '2 aguardando disponibilização',
+  )
+
+  await page.goto(`/projetos/${c.projeto.id}/entregas`)
+  await expect(
+    page.getByText('Homologação: 2 clientes · 1 pendente de teste · 3 aguardando disponibilização'),
+  ).toBeVisible()
+
+  await page.goto(`/clientes/${c.acme.id}`)
+  const pendentes = page.getByRole('list', { name: 'Homologações pendentes' })
+  const linha = pendentes.getByRole('listitem').filter({ hasText: c.milestone.titulo })
+  await expect(linha).toContainText('1 pendente de teste · 1 aguardando disponibilização')
+  await expect(linha.getByRole('link', { name: c.milestone.titulo })).toHaveAttribute(
+    'href',
+    `/clientes/${c.acme.id}/projetos/${c.projeto.id}/homologacao?filtro=todos&milestone=${c.milestone.id}`,
+  )
+
+  await page.goto(`/projetos/${c.projeto.id}`)
+  await expect(
+    page.getByRole('heading', { level: 3, name: 'Homologações pendentes' }),
+  ).toBeVisible()
+  const noResumo = page
+    .getByRole('list', { name: 'Homologações pendentes' })
+    .getByRole('listitem')
+    .filter({ hasText: c.acme.nome })
+  await expect(noResumo).toContainText(c.milestone.titulo)
+  await expect(noResumo).toContainText('1 pendente de teste · 1 aguardando disponibilização')
+})

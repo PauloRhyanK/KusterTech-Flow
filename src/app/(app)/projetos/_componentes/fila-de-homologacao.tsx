@@ -51,26 +51,31 @@ const VAZIO_DO_FILTRO: Record<FiltroDaFila, { titulo: string; descricao: string 
   },
 }
 
+export function EstadoSemAmbienteQa({
+  hrefConfigurarAmbientes,
+}: {
+  hrefConfigurarAmbientes: string | null
+}): ReactNode {
+  return (
+    <EstadoVazio
+      tipo="nao-configurado"
+      titulo="O ambiente QA ainda não está configurado neste projeto."
+      descricao="As issues entram na fila quando a presença em QA é confirmada."
+      acao={
+        hrefConfigurarAmbientes ? (
+          <Link href={hrefConfigurarAmbientes} className="text-sm text-text-link hover:underline">
+            Configurar ambientes
+          </Link>
+        ) : undefined
+      }
+    />
+  )
+}
+
 function SemItens({ fila, props }: { fila: Fila; props: FilaDeHomologacaoProps }): ReactNode {
   switch (fila.situacao) {
     case 'sem-ambiente-qa':
-      return (
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="O ambiente QA ainda não está configurado neste projeto."
-          descricao="As issues entram na fila quando a presença em QA é confirmada."
-          acao={
-            props.hrefConfigurarAmbientes ? (
-              <Link
-                href={props.hrefConfigurarAmbientes}
-                className="text-sm text-text-link hover:underline"
-              >
-                Configurar ambientes
-              </Link>
-            ) : undefined
-          }
-        />
-      )
+      return <EstadoSemAmbienteQa hrefConfigurarAmbientes={props.hrefConfigurarAmbientes} />
     case 'sem-milestones-com-cliente':
       return (
         <EstadoVazio

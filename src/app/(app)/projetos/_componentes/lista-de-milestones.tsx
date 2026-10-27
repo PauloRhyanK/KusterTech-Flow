@@ -4,11 +4,13 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional, type LinhaOperacional } from '@/lib/ui/lista-operacional'
 import { formatarData } from '@/lib/data'
 import type { MilestoneNaLista } from '@/modules/entregas/queries'
+import type { ResumoApresentado } from '@/modules/homologacao/queries'
 import type { RotasDoProjeto } from '@/modules/projetos/model'
 
 export interface ListaDeMilestonesProps {
   rotas: RotasDoProjeto
   milestones: readonly MilestoneNaLista[]
+  homologacao?: ReadonlyMap<string, ResumoApresentado>
   rotulo?: string
   vazio?: { titulo: string; descricao: string }
 }
@@ -18,9 +20,12 @@ const VAZIO_PADRAO = {
   descricao: 'Crie uma milestone para organizar as issues deste projeto.',
 }
 
+const SEM_ITENS: ResumoApresentado = { texto: 'Nenhuma issue em homologação', tom: 'neutro' }
+
 export function ListaDeMilestones({
   rotas,
   milestones,
+  homologacao,
   rotulo = 'Milestones',
   vazio = VAZIO_PADRAO,
 }: ListaDeMilestonesProps) {
@@ -28,6 +33,7 @@ export function ListaDeMilestones({
     const prazo = m.prazo ? `Prazo ${formatarData(m.prazo)}` : 'Sem prazo'
     const clientes =
       m.clientes.length > 0 ? m.clientes.map((c) => c.nome).join(', ') : 'Nenhum cliente'
+    const resumo = homologacao?.get(m.id) ?? SEM_ITENS
     return {
       id: m.id,
       href: rotas.milestone(m.id),
@@ -36,7 +42,7 @@ export function ListaDeMilestones({
       indicador: (
         <div className="space-y-0.5">
           <BarraDeProgresso progresso={m.progresso} />
-          <p className="text-xs text-text-secondary">Homologação: ambientes não configurados</p>
+          <BadgeDeEstado tom={resumo.tom}>{`Homologação: ${resumo.texto}`}</BadgeDeEstado>
         </div>
       ),
       estado: m.arquivadaEm ? <BadgeDeEstado tom="neutro">Arquivada</BadgeDeEstado> : undefined,
