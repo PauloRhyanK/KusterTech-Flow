@@ -43,6 +43,29 @@ export default async function globalSetup(): Promise<void> {
       where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
       data: { projetoId: null, vinculadoEm: null },
     })
+    await db.issueVinculo.deleteMany({
+      where: {
+        OR: [
+          { original: dosExemplos },
+          { correcao: dosExemplos },
+          { criadoPor: { email: { startsWith: 'e2e+' } } },
+        ],
+      },
+    })
+    await db.milestoneIssue.deleteMany({
+      where: {
+        OR: [{ issue: dosExemplos }, { milestone: { projeto: { nome: { startsWith: 'E2E ' } } } }],
+      },
+    })
+    await db.milestoneCliente.deleteMany({
+      where: {
+        OR: [
+          { milestone: { projeto: { nome: { startsWith: 'E2E ' } } } },
+          { cliente: { nome: { startsWith: 'E2E ' } } },
+        ],
+      },
+    })
+    await db.milestone.deleteMany({ where: { projeto: { nome: { startsWith: 'E2E ' } } } })
     await db.pullRequestGitHub.deleteMany({ where: dosExemplos })
     await db.issueGitHub.deleteMany({ where: dosExemplos })
     await db.repositorioGitHub.deleteMany({
