@@ -67,6 +67,18 @@ describe('ImplantacaoDaIssue', () => {
     expect(screen.getAllByRole('alert').length).toBeGreaterThan(0)
   })
 
+  test('sem podeConfirmar não monta regiões de alerta', () => {
+    render(
+      <ImplantacaoDaIssue
+        projetoId="p-1"
+        issueId="i-4"
+        modo="cliente"
+        dados={dados([ambiente('QA', 'VERIFICACAO_NECESSARIA')])}
+      />,
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   test('visão global mostra commit, origem e link para Versões; contexto de cliente não', () => {
     const doGlobal = [
       ambiente('DEV', 'PRESENCA_CONFIRMADA'),

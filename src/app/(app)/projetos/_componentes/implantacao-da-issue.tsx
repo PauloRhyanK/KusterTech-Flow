@@ -81,7 +81,7 @@ function LinhaDoAmbiente({
           pendente={confirmando}
         />
       )}
-      <MensagensDeEstado estado={estado} />
+      {podeConfirmar && <MensagensDeEstado estado={estado} />}
     </li>
   )
 }
