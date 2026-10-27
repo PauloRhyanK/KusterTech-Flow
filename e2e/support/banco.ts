@@ -233,7 +233,7 @@ export async function limparVinculosDeIssuesNoBanco(
 // Grava os ambientes como a tela grava, com o efeito de reler o histórico de deployments.
 export async function configurarAmbientesNoBanco(
   projetoId: string,
-  nomes: Record<'DEV' | 'QA' | 'PROD', string> = { DEV: 'dev', QA: 'qa', PROD: 'production' },
+  nomes: Record<'DEV' | 'QA' | 'PROD', string | null> = { DEV: 'dev', QA: 'qa', PROD: 'production' },
 ): Promise<void> {
   for (const tipo of ['DEV', 'QA', 'PROD'] as const) {
     await db.ambiente.upsert({
