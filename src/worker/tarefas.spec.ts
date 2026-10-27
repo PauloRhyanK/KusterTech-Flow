@@ -7,8 +7,12 @@ import { log } from '@/lib/log'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 describe('tarefas do worker', () => {
-  test('TAREFAS_DO_CICLO.map(t => t.nome) = ["reconciliar-github"]', () => {
-    expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual(['reconciliar-github'])
+  test('TAREFAS_DO_CICLO.map(t => t.nome) = ["reconciliar-github", "sincronizar-deployments", "calcular-presencas"]', () => {
+    expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
+      'reconciliar-github',
+      'sincronizar-deployments',
+      'calcular-presencas',
+    ])
   })
 
   test('executarTarefas: a segunda lança Error("segredo ghs_x"), a terceira roda; resultado [ok, falha, ok]; log.error recebe { tarefa: "b", erro: { tipo: "Error" } } e nenhum argumento contém "ghs_x"', async () => {

@@ -6,7 +6,7 @@ import { repositorioDevido, resumirChecks, resumirErroParaLog } from './model'
 
 const ID_INTEGRACAO = 'github'
 
-function paraErroDeIntegracao(erro: unknown): ErroDeIntegracao {
+export function paraErroDeIntegracao(erro: unknown): ErroDeIntegracao {
   if (erro instanceof ErroDeIntegracao) {
     return erro
   }

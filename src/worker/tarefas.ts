@@ -1,4 +1,6 @@
 import { log } from '@/lib/log'
+import { sincronizarDeployments } from '@/modules/ambientes/deployments'
+import { calcularPresencas } from '@/modules/ambientes/presencas'
 import { obterFonteGitHub, type FonteGitHub } from '@/modules/github/fonte'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
@@ -22,6 +24,24 @@ export function criarTarefasDoCiclo(d: {
             { tarefa: 'reconciliar-github', ...resultado },
             'ciclo de reconciliação do GitHub',
           )
+        }
+      },
+    },
+    {
+      nome: 'sincronizar-deployments',
+      async executar(agora) {
+        const resumo = await sincronizarDeployments(d.obterFonte(), agora, d.intervaloMs)
+        if (resumo.repositorios > 0) {
+          log.info({ tarefa: 'sincronizar-deployments', ...resumo }, 'deployments sincronizados')
+        }
+      },
+    },
+    {
+      nome: 'calcular-presencas',
+      async executar(agora) {
+        const resumo = await calcularPresencas(d.obterFonte(), agora, d.intervaloMs)
+        if (resumo.repositorios > 0) {
+          log.info({ tarefa: 'calcular-presencas', ...resumo }, 'presenças calculadas')
         }
       },
     },
