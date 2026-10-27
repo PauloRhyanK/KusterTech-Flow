@@ -4,6 +4,7 @@ import { autorizar, ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { obterEntregasParaResumo } from '@/modules/entregas/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { ResumoDoProjeto } from '@/app/(app)/projetos/_componentes/resumo-do-projeto'
 
@@ -34,8 +35,10 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
   const { p } = await params
 
   let projetoComContagens: Awaited<ReturnType<typeof obterProjetoParaResumo>>
+  let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
   try {
     projetoComContagens = await obterProjetoParaResumo(sessao.sujeito, p, null)
+    entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'global' })
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -52,6 +55,7 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
     <ResumoDoProjeto
       projeto={projetoComContagens}
       contagens={projetoComContagens.contagens}
+      entregas={entregas}
       estadoGitHub={projetoComContagens.estadoGitHub}
       contexto={{ tipo: 'global' }}
       podeGerenciar={podeGerenciar}

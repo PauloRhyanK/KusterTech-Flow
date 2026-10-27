@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
-import { Button } from '@/components/ui/button'
+import Link from 'next/link'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
@@ -9,6 +10,7 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { contarMilestonesAtivasDoProjeto } from '@/modules/entregas/queries'
 import { obterRepositoriosDoProjeto } from '@/modules/github/queries'
 import { obterProjetoParaConfiguracao } from '@/modules/projetos/queries'
 import { AssociacaoDeClientes } from '@/app/(app)/projetos/_componentes/associacao-de-clientes'
@@ -51,9 +53,13 @@ export default async function PaginaConfiguracaoProjeto({
 
   let projeto: Awaited<ReturnType<typeof obterProjetoParaConfiguracao>>
   let github: Awaited<ReturnType<typeof obterRepositoriosDoProjeto>>
+  let milestonesAtivas: number
   try {
     projeto = await obterProjetoParaConfiguracao(sessao.sujeito, p)
     github = await obterRepositoriosDoProjeto(sessao.sujeito, p)
+    milestonesAtivas = await contarMilestonesAtivasDoProjeto(sessao.sujeito, p, {
+      tipo: 'global',
+    })
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return (
@@ -130,13 +136,37 @@ export default async function PaginaConfiguracaoProjeto({
         />
       </section>
 
-      <section className="space-y-3">
+      <section id="milestones" className="space-y-3">
         <h2 className="text-lg font-semibold text-text-primary">Milestones</h2>
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="Milestones"
-          descricao="Milestones e entregas chegam no Incremento 3."
-        />
+        {milestonesAtivas > 0 ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-4">
+            <p className="text-sm text-text-primary">
+              {milestonesAtivas === 1
+                ? '1 milestone ativa'
+                : `${milestonesAtivas} milestones ativas`}
+            </p>
+            <Link
+              href={`/projetos/${projeto.id}/entregas`}
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              Abrir Entregas
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <EstadoVazio
+              tipo="nenhum-registro"
+              titulo="Nenhuma milestone criada."
+              descricao="Milestones organizam as issues por entrega e podem ser criadas a qualquer momento."
+            />
+            <Link
+              href={`/projetos/${projeto.id}/entregas?nova=1#nova-milestone`}
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              Criar milestone
+            </Link>
+          </div>
+        )}
       </section>
 
       <section className="space-y-3">

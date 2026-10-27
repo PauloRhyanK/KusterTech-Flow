@@ -3,13 +3,22 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { cn } from '@/lib/utils'
 import type { EstadoIntegracao } from '@/modules/github/model'
-import { calcularChecklist, type ContagensDoProjeto, type Contexto } from '@/modules/projetos/model'
+import { buttonVariants } from '@/components/ui/button'
+import type { obterEntregasParaResumo } from '@/modules/entregas/queries'
+import {
+  calcularChecklist,
+  rotasDoProjeto,
+  type ContagensDoProjeto,
+  type Contexto,
+} from '@/modules/projetos/model'
 import type { ProjetoResumo } from '@/modules/projetos/service'
 import { ChecklistDeConfiguracao } from './checklist-de-configuracao'
+import { ListaDeMilestones } from './lista-de-milestones'
 
 export interface ResumoDoProjetoProps {
   projeto: ProjetoResumo
   contagens: ContagensDoProjeto
+  entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
   estadoGitHub?: EstadoIntegracao
   contexto: Contexto
   podeGerenciar: boolean
@@ -20,6 +29,7 @@ export interface ResumoDoProjetoProps {
 export function ResumoDoProjeto({
   projeto,
   contagens,
+  entregas,
   estadoGitHub = 'nao-configurada',
   contexto,
   podeGerenciar,
@@ -32,6 +42,18 @@ export function ResumoDoProjeto({
       ? (projeto.clientes.find((c) => c.id === contexto.clienteId)?.nome ?? '')
       : '')
 
+  const rotas = rotasDoProjeto(projeto.id, contexto)
+  const vazio =
+    contexto.tipo === 'global'
+      ? {
+          titulo: 'Nenhuma milestone criada.',
+          descricao: 'Crie a primeira milestone em Entregas.',
+        }
+      : {
+          titulo: 'Nenhuma milestone associada a este cliente.',
+          descricao: 'Quando uma milestone for associada, ela aparece aqui.',
+        }
+
   return (
     <div className={cn('space-y-8', className)}>
       {/* 1. Próximas ações */}
@@ -43,6 +65,7 @@ export function ResumoDoProjeto({
               contagens,
               podeGerenciar ? `/projetos/${projeto.id}/configuracao` : null,
               estadoGitHub,
+              podeGerenciar ? rotas.entregas : null,
             )}
           />
         ) : (
@@ -57,19 +80,28 @@ export function ResumoDoProjeto({
       {/* 2. Entregas */}
       <section className="space-y-3">
         <h2 className="text-[18px] font-[600] leading-[1.3] text-text-primary">Entregas</h2>
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="Nenhuma entrega registrada."
-          descricao="Milestones e entregas chegam no Incremento 3."
+        <ListaDeMilestones
+          rotas={rotas}
+          milestones={entregas.milestones}
+          rotulo="Milestones ativas"
+          vazio={vazio}
         />
+        <Link href={rotas.entregas} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          Ver todas as entregas
+        </Link>
       </section>
 
       {/* 3. Indicadores */}
       <section className="space-y-3">
         <h2 className="text-[18px] font-[600] leading-[1.3] text-text-primary">Indicadores</h2>
-        <div className="rounded-lg border border-border bg-surface p-4">
-          <BadgeDeEstado tom="neutro">Sem dados</BadgeDeEstado>
-        </div>
+        <ul
+          role="list"
+          aria-label="Indicadores do projeto"
+          className="space-y-1 rounded-lg border border-border bg-surface p-4 text-sm text-text-primary"
+        >
+          <li>Milestones ativas: {entregas.totalAtivas}</li>
+          <li>Issues abertas em milestones: {entregas.issuesAbertasEmMilestones}</li>
+        </ul>
       </section>
 
       {/* 4. Clientes */}

@@ -147,6 +147,68 @@ export async function listarMilestonesDoProjeto(
   }
 }
 
+export async function contarMilestonesAtivasPorProjeto(
+  sujeito: Sujeito,
+): Promise<Map<string, number>> {
+  exigirLeituraGlobal(sujeito)
+  const grupos = await db.milestone.groupBy({
+    by: ['projetoId'],
+    where: { arquivadaEm: null },
+    _count: { _all: true },
+  })
+  return new Map(grupos.map((g) => [g.projetoId, g._count._all]))
+}
+
+export async function contarMilestonesAtivasDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+  contexto: Contexto,
+): Promise<number> {
+  await autorizarLeitura(sujeito, projetoId, contexto)
+  const clienteId = contexto.tipo === 'cliente' ? contexto.clienteId : null
+  return db.milestone.count({
+    where: {
+      projetoId,
+      arquivadaEm: null,
+      ...(clienteId ? { clientes: { some: { clienteId } } } : {}),
+    },
+  })
+}
+
+const LIMITE_DO_RESUMO = 5
+
+export async function obterEntregasParaResumo(
+  sujeito: Sujeito,
+  projetoId: string,
+  contexto: Contexto,
+): Promise<{
+  milestones: MilestoneNaLista[]
+  totalAtivas: number
+  issuesAbertasEmMilestones: number
+}> {
+  const { ativas } = await listarMilestonesDoProjeto(sujeito, projetoId, contexto)
+
+  const clienteId = contexto.tipo === 'cliente' ? contexto.clienteId : null
+  const abertas = await db.milestoneIssue.findMany({
+    where: {
+      foraDoEscopo: false,
+      milestone: {
+        projetoId,
+        arquivadaEm: null,
+        ...(clienteId ? { clientes: { some: { clienteId } } } : {}),
+      },
+      issue: { estado: 'ABERTA', repositorio: { projetoId } },
+    },
+    select: { issueId: true },
+  })
+
+  return {
+    milestones: ativas.slice(0, LIMITE_DO_RESUMO),
+    totalAtivas: ativas.length,
+    issuesAbertasEmMilestones: new Set(abertas.map((v) => v.issueId)).size,
+  }
+}
+
 export async function obterMilestone(
   sujeito: Sujeito,
   projetoId: string,

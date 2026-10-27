@@ -210,6 +210,53 @@ test('contexto de A lista só a milestone de A, sem "Issues sem milestone"; cont
   await expect(page.getByText('Entrega A')).toHaveCount(0)
 })
 
+test('Resumo global mostra a milestone com "1 de 3 issues fechadas · 33%" abaixo de Próximas ações, checklist Milestones Concluído "1 milestone ativa"; Resumo no contexto de B mostra "Nenhuma milestone associada a este cliente."', async ({
+  page,
+}, testInfo) => {
+  const { email, senha } = obterAdmin()
+  await fazerLogin(page, email, senha)
+  const { repoUm, repoDois, clienteA, clienteB, projeto } = await prepararCenario(
+    testInfo.project.name,
+  )
+  const milestone = await criarMilestoneNoBanco(projeto.id, 'Entrega 1', [clienteA.id])
+  const { um1, um4, dois1 } = await issuesDe(repoUm, repoDois)
+  await vincularIssuesNoBanco(milestone.id, [um1, um4, dois1])
+
+  await page.goto(`/projetos/${projeto.id}`)
+  const proximas = page.getByRole('heading', { level: 2, name: 'Próximas ações' })
+  const entregas = page.getByRole('heading', { level: 2, name: 'Entregas' })
+  const indicadores = page.getByRole('heading', { level: 2, name: 'Indicadores' })
+  const yProximas = (await proximas.boundingBox())?.y ?? -1
+  const yEntregas = (await entregas.boundingBox())?.y ?? -1
+  const yIndicadores = (await indicadores.boundingBox())?.y ?? -1
+  expect(yProximas).toBeGreaterThanOrEqual(0)
+  expect(yEntregas).toBeGreaterThan(yProximas)
+  expect(yIndicadores).toBeGreaterThan(yEntregas)
+
+  const lista = page.getByRole('list', { name: 'Milestones ativas' })
+  await expect(lista.getByRole('link', { name: 'Entrega 1' })).toHaveAttribute(
+    'href',
+    `/projetos/${projeto.id}/entregas/milestones/${milestone.id}`,
+  )
+  await expect(lista.getByText('1 de 3 issues fechadas · 33%')).toBeVisible()
+  expect(((await lista.boundingBox())?.y ?? -1) > yEntregas).toBe(true)
+  await expect(page.getByRole('link', { name: 'Ver todas as entregas' })).toHaveAttribute(
+    'href',
+    `/projetos/${projeto.id}/entregas`,
+  )
+
+  const checklist = page.getByRole('list', { name: 'Configuração do projeto' })
+  const itemMilestones = checklist.locator('li', { hasText: 'Milestones' })
+  await expect(itemMilestones).toContainText('1 milestone ativa')
+  await expect(itemMilestones.getByText('Concluído')).toBeVisible()
+  await expect(page.getByText('Milestones ativas: 1')).toBeVisible()
+  await expect(page.getByText('Issues abertas em milestones: 2')).toBeVisible()
+
+  await page.goto(`/clientes/${clienteB.id}/projetos/${projeto.id}`)
+  await expect(page.getByText('Nenhuma milestone associada a este cliente.')).toBeVisible()
+  await expect(page.getByText('Entrega 1')).toHaveCount(0)
+})
+
 test('testador de A: milestone global → "Sem permissão para esta área."; milestone de A no contexto de B → "Sem permissão para esta área."; POST forjado de "Adicionar à milestone" (capturado do admin e desfeito por desvincularIssuesNoBanco) não grava; o mesmo POST do admin grava', async ({
   page,
   browser,

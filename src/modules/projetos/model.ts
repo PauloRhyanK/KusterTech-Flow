@@ -60,10 +60,30 @@ function calcularItemGitHub(
   }
 }
 
+function calcularItemMilestones(milestones: number, hrefEntregas: string | null): ItemChecklist {
+  const base = { chave: 'milestones', titulo: 'Milestones' } as const
+  if (milestones === 0) {
+    return {
+      ...base,
+      descricao: 'Nenhuma milestone criada',
+      estado: 'pendente',
+      ...(hrefEntregas !== null
+        ? { acao: { rotulo: 'Criar milestone', href: `${hrefEntregas}?nova=1#nova-milestone` } }
+        : {}),
+    }
+  }
+  return {
+    ...base,
+    descricao: milestones === 1 ? '1 milestone ativa' : `${milestones} milestones ativas`,
+    estado: 'concluido',
+  }
+}
+
 export function calcularChecklist(
   contagens: ContagensDoProjeto,
   hrefConfiguracao: string | null,
   estadoGitHub: EstadoIntegracao,
+  hrefEntregas: string | null = null,
 ): readonly ItemChecklist[] {
   const itemClientes: ItemChecklist =
     contagens.clientes > 0
@@ -97,12 +117,7 @@ export function calcularChecklist(
       descricao: 'Ambientes e evidências de deploy chegam no Incremento 4.',
       estado: 'indisponivel',
     },
-    {
-      chave: 'milestones',
-      titulo: 'Milestones',
-      descricao: 'Milestones e entregas chegam no Incremento 3.',
-      estado: 'indisponivel',
-    },
+    calcularItemMilestones(contagens.milestones, hrefEntregas),
   ]
 }
 

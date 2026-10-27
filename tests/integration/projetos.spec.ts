@@ -2,7 +2,15 @@ import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
-import { criarMilestone, removerClienteDaMilestone } from '@/modules/entregas/service'
+import {
+  arquivarMilestone,
+  criarMilestone,
+  removerClienteDaMilestone,
+} from '@/modules/entregas/service'
+import {
+  contarMilestonesAtivasPorProjeto,
+  obterEntregasParaResumo,
+} from '@/modules/entregas/queries'
 import { obterClienteComProjetos } from '@/modules/clientes/queries'
 import { arquivarCliente, criarCliente } from '@/modules/clientes/service'
 import {
@@ -93,8 +101,13 @@ describe('projetos (integração)', () => {
         projetoId,
       },
     })
+    // Sem milestone ativa o checklist segue pendente; só deixa de estar depois de criarMilestone
     const telaComRepositorio = await listarProjetosParaTela(adminSujeito)
-    expect(telaComRepositorio[0]?.configuracaoPendente).toBe(false)
+    expect(telaComRepositorio[0]?.configuracaoPendente).toBe(true)
+
+    await criarMilestone(adminSujeito, projetoId, { titulo: 'Entrega 1' })
+    const telaComMilestone = await listarProjetosParaTela(adminSujeito)
+    expect(telaComMilestone[0]?.configuracaoPendente).toBe(false)
 
     // 5. listarProjetosParaTela com projeto sem clientes devolve configuracaoPendente = true
     const { id: projSemClientesId } = await criarProjeto(adminSujeito, {
@@ -297,5 +310,45 @@ describe('projetos (integração)', () => {
     await removerClienteDaMilestone(adminSujeito, milestoneId, clienteId)
     await desassociarCliente(adminSujeito, projetoId, clienteId)
     expect(await db.projetoCliente.count({ where: { projetoId, clienteId } })).toBe(0)
+  })
+
+  test('obterProjetoParaResumo: 1 ativa e 1 arquivada → contagens.milestones 1; contexto do cliente sem milestone associada → 0', async () => {
+    const { id: idA } = await criarCliente(adminSujeito, { nome: 'Cliente A' })
+    const { id: idB } = await criarCliente(adminSujeito, { nome: 'Cliente B' })
+    const { id: projetoId } = await criarProjeto(adminSujeito, {
+      nome: 'Projeto Contagem',
+      clientesIds: [idA, idB],
+    })
+    await criarMilestone(adminSujeito, projetoId, { titulo: 'Ativa', clientesIds: [idA] })
+    const { id: arquivadaId } = await criarMilestone(adminSujeito, projetoId, {
+      titulo: 'Arquivada',
+      clientesIds: [idA, idB],
+    })
+    await arquivarMilestone(adminSujeito, arquivadaId)
+
+    const global = await obterProjetoParaResumo(adminSujeito, projetoId, null)
+    expect(global.contagens.milestones).toBe(1)
+
+    const doClienteA = await obterProjetoParaResumo(adminSujeito, projetoId, idA)
+    expect(doClienteA.contagens.milestones).toBe(1)
+
+    // B só está na milestone arquivada: nenhuma ativa associada
+    const doClienteB = await obterProjetoParaResumo(adminSujeito, projetoId, idB)
+    expect(doClienteB.contagens.milestones).toBe(0)
+
+    const porProjeto = await contarMilestonesAtivasPorProjeto(adminSujeito)
+    expect(porProjeto.get(projetoId)).toBe(1)
+
+    const entregasA = await obterEntregasParaResumo(adminSujeito, projetoId, {
+      tipo: 'cliente',
+      clienteId: idA,
+    })
+    expect(entregasA.totalAtivas).toBe(1)
+    expect(entregasA.milestones.map((m) => m.titulo)).toEqual(['Ativa'])
+    const entregasB = await obterEntregasParaResumo(adminSujeito, projetoId, {
+      tipo: 'cliente',
+      clienteId: idB,
+    })
+    expect(entregasB).toEqual({ milestones: [], totalAtivas: 0, issuesAbertasEmMilestones: 0 })
   })
 })

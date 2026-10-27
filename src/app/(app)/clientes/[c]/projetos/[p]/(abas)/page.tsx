@@ -5,6 +5,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterCliente } from '@/modules/clientes/service'
+import { obterEntregasParaResumo } from '@/modules/entregas/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { ResumoDoProjeto } from '@/app/(app)/projetos/_componentes/resumo-do-projeto'
 
@@ -35,6 +36,7 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
   const { c, p } = await params
 
   let projetoComContagens: Awaited<ReturnType<typeof obterProjetoParaResumo>>
+  let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
   let cliente: Awaited<ReturnType<typeof obterCliente>>
 
   try {
@@ -44,6 +46,7 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
     ])
     projetoComContagens = proj
     cliente = cli
+    entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'cliente', clienteId: c })
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -60,6 +63,7 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
     <ResumoDoProjeto
       projeto={projetoComContagens}
       contagens={projetoComContagens.contagens}
+      entregas={entregas}
       contexto={{ tipo: 'cliente', clienteId: c }}
       podeGerenciar={podeGerenciar}
       cliente={{ id: cliente.id, nome: cliente.nome }}
