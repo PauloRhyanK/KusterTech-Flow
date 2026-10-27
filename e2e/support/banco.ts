@@ -130,6 +130,10 @@ export async function liberarRepositoriosNoBanco(nomes: readonly string[]): Prom
       falhasConsecutivas: 0,
       cursorIssues: null,
       cursorPullRequests: null,
+      cursorDeployments: null,
+      deploymentsSincronizadosEm: null,
+      deploymentsFalhaEm: null,
+      deploymentsFalhaMotivo: null,
     },
   })
 }
@@ -223,5 +227,55 @@ export async function limparVinculosDeIssuesNoBanco(
   const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomesDeRepositorio] } } }
   await db.issueVinculo.deleteMany({
     where: { OR: [{ original: dosRepositorios }, { correcao: dosRepositorios }] },
+  })
+}
+
+// Grava os ambientes como a tela grava, com o efeito de reler o histórico de deployments.
+export async function configurarAmbientesNoBanco(
+  projetoId: string,
+  nomes: Record<'DEV' | 'QA' | 'PROD', string> = { DEV: 'dev', QA: 'qa', PROD: 'production' },
+): Promise<void> {
+  for (const tipo of ['DEV', 'QA', 'PROD'] as const) {
+    await db.ambiente.upsert({
+      where: { projetoId_tipo: { projetoId, tipo } },
+      create: { projetoId, tipo, nomeNoGitHub: nomes[tipo] },
+      update: { nomeNoGitHub: nomes[tipo] },
+    })
+  }
+  await db.repositorioGitHub.updateMany({
+    where: { projetoId },
+    data: { cursorDeployments: null, sincronizacaoSolicitadaEm: new Date() },
+  })
+}
+
+export async function removerAmbientesNoBanco(projetoId: string): Promise<void> {
+  await db.ambiente.deleteMany({ where: { projetoId } })
+}
+
+export async function contarAmbientes(projetoId: string): Promise<number> {
+  return db.ambiente.count({ where: { projetoId } })
+}
+
+export async function contarEvidencias(projetoId: string): Promise<number> {
+  return db.evidenciaDeploy.count({ where: { ambiente: { projetoId } } })
+}
+
+// Apaga presenças, evidências e versões dos repositórios e devolve a leitura de deployments
+// ao estado de recém-catalogado.
+export async function limparImplantacaoDosRepositoriosNoBanco(
+  nomes: readonly string[],
+): Promise<void> {
+  const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomes] } } }
+  await db.presencaIssueVersao.deleteMany({ where: { versao: dosRepositorios } })
+  await db.evidenciaDeploy.deleteMany({ where: { versao: dosRepositorios } })
+  await db.versao.deleteMany({ where: dosRepositorios })
+  await db.repositorioGitHub.updateMany({
+    where: { nomeCompleto: { in: [...nomes] } },
+    data: {
+      cursorDeployments: null,
+      deploymentsSincronizadosEm: null,
+      deploymentsFalhaEm: null,
+      deploymentsFalhaMotivo: null,
+    },
   })
 }

@@ -11,7 +11,7 @@ import {
 } from './model'
 
 describe('projetos / model (unitário)', () => {
-  test('calcularChecklist: sem clientes → clientes pendente com ação para o href; com clientes → concluido; href null → pendente sem ação; github pelo estado real; ambientes/milestones sempre indisponivel; nunca concluido sem contagem; ordem fixa', () => {
+  test('calcularChecklist: sem clientes → clientes pendente com ação para o href; com clientes → concluido; href null → pendente sem ação; github pelo estado real; ambientes pela contagem; nunca concluido sem contagem; ordem fixa', () => {
     const contagensSemClientes: ContagensDoProjeto = {
       clientes: 0,
       repositorios: 0,
@@ -45,7 +45,7 @@ describe('projetos / model (unitário)', () => {
       },
     })
 
-    // GitHub sem repositórios é pendente; Ambientes e Milestones seguem indisponíveis
+    // GitHub sem repositórios e Ambientes sem nenhum são pendentes
     expect(checklistComHref[1]).toEqual({
       chave: 'github',
       titulo: 'GitHub',
@@ -59,8 +59,12 @@ describe('projetos / model (unitário)', () => {
     expect(checklistComHref[2]).toEqual({
       chave: 'ambientes',
       titulo: 'Ambientes',
-      descricao: 'Ambientes e evidências de deploy chegam no Incremento 4.',
-      estado: 'indisponivel',
+      descricao: 'Nenhum ambiente configurado',
+      estado: 'pendente',
+      acao: {
+        rotulo: 'Configurar ambientes',
+        href: '/projetos/p-1/configuracao#ambientes',
+      },
     })
     expect(checklistComHref[3]).toEqual({
       chave: 'milestones',
@@ -99,7 +103,7 @@ describe('projetos / model (unitário)', () => {
     })
     expect(checklistConcluido[0]?.acao).toBeUndefined()
 
-    // Mesmo com contagens altas em repos/ambientes/milestones, continuam indisponíveis (sem fonte)
+    // Com contagens altas, repositórios, ambientes e milestones ficam concluídos
     const contagensAltas: ContagensDoProjeto = {
       clientes: 1,
       repositorios: 5,
@@ -108,8 +112,50 @@ describe('projetos / model (unitário)', () => {
     }
     const checklistAltas = calcularChecklist(contagensAltas, null, 'conectada')
     expect(checklistAltas[1]?.estado).toBe('concluido')
-    expect(checklistAltas[2]?.estado).toBe('indisponivel')
+    expect(checklistAltas[2]?.estado).toBe('concluido')
     expect(checklistAltas[3]?.estado).toBe('concluido')
+  })
+
+  test('checklist: 0 → pendente "Nenhum ambiente configurado" com href #ambientes; 2 → "2 de 3 ambientes configurados"; 3 → concluido "DEV, QA e PROD configurados"; href null → sem acao', () => {
+    const base: ContagensDoProjeto = { clientes: 1, repositorios: 1, ambientes: 0, milestones: 1 }
+    const ambientes = (ambientesConfigurados: number, href: string | null) =>
+      calcularChecklist({ ...base, ambientes: ambientesConfigurados }, href, 'conectada').find(
+        (i) => i.chave === 'ambientes',
+      )
+    const acao = {
+      rotulo: 'Configurar ambientes',
+      href: '/projetos/p-1/configuracao#ambientes',
+    }
+
+    expect(ambientes(0, '/projetos/p-1/configuracao')).toEqual({
+      chave: 'ambientes',
+      titulo: 'Ambientes',
+      descricao: 'Nenhum ambiente configurado',
+      estado: 'pendente',
+      acao,
+    })
+    expect(ambientes(1, '/projetos/p-1/configuracao')?.descricao).toBe(
+      '1 de 3 ambientes configurados',
+    )
+    expect(ambientes(2, '/projetos/p-1/configuracao')).toEqual({
+      chave: 'ambientes',
+      titulo: 'Ambientes',
+      descricao: '2 de 3 ambientes configurados',
+      estado: 'pendente',
+      acao,
+    })
+    expect(ambientes(3, '/projetos/p-1/configuracao')).toEqual({
+      chave: 'ambientes',
+      titulo: 'Ambientes',
+      descricao: 'DEV, QA e PROD configurados',
+      estado: 'concluido',
+    })
+    expect(ambientes(0, null)).toEqual({
+      chave: 'ambientes',
+      titulo: 'Ambientes',
+      descricao: 'Nenhum ambiente configurado',
+      estado: 'pendente',
+    })
   })
 
   test('calcularChecklist milestones: 0 com hrefEntregas → acao Criar milestone para /projetos/p-1/entregas?nova=1#nova-milestone; 1 → "1 milestone ativa"; 2 → "2 milestones ativas"', () => {

@@ -146,14 +146,15 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
     await page.goto(`/projetos/${projetoId}`)
     await expect(page.getByRole('heading', { level: 1, name: nomeProjeto })).toBeVisible()
 
-    // Checklist com "Clientes" Concluído, GitHub e Milestones pendentes, Ambientes "Ainda não disponível"
+    // Checklist com "Clientes" Concluído, GitHub, Ambientes e Milestones pendentes
     const listaChecklist = page.getByRole('list', { name: 'Configuração do projeto' })
     await expect(listaChecklist.getByText('Clientes', { exact: true })).toBeVisible()
     await expect(listaChecklist.getByText('Concluído')).toBeVisible()
     await expect(listaChecklist.getByText('GitHub', { exact: true })).toBeVisible()
     await expect(listaChecklist.getByText('Ambientes', { exact: true })).toBeVisible()
     await expect(listaChecklist.getByText('Milestones', { exact: true })).toBeVisible()
-    await expect(listaChecklist.getByText('Ainda não disponível')).toHaveCount(1)
+    await expect(listaChecklist.getByText('Nenhum ambiente configurado')).toBeVisible()
+    await expect(listaChecklist.getByText('Ainda não disponível')).toHaveCount(0)
 
     // Cinco abas
     const navAbasGlobal = page.getByRole('navigation', { name: 'Seções do projeto' })
@@ -222,7 +223,7 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
     await expect(secao.getByText('Conectada')).toHaveCount(2)
     await capturar(page, testInfo, '4-admin-repositorios.png')
 
-    // Resumo: GitHub concluído; Ambientes segue "Ainda não disponível"
+    // Resumo: GitHub concluído; Ambientes segue pendente
     await page.goto(`/projetos/${projetoId}`)
     const itemGitHub = page
       .getByRole('list', { name: 'Configuração do projeto' })

@@ -58,7 +58,7 @@ describe('ChecklistDeConfiguracao', () => {
       {
         chave: 'ambientes',
         titulo: 'Ambientes',
-        descricao: 'Ambientes e evidências de deploy chegam no Incremento 4.',
+        descricao: 'Integração prevista para uma entrega futura.',
         estado: 'indisponivel',
       },
     ]

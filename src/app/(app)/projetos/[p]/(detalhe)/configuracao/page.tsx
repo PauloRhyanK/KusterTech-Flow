@@ -10,9 +10,11 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { obterAmbientesDoProjeto } from '@/modules/ambientes/queries'
 import { contarMilestonesAtivasDoProjeto } from '@/modules/entregas/queries'
 import { obterRepositoriosDoProjeto } from '@/modules/github/queries'
 import { obterProjetoParaConfiguracao } from '@/modules/projetos/queries'
+import { AmbientesDoProjeto } from '@/app/(app)/projetos/_componentes/ambientes-do-projeto'
 import { AssociacaoDeClientes } from '@/app/(app)/projetos/_componentes/associacao-de-clientes'
 import { FormularioProjeto } from '@/app/(app)/projetos/_componentes/formulario-projeto'
 import { RepositoriosDoProjeto } from '@/app/(app)/projetos/_componentes/repositorios-do-projeto'
@@ -53,10 +55,12 @@ export default async function PaginaConfiguracaoProjeto({
 
   let projeto: Awaited<ReturnType<typeof obterProjetoParaConfiguracao>>
   let github: Awaited<ReturnType<typeof obterRepositoriosDoProjeto>>
+  let ambientes: Awaited<ReturnType<typeof obterAmbientesDoProjeto>>
   let milestonesAtivas: number
   try {
     projeto = await obterProjetoParaConfiguracao(sessao.sujeito, p)
     github = await obterRepositoriosDoProjeto(sessao.sujeito, p)
+    ambientes = await obterAmbientesDoProjeto(sessao.sujeito, p)
     milestonesAtivas = await contarMilestonesAtivasDoProjeto(sessao.sujeito, p, {
       tipo: 'global',
     })
@@ -127,12 +131,13 @@ export default async function PaginaConfiguracaoProjeto({
         />
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-text-primary">Ambientes</h2>
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="Ambientes"
-          descricao="Ambientes e evidências de deploy chegam no Incremento 4."
+      <section id="ambientes" className="space-y-3">
+        <AmbientesDoProjeto
+          projetoId={projeto.id}
+          ambientes={ambientes.ambientes}
+          leituras={ambientes.leituras}
+          githubConfigurado={ambientes.githubConfigurado}
+          repositoriosVinculados={ambientes.repositoriosVinculados}
         />
       </section>
 

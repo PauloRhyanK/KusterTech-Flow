@@ -66,6 +66,17 @@ export default async function globalSetup(): Promise<void> {
       },
     })
     await db.milestone.deleteMany({ where: { projeto: { nome: { startsWith: 'E2E ' } } } })
+    // Implantação, na ordem das FKs: presenças → evidências → versões → ambientes.
+    const versoesDeExemplo = { versao: dosExemplos }
+    const projetosE2E = { projeto: { nome: { startsWith: 'E2E ' } } }
+    await db.presencaIssueVersao.deleteMany({
+      where: { OR: [{ issue: dosExemplos }, versoesDeExemplo] },
+    })
+    await db.evidenciaDeploy.deleteMany({
+      where: { OR: [versoesDeExemplo, { ambiente: projetosE2E }, { versao: projetosE2E }] },
+    })
+    await db.versao.deleteMany({ where: { OR: [dosExemplos, projetosE2E] } })
+    await db.ambiente.deleteMany({ where: projetosE2E })
     await db.pullRequestGitHub.deleteMany({ where: dosExemplos })
     await db.issueGitHub.deleteMany({ where: dosExemplos })
     await db.repositorioGitHub.deleteMany({
