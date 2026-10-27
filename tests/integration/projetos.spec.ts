@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import { criarMilestone, removerClienteDaMilestone } from '@/modules/entregas/service'
 import { obterClienteComProjetos } from '@/modules/clientes/queries'
 import { arquivarCliente, criarCliente } from '@/modules/clientes/service'
 import {
@@ -275,5 +276,26 @@ describe('projetos (integração)', () => {
     const config = await obterProjetoParaConfiguracao(adminSujeito, projetoId)
     expect(config.id).toBe(projetoId)
     expect(config.clientesDisponiveis).toEqual([{ id: idC, nome: 'Cliente C' }])
+  })
+
+  test('desassociarCliente com o cliente em milestone de P → mensagem de recusa e ProjetoCliente mantido; depois de removerClienteDaMilestone desassocia', async () => {
+    const { id: clienteId } = await criarCliente(adminSujeito, { nome: 'Cliente Milestone' })
+    const { id: projetoId } = await criarProjeto(adminSujeito, {
+      nome: 'Projeto Com Milestone',
+      clientesIds: [clienteId],
+    })
+    const { id: milestoneId } = await criarMilestone(adminSujeito, projetoId, {
+      titulo: 'Entrega 1',
+      clientesIds: [clienteId],
+    })
+
+    await expect(desassociarCliente(adminSujeito, projetoId, clienteId)).rejects.toThrow(
+      'Este cliente está em milestones do projeto. Remova-o das milestones antes de desassociá-lo.',
+    )
+    expect(await db.projetoCliente.count({ where: { projetoId, clienteId } })).toBe(1)
+
+    await removerClienteDaMilestone(adminSujeito, milestoneId, clienteId)
+    await desassociarCliente(adminSujeito, projetoId, clienteId)
+    expect(await db.projetoCliente.count({ where: { projetoId, clienteId } })).toBe(0)
   })
 })

@@ -10,10 +10,13 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterRepositoriosDoProjeto } from '@/modules/github/queries'
 import { obterProjetoParaConfiguracao } from '@/modules/projetos/queries'
-import { AssociacaoDeClientes } from '../../_componentes/associacao-de-clientes'
-import { FormularioProjeto } from '../../_componentes/formulario-projeto'
-import { RepositoriosDoProjeto } from '../../_componentes/repositorios-do-projeto'
-import { alternarArquivamentoDoProjetoAction, editarProjetoAction } from '../../actions'
+import { AssociacaoDeClientes } from '@/app/(app)/projetos/_componentes/associacao-de-clientes'
+import { FormularioProjeto } from '@/app/(app)/projetos/_componentes/formulario-projeto'
+import { RepositoriosDoProjeto } from '@/app/(app)/projetos/_componentes/repositorios-do-projeto'
+import {
+  alternarArquivamentoDoProjetoAction,
+  editarProjetoAction,
+} from '@/app/(app)/projetos/actions'
 
 export interface PaginaConfiguracaoProjetoProps {
   params: Promise<{ p: string }>

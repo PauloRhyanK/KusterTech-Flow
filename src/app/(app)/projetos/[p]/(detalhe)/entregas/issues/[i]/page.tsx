@@ -7,8 +7,8 @@ import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterIssueDoProjeto } from '@/modules/github/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
-import { AvisoDeIntegracao } from '../../../../_componentes/aviso-de-integracao'
-import { DetalheDaIssue } from '../../../../_componentes/detalhe-da-issue'
+import { AvisoDeIntegracao } from '@/app/(app)/projetos/_componentes/aviso-de-integracao'
+import { DetalheDaIssue } from '@/app/(app)/projetos/_componentes/detalhe-da-issue'
 
 export interface PaginaIssueProps {
   params: Promise<{ p: string; i: string }>
