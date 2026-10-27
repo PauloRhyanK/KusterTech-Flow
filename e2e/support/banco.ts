@@ -1,9 +1,15 @@
+import { randomBytes } from 'node:crypto'
 import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
 import { normalizarNome, validarNomeDeCliente } from '@/modules/clientes/model'
+import { assinaturaDaEntrada, prsMergeadosDaIssue } from '@/modules/ambientes/model'
+import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
+import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
+import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
+import { rodarWorkerUmaVez } from './worker'
 
 export function nomeDeTeste(base: string): string {
   const sufixo = process.env.E2E_SUFIXO || 'teste'
@@ -315,4 +321,165 @@ export async function desfazerConfirmacaoDePresencaNoBanco(issueId: string): Pro
     where: { issueId, confirmadaPorId: { not: null } },
     data: { estado: 'VERIFICACAO_NECESSARIA', confirmadaPorId: null },
   })
+}
+
+// Ambiente QA (sem nome no GitHub: o worker não lê deployments dele), uma versão nova com
+// deploy manual bem-sucedido agora e presença confirmada manualmente das issues. A presença leva
+// `confirmadaPorId` e a assinatura da entrada, para o worker não a recalcular (errata §3.8, item 4).
+export async function prepararPresencaEmQANoBanco(
+  projetoId: string,
+  nomeCompleto: string,
+  numeros: readonly number[],
+  rotulo: string,
+  autorId: string,
+): Promise<{ versaoId: string }> {
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto },
+    select: { id: true },
+  })
+  const ambiente = await db.ambiente.upsert({
+    where: { projetoId_tipo: { projetoId, tipo: 'QA' } },
+    create: { projetoId, tipo: 'QA' },
+    update: {},
+    select: { id: true },
+  })
+  const agora = new Date()
+  const commitSha = randomBytes(20).toString('hex')
+  const versao = await db.versao.create({
+    data: { projetoId, repositorioId: repositorio.id, commitSha, rotulo },
+    select: { id: true },
+  })
+  await db.evidenciaDeploy.create({
+    data: {
+      ambienteId: ambiente.id,
+      versaoId: versao.id,
+      origem: 'MANUAL',
+      situacao: 'SUCESSO',
+      ocorridaEm: agora,
+      registradaEm: agora,
+      autorId,
+    },
+  })
+  const prs = await db.pullRequestGitHub.findMany({
+    where: { repositorioId: repositorio.id },
+    select: { numero: true, estado: true, issuesReferenciadas: true, shaMerge: true },
+  })
+  for (const numero of numeros) {
+    const issue = await db.issueGitHub.findFirstOrThrow({
+      where: { repositorioId: repositorio.id, numero },
+      select: { id: true },
+    })
+    await db.presencaIssueVersao.create({
+      data: {
+        issueId: issue.id,
+        versaoId: versao.id,
+        estado: 'CONFIRMACAO_MANUAL',
+        motivo: 'Confirmação manual do E2E',
+        confirmadaPorId: autorId,
+        calculadaEm: agora,
+        assinaturaEntrada: assinaturaDaEntrada(prsMergeadosDaIssue(numero, prs)),
+      },
+    })
+  }
+  return { versaoId: versao.id }
+}
+
+export async function atualizarFilaNoBanco(): Promise<number> {
+  return (await atualizarFilaDeHomologacao(new Date())).itensCriados
+}
+
+// Disponibiliza como o admin, com o evento e a versão atuais (o que a tela enviaria).
+export async function disponibilizarNoBanco(itemId: string, adminId: string): Promise<void> {
+  const item = await db.homologacaoItem.findUniqueOrThrow({
+    where: { id: itemId },
+    select: {
+      issueId: true,
+      ultimoEventoId: true,
+      issue: { select: { repositorioId: true } },
+      homologacao: {
+        select: { clienteId: true, milestoneId: true, milestone: { select: { projetoId: true } } },
+      },
+    },
+  })
+  const corrente = await obterVersaoCorrenteEmQA(
+    item.homologacao.milestone.projetoId,
+    item.issue.repositorioId,
+  )
+  await registrarAcaoDeHomologacao(
+    { usuarioId: adminId, papeis: [{ papel: 'ADMIN', clienteId: null }] },
+    {
+      acao: 'DISPONIBILIZAR',
+      itemId,
+      clienteId: item.homologacao.clienteId,
+      milestoneId: item.homologacao.milestoneId,
+      issueId: item.issueId,
+      versaoId: corrente?.id ?? null,
+      ultimoEventoId: item.ultimoEventoId,
+      texto: null,
+      visibilidade: 'COMPARTILHAVEL',
+    },
+  )
+}
+
+export async function obterItemDeHomologacaoNoBanco(
+  clienteId: string,
+  milestoneId: string,
+  nomeCompleto: string,
+  numero: number,
+): Promise<{ id: string; estado: string; ultimoEventoId: string | null } | null> {
+  return db.homologacaoItem.findFirst({
+    where: {
+      homologacao: { clienteId, milestoneId },
+      issue: { numero, repositorio: { nomeCompleto } },
+    },
+    select: { id: true, estado: true, ultimoEventoId: true },
+  })
+}
+
+export async function contarEventosDeTimeline(clienteId: string): Promise<number> {
+  return db.eventoTimeline.count({ where: { clienteId } })
+}
+
+// Acme e Beta no mesmo projeto e na mesma milestone, com as issues #1, #2 e #4 do primeiro
+// repositório e #1 do segundo; QA com a versão "E2E qa-1" e presença das #1 e #2 do primeiro.
+// A tarefa do worker cria os 4 itens (#1 e #2 × Acme e Beta), todos aguardando disponibilização.
+export async function prepararCenarioDeHomologacaoE2E(projectName: string, autorId: string) {
+  const [repoUm, repoDois] = repositoriosDoProjetoE2E(projectName)
+  const acme = await criarClienteNoBanco(nomeDeTeste('Acme'))
+  const beta = await criarClienteNoBanco(nomeDeTeste('Beta'))
+  const projeto = await criarProjetoNoBanco(nomeDeTeste('Projeto Homologação'), [acme.id, beta.id])
+  await vincularNoBanco(projeto.id, repoUm)
+  await vincularNoBanco(projeto.id, repoDois)
+  rodarWorkerUmaVez()
+
+  const issueUm1 = await obterIssueNoBanco(repoUm, 1)
+  const issueUm2 = await obterIssueNoBanco(repoUm, 2)
+  const issueUm4 = await obterIssueNoBanco(repoUm, 4)
+  const issueDois1 = await obterIssueNoBanco(repoDois, 1)
+  const milestone = await criarMilestoneNoBanco(projeto.id, nomeDeTeste('Release 1'), [
+    acme.id,
+    beta.id,
+  ])
+  await vincularIssuesNoBanco(milestone.id, [issueUm1.id, issueUm2.id, issueUm4.id, issueDois1.id])
+  const { versaoId } = await prepararPresencaEmQANoBanco(
+    projeto.id,
+    repoUm,
+    [1, 2],
+    'E2E qa-1',
+    autorId,
+  )
+  const itensCriados = await atualizarFilaNoBanco()
+  return {
+    acme,
+    beta,
+    projeto,
+    milestone,
+    repoUm,
+    repoDois,
+    issueUm1,
+    issueUm2,
+    issueUm4,
+    versaoId,
+    itensCriados,
+  }
 }
