@@ -7,6 +7,7 @@ export type Acao =
   | 'clientes.gerenciar'
   | 'projetos.ler'
   | 'projetos.gerenciar'
+  | 'homologacao.disponibilizar'
   | 'homologacao.comentar'
   | 'homologacao.solicitar_correcao'
   | 'homologacao.aprovar'
@@ -33,6 +34,7 @@ export const TODAS_AS_ACOES: readonly Acao[] = [
   'clientes.gerenciar',
   'projetos.ler',
   'projetos.gerenciar',
+  'homologacao.disponibilizar',
   'homologacao.comentar',
   'homologacao.solicitar_correcao',
   'homologacao.aprovar',
@@ -40,6 +42,7 @@ export const TODAS_AS_ACOES: readonly Acao[] = [
 ]
 
 export const ACOES_COM_CLIENTE_OBRIGATORIO: readonly Acao[] = [
+  'homologacao.disponibilizar',
   'homologacao.comentar',
   'homologacao.solicitar_correcao',
   'homologacao.aprovar',

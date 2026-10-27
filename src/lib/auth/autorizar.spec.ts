@@ -102,4 +102,22 @@ describe('autorizar', () => {
     expect(autorizar(adminRestrito, 'homologacao.aprovar', { clienteId: 'beta' })).toBe(true)
     expect(autorizar(adminRestrito, 'usuarios.gerenciar')).toBe(true)
   })
+  test('homologacao.disponibilizar: ADMIN permitido com cliente; APROVADOR e TESTADOR do mesmo cliente negados; está em ACOES_COM_CLIENTE_OBRIGATORIO', () => {
+    const admin: Sujeito = {
+      usuarioId: 'u-admin',
+      papeis: [{ papel: 'ADMIN', clienteId: null }],
+    }
+    const aprovador: Sujeito = {
+      usuarioId: 'u-aprovador',
+      papeis: [{ papel: 'APROVADOR', clienteId: 'acme' }],
+    }
+    const testador: Sujeito = {
+      usuarioId: 'u-testador',
+      papeis: [{ papel: 'TESTADOR', clienteId: 'acme' }],
+    }
+    expect(autorizar(admin, 'homologacao.disponibilizar', { clienteId: 'acme' })).toBe(true)
+    expect(autorizar(aprovador, 'homologacao.disponibilizar', { clienteId: 'acme' })).toBe(false)
+    expect(autorizar(testador, 'homologacao.disponibilizar', { clienteId: 'acme' })).toBe(false)
+    expect(ACOES_COM_CLIENTE_OBRIGATORIO).toContain('homologacao.disponibilizar')
+  })
 })
