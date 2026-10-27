@@ -1,10 +1,13 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import type { AmbienteNaTela, LeituraDeDeployments } from '@/modules/ambientes/service'
 
+const TOKEN = `fle_${'A'.repeat(43)}`
+
 vi.mock('../ambientes-actions', () => ({
   salvarAmbienteAction: vi.fn(),
-  gerarTokenDeEvidenciaAction: vi.fn(),
+  gerarTokenDeEvidenciaAction: vi.fn(async () => ({ sucesso: 'Token gerado.', token: TOKEN })),
   revogarTokenDeEvidenciaAction: vi.fn(),
 }))
 
@@ -151,5 +154,35 @@ describe('AmbientesDoProjeto', () => {
     expect(
       screen.getByText('Deployments de kustertech-exemplo/portal: aguardando a primeira leitura.'),
     ).toBeInTheDocument()
+  })
+
+  test('gerar novo token pede confirmação e mostra o token devolvido uma vez, com "Copie agora"', async () => {
+    const usuario = userEvent.setup()
+    render(
+      <AmbientesDoProjeto
+        projetoId="p-1"
+        ambientes={ambientes({
+          QA: {
+            configurado: true,
+            nomeNoGitHub: 'qa',
+            tokenCriadoEm: new Date('2026-10-27T12:00:00Z'),
+          },
+        })}
+        leituras={[leituraOk]}
+        githubConfigurado
+        repositoriosVinculados={1}
+      />,
+    )
+    const qa = screen.getByRole('region', { name: 'QA' })
+    expect(screen.queryByTestId('token-de-evidencia')).toBeNull()
+
+    await usuario.click(within(qa).getByRole('button', { name: 'Gerar novo token' }))
+    expect(screen.queryByTestId('token-de-evidencia')).toBeNull()
+    await usuario.click(
+      within(qa).getByRole('button', { name: 'Confirmar: o token atual deixa de valer' }),
+    )
+
+    await waitFor(() => expect(screen.getByTestId('token-de-evidencia')).toHaveTextContent(TOKEN))
+    expect(within(qa).getByText('Copie agora: este token não será mostrado de novo.')).toBeVisible()
   })
 })

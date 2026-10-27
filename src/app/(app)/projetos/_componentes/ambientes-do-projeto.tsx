@@ -108,19 +108,21 @@ function TokenDeEvidencia({
   const [estadoGerar, gerar, gerando] = useActionState(gerarTokenDeEvidenciaAction, {})
   const [estadoRevogar, revogar, revogando] = useActionState(revogarTokenDeEvidenciaAction, {})
   const campos = { projetoId, tipo: ambiente.tipo }
+  // Depois de revogado (tokenCriadoEm nulo) o valor mostrado deixa de valer e some.
+  const tokenNovo = ambiente.tokenCriadoEm === null ? undefined : estadoGerar.token
 
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-medium text-text-primary">Token de evidência</h4>
       <MensagensDeEstado estado={{ erro: estadoGerar.erro ?? estadoRevogar.erro }} />
-      <div role="status" aria-live="polite" className={estadoGerar.token ? 'space-y-2' : 'sr-only'}>
-        {estadoGerar.token && (
+      <div role="status" aria-live="polite" className={tokenNovo ? 'space-y-2' : 'sr-only'}>
+        {tokenNovo && (
           <>
             <code
               data-testid="token-de-evidencia"
               className="block break-all rounded-compacto border border-border bg-surface-subtle p-3 text-sm text-text-primary"
             >
-              {estadoGerar.token}
+              {tokenNovo}
             </code>
             <p className="text-sm font-medium text-text-primary">
               Copie agora: este token não será mostrado de novo.

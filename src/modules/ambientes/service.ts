@@ -243,6 +243,10 @@ const corpoSchema = z.strictObject({
 
 const naoAutorizado = { status: 401, corpo: { erro: 'Token de evidência inválido.' } } as const
 
+function ehConflitoDeUnicidade(erro: unknown): boolean {
+  return erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2002'
+}
+
 function extrairToken(autorizacao: string | null): string | null {
   const m = /^Bearer (\S+)$/.exec(autorizacao ?? '')
   return m?.[1] ?? null
@@ -354,8 +358,8 @@ export async function registrarEvidenciaPorToken(
   }
 
   const commitSha = dados.commitSha.toLowerCase()
-  try {
-    const criada = await db.$transaction(async (tx) => {
+  const gravar = () =>
+    db.$transaction(async (tx) => {
       const versao = await tx.versao.upsert({
         where: { repositorioId_commitSha: { repositorioId: repositorio.id, commitSha } },
         create: {
@@ -380,13 +384,18 @@ export async function registrarEvidenciaPorToken(
         select: { id: true, versaoId: true },
       })
     })
+  try {
+    // Dois pipelines com o mesmo commit novo podem criar a Versao ao mesmo tempo: a segunda tentativa a reutiliza.
+    const criada = await gravar().catch((erro: unknown) =>
+      ehConflitoDeUnicidade(erro) ? gravar() : Promise.reject(erro),
+    )
     return responder('criada', {
       status: 201,
       corpo: { id: criada.id, versaoId: criada.versaoId, duplicada: false },
     } as const)
   } catch (erro) {
     // Dois pedidos com o mesmo idExterno ao mesmo tempo: o segundo reconhece o primeiro.
-    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2002') {
+    if (ehConflitoDeUnicidade(erro)) {
       const concorrente = await duplicadaDe()
       if (concorrente) {
         return responder('duplicada', {
