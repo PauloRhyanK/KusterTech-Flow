@@ -62,6 +62,7 @@ describe('DetalheDaIssue', () => {
         issue={issue({ corpo: '<script>alert(1)</script> olá' })}
         modo="global"
         lateral={null}
+        homologacao={<p>Homologação de teste</p>}
       />,
     )
     expect(container.querySelector('script')).toBeNull()
@@ -76,15 +77,14 @@ describe('DetalheDaIssue', () => {
         issue={issue({ corpo: null })}
         modo="global"
         lateral={null}
+        homologacao={<p>Homologação de teste</p>}
       />,
     )
     expect(screen.getByText('Fechada')).toBeInTheDocument()
     expect(screen.getByText('Sem descrição.')).toBeInTheDocument()
     expect(screen.getByText('Sucesso')).toBeInTheDocument()
     expect(screen.getByText('Ambientes não configurados.')).toBeInTheDocument()
-    expect(
-      screen.getByText('A timeline de homologação chega no Incremento 5a.'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('Homologação de teste')).toBeInTheDocument()
     expect(container.textContent ?? '').not.toMatch(/pronta|entregue|em qa|para teste/i)
     expect(screen.getByRole('link', { name: 'Abrir no GitHub' })).toHaveAttribute(
       'href',
@@ -100,6 +100,7 @@ describe('DetalheDaIssue', () => {
         issue={issue({})}
         modo="global"
         lateral={<p>Lateral de teste</p>}
+        homologacao={null}
       />,
     )
     expect(screen.getByRole('heading', { name: 'Pull requests' })).toBeInTheDocument()
@@ -115,6 +116,7 @@ describe('DetalheDaIssue', () => {
         issue={issue({})}
         modo="cliente"
         lateral={<p>Lateral de teste</p>}
+        homologacao={null}
       />,
     )
     expect(screen.queryByRole('heading', { name: 'Pull requests' })).toBeNull()
@@ -136,6 +138,7 @@ describe('DetalheDaIssue — versão e ambiente', () => {
         issue={issue({})}
         modo="cliente"
         lateral={null}
+        homologacao={<p>Homologação de teste</p>}
       />,
     )
     expect(screen.getByRole('heading', { name: 'Versão e ambiente' })).toBeInTheDocument()

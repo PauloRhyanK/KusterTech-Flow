@@ -17,7 +17,7 @@ export interface AcoesDeHomologacaoProps {
   repositorio: string
   itemId: string
   ultimoEventoId: string | null
-  versao: { id: string; rotulo: string }
+  versao: { id: string; rotulo: string } | null
   acoes: readonly AcaoDeHomologacao[]
   recusa: string | null
   podeEscolherVisibilidade: boolean
@@ -61,7 +61,8 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
     }
   }
 
-  const contexto = `na issue #${props.issueNumero} (${props.repositorio}) para ${props.clienteNome}, na milestone ${props.milestoneTitulo}, versão ${versao.rotulo}`
+  const rotuloDaVersao = versao?.rotulo ?? 'não identificada'
+  const contexto = `na issue #${props.issueNumero} (${props.repositorio}) para ${props.clienteNome}, na milestone ${props.milestoneTitulo}, versão ${rotuloDaVersao}`
 
   function alternar(acao: AcaoDeHomologacao) {
     setAberta((atual) => (atual === acao ? null : acao))
@@ -99,7 +100,7 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
       <input type="hidden" name="clienteId" value={props.clienteId} />
       <input type="hidden" name="milestoneId" value={props.milestoneId} />
       <input type="hidden" name="issueId" value={props.issueId} />
-      <input type="hidden" name="versaoId" value={versao.id} />
+      <input type="hidden" name="versaoId" value={versao?.id ?? ''} />
       <input type="hidden" name="ultimoEventoId" value={props.ultimoEventoId ?? ''} />
 
       <div role="group" aria-label="Ações de homologação" className="flex flex-wrap gap-2">
@@ -161,7 +162,7 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
             <div className="space-y-3 rounded-padrao border border-border bg-surface-subtle p-4">
               <p className="text-sm text-text-primary">
                 Disponibilizar a issue #{props.issueNumero} para teste de {props.clienteNome} na
-                versão {versao.rotulo}?
+                versão {rotuloDaVersao}?
               </p>
               <Button type="submit" aria-busy={pendente} onClick={bloquearSePendente}>
                 Confirmar disponibilização
@@ -197,7 +198,7 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
                   <p className="text-sm text-text-primary">
                     {aberta === 'APROVAR'
                       ? `Você vai registrar Testado e aprovado ${contexto}.`
-                      : `Você vai solicitar correção da issue #${props.issueNumero} (${props.repositorio}) para ${props.clienteNome}, na milestone ${props.milestoneTitulo}, versão ${versao.rotulo}.`}
+                      : `Você vai solicitar correção da issue #${props.issueNumero} (${props.repositorio}) para ${props.clienteNome}, na milestone ${props.milestoneTitulo}, versão ${rotuloDaVersao}.`}
                   </p>
                   {texto.trim() !== '' && (
                     <p className="whitespace-pre-wrap break-words text-sm text-text-secondary">
