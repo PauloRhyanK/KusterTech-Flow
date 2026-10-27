@@ -19,17 +19,19 @@ enum Tema {
 }
 
 model Usuario {
-  id              String         @id @default(uuid())
-  email           String         @unique
-  nome            String
-  senhaHash       String
-  ativo           Boolean        @default(true)
-  tema            Tema           @default(SISTEMA)
-  criadoEm        DateTime       @default(now())
-  atualizadoEm    DateTime       @updatedAt
-  papeis          UsuarioPapel[]
-  sessoes         Sessao[]
-  vinculosCriados IssueVinculo[]
+  id                    String                @id @default(uuid())
+  email                 String                @unique
+  nome                  String
+  senhaHash             String
+  ativo                 Boolean               @default(true)
+  tema                  Tema                  @default(SISTEMA)
+  criadoEm              DateTime              @default(now())
+  atualizadoEm          DateTime              @updatedAt
+  papeis                UsuarioPapel[]
+  sessoes               Sessao[]
+  vinculosCriados       IssueVinculo[]
+  evidenciasRegistradas EvidenciaDeploy[]
+  presencasConfirmadas  PresencaIssueVersao[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -92,6 +94,8 @@ model Projeto {
   clientes        ProjetoCliente[]
   repositorios    RepositorioGitHub[]
   milestones      Milestone[]
+  ambientes       Ambiente[]
+  versoes         Versao[]
 }
 
 model ProjetoCliente {
@@ -135,34 +139,39 @@ model IntegracaoGitHub {
 }
 
 model RepositorioGitHub {
-  id                        String              @id @default(uuid())
-  githubId                  BigInt              @unique
-  instalacaoId              BigInt
-  nomeCompleto              String
-  urlHtml                   String
-  privado                   Boolean
-  arquivadoNoGitHub         Boolean             @default(false)
-  removidoDaInstalacaoEm    DateTime?
-  projetoId                 String?
-  vinculadoEm               DateTime?
-  sincronizadoEm            DateTime?
-  sincronizacaoSolicitadaEm DateTime?
-  ultimaFalhaEm             DateTime?
-  ultimaFalhaMotivo         String?
-  falhasConsecutivas        Int                 @default(0)
-  cursorIssues              DateTime?
-  cursorPullRequests        DateTime?
-  catalogadoEm              DateTime
-  projeto                   Projeto?            @relation(fields: [projetoId], references: [id], onDelete: SetNull)
-  issues                    IssueGitHub[]
-  pullRequests              PullRequestGitHub[]
+  id                         String              @id @default(uuid())
+  githubId                   BigInt              @unique
+  instalacaoId               BigInt
+  nomeCompleto               String
+  urlHtml                    String
+  privado                    Boolean
+  arquivadoNoGitHub          Boolean             @default(false)
+  removidoDaInstalacaoEm     DateTime?
+  projetoId                  String?
+  vinculadoEm                DateTime?
+  sincronizadoEm             DateTime?
+  sincronizacaoSolicitadaEm  DateTime?
+  ultimaFalhaEm              DateTime?
+  ultimaFalhaMotivo          String?
+  falhasConsecutivas         Int                 @default(0)
+  cursorIssues               DateTime?
+  cursorPullRequests         DateTime?
+  cursorDeployments          DateTime?
+  deploymentsSincronizadosEm DateTime?
+  deploymentsFalhaEm         DateTime?
+  deploymentsFalhaMotivo     String?
+  catalogadoEm               DateTime
+  projeto                    Projeto?            @relation(fields: [projetoId], references: [id], onDelete: SetNull)
+  issues                     IssueGitHub[]
+  pullRequests               PullRequestGitHub[]
+  versoes                    Versao[]
 
   @@index([projetoId])
 }
 
 model IssueGitHub {
-  id                 String            @id @default(uuid())
-  githubId           BigInt            @unique
+  id                 String                @id @default(uuid())
+  githubId           BigInt                @unique
   repositorioId      String
   numero             Int
   titulo             String
@@ -176,10 +185,11 @@ model IssueGitHub {
   atualizadaNoGitHub DateTime
   fechadaNoGitHub    DateTime?
   sincronizadaEm     DateTime
-  repositorio        RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  repositorio        RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
   milestones         MilestoneIssue[]
-  correcoes          IssueVinculo[]    @relation("VinculoOriginal")
-  corrige            IssueVinculo[]    @relation("VinculoCorrecao")
+  correcoes          IssueVinculo[]        @relation("VinculoOriginal")
+  corrige            IssueVinculo[]        @relation("VinculoCorrecao")
+  presencas          PresencaIssueVersao[]
 
   @@unique([repositorioId, numero])
 }
@@ -196,6 +206,7 @@ model PullRequestGitHub {
   urlHtml             String
   branch              String
   shaHead             String
+  shaMerge            String?
   issuesReferenciadas Int[]
   checks              ResumoDeChecks          @default(SEM_CHECKS)
   checksAtualizadosEm DateTime?
@@ -266,4 +277,98 @@ model IssueVinculo {
 
   @@unique([issueOriginalId, issueCorrecaoId])
   @@index([issueCorrecaoId])
+}
+
+enum TipoAmbiente {
+  DEV
+  QA
+  PROD
+}
+
+enum OrigemEvidencia {
+  GITHUB_DEPLOYMENT
+  ENDPOINT
+  MANUAL
+}
+
+enum SituacaoEvidencia {
+  SUCESSO
+  FALHA
+  EM_ANDAMENTO
+}
+
+enum EstadoImplantacao {
+  SEM_EVIDENCIA
+  PRESENCA_CONFIRMADA
+  CONFIRMACAO_MANUAL
+  VERIFICACAO_NECESSARIA
+}
+
+model Ambiente {
+  id                 String            @id @default(uuid())
+  projetoId          String
+  tipo               TipoAmbiente
+  nomeNoGitHub       String?
+  url                String?
+  tokenEvidenciaHash String?           @unique
+  tokenCriadoEm      DateTime?
+  criadoEm           DateTime          @default(now())
+  atualizadoEm       DateTime          @updatedAt
+  projeto            Projeto           @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  evidencias         EvidenciaDeploy[]
+
+  @@unique([projetoId, tipo])
+}
+
+model Versao {
+  id            String                @id @default(uuid())
+  projetoId     String
+  repositorioId String
+  commitSha     String
+  rotulo        String
+  criadaEm      DateTime              @default(now())
+  projeto       Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio   RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  evidencias    EvidenciaDeploy[]
+  presencas     PresencaIssueVersao[]
+
+  @@unique([repositorioId, commitSha])
+  @@index([projetoId])
+}
+
+// Só inserção (invariante 4).
+model EvidenciaDeploy {
+  id           String            @id @default(uuid())
+  ambienteId   String
+  versaoId     String
+  origem       OrigemEvidencia
+  situacao     SituacaoEvidencia
+  ocorridaEm   DateTime
+  registradaEm DateTime          @default(now())
+  autorId      String?
+  idExterno    String?
+  detalhe      String?
+  ambiente     Ambiente          @relation(fields: [ambienteId], references: [id], onDelete: Restrict)
+  versao       Versao            @relation(fields: [versaoId], references: [id], onDelete: Restrict)
+  autor        Usuario?          @relation(fields: [autorId], references: [id], onDelete: Restrict)
+
+  @@unique([origem, idExterno])
+  @@index([ambienteId, ocorridaEm])
+  @@index([versaoId])
+}
+
+model PresencaIssueVersao {
+  issueId           String
+  versaoId          String
+  estado            EstadoImplantacao
+  motivo            String
+  confirmadaPorId   String?
+  calculadaEm       DateTime
+  assinaturaEntrada String
+  issue             IssueGitHub       @relation(fields: [issueId], references: [id], onDelete: Restrict)
+  versao            Versao            @relation(fields: [versaoId], references: [id], onDelete: Restrict)
+  confirmadaPor     Usuario?          @relation(fields: [confirmadaPorId], references: [id], onDelete: Restrict)
+
+  @@id([issueId, versaoId])
+  @@index([versaoId])
 }
