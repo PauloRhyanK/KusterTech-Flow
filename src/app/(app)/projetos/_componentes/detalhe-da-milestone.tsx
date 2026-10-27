@@ -58,9 +58,7 @@ export function DetalheDaMilestone({
         </dl>
         {milestone.foraDaContagem > 0 && (
           <p className="text-sm text-text-secondary">
-            {milestone.foraDaContagem === 1
-              ? '1 issue de repositório desvinculado não entra na contagem.'
-              : `${milestone.foraDaContagem} issues de repositórios desvinculados não entram na contagem.`}
+            {milestone.foraDaContagem} issues de repositórios desvinculados não entram na contagem.
           </p>
         )}
       </section>

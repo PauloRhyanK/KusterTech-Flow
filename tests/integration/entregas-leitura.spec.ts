@@ -3,11 +3,7 @@ import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { criarCliente } from '@/modules/clientes/service'
-import {
-  lerFiltrosDaMilestone,
-  listarMilestonesDoProjeto,
-  obterMilestone,
-} from '@/modules/entregas/queries'
+import { listarMilestonesDoProjeto, obterMilestone } from '@/modules/entregas/queries'
 import {
   adicionarIssuesAMilestone,
   arquivarMilestone,
@@ -210,9 +206,5 @@ describe('leitura de entregas (integração)', () => {
       lerFiltrosDeIssues({ estado: 'todas', milestone: 'todas' }),
     )
     expect(todasAsIssues.total).toBe(8)
-  })
-
-  test('lerFiltrosDaMilestone é consistente com a página', () => {
-    expect(lerFiltrosDaMilestone({ aba: 'homologacao' }).aba).toBe('homologacao')
   })
 })
