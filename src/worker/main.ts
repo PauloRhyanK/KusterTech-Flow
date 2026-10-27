@@ -1,27 +1,25 @@
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
-import { obterFonteGitHub } from '@/modules/github/fonte'
-import { executarCiclo } from '@/modules/github/reconciliacao'
-import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
+import { resumirErroParaLog } from '@/modules/github/model'
+import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 const INTERVALO_HEARTBEAT_MS = 60_000
 const INTERVALO_TIQUE_MS = 30_000
 const ESPERA_MAXIMA_ENCERRAMENTO_MS = 8_000
 
-async function rodarCiclo(): Promise<void> {
-  const intervaloMs = Number(process.env.GITHUB_INTERVALO_MS) || INTERVALO_PADRAO_MS
-  const resultado = await executarCiclo(obterFonteGitHub(process.env), new Date(), intervaloMs)
-  if (resultado.catalogo || resultado.repositorios > 0) {
-    log.info(resultado, 'ciclo de reconciliação do GitHub')
-  }
+async function rodarCiclo(): Promise<boolean> {
+  const resultados = await executarTarefas(TAREFAS_DO_CICLO, new Date())
+  return resultados.every((r) => r.resultado === 'ok')
 }
 
 async function umaVez(): Promise<void> {
   let codigo = 0
   try {
-    await rodarCiclo()
+    if (!(await rodarCiclo())) {
+      codigo = 1
+    }
   } catch (err) {
-    log.error({ erro: resumirErroParaLog(err) }, 'ciclo de reconciliação do GitHub falhou')
+    log.error({ erro: resumirErroParaLog(err) }, 'ciclo do worker falhou')
     codigo = 1
   }
   await db.$disconnect()
@@ -44,8 +42,9 @@ function iniciarWorker(): void {
       return
     }
     cicloAtual = rodarCiclo()
+      .then(() => undefined)
       .catch((err) => {
-        log.error({ erro: resumirErroParaLog(err) }, 'ciclo de reconciliação do GitHub falhou')
+        log.error({ erro: resumirErroParaLog(err) }, 'ciclo do worker falhou')
       })
       .finally(() => {
         cicloAtual = null
