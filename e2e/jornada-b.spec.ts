@@ -2,14 +2,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import {
+  configurarAmbientesNoBanco,
   criarClienteNoBanco,
   criarProjetoNoBanco,
   criarUsuarioNoBanco,
   liberarRepositoriosNoBanco,
+  limparImplantacaoDosRepositoriosNoBanco,
   limparVinculosDeIssuesNoBanco,
   nomeDeTeste,
   obterIssueNoBanco,
   repositoriosDoProjetoE2E,
+  vincularIssuesNoBanco,
   vincularNoBanco,
 } from './support/banco'
 import { rodarWorkerUmaVez } from './support/worker'
@@ -47,6 +50,7 @@ test.beforeEach(async ({}, testInfo) => {
   const repositorios = repositoriosDoProjetoE2E(testInfo.project.name)
   await liberarRepositoriosNoBanco(repositorios)
   await limparVinculosDeIssuesNoBanco(repositorios)
+  await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
 test('Jornada B de ponta a ponta: milestone, issues, correção, contexto de Acme com ida e volta e isolamento de Beta', async ({
@@ -231,18 +235,70 @@ test('Jornada B de ponta a ponta: milestone, issues, correção, contexto de Acm
     await expect(page).toHaveURL(`/clientes/${acme.id}`)
   })
 
-  // 6. Beta não tem milestone nem enxerga a issue de Acme
-  await test.step('6. Beta não vê a milestone de Acme nem a issue #3', async () => {
+  // 6. Ambientes configurados e worker: coluna QA da milestone e presença na issue (A04, UX-06, UX-07)
+  await test.step('6. Com DEV, QA e PROD e o worker, QA mostra #2 "Presença confirmada" e #4 "Verificação necessária", em ambos os contextos e sem SHA para Acme', async () => {
+    const issueDois = await obterIssueNoBanco(repoUm, 2)
+    const issueQuatro = await obterIssueNoBanco(repoUm, 4)
+    await vincularIssuesNoBanco(milestoneId, [issueDois.id])
+    await configurarAmbientesNoBanco(projeto.id)
+    rodarWorkerUmaVez()
+
+    const linhaDe = (pagina: Page, titulo: string) =>
+      pagina
+        .getByRole('list', { name: 'Issues da milestone' })
+        .getByRole('listitem')
+        .filter({ hasText: titulo })
+    const qaDaIssue = (pagina: Page) =>
+      pagina
+        .getByRole('list', { name: 'Presença por ambiente' })
+        .getByRole('listitem')
+        .filter({ hasText: /^QA/ })
+    // SHAs das versões das fixtures de repoUm (n + 'c'|'d'|'e'|'f' × 39): nenhum aparece para o cliente.
+    const prefixosDeSha = ['d', 'e', 'f'].map(
+      (c) => `${repoUm.endsWith('/portal') ? 1 : 3}${c.repeat(7)}`,
+    )
+
+    // Visão global
+    await page.goto(`/projetos/${projeto.id}/entregas/milestones/${milestoneId}`)
+    await expect(linhaDe(page, `#2 Item 2 de ${nomeUm}`)).toContainText('QA:')
+    await expect(linhaDe(page, `#2 Item 2 de ${nomeUm}`)).toContainText('Presença confirmada')
+    await expect(linhaDe(page, `#4 Item 4 de ${nomeUm}`)).toContainText('Verificação necessária')
+    await capturaDe('b6-admin-milestone-qa.png')
+
+    await page.goto(`/projetos/${projeto.id}/entregas/issues/${issueQuatro.id}`)
+    await expect(page.getByText('Fechada').first()).toBeVisible()
+    await expect(qaDaIssue(page)).toContainText('Verificação necessária')
+    await expect(qaDaIssue(page)).not.toContainText('Presença confirmada')
+    await capturaDe('b6-admin-issue-presenca.png')
+
+    // Contexto de Acme: mesmos estados, sem SHA
+    await page.goto(`${baseAcme}/entregas/milestones/${milestoneId}`)
+    await expect(linhaDe(page, `#2 Item 2 de ${nomeUm}`)).toContainText('Presença confirmada')
+    await expect(linhaDe(page, `#4 Item 4 de ${nomeUm}`)).toContainText('Verificação necessária')
+    await page.goto(`${baseAcme}/entregas/issues/${issueQuatro.id}?milestone=${milestoneId}`)
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
+    await expect(qaDaIssue(page)).toContainText('Verificação necessária')
+    await expect(qaDaIssue(page)).not.toContainText('Presença confirmada')
+    const texto = (await page.getByRole('main').textContent()) ?? ''
+    for (const prefixo of prefixosDeSha) {
+      expect(texto).not.toContain(prefixo)
+    }
+    expect(await semRolagemHorizontal(page)).toBe(true)
+    await capturaDe('b6-cliente-issue-presenca.png')
+  })
+
+  // 7. Beta não tem milestone nem enxerga a issue de Acme
+  await test.step('7. Beta não vê a milestone de Acme nem a issue #3', async () => {
     await page.goto(`/clientes/${beta.id}/projetos/${projeto.id}/entregas`)
     await expect(page.getByText('Nenhuma milestone associada a este cliente.')).toBeVisible()
     await page.goto(`/clientes/${beta.id}/projetos/${projeto.id}/entregas/issues/${issueTresId}`)
     await expect(page.getByText('Registro não encontrado')).toBeVisible()
   })
 
-  // 7. Testador escopado a Beta não lê Acme nem a visão global
+  // 8. Testador escopado a Beta não lê Acme nem a visão global
   const testador = { contexto: null as BrowserContext | null }
   try {
-    await test.step('7. Testador de Beta recebe "Sem permissão para esta área." em Acme e na visão global', async () => {
+    await test.step('8. Testador de Beta recebe "Sem permissão para esta área." em Acme e na visão global', async () => {
       testador.contexto = await browser.newContext()
       const paginaTestador = await testador.contexto.newPage()
       await fazerLogin(paginaTestador, emailTestadorBeta, senhaTestador)
