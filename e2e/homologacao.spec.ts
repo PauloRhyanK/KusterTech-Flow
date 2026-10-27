@@ -217,3 +217,84 @@ test('aprovador de Beta abre a issue em /clientes/<acme>/…: "Sem permissão pa
     await aprovadorBeta.fechar()
   }
 })
+
+test('fila global abre em "Requer minha ação (4)" agrupada em E2E Release 1; Cliente=Acme mostra (2); abre #2, disponibiliza, "Voltar à fila" volta a /projetos/<p>/homologacao com filtro=requer-minha-acao e cliente=<acme>, e #item-<id> está no viewport', async ({
+  page,
+}, testInfo) => {
+  const admin = obterAdmin()
+  await fazerLogin(page, admin.email, admin.senha)
+  const c = await prepararCenarioDeHomologacaoE2E(testInfo.project.name, admin.id)
+
+  await page.goto(`/projetos/${c.projeto.id}/homologacao`)
+  await expect(page.getByRole('heading', { name: 'Fila de homologação' })).toBeVisible()
+  const filtros = page.getByRole('navigation', { name: 'Filtros da fila' })
+  await expect(filtros.getByRole('link', { name: 'Requer minha ação (4)' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  await expect(page.getByRole('heading', { level: 3, name: c.milestone.titulo })).toBeVisible()
+  await expect(
+    page.getByRole('list', { name: `Fila da milestone ${c.milestone.titulo}` }),
+  ).toBeVisible()
+
+  await page.getByLabel('Cliente').selectOption(c.acme.id)
+  await page.getByRole('button', { name: 'Filtrar' }).click()
+  await expect(filtros.getByRole('link', { name: 'Requer minha ação (2)' })).toBeVisible()
+
+  const item = await obterItemDeHomologacaoNoBanco(c.acme.id, c.milestone.id, c.repoUm, 2)
+  const ancora = page.locator(`#item-${item!.id}`)
+  await ancora.getByRole('link', { name: /^#2 / }).click()
+  await expect(page.getByRole('heading', { name: `Homologação de ${c.acme.nome}` })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Disponibilizar ao cliente' }).click()
+  await page.getByRole('button', { name: 'Confirmar disponibilização' }).click()
+  await expect(
+    page.getByRole('status').filter({ hasText: `Issue disponibilizada para ${c.acme.nome}.` }),
+  ).toBeVisible()
+
+  await page.getByRole('link', { name: 'Voltar à fila' }).first().click()
+  await expect(page).toHaveURL(new RegExp(`/projetos/${c.projeto.id}/homologacao\\?`))
+  const url = new URL(page.url())
+  expect(url.searchParams.get('filtro')).toBe('requer-minha-acao')
+  expect(url.searchParams.get('cliente')).toBe(c.acme.id)
+  expect(url.hash).toBe(`#item-${item!.id}`)
+  // Depois de disponibilizada, #2 de Acme continua em "Requer minha ação" (o admin pode agir).
+  await expect(page.locator(`#item-${item!.id}`)).toBeInViewport()
+})
+
+test('retorno=https://mal.example não mostra "Voltar à fila"', async ({ page }, testInfo) => {
+  const admin = obterAdmin()
+  await fazerLogin(page, admin.email, admin.senha)
+  const c = await prepararCenarioDeHomologacaoE2E(testInfo.project.name, admin.id)
+  const url = urlDaIssue(c.acme.id, c.projeto.id, c.issueUm2.id, c.milestone.id)
+
+  for (const ruim of ['https://mal.example', '//mal.example']) {
+    await page.goto(`${url}&retorno=${encodeURIComponent(ruim)}`)
+    await expect(page.getByRole('heading', { name: `Homologação de ${c.acme.nome}` })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Voltar à fila' })).toHaveCount(0)
+  }
+
+  const valido = `/projetos/${c.projeto.id}/homologacao?filtro=todos`
+  await page.goto(`${url}&retorno=${encodeURIComponent(valido)}`)
+  await expect(page.getByRole('link', { name: 'Voltar à fila' })).toHaveAttribute('href', valido)
+})
+
+test('mobile: fila e issue sem rolagem horizontal (scrollWidth ≤ innerWidth)', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Só no projeto mobile.')
+  const admin = obterAdmin()
+  await fazerLogin(page, admin.email, admin.senha)
+  const c = await prepararCenarioDeHomologacaoE2E(testInfo.project.name, admin.id)
+
+  const semRolagem = () =>
+    page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+
+  await page.goto(`/projetos/${c.projeto.id}/homologacao`)
+  await expect(page.getByRole('heading', { name: 'Fila de homologação' })).toBeVisible()
+  expect(await semRolagem()).toBe(true)
+
+  await page.goto(urlDaIssue(c.acme.id, c.projeto.id, c.issueUm2.id, c.milestone.id))
+  await expect(page.getByRole('heading', { name: `Homologação de ${c.acme.nome}` })).toBeVisible()
+  expect(await semRolagem()).toBe(true)
+})

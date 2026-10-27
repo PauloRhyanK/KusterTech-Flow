@@ -97,10 +97,12 @@ export async function PaginaDaIssue({
   const rotas = rotasDoProjeto(projetoId, contexto)
   const podeGerenciar = admin && projeto.arquivadoEm === null
   const verNaGlobal = !global && podeVerVisaoGlobal(sujeito)
+  // A fila global só é prefixo aceito para quem pode ver a visão global (D65).
   const hrefDeRetorno =
     clienteId === null
       ? null
       : lerRetornoDaFila(primeiro(searchParams.retorno) || undefined, [
+          ...(podeVerVisaoGlobal(sujeito) ? [`/projetos/${projetoId}/homologacao`] : []),
           `/clientes/${clienteId}/projetos/${projetoId}/homologacao`,
           `/clientes/${clienteId}/projetos/${projetoId}/entregas/milestones/`,
         ])
