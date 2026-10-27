@@ -243,7 +243,7 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
       .getByRole('link', { name: new RegExp(`#2 Item 2 de ${repoUm.split('/')[1]}`) })
       .click()
     await expect(page).toHaveURL(`/projetos/${projetoId}/entregas/issues/${issueId}`)
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Item 2')
+    await expect(page.getByRole('heading', { level: 1, name: /Item 2/ })).toBeVisible()
     await expect(page.getByText('Sem evidência de versão ou ambiente.')).toBeVisible()
     await capturar(page, testInfo, '4-admin-issue.png')
   })

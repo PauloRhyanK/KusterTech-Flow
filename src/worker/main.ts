@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { obterFonteGitHub } from '@/modules/github/fonte'
 import { executarCiclo } from '@/modules/github/reconciliacao'
-import { INTERVALO_PADRAO_MS } from '@/modules/github/model'
+import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 
 const INTERVALO_HEARTBEAT_MS = 60_000
 const INTERVALO_TIQUE_MS = 30_000
@@ -21,7 +21,7 @@ async function umaVez(): Promise<void> {
   try {
     await rodarCiclo()
   } catch (err) {
-    log.error({ err }, 'ciclo de reconciliação do GitHub falhou')
+    log.error({ erro: resumirErroParaLog(err) }, 'ciclo de reconciliação do GitHub falhou')
     codigo = 1
   }
   await db.$disconnect()
@@ -45,7 +45,7 @@ function iniciarWorker(): void {
     }
     cicloAtual = rodarCiclo()
       .catch((err) => {
-        log.error({ err }, 'ciclo de reconciliação do GitHub falhou')
+        log.error({ erro: resumirErroParaLog(err) }, 'ciclo de reconciliação do GitHub falhou')
       })
       .finally(() => {
         cicloAtual = null

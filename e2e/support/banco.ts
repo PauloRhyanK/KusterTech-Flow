@@ -114,10 +114,23 @@ export async function vincularNoBanco(projetoId: string, nomeCompleto: string): 
   })
 }
 
+// Desvincula e devolve a situação de sincronização ao estado de recém-catalogado, para que
+// um teste anterior (por exemplo, o que força a última sincronização para o passado) não
+// contamine o seguinte. Issues e PRs ficam: o próximo ciclo do worker os reconcilia.
 export async function liberarRepositoriosNoBanco(nomes: readonly string[]): Promise<void> {
   await db.repositorioGitHub.updateMany({
     where: { nomeCompleto: { in: [...nomes] } },
-    data: { projetoId: null, vinculadoEm: null },
+    data: {
+      projetoId: null,
+      vinculadoEm: null,
+      sincronizadoEm: null,
+      sincronizacaoSolicitadaEm: null,
+      ultimaFalhaEm: null,
+      ultimaFalhaMotivo: null,
+      falhasConsecutivas: 0,
+      cursorIssues: null,
+      cursorPullRequests: null,
+    },
   })
 }
 
