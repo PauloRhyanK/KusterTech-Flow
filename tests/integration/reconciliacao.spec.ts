@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+import { inspect } from 'node:util'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { db } from '@/lib/db'
+import { log } from '@/lib/log'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
 import type { FonteGitHub } from '@/modules/github/fonte'
@@ -189,6 +191,7 @@ describe('reconciliação do GitHub', () => {
     const fonte = criarFonteFixtures()
     await sincronizarCatalogo(fonte, t0)
     const repo = await repositorioPortal(true)
+    const logDeErro = vi.spyOn(log, 'error').mockImplementation(() => undefined)
 
     const resultado = await sincronizarRepositorio(
       fonteComFalha(() => new Error('Bearer ghs_segredo-que-nao-pode-vazar')),
@@ -199,6 +202,10 @@ describe('reconciliação do GitHub', () => {
     expect(resultado).toBe('falha')
     const depois = await db.repositorioGitHub.findUniqueOrThrow({ where: { id: repo.id } })
     expect(depois.ultimaFalhaMotivo).toBe('Falha inesperada na sincronização.')
+    expect(logDeErro).toHaveBeenCalledTimes(1)
+    // inspect (e não JSON.stringify) para enxergar message e stack de um Error.
+    expect(inspect(logDeErro.mock.calls, { depth: 5 })).not.toContain('ghs_segredo')
+    logDeErro.mockRestore()
   })
 
   test('repositório não vinculado não é sincronizado; desvincular não apaga issues', async () => {

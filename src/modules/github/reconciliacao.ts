@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { ErroDeIntegracao } from './erros'
 import type { FonteGitHub } from './fonte'
-import { repositorioDevido, resumirChecks } from './model'
+import { repositorioDevido, resumirChecks, resumirErroParaLog } from './model'
 
 const ID_INTEGRACAO = 'github'
 
@@ -10,7 +10,7 @@ function paraErroDeIntegracao(erro: unknown): ErroDeIntegracao {
   if (erro instanceof ErroDeIntegracao) {
     return erro
   }
-  log.error({ err: erro }, 'falha inesperada na reconciliação do GitHub')
+  log.error({ erro: resumirErroParaLog(erro) }, 'falha inesperada na reconciliação do GitHub')
   return new ErroDeIntegracao('desconhecida')
 }
 

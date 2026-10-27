@@ -9,6 +9,7 @@ import {
   mensagemDeFalha,
   repositorioDevido,
   resumirChecks,
+  resumirErroParaLog,
   type CategoriaDeFalha,
   type EstadoIntegracao,
   type SituacaoDoRepositorio,
@@ -325,5 +326,27 @@ describe('mensagemDeFalha e ErroDeIntegracao', () => {
     const quando = new Date('2026-10-26T16:00:00.000Z')
     expect(new ErroDeIntegracao('limite', quando).tentarApos).toBe(quando)
     expect(new ErroDeIntegracao('rede').tentarApos).toBeUndefined()
+  })
+})
+
+describe('resumirErroParaLog', () => {
+  test('erro comum vira só o tipo, sem mensagem nem stack', () => {
+    const resumo = resumirErroParaLog(new TypeError('Bearer ghs_segredo-que-nao-pode-vazar'))
+    expect(resumo).toEqual({ tipo: 'TypeError' })
+    expect(JSON.stringify(resumo)).not.toContain('ghs_segredo')
+  })
+
+  test('ErroDeIntegracao leva a categoria; erro com code textual leva o código', () => {
+    expect(resumirErroParaLog(new ErroDeIntegracao('rede'))).toEqual({
+      tipo: 'ErroDeIntegracao',
+      categoria: 'rede',
+    })
+    const comCodigo = Object.assign(new Error('Unique constraint ghs_segredo'), { code: 'P2002' })
+    expect(resumirErroParaLog(comCodigo)).toEqual({ tipo: 'Error', codigo: 'P2002' })
+  })
+
+  test('valor que não é Error vira o typeof', () => {
+    expect(resumirErroParaLog('ghs_segredo')).toEqual({ tipo: 'string' })
+    expect(resumirErroParaLog(null)).toEqual({ tipo: 'object' })
   })
 })

@@ -55,9 +55,11 @@ beforeEach(async () => {
   const portal = await repo('kustertech-exemplo/portal')
   await vincularRepositorio(admin, projetoId, portal.id)
   await sincronizarRepositorio(fonte, portal.id, agora)
-  // Repositório sincronizado mas não vinculado ao projeto: suas issues não podem aparecer.
+  // Repositório sincronizado em outro projeto: suas issues não podem aparecer neste.
+  // (Repositório sem projeto não é sincronizado, então ele precisa estar vinculado.)
+  const outroProjetoId = (await criarProjeto(admin, { nome: 'Outro Projeto Issues' })).id
   const api = await repo('kustertech-exemplo/api')
-  await db.repositorioGitHub.update({ where: { id: api.id }, data: { projetoId: null } })
+  await vincularRepositorio(admin, outroProjetoId, api.id)
   await sincronizarRepositorio(fonte, api.id, agora)
 })
 
@@ -73,14 +75,15 @@ describe('issues do projeto (integração)', () => {
     expect(abertas.total).toBe(3)
 
     const todasAsIssues = await listarIssuesDoProjeto(admin, projetoId, todas)
-    expect(todasAsIssues.total).toBe(5)
+    // Fixture: três abertas, uma fechada e um item de PR, que não conta como issue.
+    expect(todasAsIssues.total).toBe(4)
 
     const fechadas = await listarIssuesDoProjeto(
       admin,
       projetoId,
       lerFiltrosDeIssues({ estado: 'fechadas' }),
     )
-    expect(fechadas.issues.map((i) => i.numero).sort()).toEqual([4, 5])
+    expect(fechadas.issues.map((i) => i.numero)).toEqual([4])
     expect(fechadas.issues.every((i) => i.estado === 'FECHADA')).toBe(true)
 
     const busca = await listarIssuesDoProjeto(

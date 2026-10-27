@@ -155,3 +155,28 @@ const MENSAGENS_DE_FALHA: Record<CategoriaDeFalha, string> = {
 export function mensagemDeFalha(c: CategoriaDeFalha): string {
   return MENSAGENS_DE_FALHA[c]
 }
+
+export interface ErroParaLog {
+  tipo: string
+  categoria?: string
+  codigo?: string
+}
+
+/**
+ * Resumo seguro de um erro para o log: só o tipo, a categoria de integração e o código textual.
+ * A mensagem e o stack ficam de fora porque podem repetir token, cabeçalho ou corpo de resposta.
+ */
+export function resumirErroParaLog(erro: unknown): ErroParaLog {
+  if (!(erro instanceof Error)) {
+    return { tipo: typeof erro }
+  }
+  const resumo: ErroParaLog = { tipo: erro.name }
+  const { categoria, code } = erro as { categoria?: unknown; code?: unknown }
+  if (typeof categoria === 'string') {
+    resumo.categoria = categoria
+  }
+  if (typeof code === 'string') {
+    resumo.codigo = code
+  }
+  return resumo
+}

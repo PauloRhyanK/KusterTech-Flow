@@ -64,13 +64,13 @@ test('Entregas lista as issues abertas dos dois repositórios, filtra por fechad
 
   await page.getByLabel('Situação').selectOption({ label: 'Fechadas' })
   await page.getByRole('button', { name: 'Filtrar' }).click()
-  await expect(lista.getByRole('listitem')).toHaveCount(4)
-  await expect(lista.getByText('Fechada')).toHaveCount(4)
+  await expect(lista.getByRole('listitem')).toHaveCount(2)
+  await expect(lista.getByText('Fechada')).toHaveCount(2)
 
   await page.getByLabel('Situação').selectOption({ label: 'Todas' })
   await page.getByLabel('Repositório', { exact: true }).selectOption({ label: repoUm })
   await page.getByRole('button', { name: 'Filtrar' }).click()
-  await expect(lista.getByRole('listitem')).toHaveCount(5)
+  await expect(lista.getByRole('listitem')).toHaveCount(4)
 
   await page.getByLabel('Buscar').fill('#2')
   await page.getByRole('button', { name: 'Filtrar' }).click()
@@ -88,7 +88,7 @@ test('issue #2 mostra o PR mergeado com checks Sucesso e "Sem evidência de vers
   const issue = await obterIssueNoBanco(repoUm, 2)
 
   await page.goto(`/projetos/${projeto.id}/entregas/issues/${issue.id}`)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Item 2')
+  await expect(page.getByRole('heading', { level: 1, name: /Item 2/ })).toBeVisible()
   await expect(page.getByText('Mergeado')).toBeVisible()
   await expect(page.getByText('Sucesso')).toBeVisible()
   await expect(page.getByText('Sem evidência de versão ou ambiente.')).toBeVisible()
