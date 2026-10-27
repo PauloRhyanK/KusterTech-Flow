@@ -1,4 +1,11 @@
-import { mapearCheck, mapearIssue, mapearPullRequest, mapearRepositorio } from './fonte'
+import {
+  mapearCheck,
+  mapearComparacao,
+  mapearDeployment,
+  mapearIssue,
+  mapearPullRequest,
+  mapearRepositorio,
+} from './fonte'
 import type { FonteGitHub, RefRepositorio } from './fonte'
 import { ErroDeIntegracao } from './erros'
 import checks1a from './fixtures/checks/1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
@@ -11,20 +18,64 @@ import checks4a from './fixtures/checks/4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 import checks4b from './fixtures/checks/4bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
 import issues_portal from './fixtures/kustertech-exemplo__portal/issues.json'
 import pulls_portal from './fixtures/kustertech-exemplo__portal/pulls.json'
+import deployments_portal from './fixtures/kustertech-exemplo__portal/deployments.json'
+import statuses_portal from './fixtures/kustertech-exemplo__portal/deployment-statuses.json'
+import comparacoes_portal from './fixtures/kustertech-exemplo__portal/comparacoes.json'
 import issues_api from './fixtures/kustertech-exemplo__api/issues.json'
 import pulls_api from './fixtures/kustertech-exemplo__api/pulls.json'
+import deployments_api from './fixtures/kustertech-exemplo__api/deployments.json'
+import statuses_api from './fixtures/kustertech-exemplo__api/deployment-statuses.json'
+import comparacoes_api from './fixtures/kustertech-exemplo__api/comparacoes.json'
 import issues_site from './fixtures/kustertech-exemplo__site/issues.json'
 import pulls_site from './fixtures/kustertech-exemplo__site/pulls.json'
+import deployments_site from './fixtures/kustertech-exemplo__site/deployments.json'
+import statuses_site from './fixtures/kustertech-exemplo__site/deployment-statuses.json'
+import comparacoes_site from './fixtures/kustertech-exemplo__site/comparacoes.json'
 import issues_app_mobile from './fixtures/kustertech-exemplo__app-mobile/issues.json'
 import pulls_app_mobile from './fixtures/kustertech-exemplo__app-mobile/pulls.json'
+import deployments_app_mobile from './fixtures/kustertech-exemplo__app-mobile/deployments.json'
+import statuses_app_mobile from './fixtures/kustertech-exemplo__app-mobile/deployment-statuses.json'
+import comparacoes_app_mobile from './fixtures/kustertech-exemplo__app-mobile/comparacoes.json'
 import instalacoes from './fixtures/instalacoes.json'
 import repositorios from './fixtures/repositorios.json'
 
-const POR_REPOSITORIO: Record<string, { issues: unknown[]; pulls: unknown[] }> = {
-  'kustertech-exemplo/portal': { issues: issues_portal, pulls: pulls_portal },
-  'kustertech-exemplo/api': { issues: issues_api, pulls: pulls_api },
-  'kustertech-exemplo/site': { issues: issues_site, pulls: pulls_site },
-  'kustertech-exemplo/app-mobile': { issues: issues_app_mobile, pulls: pulls_app_mobile },
+interface DadosDoRepositorio {
+  issues: unknown[]
+  pulls: unknown[]
+  deployments: { created_at: string; id: number }[]
+  statuses: Record<string, unknown[]>
+  comparacoes: Record<string, unknown>
+}
+
+const POR_REPOSITORIO: Record<string, DadosDoRepositorio> = {
+  'kustertech-exemplo/portal': {
+    issues: issues_portal,
+    pulls: pulls_portal,
+    deployments: deployments_portal,
+    statuses: statuses_portal,
+    comparacoes: comparacoes_portal,
+  },
+  'kustertech-exemplo/api': {
+    issues: issues_api,
+    pulls: pulls_api,
+    deployments: deployments_api,
+    statuses: statuses_api,
+    comparacoes: comparacoes_api,
+  },
+  'kustertech-exemplo/site': {
+    issues: issues_site,
+    pulls: pulls_site,
+    deployments: deployments_site,
+    statuses: statuses_site,
+    comparacoes: comparacoes_site,
+  },
+  'kustertech-exemplo/app-mobile': {
+    issues: issues_app_mobile,
+    pulls: pulls_app_mobile,
+    deployments: deployments_app_mobile,
+    statuses: statuses_app_mobile,
+    comparacoes: comparacoes_app_mobile,
+  },
 }
 
 const CHECKS_POR_SHA: Record<string, { check_runs: unknown[] }> = {
@@ -68,6 +119,23 @@ export function criarFonteFixtures(): FonteGitHub {
     async listarChecks(repo, sha) {
       dados(repo)
       return (CHECKS_POR_SHA[sha]?.check_runs ?? []).map(mapearCheck)
+    },
+    async listarDeployments(repo, desde) {
+      const d = dados(repo)
+      return d.deployments
+        .filter((x) => desde === null || new Date(x.created_at) >= desde)
+        .map((x) => mapearDeployment(x, d.statuses[String(x.id)]?.[0] ?? null))
+    },
+    async compararCommits(repo, base, cabeca) {
+      const d = dados(repo)
+      if (base === cabeca) {
+        return { status: 'identical', commits: [], truncada: false }
+      }
+      const bruto = d.comparacoes[`${base}...${cabeca}`]
+      if (bruto === undefined) {
+        throw new ErroDeIntegracao('commit-desconhecido')
+      }
+      return mapearComparacao(bruto)
     },
   }
 }

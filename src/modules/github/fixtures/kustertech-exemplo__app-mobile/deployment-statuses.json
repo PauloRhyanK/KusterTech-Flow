@@ -1,0 +1,60 @@
+{
+  "6003001": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003001/statuses/5003001",
+      "id": 5003001,
+      "state": "success",
+      "environment": "production",
+      "created_at": "2026-10-10T12:05:00Z",
+      "updated_at": "2026-10-10T12:05:00Z"
+    }
+  ],
+  "6003002": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003002/statuses/5003002",
+      "id": 5003002,
+      "state": "success",
+      "environment": "dev",
+      "created_at": "2026-10-16T10:05:00Z",
+      "updated_at": "2026-10-16T10:05:00Z"
+    }
+  ],
+  "6003003": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003003/statuses/5003003",
+      "id": 5003003,
+      "state": "success",
+      "environment": "qa",
+      "created_at": "2026-10-16T12:05:00Z",
+      "updated_at": "2026-10-16T12:05:00Z"
+    },
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003003/statuses/5003103",
+      "id": 5003103,
+      "state": "in_progress",
+      "environment": "qa",
+      "created_at": "2026-10-16T12:01:00Z",
+      "updated_at": "2026-10-16T12:01:00Z"
+    }
+  ],
+  "6003004": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003004/statuses/5003004",
+      "id": 5003004,
+      "state": "failure",
+      "environment": "qa",
+      "created_at": "2026-10-17T12:05:00Z",
+      "updated_at": "2026-10-17T12:05:00Z"
+    }
+  ],
+  "6003005": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003005/statuses/5003005",
+      "id": 5003005,
+      "state": "success",
+      "environment": "staging",
+      "created_at": "2026-10-18T12:05:00Z",
+      "updated_at": "2026-10-18T12:05:00Z"
+    }
+  ]
+}

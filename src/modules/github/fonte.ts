@@ -44,6 +44,22 @@ export interface PullRequestDaFonte {
   issuesReferenciadas: number[]
   atualizadoEm: Date
   mergeadoEm: Date | null
+  shaMerge: string | null
+}
+
+export interface DeploymentDaFonte {
+  githubId: bigint
+  sha: string
+  ref: string
+  ambiente: string
+  criadoEm: Date
+  status: { githubId: bigint; estado: string; criadoEm: Date } | null
+}
+
+export interface ComparacaoDaFonte {
+  status: 'ahead' | 'behind' | 'identical' | 'diverged'
+  commits: string[]
+  truncada: boolean
 }
 
 export interface FonteGitHub {
@@ -55,6 +71,9 @@ export interface FonteGitHub {
     desde: Date | null,
   ): Promise<PullRequestDaFonte[]>
   listarChecks(repo: RefRepositorio, sha: string): Promise<CheckDaFonte[]>
+  /** Deployments com `created_at >= desde`, cada um com o status mais recente. */
+  listarDeployments(repo: RefRepositorio, desde: Date | null): Promise<DeploymentDaFonte[]>
+  compararCommits(repo: RefRepositorio, base: string, cabeca: string): Promise<ComparacaoDaFonte>
 }
 
 const data = z.string().transform((s, ctx) => {
@@ -103,6 +122,27 @@ const esquemaPullRequest = z.object({
   head: z.object({ ref: z.string(), sha: z.string() }),
   updated_at: data,
   merged_at: data.nullish(),
+  merge_commit_sha: z.string().nullish(),
+})
+
+const esquemaDeployment = z.object({
+  id: z.number().int(),
+  sha: z.string(),
+  ref: z.string(),
+  environment: z.string(),
+  created_at: data,
+})
+
+const esquemaStatusDeDeployment = z.object({
+  id: z.number().int(),
+  state: z.string(),
+  created_at: data,
+})
+
+const esquemaComparacao = z.object({
+  status: z.enum(['ahead', 'behind', 'identical', 'diverged']),
+  total_commits: z.number().int(),
+  commits: z.array(z.object({ sha: z.string() })),
 })
 
 const esquemaCheck = z.object({ status: z.string(), conclusion: z.string().nullish() })
@@ -165,6 +205,33 @@ export function mapearPullRequest(bruto: unknown): PullRequestDaFonte {
     issuesReferenciadas: issuesReferenciadas(p.body ?? null),
     atualizadoEm: p.updated_at,
     mergeadoEm,
+    shaMerge: mergeadoEm ? (p.merge_commit_sha ?? null) : null,
+  }
+}
+
+export function mapearDeployment(
+  bruto: unknown,
+  statusMaisRecente: unknown | null,
+): DeploymentDaFonte {
+  const d = validar(esquemaDeployment, bruto)
+  const s =
+    statusMaisRecente === null ? null : validar(esquemaStatusDeDeployment, statusMaisRecente)
+  return {
+    githubId: BigInt(d.id),
+    sha: d.sha,
+    ref: d.ref,
+    ambiente: d.environment,
+    criadoEm: d.created_at,
+    status: s ? { githubId: BigInt(s.id), estado: s.state, criadoEm: s.created_at } : null,
+  }
+}
+
+export function mapearComparacao(bruto: unknown): ComparacaoDaFonte {
+  const c = validar(esquemaComparacao, bruto)
+  return {
+    status: c.status,
+    commits: c.commits.map((x) => x.sha),
+    truncada: c.total_commits > c.commits.length,
   }
 }
 

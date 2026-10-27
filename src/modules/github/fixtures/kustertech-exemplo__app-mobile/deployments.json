@@ -1,0 +1,67 @@
+[
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003005",
+    "id": 6003005,
+    "sha": "4eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ref": "v1.4.0",
+    "task": "deploy",
+    "environment": "staging",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-18T12:00:00Z",
+    "updated_at": "2026-10-18T12:05:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003005/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003004",
+    "id": 6003004,
+    "sha": "4fffffffffffffffffffffffffffffffffffffff",
+    "ref": "hotfix/teste",
+    "task": "deploy",
+    "environment": "qa",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-17T12:00:00Z",
+    "updated_at": "2026-10-17T12:05:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003004/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003003",
+    "id": 6003003,
+    "sha": "4eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ref": "v1.4.0",
+    "task": "deploy",
+    "environment": "qa",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-16T12:00:00Z",
+    "updated_at": "2026-10-16T12:05:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003003/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003002",
+    "id": 6003002,
+    "sha": "4eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ref": "v1.4.0",
+    "task": "deploy",
+    "environment": "dev",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-16T10:00:00Z",
+    "updated_at": "2026-10-16T10:05:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003002/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003001",
+    "id": 6003001,
+    "sha": "4ddddddddddddddddddddddddddddddddddddddd",
+    "ref": "v1.3.0",
+    "task": "deploy",
+    "environment": "production",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-10T12:00:00Z",
+    "updated_at": "2026-10-10T12:05:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003001/statuses"
+  }
+]

@@ -7,6 +7,8 @@ import instalacoes from './fixtures/instalacoes.json'
 import repositorios from './fixtures/repositorios.json'
 import issuesPortal from './fixtures/kustertech-exemplo__portal/issues.json'
 import pullsPortal from './fixtures/kustertech-exemplo__portal/pulls.json'
+import deploymentsPortal from './fixtures/kustertech-exemplo__portal/deployments.json'
+import statusesPortal from './fixtures/kustertech-exemplo__portal/deployment-statuses.json'
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
@@ -309,6 +311,84 @@ describe('categorias de falha', () => {
       expect(texto).not.toMatch(/eyJ[\w-]+\.[\w-]+\.[\w-]+/)
       expect(texto).not.toContain('PRIVATE KEY')
       expect((e as Error & { cause?: unknown }).cause).toBeUndefined()
+    }
+  })
+})
+
+describe('deployments e comparação de commits', () => {
+  const statuses = statusesPortal as Record<string, unknown[]>
+  const rotasDeStatuses = Object.fromEntries(
+    deploymentsPortal.map((d) => [
+      `GET /repos/kustertech-exemplo/portal/deployments/${d.id}/statuses`,
+      { corpo: statuses[String(d.id)]!.slice(0, 1) } as Rota,
+    ]),
+  )
+  const M = '1' + 'c'.repeat(39)
+  const V2 = '1' + 'e'.repeat(39)
+
+  test('listarDeployments(portal, null): 1 GET de deployments + 5 GET de statuses (per_page=1); 5 itens; k=3 traz o status success, não o in_progress', async () => {
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      'GET /repos/kustertech-exemplo/portal/deployments': { corpo: deploymentsPortal },
+      ...rotasDeStatuses,
+    })
+    const itens = await fonte.listarDeployments(repo, null)
+    const gets = chamadas.filter((c) => c.metodo === 'GET')
+    expect(gets).toHaveLength(6)
+    expect(gets[0]!.url.searchParams.get('per_page')).toBe('100')
+    expect(gets.slice(1).every((c) => c.url.searchParams.get('per_page') === '1')).toBe(true)
+    expect(itens).toHaveLength(5)
+    const k3 = itens.find((d) => d.githubId === BigInt(6000003))!
+    expect(k3.status).toMatchObject({ githubId: BigInt(5000003), estado: 'success' })
+  })
+
+  test('listarDeployments com desde 2026-10-16T11:00:00Z → ids 6000005, 6000004, 6000003; para na página com item anterior a desde (Link com segunda página não é pedido)', async () => {
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      'GET /repos/kustertech-exemplo/portal/deployments': {
+        corpo: deploymentsPortal,
+        cabecalhos: {
+          Link: `<${API}/repos/kustertech-exemplo/portal/deployments?page=2>; rel="next"`,
+        },
+      },
+      ...rotasDeStatuses,
+    })
+    const itens = await fonte.listarDeployments(repo, new Date('2026-10-16T11:00:00Z'))
+    expect(itens.map((d) => d.githubId)).toEqual([
+      BigInt(6000005),
+      BigInt(6000004),
+      BigInt(6000003),
+    ])
+    expect(
+      chamadas.filter(
+        (c) => c.url.pathname.endsWith('/deployments') && c.url.search.includes('page=2'),
+      ),
+    ).toHaveLength(0)
+  })
+
+  test('compararCommits: URL .../compare/{M}...{V2}?per_page=100 → ahead, commits [V2]; 404 → commit-desconhecido; 401 → autenticacao; nenhuma mensagem contém o token', async () => {
+    const caminho = `GET /repos/kustertech-exemplo/portal/compare/${M}...${V2}`
+    const ok = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [caminho]: { corpo: { status: 'ahead', total_commits: 1, commits: [{ sha: V2 }] } },
+    })
+    expect(await ok.fonte.compararCommits(repo, M, V2)).toEqual({
+      status: 'ahead',
+      commits: [V2],
+      truncada: false,
+    })
+    expect(ok.chamadas.at(-1)!.url.searchParams.get('per_page')).toBe('100')
+
+    const falhas: [number, string][] = [
+      [404, 'commit-desconhecido'],
+      [401, 'autenticacao'],
+    ]
+    for (const [status, categoria] of falhas) {
+      const { fonte } = criar({ [TOKEN_PATH]: tokenRota(), [caminho]: { status } })
+      const erro = await fonte.compararCommits(repo, M, V2).catch((e: unknown) => e)
+      expect(erro).toBeInstanceOf(ErroDeIntegracao)
+      expect((erro as ErroDeIntegracao).categoria).toBe(categoria)
+      expect((erro as Error).message).not.toContain(TOKEN)
     }
   })
 })

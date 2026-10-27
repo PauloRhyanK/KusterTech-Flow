@@ -36,6 +36,8 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
     listarIssuesAtualizadas: guardar(base.listarIssuesAtualizadas),
     listarPullRequestsAtualizados: guardar(base.listarPullRequestsAtualizados),
     listarChecks: guardar(base.listarChecks),
+    listarDeployments: guardar(base.listarDeployments),
+    compararCommits: guardar(base.compararCommits),
   }
 }
 
@@ -133,6 +135,27 @@ describe('reconciliação do GitHub', () => {
     expect(depois.falhasConsecutivas).toBe(0)
     expect(depois.cursorIssues).not.toBeNull()
     expect(depois.cursorPullRequests).not.toBeNull()
+  })
+
+  test('sincronizarRepositorio de portal grava shaMerge "1"+"c"×39 no PR #5 e null no #6; segundo ciclo mantém', async () => {
+    const fonte = criarFonteFixtures()
+    await sincronizarCatalogo(fonte, t0)
+    const repo = await repositorioPortal(true)
+    const leitura = async () =>
+      (await db.pullRequestGitHub.findMany({ where: { repositorioId: repo.id } }))
+        .sort((a, b) => a.numero - b.numero)
+        .map((p) => [p.numero, p.shaMerge])
+
+    await sincronizarRepositorio(fonte, repo.id, t0)
+    expect(await leitura()).toEqual([
+      [5, '1' + 'c'.repeat(39)],
+      [6, null],
+    ])
+    await sincronizarRepositorio(fonte, repo.id, t1)
+    expect(await leitura()).toEqual([
+      [5, '1' + 'c'.repeat(39)],
+      [6, null],
+    ])
   })
 
   test('rodar duas vezes seguidas com os mesmos dados mantém as contagens e os ids (sem efeito duplo)', async () => {
