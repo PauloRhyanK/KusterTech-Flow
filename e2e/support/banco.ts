@@ -443,7 +443,11 @@ export async function contarEventosDeTimeline(clienteId: string): Promise<number
 // Acme e Beta no mesmo projeto e na mesma milestone, com as issues #1, #2 e #4 do primeiro
 // repositório e #1 do segundo; QA com a versão "E2E qa-1" e presença das #1 e #2 do primeiro.
 // A tarefa do worker cria os 4 itens (#1 e #2 × Acme e Beta), todos aguardando disponibilização.
-export async function prepararCenarioDeHomologacaoE2E(projectName: string, autorId: string) {
+export async function prepararCenarioDeHomologacaoE2E(
+  projectName: string,
+  autorId: string,
+  opcoes: { atualizarFila?: boolean } = {},
+) {
   const [repoUm, repoDois] = repositoriosDoProjetoE2E(projectName)
   const acme = await criarClienteNoBanco(nomeDeTeste('Acme'))
   const beta = await criarClienteNoBanco(nomeDeTeste('Beta'))
@@ -468,7 +472,8 @@ export async function prepararCenarioDeHomologacaoE2E(projectName: string, autor
     'E2E qa-1',
     autorId,
   )
-  const itensCriados = await atualizarFilaNoBanco()
+  // Sem atualizar a fila aqui, quem chama prova a tarefa do ciclo com rodarWorkerUmaVez().
+  const itensCriados = opcoes.atualizarFila === false ? 0 : await atualizarFilaNoBanco()
   return {
     acme,
     beta,
@@ -482,4 +487,10 @@ export async function prepararCenarioDeHomologacaoE2E(projectName: string, autor
     versaoId,
     itensCriados,
   }
+}
+
+export async function contarSolicitacoesAbertasNoBanco(milestoneId: string): Promise<number> {
+  return db.solicitacaoDeCorrecao.count({
+    where: { estado: 'ABERTA', item: { homologacao: { milestoneId } } },
+  })
 }

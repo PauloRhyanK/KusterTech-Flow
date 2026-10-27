@@ -128,3 +128,28 @@ O Incremento 4 mostra em que versão cada ambiente (DEV, QA e PROD) está e se c
 
 - **Versões:** a página `/projetos/[p]/versoes` (visão global) mostra a versão vigente por ambiente e repositório e a origem da evidência. Deploy que falha ou chega fora de ordem não troca a versão vigente.
 - **Verificação:** `e2e/jornada-a.spec.ts` (passo 5) e `e2e/jornada-b.spec.ts` (passo 6) percorrem este fluxo e gravam capturas em `e2e/capturas/` (ignoradas pelo git).
+
+## Homologação
+
+O Incremento 5a leva as issues que já estão na versão corrente de QA até a decisão do cliente: histórico por cliente e versão, três ações explícitas na issue e uma fila do projeto.
+
+- **Entrada automática:** a tarefa `atualizar-fila-de-homologacao` do worker (parte do ciclo de `pnpm worker` e `pnpm worker:uma-vez`, depois de `calcular-presencas`) cria um item "Aguardando disponibilização" para cada cliente da milestone quando a issue está no escopo e tem presença confirmada (por evidência ou confirmação manual) na versão corrente de QA. Issue fechada sem essa presença não entra. A tarefa só cria; nunca altera item existente, então rodar de novo não duplica nada.
+- **Versão corrente de QA:** a versão da evidência `SUCESSO` mais recente no ambiente QA, por repositório. Deploy com falha ou em andamento não a troca.
+- **Fluxo:** o admin **disponibiliza** a issue ao cliente (Aguardando disponibilização → Pendente de teste); no contexto do cliente (`/clientes/[c]/projetos/[p]/entregas/issues/[i]?milestone=<m>`) quem tem permissão registra **Testado e aprovado**, **Solicitar correção** ou um **Comentário**. A visão global só direciona para o contexto do cliente. Aprovar e solicitar correção passam por um painel de revisão com cliente, milestone, issue e versão antes da confirmação; o sucesso só aparece depois da resposta do servidor.
+- **Papéis por ação:**
+
+  | Ação               | ADMIN | APROVADOR (do cliente) | TESTADOR (do cliente) |
+  | ------------------ | ----- | ---------------------- | --------------------- |
+  | Disponibilizar     | sim   | não                    | não                   |
+  | Testado e aprovado | sim   | sim                    | não                   |
+  | Solicitar correção | sim   | sim                    | sim                   |
+  | Comentar           | sim   | sim                    | sim                   |
+
+  Usuário escopado a um cliente não lê nem altera a homologação de outro, nem por requisição forjada; a autorização usa o cliente do item gravado no banco.
+
+- **Estado desatualizado:** a ação é recusada, com explicação e sem gravar nada, se a homologação mudou desde que a página foi aberta ou se a versão em QA mudou. Comentário não muda o estado.
+- **Visibilidade:** eventos são internos ou compartilháveis. Quem é escopado a um cliente vê só os compartilháveis e não vê itens ainda aguardando disponibilização. Disponibilização, aprovação e solicitação de correção são sempre compartilháveis; o comentário de admin escolhe (padrão interno) e o de usuário escopado é sempre compartilhável.
+- **Fila do projeto:** `/projetos/[p]/homologacao` (e a versão do cliente) agrupa por milestone, com os filtros "Requer minha ação", "Aguardando outros", "Aprovados" e "Todos" e, na visão global, o filtro por cliente, todos na URL. Abrir uma issue a partir da fila preserva o retorno: "Voltar à fila" leva ao mesmo filtro e à mesma linha. Só retornos internos à fila ou à aba da milestone do mesmo projeto são aceitos.
+- **Onde aparece:** aba Homologação da milestone, Entregas ("Homologação: …"), Detalhe do Cliente e Resumo do Projeto ("Homologações pendentes").
+- **Fora desta etapa:** reteste, triagem da correção solicitada e aprovação de milestone ficam para o Incremento 5b.
+- **Verificação:** `e2e/homologacao.spec.ts` cobre as telas e o isolamento entre clientes; `e2e/jornada-c.spec.ts` percorre a Jornada C até a solicitação de correção, no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
