@@ -5,7 +5,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
-import { ResumoDoProjeto } from '../_componentes/resumo-do-projeto'
+import { ResumoDoProjeto } from '@/app/(app)/projetos/_componentes/resumo-do-projeto'
 
 export interface PaginaProjetoProps {
   params: Promise<{ p: string }>

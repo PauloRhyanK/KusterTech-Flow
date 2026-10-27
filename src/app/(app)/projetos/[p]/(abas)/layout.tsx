@@ -7,7 +7,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
-import { CabecalhoDoProjeto } from '../_componentes/cabecalho-do-projeto'
+import { CabecalhoDoProjeto } from '@/app/(app)/projetos/_componentes/cabecalho-do-projeto'
 
 export interface LayoutProjetoProps {
   children: ReactNode

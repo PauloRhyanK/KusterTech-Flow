@@ -7,9 +7,9 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { lerFiltrosDeIssues, listarIssuesDoProjeto } from '@/modules/github/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
-import { AvisoDeIntegracao } from '../../_componentes/aviso-de-integracao'
-import { FiltrosDeIssues } from '../../_componentes/filtros-de-issues'
-import { ListaDeIssues } from '../../_componentes/lista-de-issues'
+import { AvisoDeIntegracao } from '@/app/(app)/projetos/_componentes/aviso-de-integracao'
+import { FiltrosDeIssues } from '@/app/(app)/projetos/_componentes/filtros-de-issues'
+import { ListaDeIssues } from '@/app/(app)/projetos/_componentes/lista-de-issues'
 
 export interface PaginaEntregasProjetoProps {
   params: Promise<{ p: string }>

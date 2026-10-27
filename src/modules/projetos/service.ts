@@ -355,13 +355,24 @@ export async function desassociarCliente(
   exigirPermissao(sujeito, 'projetos.gerenciar')
 
   try {
-    await db.projetoCliente.delete({
-      where: {
-        projetoId_clienteId: {
-          projetoId,
-          clienteId,
+    await db.$transaction(async (tx) => {
+      const emMilestone = await tx.milestoneCliente.findFirst({
+        where: { clienteId, milestone: { projetoId } },
+        select: { milestoneId: true },
+      })
+      if (emMilestone) {
+        throw new ErroDeDominio(
+          'Este cliente está em milestones do projeto. Remova-o das milestones antes de desassociá-lo.',
+        )
+      }
+      await tx.projetoCliente.delete({
+        where: {
+          projetoId_clienteId: {
+            projetoId,
+            clienteId,
+          },
         },
-      },
+      })
     })
   } catch (erro) {
     if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === 'P2025') {

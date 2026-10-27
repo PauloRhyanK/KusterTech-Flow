@@ -14,6 +14,9 @@ const { mockTx, mockDb } = vi.hoisted(() => {
       createMany: vi.fn(),
       delete: vi.fn(),
     },
+    milestoneCliente: {
+      findFirst: vi.fn(),
+    },
   }
   const mockDb = {
     projeto: {
@@ -407,10 +410,15 @@ describe('projetos / service (unitário com mocks)', () => {
   })
 
   test('desassociarCliente: remove vínculo na chave composta e trata P2025', async () => {
-    vi.mocked(db.projetoCliente.delete).mockResolvedValue({} as never)
+    vi.mocked(mockTx.milestoneCliente.findFirst).mockResolvedValue(null)
+    vi.mocked(mockTx.projetoCliente.delete).mockResolvedValue({} as never)
 
     await desassociarCliente(adminSujeito, 'proj-1', 'cli-1')
-    expect(db.projetoCliente.delete).toHaveBeenCalledWith({
+    expect(mockTx.milestoneCliente.findFirst).toHaveBeenCalledWith({
+      where: { clienteId: 'cli-1', milestone: { projetoId: 'proj-1' } },
+      select: { milestoneId: true },
+    })
+    expect(mockTx.projetoCliente.delete).toHaveBeenCalledWith({
       where: {
         projetoId_clienteId: {
           projetoId: 'proj-1',
@@ -420,7 +428,7 @@ describe('projetos / service (unitário com mocks)', () => {
     })
 
     // P2025 -> "Cliente não está associado a este projeto."
-    vi.mocked(db.projetoCliente.delete).mockRejectedValue(
+    vi.mocked(mockTx.projetoCliente.delete).mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError('Not found', {
         code: 'P2025',
         clientVersion: '7.10.1',
@@ -429,6 +437,18 @@ describe('projetos / service (unitário com mocks)', () => {
     await expect(desassociarCliente(adminSujeito, 'proj-1', 'cli-1')).rejects.toThrow(
       new ErroDeDominio('Cliente não está associado a este projeto.'),
     )
+  })
+
+  test('desassociarCliente: cliente em milestone do projeto é recusado sem apagar o vínculo', async () => {
+    vi.mocked(mockTx.milestoneCliente.findFirst).mockResolvedValue({ milestoneId: 'm-1' } as never)
+    vi.mocked(mockTx.projetoCliente.delete).mockClear()
+
+    await expect(desassociarCliente(adminSujeito, 'proj-1', 'cli-1')).rejects.toThrow(
+      new ErroDeDominio(
+        'Este cliente está em milestones do projeto. Remova-o das milestones antes de desassociá-lo.',
+      ),
+    )
+    expect(mockTx.projetoCliente.delete).not.toHaveBeenCalled()
   })
 
   test('arquivarProjeto e desarquivarProjeto são idempotentes', async () => {
