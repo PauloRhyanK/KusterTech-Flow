@@ -43,12 +43,50 @@ describe('ListaDeMilestones', () => {
     expect(screen.getByText('Arquivada')).toBeInTheDocument()
     expect(screen.getByText('Sem prazo · Nenhum cliente')).toBeInTheDocument()
     expect(screen.getByText('Prazo 30/11/2026 · Acme')).toBeInTheDocument()
-    expect(screen.getAllByText('Homologação: ambientes não configurados')).toHaveLength(2)
+    expect(screen.getAllByText('Homologação: Nenhuma issue em homologação')).toHaveLength(2)
     expect(screen.getByRole('link', { name: 'Entrega 1' })).toHaveAttribute(
       'href',
       '/projetos/p-1/entregas/milestones/m-1',
     )
     expect(container.textContent ?? '').not.toMatch(/pronta|entregue|aprovada|qa/i)
+  })
+
+  test('lista de milestones mostra progresso e "Homologação: …" separados', () => {
+    render(
+      <ListaDeMilestones
+        rotas={rotas}
+        milestones={[milestone({})]}
+        homologacao={
+          new Map([
+            ['m-1', { texto: '2 clientes · 1 pendente de teste', tom: 'informacao' as const }],
+          ])
+        }
+      />,
+    )
+    const homologacao = screen.getByText('Homologação: 2 clientes · 1 pendente de teste')
+    expect(homologacao).toHaveAttribute('data-tom', 'informacao')
+    expect(screen.getByText(/1 de 3 issues fechadas/)).toBeInTheDocument()
+    expect(homologacao.textContent).not.toMatch(/fechadas/)
+  })
+
+  test('nenhum resumo sem itens usa tom sucesso', () => {
+    const { container } = render(
+      <ListaDeMilestones
+        rotas={rotas}
+        milestones={[milestone({}), milestone({ id: 'm-2', titulo: 'Entrega 2' })]}
+        homologacao={
+          new Map([
+            ['m-1', { texto: 'Nenhuma issue em homologação', tom: 'neutro' as const }],
+            ['m-2', { texto: 'Sem clientes associados', tom: 'neutro' as const }],
+          ])
+        }
+      />,
+    )
+    expect(container.querySelector('[data-tom="sucesso"]')).toBeNull()
+    expect(screen.getByText('Homologação: Sem clientes associados')).toHaveAttribute(
+      'data-tom',
+      'neutro',
+    )
   })
 
   test('vazio global e de cliente usam as mensagens do contexto', () => {

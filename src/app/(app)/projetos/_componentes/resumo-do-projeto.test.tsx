@@ -85,4 +85,70 @@ describe('ResumoDoProjeto', () => {
     expect(screen.getByText('Issues abertas em milestones: 2')).toBeInTheDocument()
     expect(screen.getByText('1 milestone ativa')).toBeInTheDocument()
   })
+
+  const pendencia = {
+    projetoId: 'p-1',
+    projetoNome: 'Portal',
+    milestoneId: 'm-1',
+    milestoneTitulo: 'Release 1',
+    clienteId: 'c-1',
+    clienteNome: 'Acme',
+    resumo: { texto: '1 pendente de teste', tom: 'informacao' as const },
+    href: '/projetos/p-1/homologacao?filtro=todos&cliente=c-1&milestone=m-1',
+  }
+
+  test('global: "Homologações pendentes" (h3) depois do checklist, com o cliente; vazio "Nenhuma homologação pendente."', () => {
+    const { rerender } = render(
+      <ResumoDoProjeto
+        projeto={projeto}
+        contagens={contagens}
+        entregas={semEntregas}
+        pendencias={[pendencia]}
+        contexto={{ tipo: 'global' }}
+        podeGerenciar
+      />,
+    )
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Homologações pendentes' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Release 1' })).toHaveAttribute('href', pendencia.href)
+    expect(screen.getByText('Acme')).toBeInTheDocument()
+
+    rerender(
+      <ResumoDoProjeto
+        projeto={projeto}
+        contagens={contagens}
+        entregas={semEntregas}
+        contexto={{ tipo: 'global' }}
+        podeGerenciar
+      />,
+    )
+    expect(screen.getByText('Nenhuma homologação pendente.')).toBeInTheDocument()
+  })
+
+  test('cliente: lista as pendências no lugar do aviso do Incremento 5a; vazio "Nenhuma ação pendente para este cliente."', () => {
+    const { rerender } = render(
+      <ResumoDoProjeto
+        projeto={projeto}
+        contagens={contagens}
+        entregas={semEntregas}
+        pendencias={[pendencia]}
+        contexto={{ tipo: 'cliente', clienteId: 'c-1' }}
+        podeGerenciar={false}
+      />,
+    )
+    expect(screen.getByRole('link', { name: 'Release 1' })).toBeInTheDocument()
+    expect(screen.queryByText(/Incremento 5a/)).toBeNull()
+
+    rerender(
+      <ResumoDoProjeto
+        projeto={projeto}
+        contagens={contagens}
+        entregas={semEntregas}
+        contexto={{ tipo: 'cliente', clienteId: 'c-1' }}
+        podeGerenciar={false}
+      />,
+    )
+    expect(screen.getByText('Nenhuma ação pendente para este cliente.')).toBeInTheDocument()
+  })
 })

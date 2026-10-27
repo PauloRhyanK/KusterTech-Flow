@@ -5,6 +5,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterEntregasParaResumo } from '@/modules/entregas/queries'
+import { pendenciasDoProjeto, resumoDeHomologacaoPorMilestone } from '@/modules/homologacao/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { ResumoDoProjeto } from '@/app/(app)/projetos/_componentes/resumo-do-projeto'
 
@@ -36,9 +37,13 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
 
   let projetoComContagens: Awaited<ReturnType<typeof obterProjetoParaResumo>>
   let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
+  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
+  let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>>
   try {
     projetoComContagens = await obterProjetoParaResumo(sessao.sujeito, p, null)
     entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'global' })
+    homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, { tipo: 'global' })
+    pendencias = await pendenciasDoProjeto(sessao.sujeito, p, { tipo: 'global' })
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -57,6 +62,8 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
       contagens={projetoComContagens.contagens}
       entregas={entregas}
       estadoGitHub={projetoComContagens.estadoGitHub}
+      homologacao={homologacao}
+      pendencias={pendencias}
       contexto={{ tipo: 'global' }}
       podeGerenciar={podeGerenciar}
     />

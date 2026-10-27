@@ -1,6 +1,7 @@
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import type { TomDeEstado } from '@/lib/ui/badge-de-estado'
 import type { EventoDaTimeline } from '@/lib/ui/timeline'
 import type { EstadoImplantacao } from '@/modules/ambientes/model'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
@@ -22,10 +23,11 @@ import {
   type FiltroDaFila,
   type FiltrosDaFila,
   hrefDaFila,
+  resumoDaHomologacao,
   tituloDoEvento,
   transicaoDeHomologacao,
 } from './model'
-import { obterVersaoCorrenteEmQA } from './versao-corrente'
+import { obterVersaoCorrenteEmQA, versoesCorrentesEmQA } from './versao-corrente'
 
 export type SituacaoDaHomologacaoDaIssue =
   | 'sem-ambiente-qa'
@@ -547,4 +549,370 @@ export async function listarFilaDoProjeto(
     contagens,
     grupos,
   }
+}
+
+export interface ResumoApresentado {
+  texto: string
+  tom: TomDeEstado
+}
+
+function hrefDaMilestoneNoCliente(clienteId: string, projetoId: string, milestoneId: string) {
+  return `/clientes/${clienteId}/projetos/${projetoId}/entregas/milestones/${milestoneId}?aba=homologacao`
+}
+
+const MILESTONE_NAO_ENCONTRADA = 'Milestone não encontrada.'
+
+export interface LinhaDaHomologacaoDaMilestone {
+  issueId: string
+  numero: number
+  titulo: string
+  repositorio: string
+  estado: EstadoItemHomologacao | null
+  // Item que existe mas ainda não foi disponibilizado ao cliente escopado (D26).
+  oculta: boolean
+  presenca: EstadoImplantacao | null
+  href: string | null
+}
+
+export interface HomologacaoDaMilestoneNoCliente {
+  semAmbienteQa: boolean
+  resumo: ResumoApresentado
+  versoes: { repositorio: string; rotulo: string | null }[]
+  linhas: LinhaDaHomologacaoDaMilestone[]
+}
+
+// Aba Homologação da milestone no contexto do cliente (D63): só as issues do escopo da
+// milestone, com o item do cliente quando ele já pode vê-lo.
+export async function homologacaoDaMilestoneNoCliente(
+  sujeito: Sujeito,
+  clienteId: string,
+  projetoId: string,
+  milestoneId: string,
+): Promise<HomologacaoDaMilestoneNoCliente> {
+  exigirPermissao(sujeito, 'clientes.ler', { clienteId })
+
+  const milestone = await db.milestone.findFirst({
+    where: { id: milestoneId, projetoId, clientes: { some: { clienteId } } },
+    select: {
+      issues: {
+        where: { foraDoEscopo: false },
+        select: {
+          issue: {
+            select: {
+              id: true,
+              numero: true,
+              titulo: true,
+              repositorioId: true,
+              repositorio: { select: { nomeCompleto: true } },
+            },
+          },
+        },
+      },
+    },
+  })
+  if (!milestone) {
+    throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
+  }
+  const escopado = !podeVerVisaoGlobal(sujeito)
+  const issues = milestone.issues
+    .map((v) => v.issue)
+    .sort(
+      (a, b) =>
+        porTexto(a.repositorio.nomeCompleto, b.repositorio.nomeCompleto) || a.numero - b.numero,
+    )
+
+  const ambienteQa = await db.ambiente.findUnique({
+    where: { projetoId_tipo: { projetoId, tipo: 'QA' } },
+    select: { id: true },
+  })
+  const correntes = ambienteQa
+    ? await versoesCorrentesEmQA(projetoId)
+    : new Map<string, { id: string; rotulo: string }>()
+
+  const [itens, presencas] = await Promise.all([
+    db.homologacaoItem.findMany({
+      where: { issueId: { in: issues.map((i) => i.id) }, homologacao: { clienteId, milestoneId } },
+      select: { issueId: true, estado: true },
+    }),
+    db.presencaIssueVersao.findMany({
+      where: {
+        issueId: { in: issues.map((i) => i.id) },
+        versaoId: { in: [...correntes.values()].map((v) => v.id) },
+      },
+      select: { issueId: true, versaoId: true, estado: true },
+    }),
+  ])
+  const estadoPorIssue = new Map(itens.map((i) => [i.issueId, i.estado]))
+  const presencaPorPar = new Map(presencas.map((p) => [`${p.issueId}|${p.versaoId}`, p.estado]))
+
+  const retorno = encodeURIComponent(hrefDaMilestoneNoCliente(clienteId, projetoId, milestoneId))
+  const visiveis: EstadoItemHomologacao[] = []
+  const linhas = issues.map<LinhaDaHomologacaoDaMilestone>((issue) => {
+    const real = estadoPorIssue.get(issue.id) ?? null
+    const oculta = real === 'AGUARDANDO_DISPONIBILIZACAO' && escopado
+    const estado = oculta ? null : real
+    if (estado) visiveis.push(estado)
+    const corrente = correntes.get(issue.repositorioId)
+    return {
+      issueId: issue.id,
+      numero: issue.numero,
+      titulo: issue.titulo,
+      repositorio: issue.repositorio.nomeCompleto,
+      estado,
+      oculta,
+      presenca: corrente ? (presencaPorPar.get(`${issue.id}|${corrente.id}`) ?? null) : null,
+      href: estado
+        ? `${hrefDaIssueNoCliente(clienteId, projetoId, issue.id, milestoneId)}&retorno=${retorno}`
+        : null,
+    }
+  })
+
+  const repositorios = new Map(issues.map((i) => [i.repositorioId, i.repositorio.nomeCompleto]))
+  const versoes = [...repositorios]
+    .map(([id, repositorio]) => ({ repositorio, rotulo: correntes.get(id)?.rotulo ?? null }))
+    .sort((a, b) => porTexto(a.repositorio, b.repositorio))
+
+  return {
+    semAmbienteQa: ambienteQa === null,
+    resumo: resumoDaHomologacao(visiveis),
+    versoes,
+    linhas,
+  }
+}
+
+export interface ConsolidadoDaMilestone {
+  clientes: { clienteId: string; nome: string; resumo: ResumoApresentado; href: string }[]
+}
+
+// Aba Homologação da milestone na visão global (D62): uma linha por cliente, só contagens.
+export async function consolidadoDaMilestone(
+  sujeito: Sujeito,
+  projetoId: string,
+  milestoneId: string,
+): Promise<ConsolidadoDaMilestone> {
+  exigirLeituraGlobal(sujeito)
+
+  const milestone = await db.milestone.findFirst({
+    where: { id: milestoneId, projetoId },
+    select: {
+      clientes: {
+        where: { cliente: { arquivadoEm: null } },
+        select: { cliente: { select: { id: true, nome: true } } },
+      },
+    },
+  })
+  if (!milestone) {
+    throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
+  }
+  const itens = await db.homologacaoItem.findMany({
+    where: { homologacao: { milestoneId } },
+    select: { estado: true, homologacao: { select: { clienteId: true } } },
+  })
+  const estadosPorCliente = new Map<string, EstadoItemHomologacao[]>()
+  for (const i of itens) {
+    const lista = estadosPorCliente.get(i.homologacao.clienteId) ?? []
+    lista.push(i.estado)
+    estadosPorCliente.set(i.homologacao.clienteId, lista)
+  }
+
+  return {
+    clientes: milestone.clientes
+      .map(({ cliente }) => ({
+        clienteId: cliente.id,
+        nome: cliente.nome,
+        resumo: resumoDaHomologacao(estadosPorCliente.get(cliente.id) ?? []),
+        href: hrefDaMilestoneNoCliente(cliente.id, projetoId, milestoneId),
+      }))
+      .sort((a, b) => porTexto(a.nome, b.nome)),
+  }
+}
+
+interface ItemParaResumo {
+  estado: EstadoItemHomologacao
+  clienteId: string
+  clienteNome: string
+  projetoId: string
+  projetoNome: string
+  milestoneId: string
+  milestoneTitulo: string
+}
+
+// Itens vigentes (cliente ainda associado à milestone e não arquivado) de um projeto ou de
+// um cliente. O escopado não conta o que ainda não foi disponibilizado a ele (D26).
+async function carregarItensVigentes(
+  sujeito: Sujeito,
+  filtro: { projetoId?: string; clienteId?: string },
+  opcoes: { milestonesAtivas: boolean },
+): Promise<ItemParaResumo[]> {
+  const escopado = !podeVerVisaoGlobal(sujeito)
+  const registros = await db.homologacaoItem.findMany({
+    where: {
+      ...(escopado ? { estado: { not: 'AGUARDANDO_DISPONIBILIZACAO' } } : {}),
+      homologacao: {
+        cliente: { arquivadoEm: null, ...(filtro.clienteId ? { id: filtro.clienteId } : {}) },
+        milestone: {
+          ...(filtro.projetoId ? { projetoId: filtro.projetoId } : {}),
+          ...(opcoes.milestonesAtivas ? { arquivadaEm: null, projeto: { arquivadoEm: null } } : {}),
+        },
+      },
+    },
+    select: {
+      estado: true,
+      homologacao: {
+        select: {
+          cliente: { select: { id: true, nome: true } },
+          milestone: {
+            select: {
+              id: true,
+              titulo: true,
+              projeto: { select: { id: true, nome: true } },
+              clientes: { select: { clienteId: true } },
+            },
+          },
+        },
+      },
+    },
+  })
+  return registros
+    .filter((r) =>
+      r.homologacao.milestone.clientes.some((m) => m.clienteId === r.homologacao.cliente.id),
+    )
+    .map((r) => ({
+      estado: r.estado,
+      clienteId: r.homologacao.cliente.id,
+      clienteNome: r.homologacao.cliente.nome,
+      projetoId: r.homologacao.milestone.projeto.id,
+      projetoNome: r.homologacao.milestone.projeto.nome,
+      milestoneId: r.homologacao.milestone.id,
+      milestoneTitulo: r.homologacao.milestone.titulo,
+    }))
+}
+
+// Indicador "Homologação: …" da lista de milestones (D20: separado do progresso de desenvolvimento).
+export async function resumoDeHomologacaoPorMilestone(
+  sujeito: Sujeito,
+  projetoId: string,
+  contexto: Contexto,
+): Promise<Map<string, ResumoApresentado>> {
+  await obterProjeto(sujeito, projetoId, contexto)
+  const clienteId = contexto.tipo === 'cliente' ? contexto.clienteId : undefined
+
+  const [milestones, itens] = await Promise.all([
+    db.milestone.findMany({
+      where: { projetoId, ...(clienteId ? { clientes: { some: { clienteId } } } : {}) },
+      select: {
+        id: true,
+        clientes: { where: { cliente: { arquivadoEm: null } }, select: { clienteId: true } },
+      },
+    }),
+    carregarItensVigentes(sujeito, { projetoId, clienteId }, { milestonesAtivas: false }),
+  ])
+  const estadosPorMilestone = new Map<string, EstadoItemHomologacao[]>()
+  for (const i of itens) {
+    const lista = estadosPorMilestone.get(i.milestoneId) ?? []
+    lista.push(i.estado)
+    estadosPorMilestone.set(i.milestoneId, lista)
+  }
+
+  const resumos = new Map<string, ResumoApresentado>()
+  for (const m of milestones) {
+    const resumo = resumoDaHomologacao(estadosPorMilestone.get(m.id) ?? [])
+    if (contexto.tipo === 'cliente') {
+      resumos.set(m.id, resumo)
+    } else if (m.clientes.length === 0) {
+      resumos.set(m.id, { texto: 'Sem clientes associados', tom: 'neutro' })
+    } else {
+      const n = m.clientes.length
+      resumos.set(m.id, {
+        texto: `${n} ${n === 1 ? 'cliente' : 'clientes'} · ${resumo.texto}`,
+        tom: resumo.tom,
+      })
+    }
+  }
+  return resumos
+}
+
+export interface PendenciaDeHomologacao {
+  projetoId: string
+  projetoNome: string
+  milestoneId: string
+  milestoneTitulo: string
+  clienteId: string
+  clienteNome: string
+  resumo: ResumoApresentado
+  href: string
+}
+
+// Uma linha por (cliente, milestone) com algum item ainda não aprovado; o resumo conta só os pendentes.
+function agruparPendencias(
+  itens: readonly ItemParaResumo[],
+  hrefDe: (i: ItemParaResumo) => string,
+): PendenciaDeHomologacao[] {
+  const grupos = new Map<string, { base: ItemParaResumo; estados: EstadoItemHomologacao[] }>()
+  for (const i of itens) {
+    if (i.estado === 'APROVADA') continue
+    const chave = `${i.clienteId}|${i.milestoneId}`
+    const grupo = grupos.get(chave) ?? { base: i, estados: [] }
+    grupo.estados.push(i.estado)
+    grupos.set(chave, grupo)
+  }
+  return [...grupos.values()]
+    .map(({ base, estados }) => ({
+      projetoId: base.projetoId,
+      projetoNome: base.projetoNome,
+      milestoneId: base.milestoneId,
+      milestoneTitulo: base.milestoneTitulo,
+      clienteId: base.clienteId,
+      clienteNome: base.clienteNome,
+      resumo: resumoDaHomologacao(estados),
+      href: hrefDe(base),
+    }))
+    .sort(
+      (a, b) =>
+        porTexto(a.projetoNome, b.projetoNome) ||
+        porTexto(a.milestoneTitulo, b.milestoneTitulo) ||
+        porTexto(a.clienteNome, b.clienteNome),
+    )
+}
+
+export async function pendenciasDoCliente(
+  sujeito: Sujeito,
+  clienteId: string,
+): Promise<PendenciaDeHomologacao[]> {
+  exigirPermissao(sujeito, 'clientes.ler', { clienteId })
+  const itens = await carregarItensVigentes(sujeito, { clienteId }, { milestonesAtivas: true })
+  return agruparPendencias(itens, (i) =>
+    hrefDaFila(`/clientes/${clienteId}/projetos/${i.projetoId}/homologacao`, {
+      filtro: 'todos',
+      clienteId: null,
+      milestoneId: i.milestoneId,
+    }),
+  )
+}
+
+export async function pendenciasDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+  contexto: Contexto,
+): Promise<PendenciaDeHomologacao[]> {
+  await obterProjeto(sujeito, projetoId, contexto)
+  const clienteId = contexto.tipo === 'cliente' ? contexto.clienteId : undefined
+  const itens = await carregarItensVigentes(
+    sujeito,
+    { projetoId, clienteId },
+    { milestonesAtivas: true },
+  )
+  return agruparPendencias(itens, (i) =>
+    contexto.tipo === 'cliente'
+      ? hrefDaFila(`/clientes/${contexto.clienteId}/projetos/${projetoId}/homologacao`, {
+          filtro: 'todos',
+          clienteId: null,
+          milestoneId: i.milestoneId,
+        })
+      : hrefDaFila(`/projetos/${projetoId}/homologacao`, {
+          filtro: 'todos',
+          clienteId: i.clienteId,
+          milestoneId: i.milestoneId,
+        }),
+  )
 }

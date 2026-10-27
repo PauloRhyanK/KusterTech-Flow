@@ -6,6 +6,7 @@ import { obterCliente } from '@/modules/clientes/service'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { listarMilestonesDoProjeto } from '@/modules/entregas/queries'
+import { resumoDeHomologacaoPorMilestone } from '@/modules/homologacao/queries'
 import { rotasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { ListaDeMilestones } from '@/app/(app)/projetos/_componentes/lista-de-milestones'
@@ -42,10 +43,12 @@ export default async function PaginaEntregasProjetoCliente({
 
   const contexto = { tipo: 'cliente', clienteId: c } as const
   let milestones: Awaited<ReturnType<typeof listarMilestonesDoProjeto>>
+  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
   let cliente: Awaited<ReturnType<typeof obterCliente>>
   try {
     await obterProjetoParaResumo(sessao.sujeito, p, c)
     milestones = await listarMilestonesDoProjeto(sessao.sujeito, p, contexto)
+    homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, contexto)
     cliente = await obterCliente(sessao.sujeito, c)
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
@@ -61,6 +64,7 @@ export default async function PaginaEntregasProjetoCliente({
     <ListaDeMilestones
       rotas={rotasDoProjeto(p, contexto)}
       milestones={milestones.ativas}
+      homologacao={homologacao}
       vazio={{
         titulo: 'Nenhuma milestone associada a este cliente.',
         descricao: `As entregas aparecem aqui quando uma milestone do projeto é associada a ${cliente.nome}.`,

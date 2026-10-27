@@ -6,6 +6,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterCliente } from '@/modules/clientes/service'
 import { obterEntregasParaResumo } from '@/modules/entregas/queries'
+import { pendenciasDoProjeto, resumoDeHomologacaoPorMilestone } from '@/modules/homologacao/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { ResumoDoProjeto } from '@/app/(app)/projetos/_componentes/resumo-do-projeto'
 
@@ -37,6 +38,8 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
 
   let projetoComContagens: Awaited<ReturnType<typeof obterProjetoParaResumo>>
   let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
+  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
+  let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>>
   let cliente: Awaited<ReturnType<typeof obterCliente>>
 
   try {
@@ -46,7 +49,10 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
     ])
     projetoComContagens = proj
     cliente = cli
-    entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'cliente', clienteId: c })
+    const contexto = { tipo: 'cliente', clienteId: c } as const
+    entregas = await obterEntregasParaResumo(sessao.sujeito, p, contexto)
+    homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, contexto)
+    pendencias = await pendenciasDoProjeto(sessao.sujeito, p, contexto)
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -64,6 +70,8 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
       projeto={projetoComContagens}
       contagens={projetoComContagens.contagens}
       entregas={entregas}
+      homologacao={homologacao}
+      pendencias={pendencias}
       contexto={{ tipo: 'cliente', clienteId: c }}
       podeGerenciar={podeGerenciar}
       cliente={{ id: cliente.id, nome: cliente.nome }}

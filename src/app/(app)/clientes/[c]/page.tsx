@@ -11,6 +11,8 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterClienteComProjetos } from '@/modules/clientes/queries'
+import { pendenciasDoCliente } from '@/modules/homologacao/queries'
+import { PendenciasDeHomologacao } from '../../projetos/_componentes/pendencias-de-homologacao'
 import { BotaoDeConfirmacao } from '../_componentes/botao-de-confirmacao'
 import { alternarArquivamentoAction } from '../actions'
 
@@ -41,8 +43,10 @@ export default async function PaginaCliente({ params }: PaginaClienteProps) {
   const { c } = await params
 
   let cliente: Awaited<ReturnType<typeof obterClienteComProjetos>>
+  let pendencias: Awaited<ReturnType<typeof pendenciasDoCliente>>
   try {
     cliente = await obterClienteComProjetos(sessao.sujeito, c)
+    pendencias = await pendenciasDoCliente(sessao.sujeito, c)
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return (
@@ -140,10 +144,13 @@ export default async function PaginaCliente({ params }: PaginaClienteProps) {
         <h2 className="text-[18px] font-[600] leading-[1.3] text-text-primary">
           Homologações pendentes
         </h2>
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="Homologações ainda não disponíveis."
-          descricao="Elas aparecem quando o fluxo de homologação estiver configurado."
+        <PendenciasDeHomologacao
+          pendencias={pendencias}
+          contexto="projeto"
+          vazio={{
+            titulo: 'Nenhuma homologação pendente para este cliente.',
+            descricao: 'Issues entram em homologação quando a presença em QA é confirmada.',
+          }}
         />
       </section>
     </div>
