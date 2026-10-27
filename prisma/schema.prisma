@@ -19,16 +19,17 @@ enum Tema {
 }
 
 model Usuario {
-  id           String         @id @default(uuid())
-  email        String         @unique
-  nome         String
-  senhaHash    String
-  ativo        Boolean        @default(true)
-  tema         Tema           @default(SISTEMA)
-  criadoEm     DateTime       @default(now())
-  atualizadoEm DateTime       @updatedAt
-  papeis       UsuarioPapel[]
-  sessoes      Sessao[]
+  id              String         @id @default(uuid())
+  email           String         @unique
+  nome            String
+  senhaHash       String
+  ativo           Boolean        @default(true)
+  tema            Tema           @default(SISTEMA)
+  criadoEm        DateTime       @default(now())
+  atualizadoEm    DateTime       @updatedAt
+  papeis          UsuarioPapel[]
+  sessoes         Sessao[]
+  vinculosCriados IssueVinculo[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -68,27 +69,29 @@ model TentativaLogin {
 }
 
 model Cliente {
-  id              String           @id @default(uuid())
+  id              String             @id @default(uuid())
   nome            String
-  nomeNormalizado String           @unique
+  nomeNormalizado String             @unique
   observacoes     String?
   arquivadoEm     DateTime?
-  criadoEm        DateTime         @default(now())
-  atualizadoEm    DateTime         @updatedAt
+  criadoEm        DateTime           @default(now())
+  atualizadoEm    DateTime           @updatedAt
   projetos        ProjetoCliente[]
   papeis          UsuarioPapel[]
+  milestones      MilestoneCliente[]
 }
 
 model Projeto {
-  id              String           @id @default(uuid())
+  id              String              @id @default(uuid())
   nome            String
-  nomeNormalizado String           @unique
+  nomeNormalizado String              @unique
   descricao       String?
   arquivadoEm     DateTime?
-  criadoEm        DateTime         @default(now())
-  atualizadoEm    DateTime         @updatedAt
+  criadoEm        DateTime            @default(now())
+  atualizadoEm    DateTime            @updatedAt
   clientes        ProjetoCliente[]
   repositorios    RepositorioGitHub[]
+  milestones      Milestone[]
 }
 
 model ProjetoCliente {
@@ -174,6 +177,9 @@ model IssueGitHub {
   fechadaNoGitHub    DateTime?
   sincronizadaEm     DateTime
   repositorio        RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  milestones         MilestoneIssue[]
+  correcoes          IssueVinculo[]    @relation("VinculoOriginal")
+  corrige            IssueVinculo[]    @relation("VinculoCorrecao")
 
   @@unique([repositorioId, numero])
 }
@@ -199,4 +205,65 @@ model PullRequestGitHub {
   repositorio         RepositorioGitHub       @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
 
   @@unique([repositorioId, numero])
+}
+
+enum OrigemVinculoMilestone {
+  MANUAL
+  HERANCA_CORRECAO
+}
+
+model Milestone {
+  id                String             @id @default(uuid())
+  projetoId         String
+  titulo            String
+  tituloNormalizado String
+  descricao         String?
+  prazo             DateTime?          @db.Date
+  arquivadaEm       DateTime?
+  criadoEm          DateTime           @default(now())
+  atualizadoEm      DateTime           @updatedAt
+  projeto           Projeto            @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  clientes          MilestoneCliente[]
+  issues            MilestoneIssue[]
+
+  @@unique([projetoId, tituloNormalizado])
+}
+
+model MilestoneCliente {
+  milestoneId String
+  clienteId   String
+  criadoEm    DateTime  @default(now())
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  cliente     Cliente   @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+
+  @@id([milestoneId, clienteId])
+  @@index([clienteId])
+}
+
+model MilestoneIssue {
+  milestoneId               String
+  issueId                   String
+  origem                    OrigemVinculoMilestone
+  foraDoEscopo              Boolean                @default(false)
+  justificativaForaDoEscopo String?
+  criadoEm                  DateTime               @default(now())
+  milestone                 Milestone              @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  issue                     IssueGitHub            @relation(fields: [issueId], references: [id], onDelete: Restrict)
+
+  @@id([milestoneId, issueId])
+  @@index([issueId])
+}
+
+model IssueVinculo {
+  id              String      @id @default(uuid())
+  issueOriginalId String
+  issueCorrecaoId String
+  criadoPorId     String
+  criadoEm        DateTime    @default(now())
+  original        IssueGitHub @relation("VinculoOriginal", fields: [issueOriginalId], references: [id], onDelete: Restrict)
+  correcao        IssueGitHub @relation("VinculoCorrecao", fields: [issueCorrecaoId], references: [id], onDelete: Restrict)
+  criadoPor       Usuario     @relation(fields: [criadoPorId], references: [id], onDelete: Restrict)
+
+  @@unique([issueOriginalId, issueCorrecaoId])
+  @@index([issueCorrecaoId])
 }

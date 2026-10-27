@@ -7,3 +7,12 @@ const FORMATADOR = new Intl.DateTimeFormat('pt-BR', {
 export function formatarDataHora(data: Date): string {
   return FORMATADOR.format(data).replace(', ', ' ')
 }
+
+const FORMATADOR_DE_DATA = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'UTC',
+  dateStyle: 'short',
+})
+
+export function formatarData(data: Date): string {
+  return FORMATADOR_DE_DATA.format(data)
+}
