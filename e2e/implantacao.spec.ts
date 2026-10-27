@@ -115,7 +115,9 @@ test('admin confirma #4 em QA: "Confirmação manual" e "Confirmada manualmente 
   await qa.getByRole('button', { name: 'Confirmar presença manualmente' }).click()
   await qa.getByRole('button', { name: 'Confirmar presença em v1.4.0 (QA)' }).click()
 
-  await expect(qa.getByText('Presença confirmada manualmente.', { exact: true })).toBeVisible()
+  await expect(
+    qa.getByRole('status').filter({ hasText: 'Presença confirmada manualmente.' }),
+  ).toBeVisible()
   await expect(qa).toContainText('Confirmação manual')
   await expect(qa).toContainText('Confirmada manualmente por Admin E2E em')
   await expect(qa.getByRole('button')).toHaveCount(0)
