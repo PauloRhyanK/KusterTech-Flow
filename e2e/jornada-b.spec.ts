@@ -170,7 +170,7 @@ test('Jornada B de ponta a ponta: milestone, issues, correção, contexto de Acm
     await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
 
     await page.goto(`/projetos/${projeto.id}/entregas/milestones/${milestoneId}?aba=homologacao`)
-    await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
+    await expect(page.getByRole('list', { name: 'Homologação por cliente' })).toBeVisible()
     await capturaDe('b4-admin-milestone-homologacao.png')
   })
 
