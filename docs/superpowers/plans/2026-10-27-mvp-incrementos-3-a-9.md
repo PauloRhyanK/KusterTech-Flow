@@ -1,6 +1,6 @@
 # Plano mestre — Incrementos 3 a 9 e 2b
 
-> **Para agentes executores:** cada Plan Run do Warren executa **um** incremento: as seeds filhas do épico, em ordem. Leia este documento inteiro uma vez (as seções 1 a 5 valem para todos) e depois a seção do seu incremento. Use TDD, revisão independente e verificação antes de concluir (Superpowers).
+> **Para agentes executores:** um único Plan Run do Warren (plano `pl-3be6`, épico guarda-chuva `FLOW-2884`) executa as 55 seeds em ordem; cada seed é uma Task de um incremento. Leia este documento inteiro uma vez (as seções 1 a 6 valem para todos) e depois a seção do incremento da sua seed. Use TDD, revisão independente e verificação antes de concluir (Superpowers).
 
 **Objetivo:** levar a Central de Operações do Incremento 2 (Integração GitHub) até o fim do MVP do plano técnico: entregas por milestone, ambientes e evidência, homologação por cliente, publicação, infraestrutura base, Visão Geral, Central de Desenvolvimento e, por último, webhooks do GitHub.
 
@@ -14,7 +14,7 @@
 
 ## 1. Ordem dos Plan Runs
 
-| Run | Épico | Incremento | Depende de | Migration |
+| Ordem | Épico | Incremento | Depende de | Migration |
 | --- | --- | --- | --- | --- |
 | 1 | `FLOW-2f85` | 3 — Milestones e Entregas | 2 | sim |
 | 2 | `FLOW-aa1d` | 4 — Ambientes, versões e evidência | 3 | sim |
@@ -26,7 +26,7 @@
 | 8 | `FLOW-1ab6` | 9 — Central de Desenvolvimento base | 2 | sim |
 | 9 | `FLOW-ae40` | 2b — Webhooks GitHub (opcional) | 2 | sim |
 
-Um Plan Run por vez, na ordem da tabela: todos criam migrations e commitam `.seeds/` (spec §4, "Paralelismo"). O Paulo dispara cada run. A conferência do orquestrador e a homologação acontecem ao fim de todos os runs (decisão do Paulo, 2026-10-27); por isso **cada seed tem de deixar `main` verde sozinha**, com a suíte inteira rodada localmente (seção 4).
+**Um único Plan Run** executa tudo: o plano `pl-3be6` (épico guarda-chuva `FLOW-2884`) adota as 55 seeds dos nove épicos na ordem da tabela, e a primeira seed de cada incremento depende da última do anterior (decisão do Paulo, 2026-10-27). No Seeds, as seeds passam a bloquear o épico guarda-chuva `FLOW-2884`. Os épicos por incremento continuam abertos e cada um fecha, por chore PR do orquestrador, quando os critérios de aceite da sua seção forem conferidos. Os planos por épico (`pl-e4f1` … `pl-3d4e`) ficaram vazios e marcados como substituídos. A sequência é obrigatória: todas as seeds criam migrations e commitam `.seeds/` (spec §4, "Paralelismo"). A conferência do orquestrador e a homologação acontecem ao fim do run (decisão do Paulo, 2026-10-27); por isso **cada seed tem de deixar `main` verde sozinha**, com a suíte inteira rodada localmente (seção 4).
 
 ## 2. Decisões transversais (o Paulo confirma na homologação)
 
