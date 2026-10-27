@@ -8,14 +8,18 @@ import { log } from '@/lib/log'
 import { type EstadoIntegracao, estadoDoRepositorio } from '@/modules/github/model'
 import { exigirLeituraGlobal, intervaloDaIntegracao } from '@/modules/github/service'
 import {
+  evidenciaVigente,
+  type EvidenciaParaEstado,
   formatoDeTokenValido,
   hashDoTokenDeEvidencia,
+  type OrigemEvidencia,
   PREFIXO_DO_TOKEN,
   rotuloDaVersao,
   TIPOS_DE_AMBIENTE,
   type SituacaoEvidencia,
   type TipoAmbiente,
   validarNomeNoGitHub,
+  validarShaDeCommit,
   validarUrlDoAmbiente,
 } from './model'
 
@@ -37,8 +41,67 @@ export interface LeituraDeDeployments {
   falhaMotivo: string | null
 }
 
+export interface SituacaoNoAmbiente {
+  tipo: TipoAmbiente
+  repositorio: string
+  vigente: {
+    rotulo: string
+    commitCurto: string
+    origem: OrigemEvidencia
+    ocorridaEm: Date
+    autor: string | null
+  } | null
+  ultimoDeploy: { situacao: 'FALHA' | 'EM_ANDAMENTO'; rotulo: string; ocorridaEm: Date } | null
+}
+
+export interface VersaoNaLista {
+  id: string
+  rotulo: string
+  commitCurto: string
+  repositorio: string
+  vigenteEm: TipoAmbiente[]
+  ultimaEvidencia: {
+    tipo: TipoAmbiente
+    origem: OrigemEvidencia
+    situacao: SituacaoEvidencia
+    ocorridaEm: Date
+    autor: string | null
+  }
+}
+
+const LIMITE_DE_VERSOES = 50
+
 function normalizarNome(v: string): string {
   return v.trim().toLowerCase()
+}
+
+function leiturasDeDeployments(
+  repositorios: readonly {
+    nomeCompleto: string
+    deploymentsSincronizadosEm: Date | null
+    deploymentsFalhaEm: Date | null
+    deploymentsFalhaMotivo: string | null
+    removidoDaInstalacaoEm: Date | null
+  }[],
+): LeituraDeDeployments[] {
+  const agora = new Date()
+  const intervalo = intervaloDaIntegracao()
+  return repositorios.map<LeituraDeDeployments>((r) => ({
+    repositorio: r.nomeCompleto,
+    estado: estadoDoRepositorio(
+      {
+        sincronizadoEm: r.deploymentsSincronizadosEm,
+        ultimaFalhaEm: r.deploymentsFalhaEm,
+        removidoDaInstalacaoEm: r.removidoDaInstalacaoEm,
+      },
+      agora,
+      intervalo,
+    ),
+    lidoEm: r.deploymentsSincronizadosEm,
+    falhaMotivo: r.removidoDaInstalacaoEm
+      ? 'A Central não tem mais acesso a este repositório.'
+      : r.deploymentsFalhaMotivo,
+  }))
 }
 
 export async function obterAmbientesDoProjeto(
@@ -58,8 +121,6 @@ export async function obterAmbientesDoProjeto(
     db.integracaoGitHub.findUnique({ where: { id: 'github' } }),
   ])
 
-  const agora = new Date()
-  const intervalo = intervaloDaIntegracao()
   const ambientes = TIPOS_DE_AMBIENTE.map<AmbienteNaTela>((tipo) => {
     const linha = linhas.find((a) => a.tipo === tipo)
     return {
@@ -70,22 +131,7 @@ export async function obterAmbientesDoProjeto(
       tokenCriadoEm: linha?.tokenEvidenciaHash ? (linha.tokenCriadoEm ?? null) : null,
     }
   })
-  const leituras = repositorios.map<LeituraDeDeployments>((r) => ({
-    repositorio: r.nomeCompleto,
-    estado: estadoDoRepositorio(
-      {
-        sincronizadoEm: r.deploymentsSincronizadosEm,
-        ultimaFalhaEm: r.deploymentsFalhaEm,
-        removidoDaInstalacaoEm: r.removidoDaInstalacaoEm,
-      },
-      agora,
-      intervalo,
-    ),
-    lidoEm: r.deploymentsSincronizadosEm,
-    falhaMotivo: r.removidoDaInstalacaoEm
-      ? 'A Central não tem mais acesso a este repositório.'
-      : r.deploymentsFalhaMotivo,
-  }))
+  const leituras = leiturasDeDeployments(repositorios)
 
   return {
     ambientes,
@@ -406,4 +452,218 @@ export async function registrarEvidenciaPorToken(
     }
     throw erro
   }
+}
+
+interface EvidenciaDaLista extends EvidenciaParaEstado {
+  tipo: TipoAmbiente
+  repositorioId: string
+  commitSha: string
+  autor: string | null
+}
+
+function maisRecenteQue(a: EvidenciaParaEstado, b: EvidenciaParaEstado): boolean {
+  const porOcorrencia = a.ocorridaEm.getTime() - b.ocorridaEm.getTime()
+  return porOcorrencia !== 0 ? porOcorrencia > 0 : a.registradaEm > b.registradaEm
+}
+
+function maisRecenteDe<T extends EvidenciaParaEstado>(lista: readonly T[]): T | null {
+  return lista.reduce<T | null>((m, e) => (m === null || maisRecenteQue(e, m) ? e : m), null)
+}
+
+export async function listarVersoesDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+  filtros: { repositorioId: string | null },
+): Promise<{
+  ambientesConfigurados: TipoAmbiente[]
+  repositorios: { id: string; nomeCompleto: string }[]
+  situacoes: SituacaoNoAmbiente[]
+  versoes: VersaoNaLista[]
+  total: number
+  leituras: LeituraDeDeployments[]
+}> {
+  exigirLeituraGlobal(sujeito)
+
+  const [ambientes, todosRepositorios] = await Promise.all([
+    db.ambiente.findMany({ where: { projetoId } }),
+    db.repositorioGitHub.findMany({ where: { projetoId }, orderBy: { nomeCompleto: 'asc' } }),
+  ])
+  const repositorios = todosRepositorios.filter(
+    (r) => filtros.repositorioId === null || r.id === filtros.repositorioId,
+  )
+  const configurados = TIPOS_DE_AMBIENTE.filter((t) => ambientes.some((a) => a.tipo === t))
+
+  const linhas =
+    ambientes.length === 0 || repositorios.length === 0
+      ? []
+      : await db.evidenciaDeploy.findMany({
+          where: {
+            ambienteId: { in: ambientes.map((a) => a.id) },
+            versao: { repositorioId: { in: repositorios.map((r) => r.id) } },
+          },
+          include: {
+            versao: { select: { rotulo: true, commitSha: true, repositorioId: true } },
+            autor: { select: { nome: true } },
+          },
+        })
+  const tipoDoAmbiente = new Map(ambientes.map((a) => [a.id, a.tipo] as const))
+  const evidencias = linhas.map<EvidenciaDaLista>((l) => ({
+    versaoId: l.versaoId,
+    rotulo: l.versao.rotulo,
+    origem: l.origem,
+    situacao: l.situacao,
+    ocorridaEm: l.ocorridaEm,
+    registradaEm: l.registradaEm,
+    tipo: tipoDoAmbiente.get(l.ambienteId) as TipoAmbiente,
+    repositorioId: l.versao.repositorioId,
+    commitSha: l.versao.commitSha,
+    autor: l.autor?.nome ?? null,
+  }))
+
+  const vigentePorVersao = new Map<string, Set<TipoAmbiente>>()
+  const situacoes: SituacaoNoAmbiente[] = []
+  for (const tipo of configurados) {
+    for (const repo of repositorios) {
+      const doPar = evidencias.filter((e) => e.tipo === tipo && e.repositorioId === repo.id)
+      const vigente = evidenciaVigente(doPar) as EvidenciaDaLista | null
+      const posterior = maisRecenteDe(
+        doPar.filter(
+          (e) => e.situacao !== 'SUCESSO' && (vigente === null || maisRecenteQue(e, vigente)),
+        ),
+      )
+      if (vigente) {
+        const tipos = vigentePorVersao.get(vigente.versaoId) ?? new Set<TipoAmbiente>()
+        vigentePorVersao.set(vigente.versaoId, tipos.add(tipo))
+      }
+      situacoes.push({
+        tipo,
+        repositorio: repo.nomeCompleto,
+        vigente: vigente && {
+          rotulo: vigente.rotulo,
+          commitCurto: vigente.commitSha.slice(0, 7),
+          origem: vigente.origem,
+          ocorridaEm: vigente.ocorridaEm,
+          autor: vigente.origem === 'MANUAL' ? vigente.autor : null,
+        },
+        ultimoDeploy:
+          posterior && posterior.situacao !== 'SUCESSO'
+            ? {
+                situacao: posterior.situacao,
+                rotulo: posterior.rotulo,
+                ocorridaEm: posterior.ocorridaEm,
+              }
+            : null,
+      })
+    }
+  }
+
+  const nomeDoRepositorio = new Map(repositorios.map((r) => [r.id, r.nomeCompleto] as const))
+  const porVersao = Map.groupBy(evidencias, (e) => e.versaoId)
+  const todasAsVersoes = [...porVersao.entries()]
+    .map(([id, doGrupo]) => ({ id, ultima: maisRecenteDe(doGrupo) as EvidenciaDaLista }))
+    .sort((a, b) =>
+      maisRecenteQue(a.ultima, b.ultima) ? -1 : maisRecenteQue(b.ultima, a.ultima) ? 1 : 0,
+    )
+  const versoes = todasAsVersoes
+    .slice(0, LIMITE_DE_VERSOES)
+    .map<VersaoNaLista>(({ id, ultima }) => ({
+      id,
+      rotulo: ultima.rotulo,
+      commitCurto: ultima.commitSha.slice(0, 7),
+      repositorio: nomeDoRepositorio.get(ultima.repositorioId) ?? '',
+      vigenteEm: TIPOS_DE_AMBIENTE.filter((t) => vigentePorVersao.get(id)?.has(t)),
+      ultimaEvidencia: {
+        tipo: ultima.tipo,
+        origem: ultima.origem,
+        situacao: ultima.situacao,
+        ocorridaEm: ultima.ocorridaEm,
+        autor: ultima.origem === 'MANUAL' ? ultima.autor : null,
+      },
+    }))
+
+  return {
+    ambientesConfigurados: configurados,
+    repositorios: todosRepositorios.map((r) => ({ id: r.id, nomeCompleto: r.nomeCompleto })),
+    situacoes,
+    versoes,
+    total: todasAsVersoes.length,
+    leituras: leiturasDeDeployments(repositorios),
+  }
+}
+
+export interface DadosDeDeployManual {
+  tipo: TipoAmbiente
+  repositorioId: string
+  commitSha: string
+  rotulo: string
+  ocorridaEm: Date | null
+}
+
+export async function registrarDeployManual(
+  sujeito: Sujeito,
+  projetoId: string,
+  dados: DadosDeDeployManual,
+  agora: Date,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+
+  const commitSha = validarShaDeCommit(dados.commitSha)
+  const projeto = await db.projeto.findUnique({
+    where: { id: projetoId },
+    select: { id: true, arquivadoEm: true },
+  })
+  if (!projeto) {
+    throw new ErroDeDominio('Projeto não encontrado.')
+  }
+  if (projeto.arquivadoEm !== null) {
+    throw new ErroDeDominio('Projeto arquivado não recebe evidências.')
+  }
+  const ambiente = await db.ambiente.findUnique({
+    where: { projetoId_tipo: { projetoId, tipo: dados.tipo } },
+    select: { id: true },
+  })
+  if (!ambiente) {
+    throw new ErroDeDominio('Configure o ambiente antes de registrar um deploy.')
+  }
+  const repositorio = await db.repositorioGitHub.findFirst({
+    where: { id: dados.repositorioId, projetoId, removidoDaInstalacaoEm: null },
+    select: { id: true },
+  })
+  if (!repositorio) {
+    throw new ErroDeDominio('Repositório não vinculado a este projeto.')
+  }
+  const ocorridaEm = dados.ocorridaEm ?? agora
+  if (ocorridaEm.getTime() > agora.getTime() + TOLERANCIA_DE_RELOGIO_MS) {
+    throw new ErroDeDominio('A data do deploy não pode estar no futuro.')
+  }
+
+  const gravar = () =>
+    db.$transaction(async (tx) => {
+      const versao = await tx.versao.upsert({
+        where: { repositorioId_commitSha: { repositorioId: repositorio.id, commitSha } },
+        create: {
+          projetoId,
+          repositorioId: repositorio.id,
+          commitSha,
+          rotulo: rotuloDaVersao({ informado: dados.rotulo, ref: null, commitSha }),
+        },
+        update: {},
+      })
+      await tx.evidenciaDeploy.create({
+        data: {
+          ambienteId: ambiente.id,
+          versaoId: versao.id,
+          origem: 'MANUAL',
+          situacao: 'SUCESSO',
+          ocorridaEm,
+          registradaEm: agora,
+          autorId: sujeito.usuarioId,
+          detalhe: 'Registro manual',
+        },
+      })
+    })
+  // Dois registros do mesmo commit novo podem criar a Versao ao mesmo tempo: o segundo a reutiliza.
+  await gravar().catch((erro: unknown) =>
+    ehConflitoDeUnicidade(erro) ? gravar() : Promise.reject(erro),
+  )
 }

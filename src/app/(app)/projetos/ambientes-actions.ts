@@ -5,11 +5,13 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { lerDataHoraDeSaoPaulo } from '@/lib/data'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { TIPOS_DE_AMBIENTE } from '@/modules/ambientes/model'
 import {
   gerarTokenDeEvidencia,
+  registrarDeployManual,
   revogarTokenDeEvidencia,
   salvarAmbiente,
 } from '@/modules/ambientes/service'
@@ -32,6 +34,13 @@ const salvarSchema = z.object({
   url: texto,
 })
 const tokenSchema = z.object(identificacao)
+const deployManualSchema = z.object({
+  ...identificacao,
+  repositorioId: texto.uuid('Repositório inválido.'),
+  commitSha: texto,
+  rotulo: texto,
+  ocorridaEm: texto,
+})
 
 function estadoDeErro(erro: unknown, contexto: string): EstadoAmbiente {
   if (erro instanceof ErroDeAutorizacao) {
@@ -131,5 +140,47 @@ export async function revogarTokenDeEvidenciaAction(
     return { sucesso: `Token de evidência de ${parse.data.tipo} revogado.` }
   } catch (erro) {
     return estadoDeErro(erro, 'Erro inesperado ao revogar token de evidência.')
+  }
+}
+
+export async function registrarDeployManualAction(
+  estadoOuForm: EstadoAmbiente | FormData,
+  talvezForm?: FormData,
+): Promise<EstadoAmbiente> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const form = formDaChamada(estadoOuForm, talvezForm)
+  const parse = deployManualSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    tipo: form.get('tipo'),
+    repositorioId: form.get('repositorioId'),
+    commitSha: form.get('commitSha') ?? '',
+    rotulo: form.get('rotulo') ?? '',
+    ocorridaEm: form.get('ocorridaEm') ?? '',
+  })
+  if (!parse.success) {
+    return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  }
+
+  const { projetoId, tipo, repositorioId, commitSha, rotulo, ocorridaEm: informada } = parse.data
+  const ocorridaEm = informada.trim() === '' ? null : lerDataHoraDeSaoPaulo(informada)
+  if (informada.trim() !== '' && ocorridaEm === null) {
+    return { erro: 'Informe a data e a hora do deploy.' }
+  }
+
+  try {
+    await registrarDeployManual(
+      sessao.sujeito,
+      projetoId,
+      { tipo, repositorioId, commitSha, rotulo, ocorridaEm },
+      new Date(),
+    )
+    revalidar(projetoId)
+    return { sucesso: `Deploy manual registrado em ${tipo}.` }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao registrar deploy manual.')
   }
 }
