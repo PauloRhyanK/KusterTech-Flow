@@ -5,6 +5,8 @@ import {
   abasDoContexto,
   calcularChecklist,
   type ContagensDoProjeto,
+  rotasDoProjeto,
+  trilhasDoProjeto,
   validarNomeDeProjeto,
 } from './model'
 
@@ -146,7 +148,7 @@ describe('projetos / model (unitário)', () => {
     expect(github({ ...base, repositorios: 1 }, null, 'indisponivel')?.acao).toBeUndefined()
   })
 
-  test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/... e Entregas disponível; cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas indisponível', () => {
+  test('abasDoContexto: global tem 5 abas com hrefs /projetos/[p]/... e Entregas disponível; cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas disponível', () => {
     const projetoId = 'proj-123'
 
     // Contexto global
@@ -166,13 +168,60 @@ describe('projetos / model (unitário)', () => {
       {
         rotulo: 'Entregas',
         href: '/clientes/cli-456/projetos/proj-123/entregas',
-        disponivel: false,
+        disponivel: true,
       },
       {
         rotulo: 'Homologação',
         href: '/clientes/cli-456/projetos/proj-123/homologacao',
         disponivel: false,
       },
+    ])
+  })
+
+  test('rotasDoProjeto: global e cliente para entregas, milestone com aba homologacao e issue com ?milestone=m-1', () => {
+    const global = rotasDoProjeto('p-1', { tipo: 'global' })
+    expect(global.resumo).toBe('/projetos/p-1')
+    expect(global.entregas).toBe('/projetos/p-1/entregas')
+    expect(global.milestone('m-1')).toBe('/projetos/p-1/entregas/milestones/m-1')
+    expect(global.milestone('m-1', 'issues')).toBe('/projetos/p-1/entregas/milestones/m-1')
+    expect(global.milestone('m-1', 'homologacao')).toBe(
+      '/projetos/p-1/entregas/milestones/m-1?aba=homologacao',
+    )
+    expect(global.issue('i-1')).toBe('/projetos/p-1/entregas/issues/i-1')
+    expect(global.issue('i-1', 'm-1')).toBe('/projetos/p-1/entregas/issues/i-1?milestone=m-1')
+
+    const cliente = rotasDoProjeto('p-1', { tipo: 'cliente', clienteId: 'c-1' })
+    expect(cliente.resumo).toBe('/clientes/c-1/projetos/p-1')
+    expect(cliente.entregas).toBe('/clientes/c-1/projetos/p-1/entregas')
+    expect(cliente.milestone('m-1', 'homologacao')).toBe(
+      '/clientes/c-1/projetos/p-1/entregas/milestones/m-1?aba=homologacao',
+    )
+    expect(cliente.issue('i-1', 'm-1')).toBe(
+      '/clientes/c-1/projetos/p-1/entregas/issues/i-1?milestone=m-1',
+    )
+  })
+
+  test('trilhasDoProjeto: global com complemento → Projetos › P (/projetos/p-1) › …; cliente → Clientes › Acme › Portal › …', () => {
+    const projeto = { id: 'p-1', nome: 'Portal' }
+    expect(trilhasDoProjeto(projeto, { tipo: 'global' }, null, { rotulo: 'Configuração' })).toEqual(
+      [
+        { rotulo: 'Projetos', href: '/projetos' },
+        { rotulo: 'Portal', href: '/projetos/p-1' },
+        { rotulo: 'Configuração' },
+      ],
+    )
+    expect(
+      trilhasDoProjeto(
+        projeto,
+        { tipo: 'cliente', clienteId: 'c-1' },
+        { id: 'c-1', nome: 'Acme' },
+        { rotulo: 'Entregas', href: '/clientes/c-1/projetos/p-1/entregas' },
+      ),
+    ).toEqual([
+      { rotulo: 'Clientes', href: '/clientes' },
+      { rotulo: 'Acme', href: '/clientes/c-1' },
+      { rotulo: 'Portal', href: '/clientes/c-1/projetos/p-1' },
+      { rotulo: 'Entregas', href: '/clientes/c-1/projetos/p-1/entregas' },
     ])
   })
 

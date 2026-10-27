@@ -6,7 +6,7 @@ import type { SituacaoDaIntegracao } from '@/modules/github/service'
 export interface AvisoDeIntegracaoProps {
   situacao: SituacaoDaIntegracao
   sincronizadoEm: Date | null
-  hrefConfiguracao: string
+  hrefConfiguracao: string | null
 }
 
 export function AvisoDeIntegracao({
@@ -26,9 +26,11 @@ export function AvisoDeIntegracao({
           titulo="O GitHub ainda não está configurado neste projeto."
           descricao="Vincule os repositórios do projeto para ver as issues aqui."
           acao={
-            <Link href={hrefConfiguracao} className="text-sm text-text-link hover:underline">
-              Vincular repositórios
-            </Link>
+            hrefConfiguracao ? (
+              <Link href={hrefConfiguracao} className="text-sm text-text-link hover:underline">
+                Vincular repositórios
+              </Link>
+            ) : undefined
           }
         />
       )
