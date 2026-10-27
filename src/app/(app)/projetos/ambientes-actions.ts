@@ -10,6 +10,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { TIPOS_DE_AMBIENTE } from '@/modules/ambientes/model'
 import {
+  confirmarPresencaManual,
   gerarTokenDeEvidencia,
   registrarDeployManual,
   revogarTokenDeEvidencia,
@@ -34,6 +35,11 @@ const salvarSchema = z.object({
   url: texto,
 })
 const tokenSchema = z.object(identificacao)
+const presencaManualSchema = z.object({
+  ...identificacao,
+  issueId: texto.uuid('Issue inválida.'),
+  versaoId: texto.uuid('Versão inválida.'),
+})
 const deployManualSchema = z.object({
   ...identificacao,
   repositorioId: texto.uuid('Repositório inválido.'),
@@ -182,5 +188,35 @@ export async function registrarDeployManualAction(
     return { sucesso: `Deploy manual registrado em ${tipo}.` }
   } catch (erro) {
     return estadoDeErro(erro, 'Erro inesperado ao registrar deploy manual.')
+  }
+}
+
+export async function confirmarPresencaManualAction(
+  estadoOuForm: EstadoAmbiente | FormData,
+  talvezForm?: FormData,
+): Promise<EstadoAmbiente> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const form = formDaChamada(estadoOuForm, talvezForm)
+  const parse = presencaManualSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    tipo: form.get('tipo'),
+    issueId: form.get('issueId'),
+    versaoId: form.get('versaoId'),
+  })
+  if (!parse.success) {
+    return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  }
+
+  try {
+    const { projetoId, ...dados } = parse.data
+    await confirmarPresencaManual(sessao.sujeito, projetoId, dados, new Date())
+    revalidar(projetoId)
+    return { sucesso: 'Presença confirmada manualmente.' }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao confirmar presença manual.')
   }
 }

@@ -393,6 +393,19 @@ export async function issueVisivelNoCliente(
   return total > 0
 }
 
+// Versão em lote de `issueVisivelNoCliente`: devolve só os ids visíveis no cliente.
+export async function filtrarIssuesVisiveisNoCliente(
+  projetoId: string,
+  issueIds: readonly string[],
+  clienteId: string,
+): Promise<string[]> {
+  const linhas = await db.issueGitHub.findMany({
+    where: { id: { in: [...issueIds] }, ...visivelNoCliente(projetoId, clienteId) },
+    select: { id: true },
+  })
+  return linhas.map((l) => l.id)
+}
+
 const SELECAO_RELACIONADA = {
   id: true,
   numero: true,

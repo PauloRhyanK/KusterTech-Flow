@@ -1,16 +1,21 @@
 import { randomBytes } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { filtrarIssuesVisiveisNoCliente, issueVisivelNoCliente } from '@/modules/entregas/queries'
 import { type EstadoIntegracao, estadoDoRepositorio } from '@/modules/github/model'
 import { exigirLeituraGlobal, intervaloDaIntegracao } from '@/modules/github/service'
+import type { Contexto } from '@/modules/projetos/model'
+import { obterProjeto } from '@/modules/projetos/service'
+import { implantacaoDasIssues } from './implantacao'
 import {
   evidenciaVigente,
   type EvidenciaParaEstado,
   formatoDeTokenValido,
+  type ImplantacaoNoAmbiente,
   hashDoTokenDeEvidencia,
   type OrigemEvidencia,
   PREFIXO_DO_TOKEN,
@@ -666,4 +671,213 @@ export async function registrarDeployManual(
   await gravar().catch((erro: unknown) =>
     ehConflitoDeUnicidade(erro) ? gravar() : Promise.reject(erro),
   )
+}
+
+export interface ImplantacaoNaTela extends ImplantacaoNoAmbiente {
+  tipo: TipoAmbiente
+  commitCurto: string | null
+  confirmadaPor: { nome: string; em: Date } | null
+  autorDoDeploy: string | null
+}
+
+export interface ImplantacaoDaIssueNaTela {
+  ambientes: ImplantacaoNaTela[]
+  nenhumConfigurado: boolean
+  leituras: LeituraDeDeployments[]
+  podeConfirmar: boolean
+}
+
+// Global exige a visão global; no contexto de cliente, `projetos.ler` com o cliente e o projeto
+// associado a ele (a mesma regra da leitura de entregas).
+async function autorizarLeituraDeImplantacao(
+  sujeito: Sujeito,
+  projetoId: string,
+  contexto: Contexto,
+): Promise<void> {
+  if (contexto.tipo === 'global') {
+    exigirLeituraGlobal(sujeito)
+    const projeto = await db.projeto.findUnique({ where: { id: projetoId }, select: { id: true } })
+    if (!projeto) {
+      throw new ErroDeDominio('Projeto não encontrado.')
+    }
+    return
+  }
+  exigirPermissao(sujeito, 'projetos.ler', { clienteId: contexto.clienteId })
+  await obterProjeto(sujeito, projetoId, contexto)
+}
+
+async function implantacoesNaTela(
+  projetoId: string,
+  issueIds: readonly string[],
+  tipo: TipoAmbiente,
+  contexto: Contexto,
+): Promise<Map<string, ImplantacaoNaTela>> {
+  const lidas = await implantacaoDasIssues(projetoId, issueIds, tipo)
+  const global = contexto.tipo === 'global'
+  return new Map(
+    [...lidas].map(([issueId, l]) => [
+      issueId,
+      {
+        configurado: l.configurado,
+        estado: l.estado,
+        // O motivo cita PRs e o cliente não vê dado técnico (invariante 10).
+        motivo: global ? l.motivo : '',
+        versao: l.versao,
+        origem: global ? l.origem : null,
+        ocorridaEm: l.ocorridaEm,
+        tipo,
+        commitCurto: global ? (l.commitSha?.slice(0, 7) ?? null) : null,
+        confirmadaPor: l.confirmadaPor,
+        autorDoDeploy: global ? l.autorDoDeploy : null,
+      } satisfies ImplantacaoNaTela,
+    ]),
+  )
+}
+
+export async function obterImplantacaoDaIssue(
+  sujeito: Sujeito,
+  projetoId: string,
+  issueId: string,
+  contexto: Contexto,
+): Promise<ImplantacaoDaIssueNaTela> {
+  await autorizarLeituraDeImplantacao(sujeito, projetoId, contexto)
+
+  const issue = await db.issueGitHub.findFirst({
+    where: { id: issueId, repositorio: { projetoId } },
+    include: { repositorio: true },
+  })
+  const visivel =
+    issue !== null &&
+    (contexto.tipo === 'global' ||
+      (await issueVisivelNoCliente(projetoId, issueId, contexto.clienteId)))
+  if (!issue || !visivel) {
+    throw new ErroDeDominio('Issue não encontrada.')
+  }
+
+  const ambientes: ImplantacaoNaTela[] = []
+  for (const tipo of TIPOS_DE_AMBIENTE) {
+    const lida = (await implantacoesNaTela(projetoId, [issueId], tipo, contexto)).get(issueId)
+    if (lida) {
+      ambientes.push(lida)
+    }
+  }
+
+  const projeto = await db.projeto.findUnique({
+    where: { id: projetoId },
+    select: { arquivadoEm: true },
+  })
+  const global = contexto.tipo === 'global'
+  return {
+    ambientes,
+    nenhumConfigurado: ambientes.every((a) => !a.configurado),
+    leituras: global ? leiturasDeDeployments([issue.repositorio]) : [],
+    podeConfirmar:
+      global && projeto?.arquivadoEm === null && autorizar(sujeito, 'projetos.gerenciar'),
+  }
+}
+
+export async function listarPresencaEmQA(
+  sujeito: Sujeito,
+  projetoId: string,
+  issueIds: readonly string[],
+  contexto: Contexto,
+): Promise<Map<string, ImplantacaoNaTela>> {
+  await autorizarLeituraDeImplantacao(sujeito, projetoId, contexto)
+
+  const ids =
+    contexto.tipo === 'global'
+      ? issueIds
+      : await filtrarIssuesVisiveisNoCliente(projetoId, issueIds, contexto.clienteId)
+  return implantacoesNaTela(projetoId, ids, 'QA', contexto)
+}
+
+export async function confirmarPresencaManual(
+  sujeito: Sujeito,
+  projetoId: string,
+  dados: { issueId: string; versaoId: string; tipo: TipoAmbiente },
+  agora: Date,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+
+  const projeto = await db.projeto.findUnique({
+    where: { id: projetoId },
+    select: { arquivadoEm: true },
+  })
+  if (!projeto) {
+    throw new ErroDeDominio('Projeto não encontrado.')
+  }
+  if (projeto.arquivadoEm !== null) {
+    throw new ErroDeDominio('Projeto arquivado não recebe confirmações.')
+  }
+
+  await db.$transaction(async (tx) => {
+    const issue = await tx.issueGitHub.findFirst({
+      where: { id: dados.issueId, repositorio: { projetoId, removidoDaInstalacaoEm: null } },
+      select: { id: true, repositorioId: true },
+    })
+    const versao = issue
+      ? await tx.versao.findFirst({
+          where: { id: dados.versaoId, repositorioId: issue.repositorioId },
+          select: { id: true },
+        })
+      : null
+    if (!issue || !versao) {
+      throw new ErroDeDominio('Issue não encontrada.')
+    }
+
+    // A versão precisa continuar vigente no ambiente escolhido (invariante 8).
+    const ambiente = await tx.ambiente.findUnique({
+      where: { projetoId_tipo: { projetoId, tipo: dados.tipo } },
+      select: { id: true },
+    })
+    const evidencias = ambiente
+      ? await tx.evidenciaDeploy.findMany({
+          where: { ambienteId: ambiente.id, versao: { repositorioId: issue.repositorioId } },
+          include: { versao: { select: { rotulo: true } } },
+        })
+      : []
+    const vigente = evidenciaVigente(
+      evidencias.map<EvidenciaParaEstado>((e) => ({
+        versaoId: e.versaoId,
+        rotulo: e.versao.rotulo,
+        origem: e.origem,
+        situacao: e.situacao,
+        ocorridaEm: e.ocorridaEm,
+        registradaEm: e.registradaEm,
+      })),
+    )
+    if (vigente?.versaoId !== versao.id) {
+      throw new ErroDeDominio(
+        `A versão em ${dados.tipo} mudou desde que a página foi aberta. Confira de novo.`,
+      )
+    }
+
+    const linha = await tx.presencaIssueVersao.findUnique({
+      where: { issueId_versaoId: { issueId: issue.id, versaoId: versao.id } },
+      select: { issueId: true },
+    })
+    if (!linha) {
+      throw new ErroDeDominio(
+        'A presença desta issue ainda não foi calculada; aguarde o próximo ciclo do worker.',
+      )
+    }
+
+    const { count } = await tx.presencaIssueVersao.updateMany({
+      where: {
+        issueId: issue.id,
+        versaoId: versao.id,
+        estado: 'VERIFICACAO_NECESSARIA',
+        confirmadaPorId: null,
+      },
+      data: {
+        estado: 'CONFIRMACAO_MANUAL',
+        motivo: 'Presença confirmada manualmente.',
+        confirmadaPorId: sujeito.usuarioId,
+        calculadaEm: agora,
+      },
+    })
+    if (count === 0) {
+      throw new ErroDeDominio('Esta issue não precisa de confirmação manual nesta versão.')
+    }
+  })
 }

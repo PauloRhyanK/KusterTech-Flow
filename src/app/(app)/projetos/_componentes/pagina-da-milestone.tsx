@@ -9,6 +9,7 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { listarPresencaEmQA } from '@/modules/ambientes/queries'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { obterCliente } from '@/modules/clientes/service'
 import {
@@ -61,9 +62,18 @@ export async function PaginaDaMilestone({
   let dados: Awaited<ReturnType<typeof obterMilestone>>
   let cliente: { id: string; nome: string } | null = null
   let candidatas: Awaited<ReturnType<typeof listarIssuesParaAdicionar>> | null = null
+  let presencaEmQA: Awaited<ReturnType<typeof listarPresencaEmQA>> | undefined
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
     dados = await obterMilestone(sujeito, projetoId, milestoneId, contexto, filtros)
+    if (filtros.aba === 'issues') {
+      presencaEmQA = await listarPresencaEmQA(
+        sujeito,
+        projetoId,
+        dados.milestone.issues.map((i) => i.id),
+        contexto,
+      )
+    }
     if (clienteId !== null) {
       const encontrado = await obterCliente(sujeito, clienteId)
       cliente = { id: encontrado.id, nome: encontrado.nome }
@@ -237,6 +247,7 @@ export async function PaginaDaMilestone({
             issues={milestone.issues}
             podeGerenciar={podeGerenciar}
             comFiltros={filtros.estado !== 'todas' || filtros.repositorioId !== null}
+            presencaEmQA={presencaEmQA}
           />
           {podeGerenciar && milestone.repositorios.length === 0 && (
             <EstadoVazio

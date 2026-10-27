@@ -79,7 +79,7 @@ test('Entregas lista as issues abertas dos dois repositórios, filtra por fechad
   await expect(lista.getByText('1 PR')).toBeVisible()
 })
 
-test('issue #2 mostra o PR mergeado com checks Sucesso e "Sem evidência de versão ou ambiente"; desktop em duas colunas, mobile em uma sem rolagem horizontal', async ({
+test('issue #2 mostra o PR mergeado com checks Sucesso e "Ambientes não configurados"; desktop em duas colunas, mobile em uma sem rolagem horizontal', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -91,7 +91,7 @@ test('issue #2 mostra o PR mergeado com checks Sucesso e "Sem evidência de vers
   await expect(page.getByRole('heading', { level: 1, name: /Item 2/ })).toBeVisible()
   await expect(page.getByText('Mergeado')).toBeVisible()
   await expect(page.getByText('Sucesso')).toBeVisible()
-  await expect(page.getByText('Sem evidência de versão ou ambiente.')).toBeVisible()
+  await expect(page.getByText('Ambientes não configurados.')).toBeVisible()
 
   const corpo = await page.getByText('Descrição fictícia do item 2.').boundingBox()
   const lateral = await page.getByRole('heading', { name: 'Pull requests' }).boundingBox()
