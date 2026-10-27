@@ -65,8 +65,8 @@ describe('projetos / model (unitário)', () => {
     expect(checklistComHref[3]).toEqual({
       chave: 'milestones',
       titulo: 'Milestones',
-      descricao: 'Milestones e entregas chegam no Incremento 3.',
-      estado: 'indisponivel',
+      descricao: 'Nenhuma milestone criada',
+      estado: 'pendente',
     })
 
     // Sem clientes e com href null → pendente sem ação
@@ -109,7 +109,29 @@ describe('projetos / model (unitário)', () => {
     const checklistAltas = calcularChecklist(contagensAltas, null, 'conectada')
     expect(checklistAltas[1]?.estado).toBe('concluido')
     expect(checklistAltas[2]?.estado).toBe('indisponivel')
-    expect(checklistAltas[3]?.estado).toBe('indisponivel')
+    expect(checklistAltas[3]?.estado).toBe('concluido')
+  })
+
+  test('calcularChecklist milestones: 0 com hrefEntregas → acao Criar milestone para /projetos/p-1/entregas?nova=1#nova-milestone; 1 → "1 milestone ativa"; 2 → "2 milestones ativas"', () => {
+    const base: ContagensDoProjeto = { clientes: 1, repositorios: 1, ambientes: 0, milestones: 0 }
+    const milestones = (c: ContagensDoProjeto, hrefEntregas?: string | null) =>
+      calcularChecklist(c, null, 'conectada', hrefEntregas).find((i) => i.chave === 'milestones')
+
+    expect(milestones(base, '/projetos/p-1/entregas')).toEqual({
+      chave: 'milestones',
+      titulo: 'Milestones',
+      descricao: 'Nenhuma milestone criada',
+      estado: 'pendente',
+      acao: { rotulo: 'Criar milestone', href: '/projetos/p-1/entregas?nova=1#nova-milestone' },
+    })
+    expect(milestones(base, null)?.acao).toBeUndefined()
+    expect(milestones({ ...base, milestones: 1 }, '/projetos/p-1/entregas')).toEqual({
+      chave: 'milestones',
+      titulo: 'Milestones',
+      descricao: '1 milestone ativa',
+      estado: 'concluido',
+    })
+    expect(milestones({ ...base, milestones: 2 })?.descricao).toBe('2 milestones ativas')
   })
 
   test('calcularChecklist github: pendente sem repositórios com ação #repositorios; falha com indisponível; concluído com "2 repositórios vinculados"; sem href não há ação', () => {

@@ -1,5 +1,9 @@
 import { cache } from 'react'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import {
+  contarMilestonesAtivasPorProjeto,
+  contarMilestonesAtivasDoProjeto,
+} from '@/modules/entregas/queries'
 import { listarClientesParaSelecao } from '@/modules/clientes/queries'
 import { contarRepositoriosPorProjeto, obterResumoGitHubDoProjeto } from '@/modules/github/queries'
 import type { EstadoIntegracao } from '@/modules/github/model'
@@ -8,7 +12,6 @@ import { listarProjetos, obterProjeto, type ProjetoResumo } from './service'
 
 export const CONTAGENS_AINDA_SEM_FONTE = {
   ambientes: 0,
-  milestones: 0,
 } as const
 
 export async function listarProjetosParaTela(
@@ -17,11 +20,13 @@ export async function listarProjetosParaTela(
 ): Promise<(ProjetoResumo & { configuracaoPendente: boolean })[]> {
   const projetos = await listarProjetos(sujeito, busca ? { busca } : undefined)
   const repositoriosPorProjeto = await contarRepositoriosPorProjeto(sujeito)
+  const milestonesPorProjeto = await contarMilestonesAtivasPorProjeto(sujeito)
 
   return projetos.map((projeto) => {
     const contagens: ContagensDoProjeto = {
       clientes: projeto.clientes.length,
       repositorios: repositoriosPorProjeto.get(projeto.id) ?? 0,
+      milestones: milestonesPorProjeto.get(projeto.id) ?? 0,
       ...CONTAGENS_AINDA_SEM_FONTE,
     }
     // Só o estado "pendente" interessa aqui; o estado da integração não o altera.
@@ -51,9 +56,12 @@ export const obterProjetoParaResumo = cache(
         ? await obterResumoGitHubDoProjeto(sujeito, projetoId)
         : { repositorios: 0, estado: 'nao-configurada' as const }
 
+    const milestonesAtivas = await contarMilestonesAtivasDoProjeto(sujeito, projetoId, contexto)
+
     const contagens: ContagensDoProjeto = {
       clientes: projeto.clientes.length,
       repositorios: github.repositorios,
+      milestones: milestonesAtivas,
       ...CONTAGENS_AINDA_SEM_FONTE,
     }
 
