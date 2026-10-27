@@ -1,6 +1,5 @@
 import { formatarDataHora } from '@/lib/data'
 import { BadgeDeEstado, type TomDeEstado } from '@/lib/ui/badge-de-estado'
-import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import type { ImplantacaoDaIssueNaTela } from '@/modules/ambientes/queries'
 import type { IssueDetalhada } from '@/modules/github/queries'
 import { ImplantacaoDaIssue } from './implantacao-da-issue'
@@ -35,6 +34,7 @@ export interface DetalheDaIssueProps {
   implantacao: ImplantacaoDaIssueNaTela
   modo: 'global' | 'cliente'
   lateral: React.ReactNode
+  homologacao: React.ReactNode
 }
 
 // No modo cliente os dados técnicos internos ficam de fora (decisão 8 do Incremento 3).
@@ -44,6 +44,7 @@ export function DetalheDaIssue({
   implantacao,
   modo,
   lateral,
+  homologacao,
 }: DetalheDaIssueProps) {
   const global = modo === 'global'
 
@@ -59,11 +60,7 @@ export function DetalheDaIssue({
             <p className="text-sm text-text-secondary">Sem descrição.</p>
           )}
         </section>
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="A timeline de homologação chega no Incremento 5a."
-          descricao="Aqui ficará o histórico de testes e decisões desta issue."
-        />
+        {homologacao}
       </div>
 
       <aside className="min-w-0 space-y-6">

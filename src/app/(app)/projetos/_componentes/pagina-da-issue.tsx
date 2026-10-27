@@ -10,11 +10,16 @@ import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { obterCliente } from '@/modules/clientes/service'
 import { obterIssueNoContexto } from '@/modules/entregas/queries'
 import { obterRepositoriosDoProjeto } from '@/modules/github/service'
+import {
+  listarHomologacaoDaIssuePorCliente,
+  obterHomologacaoDaIssue,
+} from '@/modules/homologacao/queries'
 import { type Contexto, rotasDoProjeto, trilhasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 import { AvisoDeIntegracao } from './aviso-de-integracao'
 import { CorrecoesDaIssue } from './correcoes-da-issue'
 import { DetalheDaIssue } from './detalhe-da-issue'
+import { HomologacaoDaIssueNoCliente, HomologacaoDaIssuePorCliente } from './homologacao-da-issue'
 import { MilestonesDaIssue } from './milestones-da-issue'
 
 export interface PaginaDaIssueProps {
@@ -47,6 +52,8 @@ export async function PaginaDaIssue({
   let implantacao: Awaited<ReturnType<typeof obterImplantacaoDaIssue>>
   let cliente: { id: string; nome: string } | null = null
   let repositorios: { id: string; nomeCompleto: string }[] = []
+  let homologacaoNoCliente: Awaited<ReturnType<typeof obterHomologacaoDaIssue>> | null = null
+  let homologacaoPorCliente: Awaited<ReturnType<typeof listarHomologacaoDaIssuePorCliente>> = []
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
     dados = await obterIssueNoContexto(
@@ -60,6 +67,14 @@ export async function PaginaDaIssue({
     if (clienteId !== null) {
       const encontrado = await obterCliente(sujeito, clienteId)
       cliente = { id: encontrado.id, nome: encontrado.nome }
+      homologacaoNoCliente = await obterHomologacaoDaIssue(sujeito, {
+        clienteId,
+        projetoId,
+        issueId,
+        milestoneId: primeiro(searchParams.milestone) || null,
+      })
+    } else {
+      homologacaoPorCliente = await listarHomologacaoDaIssuePorCliente(sujeito, projetoId, issueId)
     }
     if (admin) {
       repositorios = (await obterRepositoriosDoProjeto(sujeito, projetoId)).vinculados.map((r) => ({
@@ -146,6 +161,18 @@ export async function PaginaDaIssue({
         implantacao={implantacao}
         modo={global ? 'global' : 'cliente'}
         lateral={lateral}
+        homologacao={
+          homologacaoNoCliente ? (
+            <HomologacaoDaIssueNoCliente
+              dados={homologacaoNoCliente}
+              projetoId={projetoId}
+              issue={{ id: issue.id, numero: issue.numero, repositorio: issue.repositorio }}
+              hrefDaMilestone={(milestoneId) => rotas.issue(issue.id, milestoneId)}
+            />
+          ) : (
+            <HomologacaoDaIssuePorCliente linhas={homologacaoPorCliente} />
+          )
+        }
       />
     </div>
   )
