@@ -52,6 +52,11 @@ export default async function globalSetup(): Promise<void> {
         ],
       },
     })
+    // Homologação (criada pela tarefa do worker) antes de milestones, versões e issues.
+    await db.solicitacaoDeCorrecao.deleteMany({})
+    await db.homologacaoItem.deleteMany({})
+    await db.eventoTimeline.deleteMany({})
+    await db.homologacao.deleteMany({})
     await db.milestoneIssue.deleteMany({
       where: {
         OR: [{ issue: dosExemplos }, { milestone: { projeto: { nome: { startsWith: 'E2E ' } } } }],
