@@ -26,7 +26,7 @@ export interface AmbientesDoProjetoProps {
 const CLASSE_CAMPO =
   'w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 
-function LeituraDoRepositorio({ leitura }: { leitura: LeituraDeDeployments }) {
+export function LeituraDoRepositorio({ leitura }: { leitura: LeituraDeDeployments }) {
   const { repositorio, estado, lidoEm, falhaMotivo } = leitura
   if (estado === 'indisponivel') {
     return (

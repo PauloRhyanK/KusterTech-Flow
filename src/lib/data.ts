@@ -16,3 +16,14 @@ const FORMATADOR_DE_DATA = new Intl.DateTimeFormat('pt-BR', {
 export function formatarData(data: Date): string {
   return FORMATADOR_DE_DATA.format(data)
 }
+
+const DATA_HORA_LOCAL = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+
+// Lê `YYYY-MM-DDTHH:mm` (campo datetime-local) como horário de São Paulo (-03:00).
+export function lerDataHoraDeSaoPaulo(valor: string): Date | null {
+  if (!DATA_HORA_LOCAL.test(valor)) {
+    return null
+  }
+  const data = new Date(`${valor}:00-03:00`)
+  return Number.isNaN(data.getTime()) ? null : data
+}
