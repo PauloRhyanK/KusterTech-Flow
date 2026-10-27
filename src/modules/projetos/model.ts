@@ -134,7 +134,7 @@ export function abasDoContexto(projetoId: string, contexto: Contexto): readonly 
     {
       rotulo: 'Entregas',
       href: `/clientes/${contexto.clienteId}/projetos/${projetoId}/entregas`,
-      disponivel: false,
+      disponivel: true,
     },
     {
       rotulo: 'Homologação',
@@ -142,4 +142,52 @@ export function abasDoContexto(projetoId: string, contexto: Contexto): readonly 
       disponivel: false,
     },
   ]
+}
+
+export interface ItemDeTrilha {
+  rotulo: string
+  href?: string
+}
+
+export function trilhasDoProjeto(
+  projeto: { id: string; nome: string },
+  contexto: Contexto,
+  cliente: { id: string; nome: string } | null,
+  ...complemento: ItemDeTrilha[]
+): ItemDeTrilha[] {
+  if (contexto.tipo === 'cliente' && cliente) {
+    return [
+      { rotulo: 'Clientes', href: '/clientes' },
+      { rotulo: cliente.nome, href: `/clientes/${cliente.id}` },
+      { rotulo: projeto.nome, href: `/clientes/${cliente.id}/projetos/${projeto.id}` },
+      ...complemento,
+    ]
+  }
+  return [
+    { rotulo: 'Projetos', href: '/projetos' },
+    { rotulo: projeto.nome, href: `/projetos/${projeto.id}` },
+    ...complemento,
+  ]
+}
+
+export interface RotasDoProjeto {
+  resumo: string
+  entregas: string
+  milestone(id: string, aba?: 'issues' | 'homologacao'): string
+  issue(id: string, milestoneId?: string): string
+}
+
+export function rotasDoProjeto(projetoId: string, contexto: Contexto): RotasDoProjeto {
+  const base =
+    contexto.tipo === 'global'
+      ? `/projetos/${projetoId}`
+      : `/clientes/${contexto.clienteId}/projetos/${projetoId}`
+  return {
+    resumo: base,
+    entregas: `${base}/entregas`,
+    milestone: (id, aba) =>
+      `${base}/entregas/milestones/${id}${aba === 'homologacao' ? '?aba=homologacao' : ''}`,
+    issue: (id, milestoneId) =>
+      `${base}/entregas/issues/${id}${milestoneId ? `?milestone=${milestoneId}` : ''}`,
+  }
 }

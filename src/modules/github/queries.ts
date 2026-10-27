@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client'
 import { type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
@@ -18,6 +19,7 @@ export interface FiltrosDeIssues {
   estado: 'abertas' | 'fechadas' | 'todas'
   repositorioId: string | null
   busca: string
+  milestone: 'sem' | 'todas'
 }
 
 function primeiro(valor: string | string[] | undefined): string {
@@ -32,6 +34,7 @@ export function lerFiltrosDeIssues(
     estado: estado === 'fechadas' || estado === 'todas' ? estado : 'abertas',
     repositorioId: primeiro(searchParams.repositorio) || null,
     busca: primeiro(searchParams.busca).trim().slice(0, LIMITE_DA_BUSCA).trim(),
+    milestone: primeiro(searchParams.milestone) === 'todas' ? 'todas' : 'sem',
   }
 }
 
@@ -64,12 +67,12 @@ export interface IssueDetalhada extends IssueNaLista {
 }
 
 // A hora do dado mais antigo exibido: é a idade real do que a tela mostra.
-function dadoMaisAntigo(datas: readonly (Date | null)[]): Date | null {
+export function dadoMaisAntigo(datas: readonly (Date | null)[]): Date | null {
   const validas = datas.filter((d): d is Date => d !== null)
   return validas.length === 0 ? null : new Date(Math.min(...validas.map((d) => d.getTime())))
 }
 
-function filtroDeBusca(busca: string) {
+export function filtroDeBusca(busca: string) {
   if (!busca) {
     return {}
   }
@@ -81,6 +84,36 @@ function filtroDeBusca(busca: string) {
       : { OR: [porNumero, { titulo: { contains: busca, mode: 'insensitive' as const } }] }
   }
   return { titulo: { contains: busca, mode: 'insensitive' as const } }
+}
+
+type LinhaDeIssue = Prisma.IssueGitHubGetPayload<{
+  include: { repositorio: { select: { nomeCompleto: true } } }
+}>
+
+// Anexa a contagem de PRs que referenciam cada issue (mesmo repositório e número).
+export async function paraIssuesNaLista(linhas: readonly LinhaDeIssue[]): Promise<IssueNaLista[]> {
+  const prs =
+    linhas.length === 0
+      ? []
+      : await db.pullRequestGitHub.findMany({
+          where: {
+            repositorioId: { in: [...new Set(linhas.map((i) => i.repositorioId))] },
+            issuesReferenciadas: { hasSome: linhas.map((i) => i.numero) },
+          },
+          select: { repositorioId: true, issuesReferenciadas: true },
+        })
+
+  return linhas.map((i) => ({
+    id: i.id,
+    numero: i.numero,
+    titulo: i.titulo,
+    estado: i.estado,
+    repositorio: i.repositorio.nomeCompleto,
+    atualizadaNoGitHub: i.atualizadaNoGitHub,
+    totalDePullRequests: prs.filter(
+      (pr) => pr.repositorioId === i.repositorioId && pr.issuesReferenciadas.includes(i.numero),
+    ).length,
+  }))
 }
 
 export async function listarIssuesDoProjeto(
@@ -103,6 +136,9 @@ export async function listarIssuesDoProjeto(
     ...(filtros.estado === 'abertas' ? { estado: 'ABERTA' as const } : {}),
     ...(filtros.estado === 'fechadas' ? { estado: 'FECHADA' as const } : {}),
     ...filtroDeBusca(filtros.busca),
+    ...(filtros.milestone === 'sem'
+      ? { milestones: { none: { milestone: { projetoId, arquivadaEm: null } } } }
+      : {}),
   }
 
   const [linhas, total] = await Promise.all([
@@ -115,28 +151,7 @@ export async function listarIssuesDoProjeto(
     db.issueGitHub.count({ where }),
   ])
 
-  const prs =
-    linhas.length === 0
-      ? []
-      : await db.pullRequestGitHub.findMany({
-          where: {
-            repositorioId: { in: [...new Set(linhas.map((i) => i.repositorioId))] },
-            issuesReferenciadas: { hasSome: linhas.map((i) => i.numero) },
-          },
-          select: { repositorioId: true, issuesReferenciadas: true },
-        })
-
-  const issues: IssueNaLista[] = linhas.map((i) => ({
-    id: i.id,
-    numero: i.numero,
-    titulo: i.titulo,
-    estado: i.estado,
-    repositorio: i.repositorio.nomeCompleto,
-    atualizadaNoGitHub: i.atualizadaNoGitHub,
-    totalDePullRequests: prs.filter(
-      (pr) => pr.repositorioId === i.repositorioId && pr.issuesReferenciadas.includes(i.numero),
-    ).length,
-  }))
+  const issues = await paraIssuesNaLista(linhas)
 
   return {
     situacao,

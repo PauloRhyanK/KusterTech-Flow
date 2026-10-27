@@ -8,9 +8,16 @@ export interface ListaDeIssuesProps {
   issues: readonly IssueNaLista[]
   total: number
   comFiltros: boolean
+  rotulo?: string
 }
 
-export function ListaDeIssues({ projetoId, issues, total, comFiltros }: ListaDeIssuesProps) {
+export function ListaDeIssues({
+  projetoId,
+  issues,
+  total,
+  comFiltros,
+  rotulo = 'Issues sem milestone',
+}: ListaDeIssuesProps) {
   const linhas: LinhaOperacional[] = issues.map((issue) => ({
     id: issue.id,
     href: `/projetos/${projetoId}/entregas/issues/${issue.id}`,
@@ -32,7 +39,7 @@ export function ListaDeIssues({ projetoId, issues, total, comFiltros }: ListaDeI
   return (
     <div className="space-y-3">
       <ListaOperacional
-        rotulo="Issues sem milestone"
+        rotulo={rotulo}
         linhas={linhas}
         vazio={
           <EstadoVazio

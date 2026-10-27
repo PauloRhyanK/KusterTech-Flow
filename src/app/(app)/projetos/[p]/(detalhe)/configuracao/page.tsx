@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
+import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
@@ -83,6 +84,9 @@ export default async function PaginaConfiguracaoProjeto({
         trilhas={trilhas}
         titulo="Configuração inicial"
         contexto="Configuração progressiva do projeto, integrações e clientes"
+        situacao={
+          projeto.arquivadoEm ? <BadgeDeEstado tom="neutro">Arquivado</BadgeDeEstado> : undefined
+        }
       />
 
       <section className="space-y-3">

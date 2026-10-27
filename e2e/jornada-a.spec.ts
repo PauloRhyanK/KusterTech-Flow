@@ -310,7 +310,7 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
       // Issues são dado técnico da visão global: no contexto de Acme a aba Entregas continua sem elas
       await testador.pagina.goto(`/clientes/${clienteAcmeId}/projetos/${projetoId}/entregas`)
       await expect(
-        testador.pagina.getByText('Milestones e entregas chegam no Incremento 3.'),
+        testador.pagina.getByText('Nenhuma milestone associada a este cliente.'),
       ).toBeVisible()
       await expect(testador.pagina.getByText(/Item \d de /)).toHaveCount(0)
     })

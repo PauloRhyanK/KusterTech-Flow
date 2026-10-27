@@ -28,6 +28,20 @@ export function FiltrosDeIssues({ filtros, repositorios }: FiltrosDeIssuesProps)
         </select>
       </div>
       <div className="space-y-1">
+        <label htmlFor="filtro-milestone" className="block text-sm font-medium text-text-primary">
+          Milestone
+        </label>
+        <select
+          id="filtro-milestone"
+          name="milestone"
+          defaultValue={filtros.milestone}
+          className={CLASSE_CAMPO}
+        >
+          <option value="sem">Sem milestone</option>
+          <option value="todas">Todas</option>
+        </select>
+      </div>
+      <div className="space-y-1">
         <label htmlFor="filtro-repositorio" className="block text-sm font-medium text-text-primary">
           Repositório
         </label>

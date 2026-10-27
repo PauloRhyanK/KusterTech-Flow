@@ -2,10 +2,13 @@ import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { obterCliente } from '@/modules/clientes/service'
 import { ErroDeDominio } from '@/lib/erros'
-import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { listarMilestonesDoProjeto } from '@/modules/entregas/queries'
+import { rotasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
+import { ListaDeMilestones } from '@/app/(app)/projetos/_componentes/lista-de-milestones'
 
 export interface PaginaEntregasProjetoClienteProps {
   params: Promise<{ c: string; p: string }>
@@ -37,8 +40,13 @@ export default async function PaginaEntregasProjetoCliente({
 
   const { c, p } = await params
 
+  const contexto = { tipo: 'cliente', clienteId: c } as const
+  let milestones: Awaited<ReturnType<typeof listarMilestonesDoProjeto>>
+  let cliente: Awaited<ReturnType<typeof obterCliente>>
   try {
     await obterProjetoParaResumo(sessao.sujeito, p, c)
+    milestones = await listarMilestonesDoProjeto(sessao.sujeito, p, contexto)
+    cliente = await obterCliente(sessao.sujeito, c)
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -50,10 +58,13 @@ export default async function PaginaEntregasProjetoCliente({
   }
 
   return (
-    <EstadoVazio
-      tipo="nao-configurado"
-      titulo="Entregas ainda não disponíveis."
-      descricao="Milestones e entregas chegam no Incremento 3."
+    <ListaDeMilestones
+      rotas={rotasDoProjeto(p, contexto)}
+      milestones={milestones.ativas}
+      vazio={{
+        titulo: 'Nenhuma milestone associada a este cliente.',
+        descricao: `As entregas aparecem aqui quando uma milestone do projeto é associada a ${cliente.nome}.`,
+      }}
     />
   )
 }
