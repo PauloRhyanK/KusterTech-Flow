@@ -4,7 +4,9 @@ import { ErroDeDominio } from '@/lib/erros'
 import {
   dadoMaisAntigo,
   filtroDeBusca,
+  obterIssueDoProjeto,
   paraIssuesNaLista,
+  type IssueDetalhada,
   type IssueNaLista,
 } from '@/modules/github/queries'
 import {
@@ -288,4 +290,180 @@ export async function listarIssuesParaAdicionar(
   ])
 
   return { issues: await paraIssuesNaLista(linhas), total }
+}
+
+export interface MilestoneDaIssue {
+  id: string
+  titulo: string
+  arquivadaEm: Date | null
+  origem: 'MANUAL' | 'HERANCA_CORRECAO'
+  foraDoEscopo: boolean
+  justificativaForaDoEscopo: string | null
+}
+
+export interface IssueRelacionada {
+  id: string
+  numero: number
+  titulo: string
+  repositorio: string
+  estado: 'ABERTA' | 'FECHADA'
+}
+
+// Visível no cliente: a issue está em milestone ativa do projeto associada a ele. É a regra única
+// que `obterIssueNoContexto` usa para a issue e para as relacionadas.
+function visivelNoCliente(projetoId: string, clienteId: string) {
+  return {
+    repositorio: { projetoId },
+    milestones: {
+      some: { milestone: { projetoId, arquivadaEm: null, clientes: { some: { clienteId } } } },
+    },
+  }
+}
+
+export async function issueVisivelNoCliente(
+  projetoId: string,
+  issueId: string,
+  clienteId: string,
+): Promise<boolean> {
+  const total = await db.issueGitHub.count({
+    where: { id: issueId, ...visivelNoCliente(projetoId, clienteId) },
+  })
+  return total > 0
+}
+
+const SELECAO_RELACIONADA = {
+  id: true,
+  numero: true,
+  titulo: true,
+  estado: true,
+  repositorio: { select: { nomeCompleto: true } },
+} as const
+
+function paraRelacionada(i: {
+  id: string
+  numero: number
+  titulo: string
+  estado: 'ABERTA' | 'FECHADA'
+  repositorio: { nomeCompleto: string }
+}): IssueRelacionada {
+  return {
+    id: i.id,
+    numero: i.numero,
+    titulo: i.titulo,
+    estado: i.estado,
+    repositorio: i.repositorio.nomeCompleto,
+  }
+}
+
+function ordenarRelacionadas(issues: IssueRelacionada[]): IssueRelacionada[] {
+  return issues.sort((a, b) => a.repositorio.localeCompare(b.repositorio) || a.numero - b.numero)
+}
+
+export async function obterIssueNoContexto(
+  sujeito: Sujeito,
+  projetoId: string,
+  issueId: string,
+  contexto: Contexto,
+  milestoneDaTrilha: string | null,
+): Promise<{
+  situacao: SituacaoDaIntegracao
+  sincronizadoEm: Date | null
+  issue: IssueDetalhada
+  milestones: MilestoneDaIssue[]
+  corrige: IssueRelacionada[]
+  corrigidaPor: IssueRelacionada[]
+  milestonesDisponiveis: { id: string; titulo: string }[]
+  milestoneDaTrilha: { id: string; titulo: string } | null
+}> {
+  await autorizarLeitura(sujeito, projetoId, contexto)
+  const clienteId = contexto.tipo === 'cliente' ? contexto.clienteId : null
+
+  let base: { situacao: SituacaoDaIntegracao; sincronizadoEm: Date | null; issue: IssueDetalhada }
+  if (clienteId === null) {
+    base = await obterIssueDoProjeto(sujeito, projetoId, issueId)
+  } else {
+    const registro = await db.issueGitHub.findFirst({
+      where: { id: issueId, ...visivelNoCliente(projetoId, clienteId) },
+      include: { repositorio: { select: { nomeCompleto: true } } },
+    })
+    if (!registro) {
+      throw new ErroDeDominio('Issue não encontrada.')
+    }
+    const { situacao, vinculados } = await lerSituacao(projetoId, new Date())
+    // Dados técnicos (PRs, checks, autor, responsáveis, rótulos, link) não saem para o cliente.
+    base = {
+      situacao,
+      sincronizadoEm: dadoMaisAntigo(vinculados.map((r) => r.sincronizadoEm)),
+      issue: {
+        id: registro.id,
+        numero: registro.numero,
+        titulo: registro.titulo,
+        estado: registro.estado,
+        repositorio: registro.repositorio.nomeCompleto,
+        atualizadaNoGitHub: registro.atualizadaNoGitHub,
+        totalDePullRequests: 0,
+        corpo: registro.corpo,
+        autor: null,
+        responsaveis: [],
+        rotulos: [],
+        urlHtml: '',
+        criadaNoGitHub: registro.criadaNoGitHub,
+        fechadaNoGitHub: registro.fechadaNoGitHub,
+        sincronizadaEm: registro.sincronizadaEm,
+        pullRequests: [],
+      },
+    }
+  }
+
+  const doClienteOuDoProjeto =
+    clienteId === null
+      ? { projetoId }
+      : { projetoId, arquivadaEm: null, clientes: { some: { clienteId } } }
+  const relacionada =
+    clienteId === null ? { repositorio: { projetoId } } : visivelNoCliente(projetoId, clienteId)
+
+  const [vinculos, originais, correcoes, disponiveis] = await Promise.all([
+    db.milestoneIssue.findMany({
+      where: { issueId, milestone: doClienteOuDoProjeto },
+      include: { milestone: { select: { id: true, titulo: true, arquivadaEm: true } } },
+    }),
+    db.issueVinculo.findMany({
+      where: { issueCorrecaoId: issueId, original: relacionada },
+      select: { original: { select: SELECAO_RELACIONADA } },
+    }),
+    db.issueVinculo.findMany({
+      where: { issueOriginalId: issueId, correcao: relacionada },
+      select: { correcao: { select: SELECAO_RELACIONADA } },
+    }),
+    clienteId === null
+      ? db.milestone.findMany({
+          where: { projetoId, arquivadaEm: null, issues: { none: { issueId } } },
+          orderBy: { tituloNormalizado: 'asc' },
+          select: { id: true, titulo: true },
+        })
+      : Promise.resolve([]),
+  ])
+
+  const milestones = vinculos
+    .map<MilestoneDaIssue>((v) => ({
+      id: v.milestone.id,
+      titulo: v.milestone.titulo,
+      arquivadaEm: v.milestone.arquivadaEm,
+      origem: v.origem,
+      foraDoEscopo: v.foraDoEscopo,
+      justificativaForaDoEscopo: v.justificativaForaDoEscopo,
+    }))
+    .sort((a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'))
+  const daTrilha = milestoneDaTrilha
+    ? milestones.find((m) => m.id === milestoneDaTrilha)
+    : undefined
+
+  return {
+    ...base,
+    milestones,
+    corrige: ordenarRelacionadas(originais.map((v) => paraRelacionada(v.original))),
+    corrigidaPor: ordenarRelacionadas(correcoes.map((v) => paraRelacionada(v.correcao))),
+    milestonesDisponiveis: disponiveis,
+    milestoneDaTrilha: daTrilha ? { id: daTrilha.id, titulo: daTrilha.titulo } : null,
+  }
 }

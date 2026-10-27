@@ -17,6 +17,9 @@ const {
   removerClienteDaMilestoneMock,
   adicionarIssuesAMilestoneMock,
   removerIssueDaMilestoneMock,
+  registrarCorrecaoMock,
+  marcarForaDoEscopoMock,
+  voltarAoEscopoMock,
 } = vi.hoisted(() => ({
   redirectMock: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`)
@@ -32,6 +35,9 @@ const {
   removerClienteDaMilestoneMock: vi.fn(),
   adicionarIssuesAMilestoneMock: vi.fn(),
   removerIssueDaMilestoneMock: vi.fn(),
+  registrarCorrecaoMock: vi.fn(),
+  marcarForaDoEscopoMock: vi.fn(),
+  voltarAoEscopoMock: vi.fn(),
 }))
 
 vi.mock('next/navigation', () => ({ redirect: redirectMock }))
@@ -47,6 +53,9 @@ vi.mock('@/modules/entregas/service', () => ({
   removerClienteDaMilestone: removerClienteDaMilestoneMock,
   adicionarIssuesAMilestone: adicionarIssuesAMilestoneMock,
   removerIssueDaMilestone: removerIssueDaMilestoneMock,
+  registrarCorrecao: registrarCorrecaoMock,
+  marcarForaDoEscopo: marcarForaDoEscopoMock,
+  voltarAoEscopo: voltarAoEscopoMock,
 }))
 
 import {
@@ -55,8 +64,11 @@ import {
   associarClienteAMilestoneAction,
   criarMilestoneAction,
   editarMilestoneAction,
+  marcarForaDoEscopoAction,
+  registrarCorrecaoAction,
   removerClienteDaMilestoneAction,
   removerIssueDaMilestoneAction,
+  voltarAoEscopoAction,
 } from './entregas'
 
 function formulario(campos: Record<string, string | string[]>): FormData {
@@ -114,6 +126,26 @@ describe('actions de entregas (unitário)', () => {
     await expect(
       removerIssueDaMilestoneAction({}, formulario({ ...base, issueId: randomUUID() })),
     ).rejects.toThrow('NEXT_REDIRECT:/entrar')
+    await expect(
+      registrarCorrecaoAction(
+        {},
+        formulario({
+          projetoId,
+          issueCorrecaoId: randomUUID(),
+          repositorioOriginalId: randomUUID(),
+          numeroOriginal: '1',
+        }),
+      ),
+    ).rejects.toThrow('NEXT_REDIRECT:/entrar')
+    await expect(
+      marcarForaDoEscopoAction(
+        {},
+        formulario({ ...base, issueId: randomUUID(), justificativa: 'Próxima entrega.' }),
+      ),
+    ).rejects.toThrow('NEXT_REDIRECT:/entrar')
+    await expect(
+      voltarAoEscopoAction({}, formulario({ ...base, issueId: randomUUID() })),
+    ).rejects.toThrow('NEXT_REDIRECT:/entrar')
 
     for (const mock of [
       criarMilestoneMock,
@@ -124,6 +156,9 @@ describe('actions de entregas (unitário)', () => {
       removerClienteDaMilestoneMock,
       adicionarIssuesAMilestoneMock,
       removerIssueDaMilestoneMock,
+      registrarCorrecaoMock,
+      marcarForaDoEscopoMock,
+      voltarAoEscopoMock,
     ]) {
       expect(mock).not.toHaveBeenCalled()
     }
@@ -238,6 +273,84 @@ describe('actions de entregas (unitário)', () => {
 
     expect(revalidatePathMock).toHaveBeenCalledWith(`/projetos/${projetoId}`, 'layout')
     expect(revalidatePathMock).toHaveBeenCalledWith('/clientes', 'layout')
+  })
+
+  test('registrarCorrecaoAction: mensagens por quantidade de milestones herdadas e número inválido', async () => {
+    obterSessaoMock.mockResolvedValue(sessao)
+    const campos = {
+      projetoId,
+      issueCorrecaoId: randomUUID(),
+      repositorioOriginalId: randomUUID(),
+      numeroOriginal: '1',
+    }
+
+    registrarCorrecaoMock.mockResolvedValueOnce({ milestonesHerdadas: 1 })
+    await expect(registrarCorrecaoAction({}, formulario(campos))).resolves.toEqual({
+      sucesso: 'Correção registrada. A issue entrou em 1 milestone da original.',
+    })
+    registrarCorrecaoMock.mockResolvedValueOnce({ milestonesHerdadas: 2 })
+    await expect(registrarCorrecaoAction({}, formulario(campos))).resolves.toEqual({
+      sucesso: 'Correção registrada. A issue entrou em 2 milestones da original.',
+    })
+    registrarCorrecaoMock.mockResolvedValueOnce({ milestonesHerdadas: 0 })
+    await expect(registrarCorrecaoAction({}, formulario(campos))).resolves.toEqual({
+      sucesso: 'Correção registrada. A original não está em nenhuma milestone ativa no escopo.',
+    })
+    expect(registrarCorrecaoMock).toHaveBeenCalledWith(sujeito, {
+      projetoId,
+      issueCorrecaoId: campos.issueCorrecaoId,
+      repositorioOriginalId: campos.repositorioOriginalId,
+      numeroOriginal: 1,
+    })
+
+    registrarCorrecaoMock.mockClear()
+    for (const numeroOriginal of ['0', '-1', '1.5', 'abc', '', '1000000000']) {
+      const resultado = await registrarCorrecaoAction({}, formulario({ ...campos, numeroOriginal }))
+      expect(resultado.erro).toBeTruthy()
+    }
+    expect(registrarCorrecaoMock).not.toHaveBeenCalled()
+  })
+
+  test('marcarForaDoEscopoAction e voltarAoEscopoAction: mensagens com o título e revalidação', async () => {
+    obterSessaoMock.mockResolvedValue(sessao)
+    const issueId = randomUUID()
+    marcarForaDoEscopoMock.mockResolvedValueOnce({ tituloDaMilestone: 'Entrega 1' })
+    await expect(
+      marcarForaDoEscopoAction(
+        {},
+        formulario({
+          projetoId,
+          milestoneId,
+          issueId,
+          justificativa: 'Pertence à próxima entrega.',
+        }),
+      ),
+    ).resolves.toEqual({ sucesso: 'Correção marcada como fora do escopo de Entrega 1.' })
+    expect(marcarForaDoEscopoMock).toHaveBeenCalledWith(sujeito, {
+      milestoneId,
+      issueId,
+      justificativa: 'Pertence à próxima entrega.',
+    })
+
+    voltarAoEscopoMock.mockResolvedValueOnce({ tituloDaMilestone: 'Entrega 1' })
+    await expect(
+      voltarAoEscopoAction({}, formulario({ projetoId, milestoneId, issueId })),
+    ).resolves.toEqual({ sucesso: 'Correção de volta ao escopo de Entrega 1.' })
+    expect(voltarAoEscopoMock).toHaveBeenCalledWith(sujeito, { milestoneId, issueId })
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projetos/${projetoId}`, 'layout')
+  })
+
+  test('marcarForaDoEscopoAction: erro de domínio do service vira a própria mensagem', async () => {
+    obterSessaoMock.mockResolvedValue(sessao)
+    marcarForaDoEscopoMock.mockRejectedValueOnce(
+      new ErroDeDominio('A justificativa é obrigatória.'),
+    )
+    await expect(
+      marcarForaDoEscopoAction(
+        {},
+        formulario({ projetoId, milestoneId, issueId: randomUUID(), justificativa: '' }),
+      ),
+    ).resolves.toEqual({ erro: 'A justificativa é obrigatória.' })
   })
 
   test('formulário inválido não chama o service', async () => {
