@@ -1,12 +1,7 @@
-'use client'
-
 import Link from 'next/link'
-import { useActionState } from 'react'
-import { registrarCorrecaoAction, type EstadoEntregas } from '@/app/(app)/projetos/_acoes/entregas'
-import { Button } from '@/components/ui/button'
 import type { IssueRelacionada } from '@/modules/entregas/queries'
 import type { RotasDoProjeto } from '@/modules/projetos/model'
-import { MensagensDeEstado } from './mensagens-de-estado'
+import { FormularioDeCorrecao } from './formularios-da-issue'
 
 export interface CorrecoesDaIssueProps {
   projetoId: string
@@ -17,9 +12,6 @@ export interface CorrecoesDaIssueProps {
   repositorios: readonly { id: string; nomeCompleto: string }[]
   podeGerenciar: boolean
 }
-
-const CLASSE_CAMPO =
-  'w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 
 function Relacionadas({
   rotulo,
@@ -47,76 +39,6 @@ function Relacionadas({
         ))}
       </ul>
     </div>
-  )
-}
-
-function FormularioDeCorrecao({
-  projetoId,
-  issueId,
-  repositorios,
-}: {
-  projetoId: string
-  issueId: string
-  repositorios: readonly { id: string; nomeCompleto: string }[]
-}) {
-  const [estado, formAction, pendente] = useActionState<EstadoEntregas, FormData>(
-    registrarCorrecaoAction,
-    {},
-  )
-
-  return (
-    <form action={formAction} className="space-y-2">
-      <input type="hidden" name="projetoId" value={projetoId} />
-      <input type="hidden" name="issueCorrecaoId" value={issueId} />
-      <p className="text-sm font-medium text-text-primary">Esta issue corrige</p>
-      <div className="space-y-1">
-        <label
-          htmlFor="correcao-repositorio"
-          className="block text-sm font-medium text-text-primary"
-        >
-          Repositório
-        </label>
-        <select
-          id="correcao-repositorio"
-          name="repositorioOriginalId"
-          required
-          className={CLASSE_CAMPO}
-        >
-          {repositorios.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.nomeCompleto}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="space-y-1">
-        <label htmlFor="correcao-numero" className="block text-sm font-medium text-text-primary">
-          Número
-        </label>
-        <input
-          id="correcao-numero"
-          name="numeroOriginal"
-          type="number"
-          min={1}
-          max={999999999}
-          step={1}
-          required
-          className={CLASSE_CAMPO}
-        />
-      </div>
-      <MensagensDeEstado estado={estado} />
-      <Button
-        type="submit"
-        aria-busy={pendente}
-        onClick={(e) => {
-          if (pendente) {
-            e.preventDefault()
-          }
-        }}
-      >
-        Registrar correção
-      </Button>
-    </form>
   )
 }
 
