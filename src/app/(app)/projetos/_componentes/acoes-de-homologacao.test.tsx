@@ -22,7 +22,7 @@ const base = {
   itemId: '55555555-5555-4555-8555-555555555555',
   ultimoEventoId: '66666666-6666-4666-8666-666666666666',
   versao: { id: '77777777-7777-4777-8777-777777777777', rotulo: 'E2E qa-1' },
-  recusa: null,
+  recusa: null as string | null,
   podeEscolherVisibilidade: false,
 }
 
