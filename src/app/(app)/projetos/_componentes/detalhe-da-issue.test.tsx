@@ -34,14 +34,20 @@ const issue = (o: Partial<IssueDetalhada> = {}): IssueDetalhada => ({
 describe('DetalheDaIssue', () => {
   test('renderiza corpo com <script> como texto', () => {
     const { container } = render(
-      <DetalheDaIssue issue={issue({ corpo: '<script>alert(1)</script> olá' })} />,
+      <DetalheDaIssue
+        issue={issue({ corpo: '<script>alert(1)</script> olá' })}
+        modo="global"
+        lateral={null}
+      />,
     )
     expect(container.querySelector('script')).toBeNull()
     expect(screen.getByText('<script>alert(1)</script> olá')).toBeInTheDocument()
   })
 
   test('issue fechada: só "Fechada"; PR com checks; sem evidência de versão; sem corpo → Sem descrição', () => {
-    const { container } = render(<DetalheDaIssue issue={issue({ corpo: null })} />)
+    const { container } = render(
+      <DetalheDaIssue issue={issue({ corpo: null })} modo="global" lateral={null} />,
+    )
     expect(screen.getByText('Fechada')).toBeInTheDocument()
     expect(screen.getByText('Sem descrição.')).toBeInTheDocument()
     expect(screen.getByText('Sucesso')).toBeInTheDocument()
@@ -54,5 +60,25 @@ describe('DetalheDaIssue', () => {
       'href',
       'https://github.com/kustertech-exemplo/portal/issues/2',
     )
+  })
+
+  test('modo cliente não tem heading "Pull requests" nem link "Abrir no GitHub"; modo global tem', () => {
+    const { unmount } = render(
+      <DetalheDaIssue issue={issue({})} modo="global" lateral={<p>Lateral de teste</p>} />,
+    )
+    expect(screen.getByRole('heading', { name: 'Pull requests' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Abrir no GitHub' })).toBeInTheDocument()
+    expect(screen.getByText('Autor')).toBeInTheDocument()
+    expect(screen.getByText('Lateral de teste')).toBeInTheDocument()
+    unmount()
+
+    render(<DetalheDaIssue issue={issue({})} modo="cliente" lateral={<p>Lateral de teste</p>} />)
+    expect(screen.queryByRole('heading', { name: 'Pull requests' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Abrir no GitHub' })).toBeNull()
+    for (const rotulo of ['Autor', 'Responsáveis', 'Rótulos']) {
+      expect(screen.queryByText(rotulo)).toBeNull()
+    }
+    expect(screen.getByText('Lateral de teste')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Versão e ambiente' })).toBeInTheDocument()
   })
 })

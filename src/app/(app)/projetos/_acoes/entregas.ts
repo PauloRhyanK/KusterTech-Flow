@@ -14,9 +14,12 @@ import {
   associarClienteAMilestone,
   criarMilestone,
   editarMilestone,
+  marcarForaDoEscopo,
   reativarMilestone,
+  registrarCorrecao,
   removerClienteDaMilestone,
   removerIssueDaMilestone,
+  voltarAoEscopo,
 } from '@/modules/entregas/service'
 import { resumirErroParaLog } from '@/modules/github/model'
 
@@ -66,6 +69,18 @@ const issueSchema = z.object({
   milestoneId: idDaMilestone,
   issueId: idDaIssue,
 })
+
+const correcaoSchema = z.object({
+  projetoId: idDoProjeto,
+  issueCorrecaoId: uuid('Identificador de issue inválido.'),
+  repositorioOriginalId: uuid('Identificador de repositório inválido.'),
+  numeroOriginal: z
+    .string({ error: 'Dados inválidos.' })
+    .regex(/^\d{1,9}$/, 'Informe o número da issue original.')
+    .transform(Number)
+    .refine((n) => n >= 1, 'Informe o número da issue original.'),
+})
+const foraDoEscopoSchema = issueSchema.extend({ justificativa: texto })
 
 function revalidar(projetoId: string): void {
   revalidatePath(`/projetos/${projetoId}`, 'layout')
@@ -318,5 +333,106 @@ export async function removerIssueDaMilestoneAction(
     return { sucesso: 'Issue removida da milestone.' }
   } catch (erro) {
     return estadoDeErro(erro, 'Erro inesperado ao remover issue da milestone.')
+  }
+}
+
+export async function registrarCorrecaoAction(
+  _estado: EstadoEntregas,
+  form: FormData,
+): Promise<EstadoEntregas> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = correcaoSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    issueCorrecaoId: form.get('issueCorrecaoId'),
+    repositorioOriginalId: form.get('repositorioOriginalId'),
+    numeroOriginal: form.get('numeroOriginal'),
+  })
+  if (!parse.success) {
+    return primeiroErro(parse.error)
+  }
+
+  try {
+    const { milestonesHerdadas } = await registrarCorrecao(sessao.sujeito, parse.data)
+    revalidar(parse.data.projetoId)
+    if (milestonesHerdadas === 0) {
+      return {
+        sucesso: 'Correção registrada. A original não está em nenhuma milestone ativa no escopo.',
+      }
+    }
+    return {
+      sucesso:
+        milestonesHerdadas === 1
+          ? 'Correção registrada. A issue entrou em 1 milestone da original.'
+          : `Correção registrada. A issue entrou em ${milestonesHerdadas} milestones da original.`,
+    }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao registrar correção.')
+  }
+}
+
+export async function marcarForaDoEscopoAction(
+  _estado: EstadoEntregas,
+  form: FormData,
+): Promise<EstadoEntregas> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = foraDoEscopoSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    milestoneId: form.get('milestoneId'),
+    issueId: form.get('issueId'),
+    justificativa: form.get('justificativa') ?? '',
+  })
+  if (!parse.success) {
+    return primeiroErro(parse.error)
+  }
+
+  try {
+    const { tituloDaMilestone } = await marcarForaDoEscopo(sessao.sujeito, {
+      milestoneId: parse.data.milestoneId,
+      issueId: parse.data.issueId,
+      justificativa: parse.data.justificativa,
+    })
+    revalidar(parse.data.projetoId)
+    return { sucesso: `Correção marcada como fora do escopo de ${tituloDaMilestone}.` }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao marcar correção como fora do escopo.')
+  }
+}
+
+export async function voltarAoEscopoAction(
+  estadoOuForm: EstadoEntregas | FormData,
+  talvezForm?: FormData,
+): Promise<EstadoEntregas> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const form = formDaChamada(estadoOuForm, talvezForm)
+  const parse = issueSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    milestoneId: form.get('milestoneId'),
+    issueId: form.get('issueId'),
+  })
+  if (!parse.success) {
+    return primeiroErro(parse.error)
+  }
+
+  try {
+    const { tituloDaMilestone } = await voltarAoEscopo(sessao.sujeito, {
+      milestoneId: parse.data.milestoneId,
+      issueId: parse.data.issueId,
+    })
+    revalidar(parse.data.projetoId)
+    return { sucesso: `Correção de volta ao escopo de ${tituloDaMilestone}.` }
+  } catch (erro) {
+    return estadoDeErro(erro, 'Erro inesperado ao devolver correção ao escopo.')
   }
 }
