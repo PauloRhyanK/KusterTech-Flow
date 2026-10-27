@@ -60,6 +60,22 @@ function calcularItemGitHub(
   }
 }
 
+function calcularItemAmbientes(ambientes: number, hrefConfiguracao: string | null): ItemChecklist {
+  const base = { chave: 'ambientes', titulo: 'Ambientes' } as const
+  if (ambientes >= 3) {
+    return { ...base, descricao: 'DEV, QA e PROD configurados', estado: 'concluido' }
+  }
+  return {
+    ...base,
+    descricao:
+      ambientes === 0 ? 'Nenhum ambiente configurado' : `${ambientes} de 3 ambientes configurados`,
+    estado: 'pendente',
+    ...(hrefConfiguracao !== null
+      ? { acao: { rotulo: 'Configurar ambientes', href: `${hrefConfiguracao}#ambientes` } }
+      : {}),
+  }
+}
+
 function calcularItemMilestones(milestones: number, hrefEntregas: string | null): ItemChecklist {
   const base = { chave: 'milestones', titulo: 'Milestones' } as const
   if (milestones === 0) {
@@ -111,12 +127,7 @@ export function calcularChecklist(
   return [
     itemClientes,
     calcularItemGitHub(contagens.repositorios, hrefConfiguracao, estadoGitHub),
-    {
-      chave: 'ambientes',
-      titulo: 'Ambientes',
-      descricao: 'Ambientes e evidências de deploy chegam no Incremento 4.',
-      estado: 'indisponivel',
-    },
+    calcularItemAmbientes(contagens.ambientes, hrefConfiguracao),
     calcularItemMilestones(contagens.milestones, hrefEntregas),
   ]
 }

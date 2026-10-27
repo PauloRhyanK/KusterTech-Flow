@@ -91,7 +91,7 @@ test('admin: /projetos/<P> mostra cinco abas, trilha Projetos › P e checklist 
   await expect(linkVerGlobal).toHaveAttribute('href', `/projetos/${projetoP.id}`)
 })
 
-test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "Associar clientes" → /projetos/<p>/configuracao; GitHub e Milestones pendentes, Ambientes "Ainda não disponível"; editar e associar funcionam (UX-03, A13)', async ({
+test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "Associar clientes" → /projetos/<p>/configuracao; GitHub, Milestones e Ambientes pendentes; editar e associar funcionam (UX-03, A13)', async ({
   page,
 }) => {
   const { email, senha } = obterAdmin()
@@ -108,8 +108,8 @@ test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "
   // Checklist
   const listaChecklist = page.getByRole('list', { name: 'Configuração do projeto' })
   await expect(listaChecklist.getByText('Nenhum cliente associado')).toBeVisible()
-  // Clientes, GitHub (sem repositórios) e Milestones (nenhuma criada) pendentes
-  await expect(listaChecklist.getByText('Pendente')).toHaveCount(3)
+  // Clientes, GitHub (sem repositórios), Ambientes (nenhum) e Milestones (nenhuma criada) pendentes
+  await expect(listaChecklist.getByText('Pendente')).toHaveCount(4)
   await expect(listaChecklist.getByText('Nenhum repositório vinculado')).toBeVisible()
 
   const linkAssociar = listaChecklist.getByRole('link', { name: 'Associar clientes' })
@@ -123,9 +123,13 @@ test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "
     `/projetos/${projeto.id}/entregas?nova=1#nova-milestone`,
   )
 
-  // Ambientes: "Ainda não disponível"
-  const badgesIndisponivel = listaChecklist.getByText('Ainda não disponível')
-  await expect(badgesIndisponivel).toHaveCount(1)
+  // Ambientes: pendente com ação para configurar
+  await expect(listaChecklist.getByText('Nenhum ambiente configurado')).toBeVisible()
+  await expect(listaChecklist.getByRole('link', { name: 'Configurar ambientes' })).toHaveAttribute(
+    'href',
+    `/projetos/${projeto.id}/configuracao#ambientes`,
+  )
+  await expect(listaChecklist.getByText('Ainda não disponível')).toHaveCount(0)
 
   // Clica em "Associar clientes" e vai para /projetos/<p>/configuracao
   await linkAssociar.click()

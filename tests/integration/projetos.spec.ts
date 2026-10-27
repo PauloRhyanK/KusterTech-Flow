@@ -11,6 +11,7 @@ import {
   contarMilestonesAtivasPorProjeto,
   obterEntregasParaResumo,
 } from '@/modules/entregas/queries'
+import { salvarAmbiente } from '@/modules/ambientes/service'
 import { obterClienteComProjetos } from '@/modules/clientes/queries'
 import { arquivarCliente, criarCliente } from '@/modules/clientes/service'
 import {
@@ -101,13 +102,23 @@ describe('projetos (integração)', () => {
         projetoId,
       },
     })
-    // Sem milestone ativa o checklist segue pendente; só deixa de estar depois de criarMilestone
+    // Sem milestone ativa o checklist segue pendente; só deixa de estar com clientes, repositório,
+    // milestone e os três ambientes
     const telaComRepositorio = await listarProjetosParaTela(adminSujeito)
     expect(telaComRepositorio[0]?.configuracaoPendente).toBe(true)
 
     await criarMilestone(adminSujeito, projetoId, { titulo: 'Entrega 1' })
     const telaComMilestone = await listarProjetosParaTela(adminSujeito)
-    expect(telaComMilestone[0]?.configuracaoPendente).toBe(false)
+    expect(telaComMilestone[0]?.configuracaoPendente).toBe(true)
+
+    await salvarAmbiente(adminSujeito, projetoId, 'DEV', { nomeNoGitHub: 'dev', url: '' })
+    await salvarAmbiente(adminSujeito, projetoId, 'QA', { nomeNoGitHub: 'qa', url: '' })
+    const telaComDoisAmbientes = await listarProjetosParaTela(adminSujeito)
+    expect(telaComDoisAmbientes[0]?.configuracaoPendente).toBe(true)
+
+    await salvarAmbiente(adminSujeito, projetoId, 'PROD', { nomeNoGitHub: 'production', url: '' })
+    const telaCompleta = await listarProjetosParaTela(adminSujeito)
+    expect(telaCompleta[0]?.configuracaoPendente).toBe(false)
 
     // 5. listarProjetosParaTela com projeto sem clientes devolve configuracaoPendente = true
     const { id: projSemClientesId } = await criarProjeto(adminSujeito, {

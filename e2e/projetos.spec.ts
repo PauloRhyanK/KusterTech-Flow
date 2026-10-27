@@ -154,8 +154,8 @@ test('associar A de novo não é oferecido no select; remover B exige confirmaç
 
   // Renomear para nome já existente mostra erro
   await page.goto(`/projetos/${projetoP.id}/configuracao`)
-  await page.getByLabel('Nome').fill(nomeProjetoQ)
-  await page.getByRole('button', { name: 'Salvar' }).click()
+  await page.getByLabel('Nome', { exact: true }).fill(nomeProjetoQ)
+  await page.getByRole('button', { name: 'Salvar', exact: true }).click()
   await expect(
     page.getByRole('alert').filter({ hasText: 'Já existe um projeto com este nome.' }),
   ).toBeVisible()
