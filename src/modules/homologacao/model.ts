@@ -267,5 +267,7 @@ export function lerRetornoDaFila(
     return null
   }
   const caminho = retorno.split(/[?#]/)[0] ?? ''
-  return prefixos.includes(caminho) ? retorno : null
+  // Prefixo terminado em "/" vale para tudo abaixo dele (páginas das milestones); os demais, só exatos.
+  const aceito = prefixos.some((p) => (p.endsWith('/') ? caminho.startsWith(p) : caminho === p))
+  return aceito ? retorno : null
 }

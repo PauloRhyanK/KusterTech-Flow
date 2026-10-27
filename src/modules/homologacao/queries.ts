@@ -5,12 +5,23 @@ import type { EventoDaTimeline } from '@/lib/ui/timeline'
 import type { EstadoImplantacao } from '@/modules/ambientes/model'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { estadoDoRepositorio } from '@/modules/github/model'
-import { exigirLeituraGlobal, intervaloDaIntegracao } from '@/modules/github/service'
+import {
+  exigirLeituraGlobal,
+  intervaloDaIntegracao,
+  lerSituacao,
+  type SituacaoDaIntegracao,
+} from '@/modules/github/service'
+import type { Contexto } from '@/modules/projetos/model'
+import { obterProjeto } from '@/modules/projetos/service'
 import {
   ACAO_PARA_PERMISSAO,
   type AcaoDeHomologacao,
   apresentarEstadoDoItem,
+  classificarNaFila,
   type EstadoItemHomologacao,
+  type FiltroDaFila,
+  type FiltrosDaFila,
+  hrefDaFila,
   tituloDoEvento,
   transicaoDeHomologacao,
 } from './model'
@@ -310,4 +321,230 @@ export async function listarHomologacaoDaIssuePorCliente(
         a.ordem.localeCompare(b.ordem, 'pt-BR'),
     )
     .map((x) => x.linha)
+}
+
+export interface ItemDaFila {
+  id: string
+  clienteId: string
+  clienteNome: string
+  issueNumero: number
+  issueTitulo: string
+  repositorio: string
+  estado: EstadoItemHomologacao
+  versaoRotulo: string | null
+  atualizadoEm: Date
+  href: string
+}
+
+export interface FilaDeHomologacao {
+  situacao: 'sem-ambiente-qa' | 'sem-milestones-com-cliente' | 'sem-itens' | 'com-itens'
+  integracao: SituacaoDaIntegracao | null
+  clientes: { id: string; nome: string }[]
+  milestones: { id: string; titulo: string }[]
+  contagens: Record<FiltroDaFila, number>
+  grupos: { milestone: { id: string; titulo: string }; itens: ItemDaFila[] }[]
+}
+
+const porTexto = (a: string, b: string) => a.localeCompare(b, 'pt-BR')
+
+// Fila do projeto (D65): global direciona ao contexto do cliente; no contexto do cliente o
+// `clienteId` é forçado e o escopado não vê itens ainda não disponibilizados (D26).
+export async function listarFilaDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+  contexto: Contexto,
+  filtrosPedidos: FiltrosDaFila,
+): Promise<FilaDeHomologacao> {
+  await obterProjeto(sujeito, projetoId, contexto)
+  const escopado = !podeVerVisaoGlobal(sujeito)
+  const filtros: FiltrosDaFila =
+    contexto.tipo === 'cliente' ? { ...filtrosPedidos, clienteId: null } : filtrosPedidos
+  const base =
+    contexto.tipo === 'cliente'
+      ? `/clientes/${contexto.clienteId}/projetos/${projetoId}/homologacao`
+      : `/projetos/${projetoId}/homologacao`
+  const doCliente = contexto.tipo === 'cliente' ? { id: contexto.clienteId } : {}
+
+  const integracao =
+    contexto.tipo === 'global' ? (await lerSituacao(projetoId, new Date())).situacao : null
+  const vazia = (situacao: FilaDeHomologacao['situacao']): FilaDeHomologacao => ({
+    situacao,
+    integracao,
+    clientes: [],
+    milestones: [],
+    contagens: { 'requer-minha-acao': 0, 'aguardando-outros': 0, aprovados: 0, todos: 0 },
+    grupos: [],
+  })
+
+  const ambienteQa = await db.ambiente.findUnique({
+    where: { projetoId_tipo: { projetoId, tipo: 'QA' } },
+    select: { id: true },
+  })
+  if (!ambienteQa) {
+    return vazia('sem-ambiente-qa')
+  }
+
+  const milestonesComCliente = await db.milestone.count({
+    where: {
+      projetoId,
+      arquivadaEm: null,
+      clientes: { some: { cliente: { arquivadoEm: null, ...doCliente } } },
+    },
+  })
+  if (milestonesComCliente === 0) {
+    return vazia('sem-milestones-com-cliente')
+  }
+
+  const registros = await db.homologacaoItem.findMany({
+    where: {
+      ...(escopado ? { estado: { not: 'AGUARDANDO_DISPONIBILIZACAO' } } : {}),
+      homologacao: {
+        milestone: { projetoId, arquivadaEm: null },
+        cliente: { arquivadoEm: null, ...doCliente },
+      },
+    },
+    select: {
+      id: true,
+      estado: true,
+      atualizadoEm: true,
+      versaoAvaliada: { select: { rotulo: true } },
+      issue: {
+        select: {
+          id: true,
+          numero: true,
+          titulo: true,
+          repositorio: { select: { nomeCompleto: true } },
+        },
+      },
+      homologacao: {
+        select: {
+          cliente: { select: { id: true, nome: true } },
+          milestone: {
+            select: {
+              id: true,
+              titulo: true,
+              tituloNormalizado: true,
+              prazo: true,
+              clientes: { select: { clienteId: true } },
+            },
+          },
+        },
+      },
+    },
+  })
+  // Só valem os pares (cliente, milestone) que ainda estão associados (D25, D46).
+  const vigentes = registros.filter((r) =>
+    r.homologacao.milestone.clientes.some((m) => m.clienteId === r.homologacao.cliente.id),
+  )
+  if (vigentes.length === 0) {
+    return vazia('sem-itens')
+  }
+
+  const clientes = new Map<string, string>()
+  const milestones = new Map<string, { titulo: string; normalizado: string }>()
+  for (const r of vigentes) {
+    clientes.set(r.homologacao.cliente.id, r.homologacao.cliente.nome)
+    const m = r.homologacao.milestone
+    milestones.set(m.id, { titulo: m.titulo, normalizado: m.tituloNormalizado })
+  }
+
+  const capacidades = new Map<string, Parameters<typeof classificarNaFila>[1]>()
+  const capacidadesDe = (clienteId: string) => {
+    let c = capacidades.get(clienteId)
+    if (!c) {
+      c = {
+        disponibilizar: autorizar(sujeito, 'homologacao.disponibilizar', { clienteId }),
+        aprovar: autorizar(sujeito, 'homologacao.aprovar', { clienteId }),
+        solicitarCorrecao: autorizar(sujeito, 'homologacao.solicitar_correcao', { clienteId }),
+      }
+      capacidades.set(clienteId, c)
+    }
+    return c
+  }
+
+  // Contagens: depois de cliente/milestone, antes do filtro de situação.
+  const recortados = vigentes
+    .filter((r) => !filtros.clienteId || r.homologacao.cliente.id === filtros.clienteId)
+    .filter((r) => !filtros.milestoneId || r.homologacao.milestone.id === filtros.milestoneId)
+    .map((r) => ({
+      r,
+      classe: classificarNaFila(r.estado, capacidadesDe(r.homologacao.cliente.id)),
+    }))
+  const contagens: Record<FiltroDaFila, number> = {
+    'requer-minha-acao': 0,
+    'aguardando-outros': 0,
+    aprovados: 0,
+    todos: recortados.length,
+  }
+  for (const { classe } of recortados) {
+    contagens[classe] += 1
+  }
+
+  const porMilestone = new Map<
+    string,
+    {
+      milestone: { id: string; titulo: string }
+      prazo: Date | null
+      normalizado: string
+      itens: ItemDaFila[]
+    }
+  >()
+  for (const { r, classe } of recortados) {
+    if (filtros.filtro !== 'todos' && classe !== filtros.filtro) continue
+    const m = r.homologacao.milestone
+    const cliente = r.homologacao.cliente
+    const retorno = `${hrefDaFila(base, filtros)}#item-${r.id}`
+    const grupo = porMilestone.get(m.id) ?? {
+      milestone: { id: m.id, titulo: m.titulo },
+      prazo: m.prazo,
+      normalizado: m.tituloNormalizado,
+      itens: [],
+    }
+    grupo.itens.push({
+      id: r.id,
+      clienteId: cliente.id,
+      clienteNome: cliente.nome,
+      issueNumero: r.issue.numero,
+      issueTitulo: r.issue.titulo,
+      repositorio: r.issue.repositorio.nomeCompleto,
+      estado: r.estado,
+      versaoRotulo: r.versaoAvaliada?.rotulo ?? null,
+      atualizadoEm: r.atualizadoEm,
+      href: `${hrefDaIssueNoCliente(cliente.id, projetoId, r.issue.id, m.id)}&retorno=${encodeURIComponent(retorno)}`,
+    })
+    porMilestone.set(m.id, grupo)
+  }
+
+  const grupos = [...porMilestone.values()]
+    .sort((a, b) => {
+      if (a.prazo && b.prazo) {
+        const d = a.prazo.getTime() - b.prazo.getTime()
+        if (d !== 0) return d
+      } else if (a.prazo || b.prazo) {
+        return a.prazo ? -1 : 1
+      }
+      return porTexto(a.normalizado, b.normalizado)
+    })
+    .map((g) => ({
+      milestone: g.milestone,
+      itens: g.itens.sort(
+        (a, b) =>
+          porTexto(a.repositorio, b.repositorio) ||
+          a.issueNumero - b.issueNumero ||
+          porTexto(a.clienteNome, b.clienteNome),
+      ),
+    }))
+
+  return {
+    situacao: 'com-itens',
+    integracao,
+    clientes: [...clientes]
+      .map(([id, nome]) => ({ id, nome }))
+      .sort((a, b) => porTexto(a.nome, b.nome)),
+    milestones: [...milestones]
+      .sort((a, b) => porTexto(a[1].normalizado, b[1].normalizado))
+      .map(([id, m]) => ({ id, titulo: m.titulo })),
+    contagens,
+    grupos,
+  }
 }

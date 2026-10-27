@@ -1,6 +1,7 @@
 'use client'
 
 import { useActionState, useState } from 'react'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import type { AcaoDeHomologacao } from '@/modules/homologacao/model'
 import { registrarAcaoDeHomologacaoAction } from '../acoes-de-homologacao'
@@ -21,6 +22,7 @@ export interface AcoesDeHomologacaoProps {
   acoes: readonly AcaoDeHomologacao[]
   recusa: string | null
   podeEscolherVisibilidade: boolean
+  hrefDeRetorno?: string | null
 }
 
 const CLASSE_CAMPO =
@@ -97,6 +99,11 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
           sucesso: sucessoOculto ? undefined : estado.sucesso,
         }}
       />
+      {props.hrefDeRetorno && estado.sucesso && !sucessoOculto && (
+        <Link href={props.hrefDeRetorno} className="block text-sm text-text-link hover:underline">
+          Voltar à fila
+        </Link>
+      )}
       {recusa && (
         <p role="status" className="text-sm text-text-secondary">
           {recusa}

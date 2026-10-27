@@ -13,6 +13,15 @@ export interface HomologacaoDaIssueNoClienteProps {
   projetoId: string
   issue: { id: string; numero: number; repositorio: string }
   hrefDaMilestone: (milestoneId: string) => string
+  hrefDeRetorno?: string | null
+}
+
+function VoltarParaAFila({ href }: { href: string }) {
+  return (
+    <Link href={href} className="inline-block text-sm text-text-link hover:underline">
+      Voltar à fila
+    </Link>
+  )
 }
 
 function Faixa({ dados }: { dados: HomologacaoDaIssue }) {
@@ -33,7 +42,13 @@ function Faixa({ dados }: { dados: HomologacaoDaIssue }) {
   )
 }
 
-function Conteudo({ dados, projetoId, issue, hrefDaMilestone }: HomologacaoDaIssueNoClienteProps) {
+function Conteudo({
+  dados,
+  projetoId,
+  issue,
+  hrefDaMilestone,
+  hrefDeRetorno,
+}: HomologacaoDaIssueNoClienteProps) {
   switch (dados.situacao) {
     case 'sem-ambiente-qa':
       return (
@@ -113,6 +128,7 @@ function Conteudo({ dados, projetoId, issue, hrefDaMilestone }: HomologacaoDaIss
               acoes={dados.acoes.map((a) => a.acao)}
               recusa={dados.recusa}
               podeEscolherVisibilidade={dados.podeEscolherVisibilidade}
+              hrefDeRetorno={hrefDeRetorno}
             />
           )}
         </div>
@@ -131,6 +147,7 @@ export function HomologacaoDaIssueNoCliente(props: HomologacaoDaIssueNoClientePr
       <h2 id="homologacao-da-issue" className="text-[15px] font-[600] text-text-primary">
         Homologação de {props.dados.cliente.nome}
       </h2>
+      {props.hrefDeRetorno && <VoltarParaAFila href={props.hrefDeRetorno} />}
       <Faixa dados={props.dados} />
       <Conteudo {...props} />
     </section>

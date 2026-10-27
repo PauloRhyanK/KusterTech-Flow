@@ -145,7 +145,7 @@ export function abasDoContexto(projetoId: string, contexto: Contexto): readonly 
     return [
       { rotulo: 'Resumo', href: `/projetos/${projetoId}`, disponivel: true },
       { rotulo: 'Entregas', href: `/projetos/${projetoId}/entregas`, disponivel: true },
-      { rotulo: 'Homologação', href: `/projetos/${projetoId}/homologacao`, disponivel: false },
+      { rotulo: 'Homologação', href: `/projetos/${projetoId}/homologacao`, disponivel: true },
       { rotulo: 'Saúde e Erros', href: `/projetos/${projetoId}/saude`, disponivel: false },
       { rotulo: 'Recursos', href: `/projetos/${projetoId}/recursos`, disponivel: false },
     ]
@@ -165,7 +165,7 @@ export function abasDoContexto(projetoId: string, contexto: Contexto): readonly 
     {
       rotulo: 'Homologação',
       href: `/clientes/${contexto.clienteId}/projetos/${projetoId}/homologacao`,
-      disponivel: false,
+      disponivel: true,
     },
   ]
 }

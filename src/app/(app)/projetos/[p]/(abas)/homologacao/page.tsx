@@ -1,19 +1,24 @@
 import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
-import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
+import { autorizar, ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
-import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { podeVerVisaoGlobal } from '@/modules/clientes/model'
+import { lerFiltrosDaFila } from '@/modules/homologacao/model'
+import { listarFilaDoProjeto } from '@/modules/homologacao/queries'
+import type { Contexto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
+import { FilaDeHomologacao } from '@/app/(app)/projetos/_componentes/fila-de-homologacao'
 
 export interface PaginaHomologacaoProjetoProps {
   params: Promise<{ p: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }
 
 export async function generateMetadata({
   params,
-}: PaginaHomologacaoProjetoProps): Promise<Metadata> {
+}: Pick<PaginaHomologacaoProjetoProps, 'params'>): Promise<Metadata> {
   const { p } = await params
   const sessao = await obterSessao()
   if (!sessao) {
@@ -27,16 +32,23 @@ export async function generateMetadata({
   }
 }
 
-export default async function PaginaHomologacaoProjeto({ params }: PaginaHomologacaoProjetoProps) {
+export default async function PaginaHomologacaoProjeto({
+  params,
+  searchParams,
+}: PaginaHomologacaoProjetoProps) {
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
   }
 
   const { p } = await params
+  const filtros = lerFiltrosDaFila(await searchParams)
+  const contexto: Contexto = { tipo: 'global' }
 
+  let fila: Awaited<ReturnType<typeof listarFilaDoProjeto>>
   try {
     await obterProjetoParaResumo(sessao.sujeito, p, null)
+    fila = await listarFilaDoProjeto(sessao.sujeito, p, contexto, filtros)
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -48,10 +60,17 @@ export default async function PaginaHomologacaoProjeto({ params }: PaginaHomolog
   }
 
   return (
-    <EstadoVazio
-      tipo="nao-configurado"
-      titulo="Homologação ainda não disponível."
-      descricao="Ações de homologação chegam no Incremento 5a."
+    <FilaDeHomologacao
+      fila={fila}
+      filtros={{ ...filtros, clienteId: filtros.clienteId }}
+      base={`/projetos/${p}/homologacao`}
+      global={true}
+      escopado={!podeVerVisaoGlobal(sessao.sujeito)}
+      hrefConfigurarAmbientes={
+        autorizar(sessao.sujeito, 'projetos.gerenciar')
+          ? `/projetos/${p}/configuracao#ambientes`
+          : null
+      }
     />
   )
 }

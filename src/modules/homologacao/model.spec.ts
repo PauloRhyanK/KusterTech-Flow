@@ -290,4 +290,13 @@ describe('filtros e retorno da fila', () => {
       expect(lerRetornoDaFila(ruim, prefixos)).toBeNull()
     }
   })
+
+  test('lerRetornoDaFila: prefixo terminado em "/" aceita a página da milestone, mas não o próprio prefixo de outro projeto', () => {
+    const prefixos = ['/c/1/p/2/homologacao', '/c/1/p/2/entregas/milestones/']
+    expect(lerRetornoDaFila('/c/1/p/2/entregas/milestones/m-9?aba=homologacao', prefixos)).toBe(
+      '/c/1/p/2/entregas/milestones/m-9?aba=homologacao',
+    )
+    expect(lerRetornoDaFila('/c/1/p/3/entregas/milestones/m-9', prefixos)).toBeNull()
+    expect(lerRetornoDaFila('/c/1/p/2/entregas/milestones/../x', prefixos)).toBeNull()
+  })
 })
