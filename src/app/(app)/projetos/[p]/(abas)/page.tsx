@@ -4,6 +4,7 @@ import { autorizar, ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { obterResumoDeSaudeDoProjeto } from '@/modules/infra/queries'
 import { obterEntregasParaResumo } from '@/modules/entregas/queries'
 import { pendenciasDoProjeto, resumoDeHomologacaoPorMilestone } from '@/modules/homologacao/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
@@ -39,11 +40,15 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
   let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
   let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
   let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>>
+  let saude: Awaited<ReturnType<typeof obterResumoDeSaudeDoProjeto>> | undefined
   try {
     projetoComContagens = await obterProjetoParaResumo(sessao.sujeito, p, null)
     entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'global' })
     homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, { tipo: 'global' })
     pendencias = await pendenciasDoProjeto(sessao.sujeito, p, { tipo: 'global' })
+    if (autorizar(sessao.sujeito, 'infraestrutura.ler')) {
+      saude = await obterResumoDeSaudeDoProjeto(sessao.sujeito, p)
+    }
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -64,6 +69,7 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
       estadoGitHub={projetoComContagens.estadoGitHub}
       homologacao={homologacao}
       pendencias={pendencias}
+      saude={saude}
       contexto={{ tipo: 'global' }}
       podeGerenciar={podeGerenciar}
     />

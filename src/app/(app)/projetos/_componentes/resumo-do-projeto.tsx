@@ -11,10 +11,12 @@ import {
   type ContagensDoProjeto,
   type Contexto,
 } from '@/modules/projetos/model'
+import type { resumoDeSaude } from '@/modules/infra/model'
 import type { ProjetoResumo } from '@/modules/projetos/service'
 import { ChecklistDeConfiguracao } from './checklist-de-configuracao'
 import { ListaDeMilestones } from './lista-de-milestones'
 import { PendenciasDeHomologacao } from './pendencias-de-homologacao'
+import { ResumoDeSaude } from './resumo-de-saude'
 
 export interface ResumoDoProjetoProps {
   projeto: ProjetoResumo
@@ -23,6 +25,7 @@ export interface ResumoDoProjetoProps {
   estadoGitHub?: EstadoIntegracao
   homologacao?: ReadonlyMap<string, ResumoApresentado>
   pendencias?: readonly PendenciaDeHomologacao[]
+  saude?: ReturnType<typeof resumoDeSaude>
   contexto: Contexto
   podeGerenciar: boolean
   cliente?: { id: string; nome: string }
@@ -36,6 +39,7 @@ export function ResumoDoProjeto({
   estadoGitHub = 'nao-configurada',
   homologacao,
   pendencias = [],
+  saude,
   contexto,
   podeGerenciar,
   cliente,
@@ -124,7 +128,15 @@ export function ResumoDoProjeto({
         </ul>
       </section>
 
-      {/* 4. Clientes */}
+      {/* 4. Saúde (só visão global, só com infraestrutura.ler) */}
+      {contexto.tipo === 'global' && saude && (
+        <section className="space-y-3">
+          <h2 className="text-[18px] font-[600] leading-[1.3] text-text-primary">Saúde</h2>
+          <ResumoDeSaude projetoId={projeto.id} saude={saude} />
+        </section>
+      )}
+
+      {/* 5. Clientes */}
       <section className="space-y-3">
         <h2 className="text-[18px] font-[600] leading-[1.3] text-text-primary">Clientes</h2>
         {contexto.tipo === 'global' ? (
