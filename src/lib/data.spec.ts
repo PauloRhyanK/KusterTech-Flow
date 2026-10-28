@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatarData, formatarDataHora, lerDataHoraDeSaoPaulo } from './data'
+import { formatarCusto, formatarData, formatarDataHora, lerDataHoraDeSaoPaulo } from './data'
 
 describe('formatarDataHora', () => {
   test('formatarDataHora(2026-10-26T17:05:00Z) → "26/10/2026 14:05" no fuso America/Sao_Paulo', () => {
@@ -21,5 +21,14 @@ describe('lerDataHoraDeSaoPaulo', () => {
     expect(lerDataHoraDeSaoPaulo('x')).toBeNull()
     expect(lerDataHoraDeSaoPaulo('')).toBeNull()
     expect(lerDataHoraDeSaoPaulo('2026-13-40T99:99')).toBeNull()
+  })
+})
+
+describe('formatarCusto', () => {
+  test('formatarCusto("0.538") → "US$ 0,538"; "1.36" → "US$ 1,36" (espaço normalizado)', () => {
+    const normalizar = (t: string) => t.replace(/\s/g, ' ')
+    expect(normalizar(formatarCusto('0.538'))).toBe('US$ 0,538')
+    expect(normalizar(formatarCusto('1.36'))).toBe('US$ 1,36')
+    expect(normalizar(formatarCusto('0.9120'))).toBe('US$ 0,912')
   })
 })

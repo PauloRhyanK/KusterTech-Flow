@@ -14,8 +14,11 @@ import {
   lerPlanosDeSeeds,
   lerSeeds,
   PADRAO_RUN_ID,
+  prioridadeNaFila,
   runIdDoBranch,
+  situacaoNaFila,
   type EntradaDoEstado,
+  type ItemParaSituacao,
   type PrParaExecucao,
   type SeedLida,
 } from './model'
@@ -527,5 +530,56 @@ describe('leituraWarrenDevida', () => {
         dezMin,
       ),
     ).toBe(true)
+  })
+})
+
+describe('fila unificada', () => {
+  const prAberto = (checks: 'SUCESSO' | 'FALHA' | 'PENDENTE' | 'SEM_CHECKS'): ItemParaSituacao => ({
+    tipo: 'pull-request',
+    estado: 'ABERTO',
+    checks,
+  })
+
+  test('situacaoNaFila: PR aberto com FALHA → intervencao com "Checks com falha no GitHub."; execução CONCLUIDA → encerrado; SEM_DADOS → aberto', () => {
+    expect(situacaoNaFila(prAberto('FALHA'))).toEqual({
+      situacao: 'intervencao',
+      motivo: 'Checks com falha no GitHub.',
+    })
+    expect(situacaoNaFila({ tipo: 'execucao', estado: 'CONCLUIDA' }).situacao).toBe('encerrado')
+    expect(situacaoNaFila({ tipo: 'execucao', estado: 'SEM_DADOS' })).toEqual({
+      situacao: 'aberto',
+      motivo: null,
+    })
+    expect(situacaoNaFila({ tipo: 'execucao', estado: 'INTERVENCAO_NECESSARIA' }).situacao).toBe(
+      'intervencao',
+    )
+    expect(situacaoNaFila(prAberto('PENDENTE')).situacao).toBe('aberto')
+    expect(situacaoNaFila({ tipo: 'issue', estado: 'FECHADA' }).situacao).toBe('encerrado')
+    expect(situacaoNaFila({ tipo: 'issue', estado: 'ABERTA' }).situacao).toBe('aberto')
+    for (const estado of ['MERGEADO', 'FECHADO'] as const) {
+      expect(situacaoNaFila({ tipo: 'pull-request', estado, checks: 'FALHA' }).situacao).toBe(
+        'encerrado',
+      )
+    }
+  })
+
+  test('prioridadeNaFila ordena intervenção, executando, aguardando, sem dados, PR aberto, issue aberta, encerrados', () => {
+    const ordem: ItemParaSituacao[] = [
+      prAberto('FALHA'),
+      { tipo: 'execucao', estado: 'EXECUTANDO' },
+      { tipo: 'execucao', estado: 'AGUARDANDO_CAPACIDADE' },
+      { tipo: 'execucao', estado: 'SEM_DADOS' },
+      prAberto('SEM_CHECKS'),
+      { tipo: 'issue', estado: 'ABERTA' },
+      { tipo: 'issue', estado: 'FECHADA' },
+    ]
+    expect(ordem.map(prioridadeNaFila)).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(prioridadeNaFila({ tipo: 'execucao', estado: 'INTERVENCAO_NECESSARIA' })).toBe(0)
+    expect(prioridadeNaFila({ tipo: 'execucao', estado: 'NA_FILA' })).toBe(2)
+    expect(prioridadeNaFila({ tipo: 'execucao', estado: 'AGUARDANDO_DEPENDENCIA' })).toBe(2)
+    expect(prioridadeNaFila({ tipo: 'execucao', estado: 'CONCLUIDA' })).toBe(6)
+    expect(prioridadeNaFila({ tipo: 'pull-request', estado: 'MERGEADO', checks: 'SUCESSO' })).toBe(
+      6,
+    )
   })
 })
