@@ -6,6 +6,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import {
   type EstadoAlerta,
   linksDeFerramentas,
+  resumoDeSaude,
   type OrigemAlerta,
   type SeveridadeAlerta,
   situacaoDoRecurso,
@@ -463,4 +464,103 @@ export async function obterResumoDeInfraestrutura(
     db.alerta.count({ where: { estado: 'RECONHECIDO' } }),
   ])
   return { recursos, recursosComAlerta, alertasAtivos, alertasReconhecidos }
+}
+
+async function exigirProjeto(projetoId: string): Promise<void> {
+  const projeto = await db.projeto.findUnique({ where: { id: projetoId }, select: { id: true } })
+  if (!projeto) {
+    throw new ErroDeDominio('Projeto não encontrado.')
+  }
+}
+
+// Decisão 8: alerta do projeto ∪ alerta de recurso associado a ele; o OR devolve cada linha uma vez.
+function alertasNaoResolvidosDoProjeto(projetoId: string): Prisma.AlertaWhereInput {
+  return {
+    ...NAO_RESOLVIDO,
+    OR: [{ projetoId }, { recurso: { projetos: { some: { projetoId } } } }],
+  }
+}
+
+export async function listarRecursosDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+): Promise<RecursoNaLista[]> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+  await exigirProjeto(projetoId)
+
+  const linhas = await db.recurso.findMany({
+    where: { projetos: { some: { projetoId } } },
+    orderBy: { nomeNormalizado: 'asc' },
+    take: LIMITE_DA_LISTA,
+    select: {
+      id: true,
+      nome: true,
+      tipo: true,
+      arquivadoEm: true,
+      hospedadoEm: { select: { id: true, nome: true } },
+      alertas: { where: NAO_RESOLVIDO, select: { severidade: true } },
+      _count: { select: { projetos: true } },
+    },
+  })
+  return linhas.map((r) => ({
+    id: r.id,
+    nome: r.nome,
+    tipo: r.tipo,
+    hospedadoEm: r.hospedadoEm,
+    totalDeProjetos: r._count.projetos,
+    situacao: situacaoDoRecurso({
+      arquivado: r.arquivadoEm !== null,
+      alertasNaoResolvidos: r.alertas,
+    }),
+  }))
+}
+
+export async function obterSaudeDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+): Promise<{
+  alertas: AlertaNaLista[]
+  resumo: ReturnType<typeof resumoDeSaude>
+  glitchTip: { recurso: string; href: string }[]
+}> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+  await exigirProjeto(projetoId)
+
+  const where = alertasNaoResolvidosDoProjeto(projetoId)
+  const [alertas, severidades, recursos] = await Promise.all([
+    db.alerta.findMany({
+      where,
+      orderBy: [...ORDEM_DA_FILA],
+      take: LIMITE_DA_LISTA,
+      select: SELECT_DA_LISTA,
+    }),
+    db.alerta.findMany({ where, select: { severidade: true } }),
+    db.recurso.findMany({
+      where: { projetos: { some: { projetoId } }, urlGlitchTip: { not: null } },
+      orderBy: { nomeNormalizado: 'asc' },
+      select: { nome: true, urlGlitchTip: true },
+    }),
+  ])
+
+  return {
+    alertas,
+    resumo: resumoDeSaude(severidades),
+    glitchTip: recursos.flatMap((r) =>
+      r.urlGlitchTip !== null ? [{ recurso: r.nome, href: r.urlGlitchTip }] : [],
+    ),
+  }
+}
+
+export async function obterResumoDeSaudeDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+): Promise<ReturnType<typeof resumoDeSaude>> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+  await exigirProjeto(projetoId)
+
+  const severidades = await db.alerta.findMany({
+    where: alertasNaoResolvidosDoProjeto(projetoId),
+    select: { severidade: true },
+  })
+  return resumoDeSaude(severidades)
 }
