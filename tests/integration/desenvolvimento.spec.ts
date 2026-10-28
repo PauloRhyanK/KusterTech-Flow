@@ -1,9 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
+import { ErroDeDominio } from '@/lib/erros'
 import {
   lerFiltrosDaFila,
+  listarExecucoesAgrupadas,
   listarFilaDeDesenvolvimento,
+  obterExecucao,
   type FiltrosDaFila,
   type ItemDaFila,
 } from '@/modules/desenvolvimento/queries'
@@ -265,5 +269,107 @@ describe('fila de desenvolvimento (integração)', () => {
       situacao: 'todos',
       origem: 'github',
     })
+  })
+})
+
+describe('execuções agrupadas e detalhe da execução (integração)', () => {
+  test('agrupada de P: 4 seeds (a001 e a003 Em andamento, a004 Aberta com "Aguarda EXEM-a003 (em andamento).", a002 Fechada), epic fora; a001 com run_exemplo0001', async () => {
+    const { grupos, fontes } = await listarExecucoesAgrupadas(admin, null, t0)
+
+    expect(grupos.map((g) => g.projeto.nome)).toEqual(['P'])
+    const [p] = grupos
+    expect(p?.seeds.map((s) => [s.seedId, s.status])).toEqual([
+      ['EXEM-a001', 'EM_ANDAMENTO'],
+      ['EXEM-a003', 'EM_ANDAMENTO'],
+      ['EXEM-a004', 'ABERTA'],
+      ['EXEM-a002', 'FECHADA'],
+    ])
+    expect(p?.seeds.some((s) => s.seedId === 'EXEM-e001')).toBe(false)
+    expect(p?.semSeed).toEqual([])
+    const a004 = p?.seeds.find((s) => s.seedId === 'EXEM-a004')
+    expect(a004).toMatchObject({
+      motivoDeEspera: 'Aguarda EXEM-a003 (em andamento).',
+      dependencias: [{ seedId: 'EXEM-a003', status: 'EM_ANDAMENTO' }],
+      execucoes: [],
+      planoNome: 'Relatórios — plano de exemplo',
+    })
+    const a001 = p?.seeds.find((s) => s.seedId === 'EXEM-a001')
+    expect(a001?.execucoes.map((e) => e.runId)).toEqual(['run_exemplo0001'])
+    expect(a001?.execucoes[0]).toMatchObject({
+      estado: 'CONCLUIDA',
+      papel: 'architect-orchestrator',
+      pr: { numero: 3, estado: 'ABERTO' },
+    })
+    expect(fontes.repositorios).toHaveLength(2)
+
+    const soQ = await listarExecucoesAgrupadas(admin, projetoQ.id, t0)
+    expect(soQ.grupos).toEqual([])
+  })
+
+  test('execução sem seed na tabela cai em "sem seed identificada"', async () => {
+    const automacao = await db.repositorioGitHub.findFirstOrThrow({
+      where: { nomeCompleto: 'kustertech-exemplo/automacao' },
+    })
+    await db.seedDoRepositorio.deleteMany({
+      where: { repositorioId: automacao.id, seedId: 'EXEM-a003' },
+    })
+    const { grupos } = await listarExecucoesAgrupadas(admin, projetoP.id, t0)
+    expect(grupos[0]?.semSeed.map((e) => e.runId)).toEqual(['run_exemplo0003'])
+    expect(grupos[0]?.seeds.map((s) => s.seedId)).not.toContain('EXEM-a003')
+  })
+
+  test('obterExecucao(run_exemplo0001): CONCLUIDA, PR #3 ABERTO com FALHA, issuesDoGitHub [#1 ABERTA], seed EM_ANDAMENTO, custoUsd "0.912", 2 eventos; id inexistente → Execução não encontrada; TESTADOR escopado → ErroDeAutorizacao', async () => {
+    const execucao = await db.execucaoAgente.findUniqueOrThrow({
+      where: { runId: 'run_exemplo0001' },
+    })
+    const d = await obterExecucao(admin, execucao.id, t0)
+
+    expect(d).toMatchObject({
+      runId: 'run_exemplo0001',
+      estado: 'CONCLUIDA',
+      custoUsd: '0.912',
+      fonte: 'seeds-e-pull-request',
+      agente: 'architect-orchestrator',
+      projeto: { id: projetoP.id, nome: 'P' },
+      repositorio: {
+        nomeCompleto: 'kustertech-exemplo/automacao',
+        urlHtml: 'https://github.com/kustertech-exemplo/automacao',
+        leitura: { situacao: 'lido', linhasInvalidas: 1 },
+      },
+      seed: { seedId: 'EXEM-a001', status: 'EM_ANDAMENTO' },
+      pullRequest: { numero: 3, estado: 'ABERTO', checks: 'FALHA' },
+    })
+    expect(d.issuesDoGitHub).toHaveLength(1)
+    expect(d.issuesDoGitHub[0]).toMatchObject({ numero: 1, estado: 'ABERTA' })
+    expect(d.issuesDoGitHub[0]?.href).toMatch(
+      new RegExp(`^/projetos/${projetoP.id}/entregas/issues/`),
+    )
+    expect(d.linhaDoTempo.map((e) => e.titulo)).toEqual([
+      'Execução registrada no Seeds',
+      'PR #3 aberta pelo Warren',
+    ])
+
+    await expect(obterExecucao(admin, '00000000-0000-4000-8000-000000000000', t0)).rejects.toThrow(
+      new ErroDeDominio('Execução não encontrada.'),
+    )
+
+    const testador: Sujeito = {
+      usuarioId: admin.usuarioId,
+      papeis: [{ papel: 'TESTADOR', clienteId: 'c-1' }],
+    }
+    await expect(obterExecucao(testador, execucao.id, t0)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    await expect(listarExecucoesAgrupadas(testador, null, t0)).rejects.toBeInstanceOf(
+      ErroDeAutorizacao,
+    )
+  })
+
+  test('execução sem PR e sem issue: detalhe sem pullRequest, sem issues e com 1 evento', async () => {
+    const execucao = await db.execucaoAgente.findUniqueOrThrow({
+      where: { runId: 'run_exemplo0003' },
+    })
+    const d = await obterExecucao(admin, execucao.id, t0)
+    expect(d).toMatchObject({ estado: 'EXECUTANDO', custoUsd: null, pullRequest: null, pr: null })
+    expect(d.issuesDoGitHub).toEqual([])
+    expect(d.linhaDoTempo).toHaveLength(1)
   })
 })

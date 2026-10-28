@@ -1,6 +1,7 @@
-import type { EstadoExecucao, Prisma } from '@prisma/client'
+import type { EstadoExecucao, Prisma, StatusDeSeed } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
 import type { TomDeEstado } from '@/lib/ui/badge-de-estado'
 import {
   estadoDoProjeto,
@@ -11,8 +12,12 @@ import { intervaloDaIntegracao } from '@/modules/github/service'
 import {
   apresentarEstadoDaExecucao,
   ehPrDoWarren,
+  linhaDoTempoDaExecucao,
+  motivoDeEsperaDaSeed,
   prioridadeNaFila,
   situacaoNaFila,
+  type EventoDaExecucao,
+  type FonteDaExecucao,
   type ItemParaSituacao,
   type SituacaoNaFila,
 } from './model'
@@ -183,27 +188,10 @@ function filtrar(item: ItemParaSituacao, filtros: FiltrosDaFila): SituacaoNaFila
   }
 }
 
-export async function listarFilaDeDesenvolvimento(
-  sujeito: Sujeito,
-  filtros: FiltrosDaFila,
-  agora: Date = new Date(),
-): Promise<{
-  fontes: SituacaoDasFontes
-  projetos: { id: string; nome: string }[]
-  itens: ItemDaFila[]
-  total: number
-}> {
-  exigirPermissao(sujeito, 'desenvolvimento.ler')
-
+async function carregarFontes(
+  agora: Date,
+): Promise<{ fontes: SituacaoDasFontes; projetos: { id: string; nome: string }[] }> {
   const intervalo = intervaloDaIntegracao()
-  const doProjeto = filtros.projetoId ? { projetoId: filtros.projetoId } : {}
-  const lerGithub = filtros.origem !== 'warren'
-  const lerWarren = filtros.origem !== 'github'
-  const whereIssue = lerGithub ? condicaoDeIssue(filtros.situacao) : null
-  const wherePr = lerGithub ? condicaoDePr(filtros.situacao) : null
-  const whereExecucao = lerWarren ? condicaoDeExecucao(filtros.situacao) : null
-  const doRepositorio = { repositorio: { ...REPOSITORIO_VISIVEL, ...doProjeto } }
-
   const [integracao, repositorios, projetos, porEstado] = await Promise.all([
     db.integracaoGitHub.findUnique({ where: { id: 'github' } }),
     db.repositorioGitHub.findMany({
@@ -257,6 +245,31 @@ export async function listarFilaDeDesenvolvimento(
     repositorios: repositorios.map((r) => leituraDoWarren(r, agora, intervalo)),
     execucoesPorEstado,
   }
+
+  return { fontes, projetos }
+}
+
+export async function listarFilaDeDesenvolvimento(
+  sujeito: Sujeito,
+  filtros: FiltrosDaFila,
+  agora: Date = new Date(),
+): Promise<{
+  fontes: SituacaoDasFontes
+  projetos: { id: string; nome: string }[]
+  itens: ItemDaFila[]
+  total: number
+}> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+
+  const doProjeto = filtros.projetoId ? { projetoId: filtros.projetoId } : {}
+  const lerGithub = filtros.origem !== 'warren'
+  const lerWarren = filtros.origem !== 'github'
+  const whereIssue = lerGithub ? condicaoDeIssue(filtros.situacao) : null
+  const wherePr = lerGithub ? condicaoDePr(filtros.situacao) : null
+  const whereExecucao = lerWarren ? condicaoDeExecucao(filtros.situacao) : null
+  const doRepositorio = { repositorio: { ...REPOSITORIO_VISIVEL, ...doProjeto } }
+
+  const { fontes, projetos } = await carregarFontes(agora)
 
   const [issues, prs, execucoes, totalIssues, totalPrs, totalExecucoes] = await Promise.all([
     whereIssue
@@ -401,5 +414,308 @@ export async function listarFilaDeDesenvolvimento(
     projetos,
     itens: candidatos.slice(0, LIMITE_DE_LINHAS).map((c) => c.item),
     total: totalIssues + totalPrs + totalExecucoes,
+  }
+}
+
+const LIMITE_DE_SEEDS_POR_PROJETO = 200
+
+export interface ExecucaoResumida {
+  id: string
+  runId: string
+  papel: string | null
+  agente: string | null
+  estado: EstadoExecucao
+  motivo: string
+  iniciadaEm: Date | null
+  pr: { numero: number; estado: string } | null
+}
+
+export interface GrupoDeSeed {
+  seedId: string
+  titulo: string | null
+  status: StatusDeSeed | null
+  repositorio: string
+  planoNome: string | null
+  dependencias: { seedId: string; status: StatusDeSeed | null }[]
+  motivoDeEspera: string | null
+  execucoes: ExecucaoResumida[]
+}
+
+export interface GrupoDeProjeto {
+  projeto: { id: string; nome: string }
+  seeds: GrupoDeSeed[]
+  semSeed: ExecucaoResumida[]
+}
+
+const ORDEM_DO_STATUS: Record<StatusDeSeed, number> = { EM_ANDAMENTO: 0, ABERTA: 1, FECHADA: 2 }
+
+function maisRecentePrimeiro(a: ExecucaoResumida, b: ExecucaoResumida): number {
+  return (
+    (b.iniciadaEm?.getTime() ?? 0) - (a.iniciadaEm?.getTime() ?? 0) ||
+    a.runId.localeCompare(b.runId)
+  )
+}
+
+export async function listarExecucoesAgrupadas(
+  sujeito: Sujeito,
+  projetoId: string | null,
+  agora: Date = new Date(),
+): Promise<{
+  fontes: SituacaoDasFontes
+  projetos: { id: string; nome: string }[]
+  grupos: GrupoDeProjeto[]
+}> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+
+  const doRepositorio = {
+    ...REPOSITORIO_VISIVEL,
+    ...(projetoId ? { projetoId } : {}),
+  }
+  const [{ fontes, projetos: projetosDoFiltro }, seeds, execucoes] = await Promise.all([
+    carregarFontes(agora),
+    db.seedDoRepositorio.findMany({
+      where: { ausenteDesde: null, repositorio: doRepositorio },
+      select: {
+        repositorioId: true,
+        seedId: true,
+        titulo: true,
+        status: true,
+        tipo: true,
+        planoNome: true,
+        bloqueadaPor: true,
+        repositorio: {
+          select: { nomeCompleto: true, projeto: { select: { id: true, nome: true } } },
+        },
+      },
+    }),
+    db.execucaoAgente.findMany({
+      where: { repositorio: doRepositorio },
+      select: {
+        id: true,
+        runId: true,
+        seedId: true,
+        papel: true,
+        agente: true,
+        estado: true,
+        motivoDoEstado: true,
+        iniciadaEm: true,
+        repositorioId: true,
+        pullRequest: { select: { numero: true, estado: true } },
+        repositorio: { select: { projeto: { select: { id: true, nome: true } } } },
+      },
+    }),
+  ])
+
+  const statusConhecidos = new Map<string, StatusDeSeed>(
+    seeds.map((s) => [`${s.repositorioId}/${s.seedId}`, s.status]),
+  )
+  const resumidas = new Map<string, ExecucaoResumida[]>()
+  const semSeedPorProjeto = new Map<string, ExecucaoResumida[]>()
+  const projetos = new Map<string, { id: string; nome: string }>()
+  const seedsListadas = new Set<string>()
+
+  const incluidas = seeds.filter((s) => {
+    if (s.tipo === 'epic') return false
+    const comExecucao = execucoes.some(
+      (e) => e.repositorioId === s.repositorioId && e.seedId === s.seedId,
+    )
+    return comExecucao || s.status !== 'FECHADA'
+  })
+  for (const s of incluidas) seedsListadas.add(`${s.repositorioId}/${s.seedId}`)
+
+  for (const e of execucoes) {
+    const projeto = e.repositorio.projeto
+    if (!projeto) continue
+    projetos.set(projeto.id, projeto)
+    const resumo: ExecucaoResumida = {
+      id: e.id,
+      runId: e.runId,
+      papel: e.papel,
+      agente: e.agente,
+      estado: e.estado,
+      motivo: e.motivoDoEstado,
+      iniciadaEm: e.iniciadaEm,
+      pr: e.pullRequest ? { numero: e.pullRequest.numero, estado: e.pullRequest.estado } : null,
+    }
+    const chave = e.seedId ? `${e.repositorioId}/${e.seedId}` : null
+    if (chave && seedsListadas.has(chave)) {
+      resumidas.set(chave, [...(resumidas.get(chave) ?? []), resumo])
+    } else {
+      semSeedPorProjeto.set(projeto.id, [...(semSeedPorProjeto.get(projeto.id) ?? []), resumo])
+    }
+  }
+
+  const seedsPorProjeto = new Map<string, GrupoDeSeed[]>()
+  for (const s of incluidas) {
+    const projeto = s.repositorio.projeto
+    if (!projeto) continue
+    projetos.set(projeto.id, projeto)
+    const grupo: GrupoDeSeed = {
+      seedId: s.seedId,
+      titulo: s.titulo,
+      status: s.status,
+      repositorio: s.repositorio.nomeCompleto,
+      planoNome: s.planoNome,
+      dependencias: s.bloqueadaPor.map((id) => ({
+        seedId: id,
+        status: statusConhecidos.get(`${s.repositorioId}/${id}`) ?? null,
+      })),
+      motivoDeEspera: motivoDeEsperaDaSeed(
+        s,
+        new Map(
+          s.bloqueadaPor.flatMap((id) => {
+            const status = statusConhecidos.get(`${s.repositorioId}/${id}`)
+            return status ? [[id, status] as const] : []
+          }),
+        ),
+      ),
+      execucoes: (resumidas.get(`${s.repositorioId}/${s.seedId}`) ?? []).sort(maisRecentePrimeiro),
+    }
+    seedsPorProjeto.set(projeto.id, [...(seedsPorProjeto.get(projeto.id) ?? []), grupo])
+  }
+
+  const grupos = [...projetos.values()]
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+    .map((projeto) => ({
+      projeto,
+      seeds: (seedsPorProjeto.get(projeto.id) ?? [])
+        .sort(
+          (a, b) =>
+            ORDEM_DO_STATUS[a.status ?? 'FECHADA'] - ORDEM_DO_STATUS[b.status ?? 'FECHADA'] ||
+            a.seedId.localeCompare(b.seedId),
+        )
+        .slice(0, LIMITE_DE_SEEDS_POR_PROJETO),
+      semSeed: (semSeedPorProjeto.get(projeto.id) ?? []).sort(maisRecentePrimeiro),
+    }))
+
+  return { fontes, projetos: projetosDoFiltro, grupos }
+}
+
+export interface ExecucaoDetalhada extends ExecucaoResumida {
+  custoUsd: string | null
+  fonte: FonteDaExecucao
+  atualizadaEm: Date
+  sincronizadaEm: Date
+  projeto: { id: string; nome: string } | null
+  repositorio: { nomeCompleto: string; urlHtml: string; leitura: LeituraWarrenDoRepositorio }
+  seed: {
+    seedId: string
+    titulo: string | null
+    status: StatusDeSeed | null
+    planoNome: string | null
+  } | null
+  pullRequest: {
+    numero: number
+    titulo: string
+    estado: 'ABERTO' | 'FECHADO' | 'MERGEADO'
+    checks: 'SUCESSO' | 'FALHA' | 'PENDENTE' | 'SEM_CHECKS'
+    urlHtml: string
+    branch: string
+  } | null
+  issuesDoGitHub: {
+    id: string
+    numero: number
+    titulo: string
+    estado: 'ABERTA' | 'FECHADA'
+    href: string | null
+  }[]
+  linhaDoTempo: EventoDaExecucao[]
+}
+
+export async function obterExecucao(
+  sujeito: Sujeito,
+  execucaoId: string,
+  agora: Date = new Date(),
+): Promise<ExecucaoDetalhada> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+
+  const e = await db.execucaoAgente.findUnique({
+    where: { id: execucaoId },
+    include: {
+      pullRequest: true,
+      repositorio: { include: { projeto: { select: { id: true, nome: true } } } },
+    },
+  })
+  if (!e) throw new ErroDeDominio('Execução não encontrada.')
+
+  const [seed, issues] = await Promise.all([
+    e.seedId
+      ? db.seedDoRepositorio.findUnique({
+          where: { repositorioId_seedId: { repositorioId: e.repositorioId, seedId: e.seedId } },
+        })
+      : null,
+    e.pullRequest && e.pullRequest.issuesReferenciadas.length > 0
+      ? db.issueGitHub.findMany({
+          where: {
+            repositorioId: e.repositorioId,
+            numero: { in: e.pullRequest.issuesReferenciadas },
+          },
+          orderBy: { numero: 'asc' },
+        })
+      : [],
+  ])
+
+  const projeto = e.repositorio.projeto
+  const pr = e.pullRequest
+  const seedPresente = seed && seed.ausenteDesde === null ? seed : null
+
+  return {
+    id: e.id,
+    runId: e.runId,
+    papel: e.papel,
+    agente: e.agente,
+    estado: e.estado,
+    motivo: e.motivoDoEstado,
+    iniciadaEm: e.iniciadaEm,
+    pr: pr ? { numero: pr.numero, estado: pr.estado } : null,
+    custoUsd: e.custo ? e.custo.toString() : null,
+    fonte: e.fonte as FonteDaExecucao,
+    atualizadaEm: e.atualizadaEm,
+    sincronizadaEm: e.sincronizadaEm,
+    projeto,
+    repositorio: {
+      nomeCompleto: e.repositorio.nomeCompleto,
+      urlHtml: `https://github.com/${e.repositorio.nomeCompleto}`,
+      leitura: leituraDoWarren(e.repositorio, agora, intervaloDaIntegracao()),
+    },
+    seed: seedPresente
+      ? {
+          seedId: seedPresente.seedId,
+          titulo: seedPresente.titulo,
+          status: seedPresente.status,
+          planoNome: seedPresente.planoNome,
+        }
+      : e.seedId
+        ? { seedId: e.seedId, titulo: null, status: null, planoNome: null }
+        : null,
+    pullRequest: pr
+      ? {
+          numero: pr.numero,
+          titulo: pr.titulo,
+          estado: pr.estado,
+          checks: pr.checks,
+          urlHtml: pr.urlHtml,
+          branch: pr.branch,
+        }
+      : null,
+    issuesDoGitHub: issues.map((i) => ({
+      id: i.id,
+      numero: i.numero,
+      titulo: i.titulo,
+      estado: i.estado,
+      href: projeto ? `/projetos/${projeto.id}/entregas/issues/${i.id}` : null,
+    })),
+    linhaDoTempo: linhaDoTempoDaExecucao({
+      iniciadaEm: e.iniciadaEm,
+      pr: pr
+        ? {
+            numero: pr.numero,
+            estado: pr.estado,
+            criadoNoGitHub: pr.criadoNoGitHub,
+            mergeadoNoGitHub: pr.mergeadoNoGitHub,
+            atualizadoNoGitHub: pr.atualizadoNoGitHub,
+          }
+        : null,
+    }),
   }
 }

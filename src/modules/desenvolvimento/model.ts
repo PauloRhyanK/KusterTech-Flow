@@ -400,3 +400,73 @@ export function prioridadeNaFila(i: ItemParaSituacao): number {
       return 5
   }
 }
+
+export interface EventoDaExecucao {
+  em: Date
+  titulo: string
+  origem: 'Seeds' | 'GitHub'
+}
+
+// Só eventos com data real nas fontes; nada de etapa, porcentagem ou duração estimada (D57).
+export function linhaDoTempoDaExecucao(d: {
+  iniciadaEm: Date | null
+  pr: {
+    numero: number
+    estado: 'ABERTO' | 'FECHADO' | 'MERGEADO'
+    criadoNoGitHub: Date | null
+    mergeadoNoGitHub: Date | null
+    atualizadoNoGitHub: Date
+  } | null
+}): EventoDaExecucao[] {
+  const eventos: EventoDaExecucao[] = []
+  if (d.iniciadaEm) {
+    eventos.push({ em: d.iniciadaEm, titulo: 'Execução registrada no Seeds', origem: 'Seeds' })
+  }
+  const { pr } = d
+  if (pr) {
+    if (pr.criadoNoGitHub) {
+      eventos.push({
+        em: pr.criadoNoGitHub,
+        titulo: `PR #${pr.numero} aberta pelo Warren`,
+        origem: 'GitHub',
+      })
+    }
+    if (pr.estado === 'MERGEADO' && pr.mergeadoNoGitHub) {
+      eventos.push({
+        em: pr.mergeadoNoGitHub,
+        titulo: `PR #${pr.numero} mergeada`,
+        origem: 'GitHub',
+      })
+    }
+    if (pr.estado === 'FECHADO') {
+      eventos.push({
+        em: pr.atualizadoNoGitHub,
+        titulo: `PR #${pr.numero} fechada sem merge`,
+        origem: 'GitHub',
+      })
+    }
+  }
+  return eventos.sort((a, b) => a.em.getTime() - b.em.getTime())
+}
+
+const ROTULO_DE_DEPENDENCIA: Record<StatusDeSeed, string> = {
+  ABERTA: 'aberta',
+  EM_ANDAMENTO: 'em andamento',
+  FECHADA: 'fechada',
+}
+
+// Motivo de espera é fato declarado: só `blockedBy` de seed aberta (UX-15, D59).
+export function motivoDeEsperaDaSeed(
+  s: { status: StatusDeSeed; bloqueadaPor: string[] },
+  conhecidas: ReadonlyMap<string, StatusDeSeed>,
+): string | null {
+  if (s.status !== 'ABERTA') return null
+  for (const id of s.bloqueadaPor) {
+    const status = conhecidas.get(id)
+    if (status === 'FECHADA') continue
+    return status
+      ? `Aguarda ${id} (${ROTULO_DE_DEPENDENCIA[status]}).`
+      : `Aguarda ${id} (não encontrada no .seeds).`
+  }
+  return null
+}
