@@ -19,23 +19,26 @@ enum Tema {
 }
 
 model Usuario {
-  id                    String                  @id @default(uuid())
-  email                 String                  @unique
-  nome                  String
-  senhaHash             String
-  ativo                 Boolean                 @default(true)
-  tema                  Tema                    @default(SISTEMA)
-  criadoEm              DateTime                @default(now())
-  atualizadoEm          DateTime                @updatedAt
-  papeis                UsuarioPapel[]
-  sessoes               Sessao[]
-  vinculosCriados       IssueVinculo[]
-  eventosTimeline       EventoTimeline[]
-  evidenciasRegistradas EvidenciaDeploy[]
-  presencasConfirmadas  PresencaIssueVersao[]
-  tarefasGitHub         TarefaGitHub[]
-  solicitacoesTriadas   SolicitacaoDeCorrecao[]
-  homologacoesAprovadas Homologacao[]
+  id                       String                  @id @default(uuid())
+  email                    String                  @unique
+  nome                     String
+  senhaHash                String
+  ativo                    Boolean                 @default(true)
+  tema                     Tema                    @default(SISTEMA)
+  criadoEm                 DateTime                @default(now())
+  atualizadoEm             DateTime                @updatedAt
+  papeis                   UsuarioPapel[]
+  sessoes                  Sessao[]
+  vinculosCriados          IssueVinculo[]
+  eventosTimeline          EventoTimeline[]
+  evidenciasRegistradas    EvidenciaDeploy[]
+  presencasConfirmadas     PresencaIssueVersao[]
+  tarefasGitHub            TarefaGitHub[]
+  solicitacoesTriadas      SolicitacaoDeCorrecao[]
+  homologacoesAprovadas    Homologacao[]
+  autorizacoesProd         AutorizacaoProd[]
+  verificacoesProd         VerificacaoProd[]
+  divergenciasReconhecidas DivergenciaDeDeploy[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -90,18 +93,20 @@ model Cliente {
 }
 
 model Projeto {
-  id              String              @id @default(uuid())
-  nome            String
-  nomeNormalizado String              @unique
-  descricao       String?
-  arquivadoEm     DateTime?
-  criadoEm        DateTime            @default(now())
-  atualizadoEm    DateTime            @updatedAt
-  clientes        ProjetoCliente[]
-  repositorios    RepositorioGitHub[]
-  milestones      Milestone[]
-  ambientes       Ambiente[]
-  versoes         Versao[]
+  id                      String                   @id @default(uuid())
+  nome                    String
+  nomeNormalizado         String                   @unique
+  descricao               String?
+  arquivadoEm             DateTime?
+  criadoEm                DateTime                 @default(now())
+  atualizadoEm            DateTime                 @updatedAt
+  clientes                ProjetoCliente[]
+  repositorios            RepositorioGitHub[]
+  milestones              Milestone[]
+  ambientes               Ambiente[]
+  versoes                 Versao[]
+  composicoesDePublicacao ComposicaoDePublicacao[]
+  autorizacoesProd        AutorizacaoProd[]
 }
 
 model ProjetoCliente {
@@ -145,13 +150,13 @@ model IntegracaoGitHub {
 }
 
 model RepositorioGitHub {
-  id                         String              @id @default(uuid())
-  githubId                   BigInt              @unique
+  id                         String                   @id @default(uuid())
+  githubId                   BigInt                   @unique
   instalacaoId               BigInt
   nomeCompleto               String
   urlHtml                    String
   privado                    Boolean
-  arquivadoNoGitHub          Boolean             @default(false)
+  arquivadoNoGitHub          Boolean                  @default(false)
   removidoDaInstalacaoEm     DateTime?
   projetoId                  String?
   vinculadoEm                DateTime?
@@ -159,7 +164,7 @@ model RepositorioGitHub {
   sincronizacaoSolicitadaEm  DateTime?
   ultimaFalhaEm              DateTime?
   ultimaFalhaMotivo          String?
-  falhasConsecutivas         Int                 @default(0)
+  falhasConsecutivas         Int                      @default(0)
   cursorIssues               DateTime?
   cursorPullRequests         DateTime?
   cursorDeployments          DateTime?
@@ -167,11 +172,13 @@ model RepositorioGitHub {
   deploymentsFalhaEm         DateTime?
   deploymentsFalhaMotivo     String?
   catalogadoEm               DateTime
-  projeto                    Projeto?            @relation(fields: [projetoId], references: [id], onDelete: SetNull)
+  projeto                    Projeto?                 @relation(fields: [projetoId], references: [id], onDelete: SetNull)
   issues                     IssueGitHub[]
   pullRequests               PullRequestGitHub[]
   versoes                    Versao[]
   tarefasGitHub              TarefaGitHub[]
+  composicoesDePublicacao    ComposicaoDePublicacao[]
+  autorizacoesProd           AutorizacaoProd[]
 
   @@index([projetoId])
 }
@@ -200,6 +207,7 @@ model IssueGitHub {
   correcoes              IssueVinculo[]          @relation("VinculoOriginal")
   corrige                IssueVinculo[]          @relation("VinculoCorrecao")
   presencas              PresencaIssueVersao[]
+  autorizacoesProd       AutorizacaoItem[]
 
   @@unique([repositorioId, numero])
 }
@@ -333,19 +341,23 @@ model Ambiente {
 }
 
 model Versao {
-  id                     String                  @id @default(uuid())
-  projetoId              String
-  repositorioId          String
-  commitSha              String
-  rotulo                 String
-  criadaEm               DateTime                @default(now())
-  projeto                Projeto                 @relation(fields: [projetoId], references: [id], onDelete: Restrict)
-  repositorio            RepositorioGitHub       @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
-  evidencias             EvidenciaDeploy[]
-  presencas              PresencaIssueVersao[]
-  itensAvaliados         HomologacaoItem[]
-  eventos                EventoTimeline[]
-  solicitacoesResolvidas SolicitacaoDeCorrecao[]
+  id                      String                   @id @default(uuid())
+  projetoId               String
+  repositorioId           String
+  commitSha               String
+  rotulo                  String
+  criadaEm                DateTime                 @default(now())
+  projeto                 Projeto                  @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio             RepositorioGitHub        @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  evidencias              EvidenciaDeploy[]
+  presencas               PresencaIssueVersao[]
+  itensAvaliados          HomologacaoItem[]
+  eventos                 EventoTimeline[]
+  solicitacoesResolvidas  SolicitacaoDeCorrecao[]
+  composicoesDePublicacao ComposicaoDePublicacao[]
+  autorizacoesProd        AutorizacaoProd[]
+  verificacoesProd        VerificacaoProd[]
+  divergencias            DivergenciaDeDeploy[]
 
   @@unique([repositorioId, commitSha])
   @@index([projetoId])
@@ -353,19 +365,20 @@ model Versao {
 
 // Só inserção (invariante 4).
 model EvidenciaDeploy {
-  id           String            @id @default(uuid())
+  id           String               @id @default(uuid())
   ambienteId   String
   versaoId     String
   origem       OrigemEvidencia
   situacao     SituacaoEvidencia
   ocorridaEm   DateTime
-  registradaEm DateTime          @default(now())
+  registradaEm DateTime             @default(now())
   autorId      String?
   idExterno    String?
   detalhe      String?
-  ambiente     Ambiente          @relation(fields: [ambienteId], references: [id], onDelete: Restrict)
-  versao       Versao            @relation(fields: [versaoId], references: [id], onDelete: Restrict)
-  autor        Usuario?          @relation(fields: [autorId], references: [id], onDelete: Restrict)
+  ambiente     Ambiente             @relation(fields: [ambienteId], references: [id], onDelete: Restrict)
+  versao       Versao               @relation(fields: [versaoId], references: [id], onDelete: Restrict)
+  autor        Usuario?             @relation(fields: [autorId], references: [id], onDelete: Restrict)
+  divergencia  DivergenciaDeDeploy?
 
   @@unique([origem, idExterno])
   @@index([ambienteId, ocorridaEm])
@@ -556,4 +569,112 @@ model TarefaGitHub {
 
   @@index([estado, proximaTentativaEm])
   @@index([solicitacaoId])
+}
+
+enum EstadoComposicao {
+  IDENTIFICADA
+  INCERTA
+}
+
+enum OrigemDaBase {
+  AUTORIZACAO
+  EVIDENCIA_PROD
+  SEM_BASE
+}
+
+enum SituacaoItemAutorizacao {
+  QA_APROVADO
+  REAPROVEITADO
+  VERIFICADO_POR_HUMANO
+}
+
+// Atualizada no lugar pelo worker; a autorização guarda o retrato dos itens (composicaoAutorizada).
+model ComposicaoDePublicacao {
+  id                   String            @id @default(uuid())
+  projetoId            String
+  repositorioId        String
+  versaoAlvoId         String
+  commitBase           String
+  commitAlvo           String
+  origemDaBase         OrigemDaBase
+  hashComposicao       String
+  estado               EstadoComposicao
+  itens                Json
+  aprovacoesAnteriores Json              @default("[]")
+  calculadaEm          DateTime
+  projeto              Projeto           @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio          RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  versaoAlvo           Versao            @relation(fields: [versaoAlvoId], references: [id], onDelete: Restrict)
+  autorizacoes         AutorizacaoProd[]
+
+  @@unique([versaoAlvoId, commitBase])
+  @@index([repositorioId, calculadaEm])
+}
+
+// Auditoria (invariante 4): nunca apagada; a revogação só marca revogadaEm.
+model AutorizacaoProd {
+  id                   String                 @id @default(uuid())
+  projetoId            String
+  repositorioId        String
+  versaoAlvoId         String
+  composicaoId         String
+  commitBase           String
+  hashComposicao       String
+  autorId              String
+  justificativa        String?
+  composicaoAutorizada Json
+  criadaEm             DateTime               @default(now())
+  revogadaEm           DateTime?
+  motivoRevogacao      String?
+  projeto              Projeto                @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio          RepositorioGitHub      @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  composicao           ComposicaoDePublicacao @relation(fields: [composicaoId], references: [id], onDelete: Restrict)
+  versaoAlvo           Versao                 @relation(fields: [versaoAlvoId], references: [id], onDelete: Restrict)
+  autor                Usuario                @relation(fields: [autorId], references: [id], onDelete: Restrict)
+  itens                AutorizacaoItem[]
+
+  @@index([composicaoId])
+  @@index([repositorioId, criadaEm])
+  @@index([versaoAlvoId])
+}
+
+model AutorizacaoItem {
+  autorizacaoId String
+  issueId       String
+  situacao      SituacaoItemAutorizacao
+  autorizacao   AutorizacaoProd         @relation(fields: [autorizacaoId], references: [id], onDelete: Restrict)
+  issue         IssueGitHub             @relation(fields: [issueId], references: [id], onDelete: Restrict)
+
+  @@id([autorizacaoId, issueId])
+  @@index([issueId])
+}
+
+// Só inserção (invariante 4); várias verificações por versão são permitidas.
+model VerificacaoProd {
+  id         String          @id @default(uuid())
+  versaoId   String
+  origem     OrigemEvidencia
+  autorId    String?
+  observacao String?
+  criadaEm   DateTime        @default(now())
+  versao     Versao          @relation(fields: [versaoId], references: [id], onDelete: Restrict)
+  autor      Usuario?        @relation(fields: [autorId], references: [id], onDelete: Restrict)
+
+  @@index([versaoId, criadaEm])
+}
+
+// Nunca apagada (invariante 7): reconhecer não autoriza, autorizar depois não a remove.
+model DivergenciaDeDeploy {
+  id               String          @id @default(uuid())
+  evidenciaId      String          @unique
+  versaoId         String
+  detectadaEm      DateTime
+  reconhecidaPorId String?
+  reconhecidaEm    DateTime?
+  evidencia        EvidenciaDeploy @relation(fields: [evidenciaId], references: [id], onDelete: Restrict)
+  versao           Versao          @relation(fields: [versaoId], references: [id], onDelete: Restrict)
+  reconhecidaPor   Usuario?        @relation(fields: [reconhecidaPorId], references: [id], onDelete: Restrict)
+
+  @@index([reconhecidaEm, detectadaEm])
+  @@index([versaoId])
 }
