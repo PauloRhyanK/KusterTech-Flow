@@ -1295,6 +1295,12 @@ export async function limparCenarioDaVisaoGeral(projectName: string): Promise<vo
     where: { OR: [{ projetoId: { in: projetosIds } }, { cliente: doCenario }] },
   })
   await db.projeto.deleteMany({ where: { id: { in: projetosIds } } })
+  // Projetos de outros arquivos continuam ativos e sem configuração; como cada grupo da Visão Geral
+  // mostra só 5 pendências, eles empurrariam o Projeto Q para fora do grupo "configuracao".
+  await db.projeto.updateMany({
+    where: { nome: { startsWith: 'E2E ' }, arquivadoEm: null },
+    data: { arquivadoEm: new Date() },
+  })
   await db.usuario.deleteMany({
     where: { email: { startsWith: PREFIXO_DE_EMAIL_DA_VISAO_GERAL, endsWith: '@local.test' } },
   })
