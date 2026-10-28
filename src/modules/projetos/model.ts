@@ -146,6 +146,7 @@ export function abasDoContexto(projetoId: string, contexto: Contexto): readonly 
       { rotulo: 'Resumo', href: `/projetos/${projetoId}`, disponivel: true },
       { rotulo: 'Entregas', href: `/projetos/${projetoId}/entregas`, disponivel: true },
       { rotulo: 'Homologação', href: `/projetos/${projetoId}/homologacao`, disponivel: true },
+      { rotulo: 'Publicações', href: `/projetos/${projetoId}/publicacoes`, disponivel: true },
       { rotulo: 'Saúde e Erros', href: `/projetos/${projetoId}/saude`, disponivel: false },
       { rotulo: 'Recursos', href: `/projetos/${projetoId}/recursos`, disponivel: false },
     ]
