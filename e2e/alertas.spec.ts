@@ -43,10 +43,14 @@ test('admin registra alerta manual para um recurso, vê na fila e no recurso o m
 
   await page.goto('/infraestrutura/alertas')
   await expect(page.getByRole('heading', { level: 1, name: 'Alertas' })).toBeVisible()
-  await page.getByLabel('Título').fill(titulo)
-  await page.getByLabel('Severidade').selectOption('ALTA')
-  await page.getByLabel('Recurso').selectOption({ label: recurso.nome })
-  await page.getByRole('button', { name: 'Registrar alerta' }).click()
+  // O filtro da fila também tem "Severidade": os campos do cadastro são buscados no próprio formulário.
+  const cadastro = page.locator('form', {
+    has: page.getByRole('button', { name: 'Registrar alerta' }),
+  })
+  await cadastro.getByLabel('Título').fill(titulo)
+  await cadastro.getByLabel('Severidade').selectOption('ALTA')
+  await cadastro.getByLabel('Recurso').selectOption({ label: recurso.nome })
+  await cadastro.getByRole('button', { name: 'Registrar alerta' }).click()
   await expect(page.getByText('Alerta registrado.')).toBeVisible()
 
   const fila = page.getByRole('list', { name: 'Fila de alertas' })
