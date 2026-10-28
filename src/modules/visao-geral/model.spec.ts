@@ -4,6 +4,8 @@ import { formatarDataHora } from '@/lib/data'
 import type { ItemChecklist } from '@/modules/projetos/model'
 import {
   agruparHomologacoes,
+  indicadoresDeInfraestrutura,
+  indicadoresDeProjetos,
   LIMITE_EXPANDIDO,
   LIMITE_POR_GRUPO,
   lerGrupoExpandido,
@@ -17,6 +19,8 @@ import {
   priorizarPendencias,
   tiposDePendenciaVisiveis,
   TITULOS_DOS_GRUPOS,
+  type DadosDoResumoDeInfraestrutura,
+  type DadosDoResumoDeProjetos,
   type EntradaDePendencias,
   type LinhaDeHomologacao,
   type Pendencia,
@@ -515,6 +519,175 @@ describe('invariante 9', () => {
     expect(presentes).toHaveLength(todas.length)
     for (const p of presentes) {
       expect(p.estado.tom).not.toBe('sucesso')
+    }
+  })
+})
+
+const PROJETOS_BASE: DadosDoResumoDeProjetos = {
+  escopo: 'global',
+  projetosAtivos: 4,
+  configuracaoIncompleta: 1,
+  milestonesAtivas: 2,
+  homologacoesEmAndamento: 3,
+  github: {
+    configurada: true,
+    vinculados: 3,
+    semDadosRecentes: 0,
+    indisponiveis: 1,
+    sincronizacaoMaisAntiga: new Date('2026-10-26T11:40:00Z'),
+  },
+}
+
+const INFRA_BASE: DadosDoResumoDeInfraestrutura = {
+  recursosPorTipo: {},
+  alertasAtivos: 0,
+  alertasCriticos: 0,
+  alertasReconhecidos: 0,
+  fontesDeAlertas: 1,
+  alertasJaRegistrados: 0,
+}
+
+function porRotulo(indicadores: readonly { rotulo: string }[], rotulo: string) {
+  const achado = indicadores.find((i) => i.rotulo === rotulo)
+  if (!achado) throw new Error(`indicador ausente: ${rotulo}`)
+  return achado as (typeof indicadores)[number] & {
+    valor: string
+    detalhe: string
+    semDados: boolean
+  }
+}
+
+describe('indicadores dos resumos', () => {
+  test('indicadoresDeProjetos: GitHub não configurado → "Sem dados" e semDados true; 3 vinculados, 1 indisponível → "3 repositórios" e "1 indisponível"; escopo cliente → só dois indicadores', () => {
+    const naoConfigurado = indicadoresDeProjetos({
+      ...PROJETOS_BASE,
+      github: {
+        configurada: false,
+        vinculados: 0,
+        semDadosRecentes: 0,
+        indisponiveis: 0,
+        sincronizacaoMaisAntiga: null,
+      },
+    })
+    expect(porRotulo(naoConfigurado, 'GitHub')).toMatchObject({
+      valor: 'Sem dados',
+      detalhe: 'A GitHub App da Central ainda não está configurada.',
+      semDados: true,
+    })
+
+    const comProblema = indicadoresDeProjetos(PROJETOS_BASE)
+    expect(porRotulo(comProblema, 'GitHub')).toMatchObject({
+      valor: '3 repositórios',
+      detalhe: '1 indisponível',
+      semDados: false,
+    })
+    expect(porRotulo(comProblema, 'Projetos ativos').valor).toBe('4')
+    expect(porRotulo(comProblema, 'Configuração incompleta').detalhe).toBe(
+      'projetos com itens pendentes no checklist',
+    )
+
+    const semProblema = indicadoresDeProjetos({
+      ...PROJETOS_BASE,
+      github: { ...PROJETOS_BASE.github!, indisponiveis: 0 },
+    })
+    expect(porRotulo(semProblema, 'GitHub').detalhe).toBe(
+      `Sincronização mais antiga: ${formatarDataHora(new Date('2026-10-26T11:40:00Z'))}`,
+    )
+
+    const doisProblemas = indicadoresDeProjetos({
+      ...PROJETOS_BASE,
+      github: { ...PROJETOS_BASE.github!, semDadosRecentes: 1, indisponiveis: 2 },
+    })
+    expect(porRotulo(doisProblemas, 'GitHub').detalhe).toBe(
+      '1 sem dados recentes · 2 indisponíveis',
+    )
+
+    const vazio = indicadoresDeProjetos({
+      ...PROJETOS_BASE,
+      projetosAtivos: 0,
+      github: { ...PROJETOS_BASE.github!, vinculados: 0, indisponiveis: 0 },
+    })
+    expect(porRotulo(vazio, 'Projetos ativos')).toMatchObject({
+      valor: '0',
+      detalhe: 'Nenhum projeto cadastrado.',
+    })
+    expect(porRotulo(vazio, 'GitHub')).toMatchObject({
+      valor: '0 repositórios',
+      detalhe: 'Nenhum repositório vinculado.',
+    })
+
+    const cliente = indicadoresDeProjetos({
+      escopo: 'cliente',
+      projetosAtivos: 1,
+      configuracaoIncompleta: null,
+      milestonesAtivas: null,
+      homologacoesEmAndamento: 1,
+      github: null,
+    })
+    expect(cliente.map((i) => i.rotulo)).toEqual([
+      'Projetos dos seus clientes',
+      'Homologações em andamento',
+    ])
+  })
+
+  test('indicadoresDeInfraestrutura: {SERVIDOR: 2, CONTAINER: 1} → "3" e "2 servidores · 1 container"; sem fonte e sem alertas → "Sem dados"; com fonte e 0 ativos → "0" e "Nenhum alerta ativo nas fontes configuradas."; Saúde dos recursos sempre "Sem dados"', () => {
+    const base = indicadoresDeInfraestrutura({
+      ...INFRA_BASE,
+      recursosPorTipo: { SERVIDOR: 2, CONTAINER: 1 },
+    })
+    expect(porRotulo(base, 'Recursos')).toMatchObject({
+      valor: '3',
+      detalhe: '2 servidores · 1 container',
+    })
+    expect(porRotulo(base, 'Alertas ativos')).toMatchObject({
+      valor: '0',
+      detalhe: 'Nenhum alerta ativo nas fontes configuradas.',
+      semDados: false,
+    })
+
+    const semFonte = indicadoresDeInfraestrutura({ ...INFRA_BASE, fontesDeAlertas: 0 })
+    expect(porRotulo(semFonte, 'Alertas ativos')).toMatchObject({
+      valor: 'Sem dados',
+      detalhe: 'Nenhuma fonte de alertas configurada.',
+      semDados: true,
+    })
+    expect(porRotulo(semFonte, 'Recursos')).toMatchObject({
+      valor: '0',
+      detalhe: 'Nenhum recurso cadastrado.',
+    })
+
+    const comAlertas = indicadoresDeInfraestrutura({
+      ...INFRA_BASE,
+      fontesDeAlertas: 0,
+      alertasJaRegistrados: 4,
+      alertasAtivos: 2,
+      alertasCriticos: 1,
+      alertasReconhecidos: 1,
+    })
+    expect(porRotulo(comAlertas, 'Alertas ativos')).toMatchObject({
+      valor: '2',
+      detalhe: '1 crítico · 1 reconhecido ainda ativo na origem',
+      semDados: false,
+    })
+
+    const plurais = indicadoresDeInfraestrutura({
+      ...INFRA_BASE,
+      recursosPorTipo: { BANCO: 2, STORAGE: 3, OUTRO: 1 },
+      alertasAtivos: 5,
+      alertasCriticos: 2,
+      alertasReconhecidos: 3,
+    })
+    expect(porRotulo(plurais, 'Recursos').detalhe).toBe('2 bancos · 3 storages · 1 outro')
+    expect(porRotulo(plurais, 'Alertas ativos').detalhe).toBe(
+      '2 críticos · 3 reconhecidos ainda ativos na origem',
+    )
+
+    for (const indicadores of [base, semFonte, comAlertas, plurais]) {
+      expect(porRotulo(indicadores, 'Saúde dos recursos')).toMatchObject({
+        valor: 'Sem dados',
+        detalhe: 'A Central ainda não recebe métricas; consulte o Beszel de cada recurso.',
+        semDados: true,
+      })
     }
   })
 })

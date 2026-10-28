@@ -447,9 +447,13 @@ export async function listarFontesDeAlertas(sujeito: Sujeito): Promise<
 
 export interface ResumoDeInfraestrutura {
   recursos: number
+  recursosPorTipo: Partial<Record<TipoRecurso, number>>
   recursosComAlerta: number
   alertasAtivos: number
+  alertasCriticos: number
   alertasReconhecidos: number
+  fontesDeAlertas: number
+  alertasJaRegistrados: number
 }
 
 export async function obterResumoDeInfraestrutura(
@@ -457,13 +461,39 @@ export async function obterResumoDeInfraestrutura(
 ): Promise<ResumoDeInfraestrutura> {
   exigirPermissao(sujeito, 'infraestrutura.ler')
 
-  const [recursos, recursosComAlerta, alertasAtivos, alertasReconhecidos] = await Promise.all([
-    db.recurso.count({ where: { arquivadoEm: null } }),
+  const [
+    porTipo,
+    recursosComAlerta,
+    alertasAtivos,
+    alertasCriticos,
+    alertasReconhecidos,
+    fontesDeAlertas,
+    alertasJaRegistrados,
+  ] = await Promise.all([
+    db.recurso.groupBy({ by: ['tipo'], where: { arquivadoEm: null }, _count: { _all: true } }),
     db.recurso.count({ where: { arquivadoEm: null, alertas: { some: NAO_RESOLVIDO } } }),
     db.alerta.count({ where: { estado: 'ATIVO' } }),
+    db.alerta.count({ where: { estado: 'ATIVO', severidade: 'CRITICA' } }),
     db.alerta.count({ where: { estado: 'RECONHECIDO' } }),
+    db.fonteDeAlertas.count({ where: { revogadaEm: null } }),
+    db.alerta.count(),
   ])
-  return { recursos, recursosComAlerta, alertasAtivos, alertasReconhecidos }
+  const recursosPorTipo: Partial<Record<TipoRecurso, number>> = {}
+  let recursos = 0
+  for (const linha of porTipo) {
+    recursosPorTipo[linha.tipo] = linha._count._all
+    recursos += linha._count._all
+  }
+  return {
+    recursos,
+    recursosPorTipo,
+    recursosComAlerta,
+    alertasAtivos,
+    alertasCriticos,
+    alertasReconhecidos,
+    fontesDeAlertas,
+    alertasJaRegistrados,
+  }
 }
 
 async function exigirProjeto(projetoId: string): Promise<void> {

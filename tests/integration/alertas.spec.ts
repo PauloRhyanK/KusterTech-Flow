@@ -328,9 +328,13 @@ describe('alertas (integração)', () => {
     const resumo = await obterResumoDeInfraestrutura(admin)
     expect(resumo).toEqual({
       recursos: 1,
+      recursosPorTipo: { SERVIDOR: 1 },
       recursosComAlerta: 1,
       alertasAtivos: 0,
+      alertasCriticos: 0,
       alertasReconhecidos: 1,
+      fontesDeAlertas: 0,
+      alertasJaRegistrados: 1,
     })
     expect((await listarAlertasNaoResolvidos(admin, 5)).map((a) => a.id)).toEqual([id])
   })
