@@ -120,7 +120,7 @@ describe('JWT da App', () => {
       'GET /installation/repositories': { corpo: repositorios },
     })
     const repos = await fonte.listarRepositorios()
-    expect(repos).toHaveLength(4)
+    expect(repos).toHaveLength(6)
     expect(repos[0]).toMatchObject({
       instalacaoId: BigInt(900001),
       nomeCompleto: 'kustertech-exemplo/portal',
@@ -416,6 +416,88 @@ describe('deployments e comparação de commits', () => {
       expect((erro as ErroDeIntegracao).categoria).toBe(categoria)
       expect((erro as Error).message).not.toContain(TOKEN)
     }
+  })
+})
+
+describe('lerArquivo', () => {
+  const ARQUIVO = 'GET /repos/kustertech-exemplo/automacao/contents/.seeds/issues.jsonl'
+  const automacao: RefRepositorio = {
+    githubId: BigInt(5005),
+    instalacaoId: BigInt(900001),
+    nomeCompleto: 'kustertech-exemplo/automacao',
+  }
+  function criarComTexto(status: number, texto: string, cabecalhos?: Record<string, string>) {
+    const chamadas: Chamada[] = []
+    const fetchFalso = (async (entrada: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(entrada))
+      const metodo = init?.method ?? 'GET'
+      chamadas.push({
+        url,
+        metodo,
+        cabecalhos: init?.headers as Record<string, string>,
+      })
+      if (`${metodo} ${url.pathname}` === TOKEN_PATH) {
+        return json({ status: 201, corpo: { token: TOKEN, expires_at: '2026-10-26T16:00:00Z' } })
+      }
+      return new Response(texto, { status, headers: cabecalhos })
+    }) as typeof fetch
+    const fonte = criarFonteApp(
+      { appId: '123456', chavePrivada: privateKey, apiUrl: API },
+      fetchFalso,
+      () => AGORA,
+    )
+    return { fonte, chamadas }
+  }
+
+  test('lerArquivo: GET /repos/kustertech-exemplo/automacao/contents/.seeds/issues.jsonl com Accept raw e token de instalação; 200 → texto', async () => {
+    const texto = '{"id":"EXEM-a001"}\n{"id":"EXEM-a002"}\n'
+    const { fonte, chamadas } = criarComTexto(200, texto)
+    expect(await fonte.lerArquivo(automacao, '.seeds/issues.jsonl')).toBe(texto)
+    const chamada = chamadas.at(-1)!
+    expect(`${chamada.metodo} ${chamada.url.pathname}`).toBe(ARQUIVO)
+    expect(chamada.url.searchParams.has('ref')).toBe(false)
+    expect(chamada.cabecalhos.Accept).toBe('application/vnd.github.raw+json')
+    expect(chamada.cabecalhos.Authorization).toBe(`Bearer ${TOKEN}`)
+    expect(chamada.cabecalhos['X-GitHub-Api-Version']).toBe('2022-11-28')
+  })
+
+  test('lerArquivo: 404 → null; content-length 2_000_001 → resposta-invalida; caminho com ".." lança sem chamar fetch; mensagem sem o conteúdo', async () => {
+    expect(
+      await criarComTexto(404, '{"message":"Not Found"}').fonte.lerArquivo(
+        automacao,
+        '.seeds/issues.jsonl',
+      ),
+    ).toBeNull()
+
+    const grande = criarComTexto(200, 'x', { 'content-length': '2000001' })
+    const e1 = await grande.fonte
+      .lerArquivo(automacao, '.seeds/issues.jsonl')
+      .catch((e: unknown) => e)
+    expect(e1).toBeInstanceOf(ErroDeIntegracao)
+    expect((e1 as ErroDeIntegracao).categoria).toBe('resposta-invalida')
+
+    const enorme = criarComTexto(200, 'x'.repeat(2_000_001))
+    const e2 = await enorme.fonte
+      .lerArquivo(automacao, '.seeds/issues.jsonl')
+      .catch((e: unknown) => e)
+    expect((e2 as ErroDeIntegracao).categoria).toBe('resposta-invalida')
+    expect((e2 as Error).message).not.toContain('xxxx')
+
+    for (const caminho of ['../segredo', '.seeds/../x', 'a b', '', 'a?b=1', '/'.repeat(201)]) {
+      const { fonte, chamadas } = criarComTexto(200, 'ok')
+      const e = await fonte.lerArquivo(automacao, caminho).catch((x: unknown) => x)
+      expect(e).toBeInstanceOf(ErroDeIntegracao)
+      expect((e as ErroDeIntegracao).categoria).toBe('resposta-invalida')
+      expect(chamadas).toHaveLength(0)
+    }
+
+    const falha = criarComTexto(401, `corpo secreto ${TOKEN}`)
+    const e3 = await falha.fonte
+      .lerArquivo(automacao, '.seeds/issues.jsonl')
+      .catch((x: unknown) => x)
+    expect((e3 as ErroDeIntegracao).categoria).toBe('autenticacao')
+    expect((e3 as Error).message).not.toContain(TOKEN)
+    expect((e3 as Error).message).not.toContain('corpo secreto')
   })
 })
 

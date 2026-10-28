@@ -9,6 +9,7 @@ import {
   mapearIssueCriada,
   mapearPullRequest,
   mapearRepositorio,
+  TAMANHO_MAXIMO_ARQUIVO,
   type ComparacaoDaFonte,
   type DeploymentDaFonte,
   type FonteGitHub,
@@ -300,6 +301,47 @@ export function criarFonteApp(
       // 404 do compare é commit que o GitHub não conhece, não perda de acesso ao repositório.
       const { corpo } = await chamar('GET', `${apiUrl}${caminho}`, token, 'commit-desconhecido')
       return mapearComparacao(corpo)
+    },
+
+    async lerArquivo(repo, caminho): Promise<string | null> {
+      if (!/^[A-Za-z0-9._/-]{1,200}$/.test(caminho) || caminho.split('/').includes('..')) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const segmentos = caminho.split('/').map(encodeURIComponent).join('/')
+      let resposta: Response
+      try {
+        resposta = await fetchImpl(`${apiUrl}${caminhoDoRepo(repo)}/contents/${segmentos}`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/vnd.github.raw+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            Authorization: `Bearer ${token}`,
+          },
+        })
+      } catch {
+        throw new ErroDeIntegracao('rede')
+      }
+      if (resposta.status === 404) {
+        return null
+      }
+      if (!resposta.ok) {
+        throw falhaDe(resposta)
+      }
+      const tamanho = Number(resposta.headers.get('content-length'))
+      if (resposta.headers.get('content-length') !== null && tamanho > TAMANHO_MAXIMO_ARQUIVO) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      let texto: string
+      try {
+        texto = await resposta.text()
+      } catch {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      if (texto.length > TAMANHO_MAXIMO_ARQUIVO) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      return texto
     },
 
     async reabrirIssue(repo, numero): Promise<IssueDaFonte> {

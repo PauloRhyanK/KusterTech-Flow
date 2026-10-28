@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { ErroDeIntegracao } from './erros'
 import type { FonteGitHub } from './fonte'
-import { repositorioDevido, resumirChecks, resumirErroParaLog } from './model'
+import { limitarCorpo, repositorioDevido, resumirChecks, resumirErroParaLog } from './model'
 
 const ID_INTEGRACAO = 'github'
 
@@ -98,7 +98,14 @@ export async function sincronizarRepositorio(
 
   try {
     const issues = await fonte.listarIssuesAtualizadas(ref, repo.cursorIssues)
-    const prs = await fonte.listarPullRequestsAtualizados(ref, repo.cursorPullRequests)
+    // PR espelhado antes do +9 tem `corpo` nulo: relê os PRs desde o início para preenchê-lo.
+    const semCorpo = await db.pullRequestGitHub.count({
+      where: { repositorioId: repo.id, corpo: null },
+    })
+    const prs = await fonte.listarPullRequestsAtualizados(
+      ref,
+      semCorpo > 0 ? null : repo.cursorPullRequests,
+    )
 
     const abertos = await db.pullRequestGitHub.findMany({
       where: { repositorioId: repo.id, estado: 'ABERTO' },
@@ -149,6 +156,8 @@ export async function sincronizarRepositorio(
           atualizadoNoGitHub: p.atualizadoEm,
           mergeadoNoGitHub: p.mergeadoEm,
           shaMerge: p.shaMerge,
+          corpo: limitarCorpo(p.corpo),
+          criadoNoGitHub: p.criadoEm,
           sincronizadoEm: agora,
         }
         await tx.pullRequestGitHub.upsert({

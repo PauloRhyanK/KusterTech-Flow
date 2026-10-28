@@ -5,15 +5,17 @@ import { resumirChecks } from './model'
 describe('fonte de fixtures', () => {
   const fonte = criarFonteFixtures()
 
-  test('quatro repositórios; issues do portal sem PRs; desde no futuro devolve []', async () => {
+  test('seis repositórios; issues do portal sem PRs; desde no futuro devolve []', async () => {
     const repos = await fonte.listarRepositorios()
     expect(repos.map((r) => r.nomeCompleto)).toEqual([
       'kustertech-exemplo/portal',
       'kustertech-exemplo/api',
       'kustertech-exemplo/site',
       'kustertech-exemplo/app-mobile',
+      'kustertech-exemplo/automacao',
+      'kustertech-exemplo/automacao-mobile',
     ])
-    expect(new Set(repos.map((r) => r.githubId)).size).toBe(4)
+    expect(new Set(repos.map((r) => r.githubId)).size).toBe(6)
     const portal = repos[0]!
     const issues = await fonte.listarIssuesAtualizadas(portal, null)
     expect(issues).toHaveLength(4)
@@ -24,7 +26,7 @@ describe('fonte de fixtures', () => {
   })
 
   test('githubId de issues e PRs é único entre repositórios; PRs e checks coerentes', async () => {
-    const repos = await fonte.listarRepositorios()
+    const repos = (await fonte.listarRepositorios()).slice(0, 4)
     const ids = new Set<bigint>()
     for (const repo of repos) {
       for (const i of await fonte.listarIssuesAtualizadas(repo, null)) ids.add(i.githubId)
@@ -40,13 +42,85 @@ describe('fonte de fixtures', () => {
     expect(ids.size).toBe(4 * (4 + 2))
   })
 
+  test('automacao: lerArquivo(".seeds/issues.jsonl") tem 6 linhas não vazias e plans.jsonl 1; portal → null; repositório desconhecido → sem-acesso', async () => {
+    const repos = await fonte.listarRepositorios()
+    const linhas = (t: string | null) => (t ?? '').split('\n').filter((l) => l.trim() !== '')
+    for (const nome of ['automacao', 'automacao-mobile']) {
+      const repo = repos.find((r) => r.nomeCompleto === `kustertech-exemplo/${nome}`)!
+      expect(linhas(await fonte.lerArquivo(repo, '.seeds/issues.jsonl'))).toHaveLength(6)
+      expect(linhas(await fonte.lerArquivo(repo, '.seeds/plans.jsonl'))).toHaveLength(1)
+      expect(await fonte.lerArquivo(repo, '.seeds/inexistente.jsonl')).toBeNull()
+    }
+    expect(await fonte.lerArquivo(repos[0]!, '.seeds/issues.jsonl')).toBeNull()
+    await expect(
+      fonte.lerArquivo(
+        { githubId: BigInt(1), instalacaoId: BigInt(1), nomeCompleto: 'outro/desconhecido' },
+        '.seeds/issues.jsonl',
+      ),
+    ).rejects.toMatchObject({ categoria: 'sem-acesso' })
+  })
+
+  test('automacao e automacao-mobile: 2 issues (1 aberta) e 3 PRs cada; PR #3 autor warren-forge-exemplo[bot] e issuesReferenciadas [1]; checks #3 FALHA, #4 SUCESSO, #5 SEM_CHECKS; githubIds únicos nos 6 repositórios (24 + 10 = 34)', async () => {
+    const repos = await fonte.listarRepositorios()
+    const ids = new Set<bigint>()
+    let total = 0
+    for (const repo of repos) {
+      const issues = await fonte.listarIssuesAtualizadas(repo, null)
+      const prs = await fonte.listarPullRequestsAtualizados(repo, null)
+      for (const i of issues) ids.add(i.githubId)
+      for (const p of prs) ids.add(p.githubId)
+      total += issues.length + prs.length
+    }
+    expect(ids.size).toBe(34)
+    expect(total).toBe(34)
+
+    for (const [nome, prefixo, runs] of [
+      ['automacao', '5', ['run_exemplo0001', 'run_exemplo0002', 'run_exemplo0009']],
+      ['automacao-mobile', '6', ['run_exemplo1001', 'run_exemplo1002', 'run_exemplo1009']],
+    ] as const) {
+      const repo = repos.find((r) => r.nomeCompleto === `kustertech-exemplo/${nome}`)!
+      const issues = await fonte.listarIssuesAtualizadas(repo, null)
+      expect(issues).toHaveLength(2)
+      expect(issues.filter((i) => i.estado === 'ABERTA')).toHaveLength(1)
+      const prs = (await fonte.listarPullRequestsAtualizados(repo, null)).sort(
+        (a, b) => a.numero - b.numero,
+      )
+      expect(prs.map((p) => p.numero)).toEqual([3, 4, 5])
+      expect(prs.map((p) => p.branch)).toEqual(runs.map((r) => `warren/${r}`))
+      expect(prs[0]).toMatchObject({
+        autor: 'warren-forge-exemplo[bot]',
+        issuesReferenciadas: [issues.find((i) => i.estado === 'ABERTA')!.numero],
+        estado: 'ABERTO',
+        shaHead: prefixo + 'a'.repeat(39),
+      })
+      expect(prs[0]!.corpo).toContain('## Prompt')
+      expect(prs[1]).toMatchObject({ estado: 'MERGEADO', shaHead: prefixo + 'b'.repeat(39) })
+      expect(prs[2]).toMatchObject({ autor: 'exemplo-bia', estado: 'ABERTO' })
+      const resumos = await Promise.all(
+        prs.map(async (p) => resumirChecks(await fonte.listarChecks(repo, p.shaHead))),
+      )
+      expect(resumos).toEqual(['FALHA', 'SUCESSO', 'SEM_CHECKS'])
+      expect(prs.every((p) => p.criadoEm instanceof Date)).toBe(true)
+    }
+  })
+
+  test('automacao e automacao-mobile: listarDeployments → [] e compararCommits → commit-desconhecido', async () => {
+    const repos = await fonte.listarRepositorios()
+    for (const repo of repos.slice(4)) {
+      expect(await fonte.listarDeployments(repo, null)).toEqual([])
+      await expect(
+        fonte.compararCommits(repo, '5'.repeat(40), '6'.repeat(40)),
+      ).rejects.toMatchObject({ categoria: 'commit-desconhecido' })
+    }
+  })
+
   test('sha desconhecido → sem checks', async () => {
     const [repo] = await fonte.listarRepositorios()
     expect(await fonte.listarChecks(repo!, 'f'.repeat(40))).toEqual([])
   })
 
   test('listarDeployments: 7 por repositório; desde 2026-10-16T11:00:00Z → 4; compararCommits(portal, M, V1/V2/V3) → behind/ahead/diverged; par desconhecido → commit-desconhecido', async () => {
-    const repos = await fonte.listarRepositorios()
+    const repos = (await fonte.listarRepositorios()).slice(0, 4)
     for (const repo of repos) {
       expect(await fonte.listarDeployments(repo, null)).toHaveLength(7)
       expect(await fonte.listarDeployments(repo, new Date('2026-10-16T11:00:00Z'))).toHaveLength(4)
@@ -135,7 +209,7 @@ describe('fonte de fixtures', () => {
   })
 
   test('PR #5 dos quatro repositórios tem shaMerge n+"c"×39; PR #6 tem null', async () => {
-    const repos = await fonte.listarRepositorios()
+    const repos = (await fonte.listarRepositorios()).slice(0, 4)
     for (const [i, repo] of repos.entries()) {
       const prs = await fonte.listarPullRequestsAtualizados(repo, null)
       expect(prs.find((p) => p.numero === 5)?.shaMerge).toBe(String(i + 1) + 'c'.repeat(39))

@@ -143,7 +143,7 @@ describe('repositórios do projeto (integração)', () => {
     let lido = await obterRepositoriosDoProjeto(admin, p1)
     expect(lido.situacao.estadoDoProjeto).toBe('nao-configurada')
     expect(lido.situacao.configurada).toBe(true)
-    expect(lido.disponiveis).toHaveLength(4)
+    expect(lido.disponiveis).toHaveLength(6)
     expect((await obterProjetoParaResumo(admin, p1, null)).contagens.repositorios).toBe(0)
 
     await vincularRepositorio(admin, p1, portal.id)

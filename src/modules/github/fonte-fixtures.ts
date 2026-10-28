@@ -36,6 +36,21 @@ import pulls_app_mobile from './fixtures/kustertech-exemplo__app-mobile/pulls.js
 import deployments_app_mobile from './fixtures/kustertech-exemplo__app-mobile/deployments.json'
 import statuses_app_mobile from './fixtures/kustertech-exemplo__app-mobile/deployment-statuses.json'
 import comparacoes_app_mobile from './fixtures/kustertech-exemplo__app-mobile/comparacoes.json'
+import checks5a from './fixtures/checks/5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
+import checks5b from './fixtures/checks/5bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
+import checks6a from './fixtures/checks/6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
+import checks6b from './fixtures/checks/6bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
+import issues_automacao from './fixtures/kustertech-exemplo__automacao/issues.json'
+import pulls_automacao from './fixtures/kustertech-exemplo__automacao/pulls.json'
+import deployments_automacao from './fixtures/kustertech-exemplo__automacao/deployments.json'
+import statuses_automacao from './fixtures/kustertech-exemplo__automacao/deployment-statuses.json'
+import comparacoes_automacao from './fixtures/kustertech-exemplo__automacao/comparacoes.json'
+import issues_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/issues.json'
+import pulls_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/pulls.json'
+import deployments_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/deployments.json'
+import statuses_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/deployment-statuses.json'
+import comparacoes_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/comparacoes.json'
+import { ARQUIVOS } from './fixtures/arquivos'
 import instalacoes from './fixtures/instalacoes.json'
 import repositorios from './fixtures/repositorios.json'
 
@@ -76,6 +91,20 @@ const POR_REPOSITORIO: Record<string, DadosDoRepositorio> = {
     statuses: statuses_app_mobile,
     comparacoes: comparacoes_app_mobile,
   },
+  'kustertech-exemplo/automacao': {
+    issues: issues_automacao,
+    pulls: pulls_automacao,
+    deployments: deployments_automacao,
+    statuses: statuses_automacao,
+    comparacoes: comparacoes_automacao,
+  },
+  'kustertech-exemplo/automacao-mobile': {
+    issues: issues_automacao_mobile,
+    pulls: pulls_automacao_mobile,
+    deployments: deployments_automacao_mobile,
+    statuses: statuses_automacao_mobile,
+    comparacoes: comparacoes_automacao_mobile,
+  },
 }
 
 const CHECKS_POR_SHA: Record<string, { check_runs: unknown[] }> = {
@@ -87,6 +116,10 @@ const CHECKS_POR_SHA: Record<string, { check_runs: unknown[] }> = {
   '3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks3b,
   '4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks4a,
   '4bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks4b,
+  '5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks5a,
+  '5bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks5b,
+  '6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': checks6a,
+  '6bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': checks6b,
 }
 
 function desdeFiltro<T extends { updated_at: string }>(itens: T[], desde: Date | null): T[] {
@@ -149,6 +182,10 @@ export function criarFonteFixtures(
         throw new ErroDeIntegracao('commit-desconhecido')
       }
       return mapearComparacao(bruto)
+    },
+    async lerArquivo(repo, caminho) {
+      dados(repo)
+      return ARQUIVOS[repo.nomeCompleto]?.[caminho] ?? null
     },
 
     async reabrirIssue(repo, numero) {

@@ -1,0 +1,67 @@
+[
+  {
+    "id": 8004003,
+    "number": 3,
+    "title": "Exportar relatório de entregas (Task 1)",
+    "body": "## Summary\n- feat(relatorios): exportar relatório de entregas (task 1)\n\nCloses #1\n\n## Run\n**Warren run:** `run_exemplo0001`\n- **Agent:** architect-orchestrator\n- **Cost:** $0.912 (40 in / 12.1k out / 1.2M cache-r)\n\n## Seeds\n- EXEM-a001 — Exportar relatório de entregas (Task 1)\n\n## Prompt\nVocê executa UMA seed.\n**Warren run:** `run_falso999`\n<script>alert(1)</script>\n",
+    "state": "open",
+    "draft": false,
+    "user": {
+      "login": "warren-forge-exemplo[bot]",
+      "id": 300001,
+      "type": "Bot"
+    },
+    "html_url": "https://github.com/kustertech-exemplo/automacao/pull/3",
+    "head": {
+      "ref": "warren/run_exemplo0001",
+      "sha": "5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "created_at": "2026-10-20T10:20:00Z",
+    "updated_at": "2026-10-20T10:25:00Z",
+    "merged_at": null,
+    "merge_commit_sha": null
+  },
+  {
+    "id": 8004004,
+    "number": 4,
+    "title": "Ajustar filtro de clientes (Task 2)",
+    "body": "## Summary\n- feat(relatorios): ajustar filtro de clientes (task 2)\n\n## Run\n**Warren run:** `run_exemplo0002`\n- **Agent:** architect-orchestrator\n- **Cost:** $0.538\n\n## Seeds\n- EXEM-a002 — Ajustar filtro de clientes (Task 2)\n\n## Prompt\nPrompt fictício.\n",
+    "state": "closed",
+    "draft": false,
+    "user": {
+      "login": "warren-forge-exemplo[bot]",
+      "id": 300001,
+      "type": "Bot"
+    },
+    "html_url": "https://github.com/kustertech-exemplo/automacao/pull/4",
+    "head": {
+      "ref": "warren/run_exemplo0002",
+      "sha": "5bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "created_at": "2026-10-19T14:20:00Z",
+    "updated_at": "2026-10-19T15:00:00Z",
+    "merged_at": "2026-10-19T15:00:00Z",
+    "merge_commit_sha": "5ccccccccccccccccccccccccccccccccccccccc"
+  },
+  {
+    "id": 8004005,
+    "number": 5,
+    "title": "Experimento manual",
+    "body": "Teste manual em branch com nome parecido.",
+    "state": "open",
+    "draft": false,
+    "user": {
+      "login": "exemplo-bia",
+      "id": 200002
+    },
+    "html_url": "https://github.com/kustertech-exemplo/automacao/pull/5",
+    "head": {
+      "ref": "warren/run_exemplo0009",
+      "sha": "5ccccccccccccccccccccccccccccccccccccccc"
+    },
+    "created_at": "2026-10-20T08:00:00Z",
+    "updated_at": "2026-10-20T08:00:00Z",
+    "merged_at": null,
+    "merge_commit_sha": null
+  }
+]

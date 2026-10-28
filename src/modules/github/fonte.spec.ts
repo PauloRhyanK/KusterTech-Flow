@@ -44,6 +44,17 @@ const prBruto = (parcial: Record<string, unknown> = {}) => ({
   ...parcial,
 })
 
+describe('mapearPullRequest: corpo e criadoEm', () => {
+  test('mapearPullRequest preenche corpo e criadoEm; sem created_at → criadoEm null', () => {
+    const pr = mapearPullRequest(prBruto({ created_at: '2026-10-03T09:00:00Z' }))
+    expect(pr.corpo).toBe('Fixes #7')
+    expect(pr.criadoEm).toEqual(new Date('2026-10-03T09:00:00Z'))
+    const sem = mapearPullRequest(prBruto({ body: null }))
+    expect(sem.corpo).toBeNull()
+    expect(sem.criadoEm).toBeNull()
+  })
+})
+
 describe('mapearIssue', () => {
   test('devolve null para item com pull_request; converte state closed em FECHADA e datas em Date', () => {
     expect(mapearIssue(issueBruta({ pull_request: { url: 'x' } }))).toBeNull()

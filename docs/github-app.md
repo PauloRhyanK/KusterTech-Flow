@@ -21,7 +21,7 @@ Somente **permissões de repositório**. Nenhuma permissão de organização ou 
 | Permissão | Acesso | Por quê |
 | --- | --- | --- |
 | Metadata | Leitura | obrigatória; catálogo de repositórios da instalação |
-| Contents | Leitura | comparação de commits para saber se o merge de um PR está numa versão (Incremento 4) e leitura de arquivos (Incremento 9) |
+| Contents | Leitura | comparação de commits para saber se o merge de um PR está numa versão (Incremento 4) e leitura de `.seeds/issues.jsonl` e `.seeds/plans.jsonl` no branch padrão, para as execuções do Warren (Incremento 9; `FonteGitHub.lerArquivo`, limite de 2 MB por arquivo) |
 | Issues | Leitura e escrita | leitura espelha as issues; escrita é para a triagem de correção do Incremento 5b (D32) |
 | Pull requests | Leitura | PRs e vínculo PR → issue |
 | Checks | Leitura | resumo de checks dos PRs |
@@ -29,7 +29,7 @@ Somente **permissões de repositório**. Nenhuma permissão de organização ou 
 
 Este incremento **não escreve** no GitHub; a escrita em Issues é concedida agora para evitar reautorizar a instalação depois.
 
-As permissões não mudam com o Incremento 4 (Contents e Deployments já estavam previstas) e os eventos continuam **nenhum**.
+As permissões não mudam com o Incremento 4 (Contents e Deployments já estavam previstas) e os eventos continuam **nenhum**. O Incremento 9 também não pede permissão nova: usa o Contents já concedido, só para leitura de arquivos.
 
 ## 2. Instalar
 
