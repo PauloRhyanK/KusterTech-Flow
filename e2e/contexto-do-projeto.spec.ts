@@ -24,7 +24,7 @@ async function fazerLogin(page: Page, email: string, senha: string): Promise<voi
   await expect(page).toHaveURL(/\/$/)
 }
 
-test('admin: /projetos/<P> mostra cinco abas, trilha Projetos › P e checklist com Clientes concluído; /clientes/<A>/projetos/<P> mostra três abas, trilha Clientes › A › P, o mesmo nome, "contexto de A" e "Ver na visão global" com href /projetos/<P>', async ({
+test('admin: /projetos/<P> mostra seis abas, trilha Projetos › P e checklist com Clientes concluído; /clientes/<A>/projetos/<P> mostra três abas, trilha Clientes › A › P, o mesmo nome, "contexto de A" e "Ver na visão global" com href /projetos/<P>', async ({
   page,
 }) => {
   const { email, senha } = obterAdmin()
@@ -44,15 +44,16 @@ test('admin: /projetos/<P> mostra cinco abas, trilha Projetos › P e checklist 
   await expect(navTrilhasGlobal.getByRole('link', { name: 'Projetos' })).toBeVisible()
   await expect(navTrilhasGlobal.getByText(nomeP)).toBeVisible()
 
-  // Cinco abas
+  // Seis abas
   const navAbasGlobal = page.getByRole('navigation', { name: 'Seções do projeto' })
-  await expect(navAbasGlobal.getByRole('link')).toHaveCount(5)
+  await expect(navAbasGlobal.getByRole('link')).toHaveCount(6)
   await expect(navAbasGlobal.getByRole('link', { name: /^Resumo/ })).toHaveAttribute(
     'aria-current',
     'page',
   )
   await expect(navAbasGlobal.getByRole('link', { name: /Entregas/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Homologação/ })).toBeVisible()
+  await expect(navAbasGlobal.getByRole('link', { name: /Publicações/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Saúde e Erros/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Recursos/ })).toBeVisible()
 
