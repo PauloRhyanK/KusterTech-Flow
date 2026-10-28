@@ -131,3 +131,20 @@ describe('schema da integração GitHub', () => {
     expect(pr.issuesReferenciadas).toEqual([])
   })
 })
+
+describe('schema de eventos de webhook', () => {
+  test('dois EventoIntegracao com o mesmo deliveryId falham com P2002; tentativas começa em 0 e processadoEm em null', async () => {
+    const evento = await db.eventoIntegracao.create({
+      data: { deliveryId: 'entrega-1', evento: 'issues', repositorioGitHubId: BigInt(5001) },
+    })
+    expect(evento.tentativas).toBe(0)
+    expect(evento.processadoEm).toBeNull()
+    expect(evento.falhaMotivo).toBeNull()
+
+    const segunda = db.eventoIntegracao.create({
+      data: { deliveryId: 'entrega-1', evento: 'pull_request' },
+    })
+    await expect(segunda).rejects.toMatchObject({ code: 'P2002' })
+    expect(await db.eventoIntegracao.count()).toBe(1)
+  })
+})

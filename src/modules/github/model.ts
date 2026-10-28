@@ -1,3 +1,6 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
+import { z } from 'zod'
+
 export const INTERVALO_PADRAO_MS = 600_000
 export const ESPERA_MAXIMA_MS = 6 * 60 * 60_000
 export const FATOR_DESATUALIZACAO = 3
@@ -198,4 +201,161 @@ export function resumirErroParaLog(erro: unknown): ErroParaLog {
     resumo.codigo = code
   }
   return resumo
+}
+
+export const EVENTOS_DE_WEBHOOK = [
+  'issues',
+  'pull_request',
+  'check_suite',
+  'deployment_status',
+  'installation',
+  'installation_repositories',
+] as const
+export type EventoDeWebhook = (typeof EVENTOS_DE_WEBHOOK)[number]
+
+export const LIMITE_DO_CORPO_DO_WEBHOOK = 1_048_576
+export const MAX_TENTATIVAS_DO_EVENTO = 5
+export const RETENCAO_DE_EVENTOS_MS = 30 * 24 * 60 * 60_000
+export const MENSAGEM_FALHA_DO_EVENTO =
+  'Falha ao processar o evento; nova tentativa no próximo ciclo.'
+export const MENSAGEM_EVENTO_ABANDONADO =
+  'Evento não processado após 5 tentativas; a reconciliação periódica cobre a mudança.'
+
+const FORMATO_DA_ASSINATURA = /^sha256=([0-9a-fA-F]{64})$/
+const FORMATO_DO_DELIVERY_ID = /^[A-Za-z0-9-]{1,100}$/
+
+export function verificarAssinatura(
+  segredo: string,
+  corpo: Uint8Array,
+  cabecalho: string | null,
+): boolean {
+  const casou = cabecalho === null ? null : FORMATO_DA_ASSINATURA.exec(cabecalho)
+  if (!casou) {
+    return false
+  }
+  const esperado = createHmac('sha256', segredo).update(corpo).digest()
+  const recebido = Buffer.from(casou[1]!, 'hex')
+  return timingSafeEqual(esperado, recebido)
+}
+
+export interface CabecalhosDoWebhook {
+  assinatura: string | null
+  evento: string | null
+  deliveryId: string | null
+}
+
+export type AvaliacaoDaEntrega =
+  | {
+      tipo: 'registrar'
+      deliveryId: string
+      evento: EventoDeWebhook
+      repositorioGitHubId: bigint | null
+    }
+  | {
+      tipo: 'responder'
+      status: 200 | 400 | 401 | 413
+      resultado:
+        | 'pong'
+        | 'ignorado'
+        | 'requisicao-invalida'
+        | 'assinatura-ausente'
+        | 'assinatura-invalida'
+        | 'corpo-grande-demais'
+    }
+
+const responder = (
+  status: 200 | 400 | 401 | 413,
+  resultado: Extract<AvaliacaoDaEntrega, { tipo: 'responder' }>['resultado'],
+): AvaliacaoDaEntrega => ({ tipo: 'responder', status, resultado })
+
+const PayloadDoWebhook = z.looseObject({
+  repository: z.looseObject({ id: z.number().int().positive() }).optional(),
+})
+
+export function avaliarEntregaDoWebhook(
+  segredo: string,
+  corpo: Uint8Array,
+  cabecalhos: CabecalhosDoWebhook,
+): AvaliacaoDaEntrega {
+  if (corpo.byteLength > LIMITE_DO_CORPO_DO_WEBHOOK) {
+    return responder(413, 'corpo-grande-demais')
+  }
+  if (cabecalhos.assinatura === null) {
+    return responder(401, 'assinatura-ausente')
+  }
+  if (!verificarAssinatura(segredo, corpo, cabecalhos.assinatura)) {
+    return responder(401, 'assinatura-invalida')
+  }
+  const { evento, deliveryId } = cabecalhos
+  if (evento === null || deliveryId === null || !FORMATO_DO_DELIVERY_ID.test(deliveryId)) {
+    return responder(400, 'requisicao-invalida')
+  }
+  if (evento === 'ping') {
+    return responder(200, 'pong')
+  }
+  if (!(EVENTOS_DE_WEBHOOK as readonly string[]).includes(evento)) {
+    return responder(200, 'ignorado')
+  }
+  let json: unknown
+  try {
+    json = JSON.parse(new TextDecoder().decode(corpo))
+  } catch {
+    return responder(400, 'requisicao-invalida')
+  }
+  const payload = PayloadDoWebhook.safeParse(json)
+  if (!payload.success) {
+    return responder(400, 'requisicao-invalida')
+  }
+  const id = payload.data.repository?.id
+  return {
+    tipo: 'registrar',
+    deliveryId,
+    evento: evento as EventoDeWebhook,
+    repositorioGitHubId: id === undefined ? null : BigInt(id),
+  }
+}
+
+export type EfeitoDoEvento = 'solicitar-sincronizacao' | 'solicitar-catalogo' | 'nenhum'
+
+const EVENTOS_DE_REPOSITORIO = ['issues', 'pull_request', 'check_suite', 'deployment_status']
+
+export function efeitoDoEvento(
+  evento: string,
+  repositorioGitHubId: bigint | null,
+  repositorio: { projetoId: string | null; falhasConsecutivas: number } | null,
+): EfeitoDoEvento {
+  if (evento === 'installation' || evento === 'installation_repositories') {
+    return 'solicitar-catalogo'
+  }
+  if (!EVENTOS_DE_REPOSITORIO.includes(evento) || repositorioGitHubId === null) {
+    return 'nenhum'
+  }
+  if (repositorio === null) {
+    return 'solicitar-catalogo'
+  }
+  if (repositorio.projetoId === null || repositorio.falhasConsecutivas > 0) {
+    return 'nenhum'
+  }
+  return 'solicitar-sincronizacao'
+}
+
+export function catalogoDevido(
+  i: {
+    catalogoSincronizadoEm: Date | null
+    ultimaFalhaEm: Date | null
+    catalogoSolicitadoEm: Date | null
+  },
+  agora: Date,
+  intervaloMs: number,
+): boolean {
+  const ms = (d: Date | null) => d?.getTime() ?? 0
+  if (
+    i.catalogoSolicitadoEm !== null &&
+    ms(i.catalogoSolicitadoEm) > Math.max(ms(i.catalogoSincronizadoEm), ms(i.ultimaFalhaEm))
+  ) {
+    return true
+  }
+  const venceu = (desde: Date | null) =>
+    desde === null || agora.getTime() - desde.getTime() >= intervaloMs
+  return venceu(i.catalogoSincronizadoEm) && venceu(i.ultimaFalhaEm)
 }
