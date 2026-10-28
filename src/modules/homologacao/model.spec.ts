@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  agruparRodadas,
   apresentarEstadoDoItem,
   classificarNaFila,
   destinoDaFalhaDaTarefa,
@@ -673,5 +674,53 @@ describe('classificarNaFila com triagem pendente (base §3.8, item 10)', () => {
     expect(classificarNaFila('CORRECAO_SOLICITADA', { ...admin, triar: false }, true)).toBe(
       'aguardando-outros',
     )
+  })
+})
+
+describe('agruparRodadas', () => {
+  const em = (minuto: number) => new Date(Date.UTC(2026, 9, 22, 12, minuto))
+  const eventos = [
+    { id: 'e1', versaoId: 'v1', criadoEm: em(1) },
+    { id: 'e2', versaoId: null, criadoEm: em(2) },
+    { id: 'e3', versaoId: 'v1', criadoEm: em(3) },
+    { id: 'e4', versaoId: 'v2', criadoEm: em(4) },
+    { id: 'e5', versaoId: null, criadoEm: em(5) },
+  ]
+
+  test('[e1 v1, e2 null, e3 v1, e4 v2, e5 null] com atual v2 → [{ v1, atual: false, [e1, e2, e3] }, { v2, atual: true, [e4, e5] }]; atual nulo → última rodada', () => {
+    expect(agruparRodadas(eventos, 'v2')).toEqual([
+      { versaoId: 'v1', atual: false, eventos: [eventos[0], eventos[1], eventos[2]] },
+      { versaoId: 'v2', atual: true, eventos: [eventos[3], eventos[4]] },
+    ])
+    expect(agruparRodadas(eventos, null).map((r) => r.atual)).toEqual([false, true])
+  })
+
+  test('ordena por criadoEm, mesmo fora de ordem; sem eventos → []', () => {
+    const desordenados = [eventos[3]!, eventos[0]!, eventos[2]!, eventos[1]!]
+    expect(agruparRodadas(desordenados, 'v1').map((r) => [r.versaoId, r.atual])).toEqual([
+      ['v1', true],
+      ['v2', false],
+    ])
+    expect(agruparRodadas([], null)).toEqual([])
+  })
+
+  test('evento sem versão no começo abre a própria rodada sem versão', () => {
+    const r = agruparRodadas([{ id: 'a', versaoId: null, criadoEm: em(0) }, eventos[0]!], 'v1')
+    expect(r.map((x) => x.versaoId)).toEqual([null, 'v1'])
+  })
+
+  test('versão que volta depois de outra continua na rodada do primeiro evento dela', () => {
+    const r = agruparRodadas(
+      [
+        { id: 'a', versaoId: 'v1', criadoEm: em(1) },
+        { id: 'b', versaoId: 'v2', criadoEm: em(2) },
+        { id: 'c', versaoId: 'v1', criadoEm: em(3) },
+      ],
+      'v2',
+    )
+    expect(r.map((x) => [x.versaoId, x.eventos.map((e) => e.id)])).toEqual([
+      ['v1', ['a', 'c']],
+      ['v2', ['b']],
+    ])
   })
 })

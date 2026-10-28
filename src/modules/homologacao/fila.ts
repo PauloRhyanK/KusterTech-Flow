@@ -92,9 +92,11 @@ export async function atualizarFilaDeHomologacao(agora: Date): Promise<{ itensCr
     if (presencas.length === 0) continue
     const versaoPorIssue = new Map(presencas.map((p) => [p.issueId, p.versaoId]))
 
+    // Decisão 5 do 5b: a issue de correção é testada pelo reteste do item original, sem item próprio.
     const vinculos = await db.milestoneIssue.findMany({
       where: {
         issueId: { in: [...versaoPorIssue.keys()] },
+        issue: { corrige: { none: {} } },
         foraDoEscopo: false,
         milestone: { projetoId: projeto.id, arquivadaEm: null },
       },

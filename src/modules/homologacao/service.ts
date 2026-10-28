@@ -17,6 +17,7 @@ import {
   type TipoEventoTimeline,
   transicaoDeHomologacao,
 } from './model'
+import { aplicarReteste, ItemMudou } from './retestes'
 import { obterVersaoCorrenteEmQA } from './versao-corrente'
 
 export interface EntradaDeAcao {
@@ -518,4 +519,92 @@ export async function reclassificarSolicitacao(
       agora,
     })
   })
+}
+
+const ITEM_NAO_ENCONTRADO = 'Item não encontrado.'
+
+// Confirmação manual do reteste (D27, 5b.4): o admin diz que a correção já está em QA quando a
+// evidência não bastou. A versão avaliada também vale: a resposta sem tarefa pede novo teste nela.
+export async function confirmarReteste(
+  sujeito: Sujeito,
+  e: { clienteId: string; itemId: string; versaoId: string; justificativa: string },
+  agora: Date = new Date(),
+): Promise<void> {
+  exigirPermissao(sujeito, ACAO_PARA_PERMISSAO.CONFIRMAR_RETESTE, { clienteId: e.clienteId })
+  const justificativa = justificativaValida(e.justificativa)
+
+  try {
+    await db.$transaction(async (tx) => {
+      const item = await tx.homologacaoItem.findUnique({
+        where: { id: e.itemId },
+        select: {
+          id: true,
+          estado: true,
+          issueId: true,
+          ultimoEventoId: true,
+          homologacao: {
+            select: {
+              clienteId: true,
+              milestoneId: true,
+              milestone: { select: { projetoId: true } },
+            },
+          },
+          issue: { select: { repositorioId: true } },
+          solicitacoes: { select: { id: true, estado: true } },
+        },
+      })
+      if (!item || item.homologacao.clienteId !== e.clienteId) {
+        throw new ErroDeDominio(ITEM_NAO_ENCONTRADO)
+      }
+      const transicao = transicaoDeHomologacao(item.estado, 'CONFIRMAR_RETESTE', {
+        presencaNaVersaoAtual: null,
+        versaoAtualId: null,
+        versaoInformadaId: null,
+        ultimoEventoAtualId: item.ultimoEventoId,
+        ultimoEventoInformadoId: item.ultimoEventoId,
+        integracaoIndisponivel: false,
+      })
+      if ('recusa' in transicao) {
+        throw new ErroDeDominio(transicao.recusa)
+      }
+      if (item.solicitacoes.some((s) => s.estado === 'ABERTA')) {
+        throw new ErroDeDominio('Faça a triagem da correção antes de confirmar o reteste.')
+      }
+      const projetoId = item.homologacao.milestone.projetoId
+      const versao = await tx.versao.findFirst({
+        where: {
+          id: e.versaoId,
+          projetoId,
+          repositorioId: item.issue.repositorioId,
+          evidencias: { some: { situacao: 'SUCESSO', ambiente: { projetoId, tipo: 'QA' } } },
+        },
+        select: { id: true, rotulo: true },
+      })
+      if (!versao) {
+        throw new ErroDeDominio('Escolha uma versão com evidência em QA deste repositório.')
+      }
+
+      await aplicarReteste(tx, {
+        item,
+        versaoId: versao.id,
+        solicitacoesResolvidas: item.solicitacoes
+          .filter((s) => s.estado !== 'RESOLVIDA' && s.estado !== 'RESPONDIDA_SEM_TAREFA')
+          .map((s) => s.id),
+        evento: {
+          tipo: 'RETESTE_CONFIRMADO',
+          origem: 'HUMANO',
+          autorId: sujeito.usuarioId,
+          texto: `Reteste confirmado manualmente na versão ${versao.rotulo}: ${justificativa}`,
+        },
+        agora,
+      })
+    })
+  } catch (erro) {
+    if (erro instanceof ItemMudou) {
+      throw new ErroDeDominio(
+        'Esta homologação mudou desde que você abriu a página. Confira o estado atual e tente de novo.',
+      )
+    }
+    throw erro
+  }
 }

@@ -5,6 +5,7 @@ import { obterFonteGitHub, type FonteGitHub } from '@/modules/github/fonte'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
+import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
 
 export interface TarefaDoWorker {
@@ -54,6 +55,15 @@ export function criarTarefasDoCiclo(d: {
         const resumo = await executarTarefasGitHub(d.obterFonte(), agora)
         if (resumo.concluidas + resumo.adiadas + resumo.falhas > 0) {
           log.info({ tarefa: 'executar-tarefas-github', ...resumo }, 'tarefas no GitHub executadas')
+        }
+      },
+    },
+    {
+      nome: 'detectar-retestes',
+      async executar(agora) {
+        const resumo = await detectarRetestes(agora)
+        if (resumo.retestes > 0) {
+          log.info({ tarefa: 'detectar-retestes', ...resumo }, 'retestes detectados')
         }
       },
     },

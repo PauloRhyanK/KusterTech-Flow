@@ -22,7 +22,9 @@ import {
   type EstadoItemHomologacao,
   type FiltroDaFila,
   type FiltrosDaFila,
+  detectarReteste,
   hrefDaFila,
+  type MotivoSemReteste,
   resumoDaHomologacao,
   situacaoDaCorrecao,
   tituloDoEvento,
@@ -1058,5 +1060,98 @@ export async function obterCorrecoesDaIssue(
     correcoes,
     podeTriar,
     integracaoConfigurada,
+  }
+}
+
+export type SituacaoDoReteste =
+  | { disponivel: false }
+  | {
+      disponivel: true
+      motivo: MotivoSemReteste
+      versoesEmQa: { id: string; rotulo: string; implantadaEm: Date }[]
+    }
+
+// Por que o reteste não foi detectado e que versões o admin pode escolher ao confirmar (5b.4).
+export async function obterSituacaoDoReteste(
+  sujeito: Sujeito,
+  clienteId: string,
+  itemId: string,
+): Promise<SituacaoDoReteste> {
+  if (!autorizar(sujeito, 'homologacao.triar', { clienteId })) {
+    return { disponivel: false }
+  }
+  const item = await db.homologacaoItem.findUnique({
+    where: { id: itemId },
+    select: {
+      estado: true,
+      issueId: true,
+      versaoAvaliadaId: true,
+      homologacao: { select: { clienteId: true, milestone: { select: { projetoId: true } } } },
+      issue: { select: { repositorioId: true, numero: true, estado: true, fechadaNoGitHub: true } },
+      solicitacoes: {
+        select: {
+          id: true,
+          estado: true,
+          issueCorrecao: { select: { id: true, estado: true, fechadaNoGitHub: true } },
+          tarefasGitHub: {
+            where: { estado: 'CONCLUIDA' },
+            orderBy: { concluidaEm: 'desc' },
+            take: 1,
+            select: { concluidaEm: true },
+          },
+        },
+      },
+    },
+  })
+  if (!item || item.homologacao.clienteId !== clienteId) {
+    throw new ErroDeDominio('Item não encontrado.')
+  }
+  const projetoId = item.homologacao.milestone.projetoId
+  const qa = { situacao: 'SUCESSO' as const, ambiente: { projetoId, tipo: 'QA' as const } }
+
+  const versoes = await db.versao.findMany({
+    where: { projetoId, repositorioId: item.issue.repositorioId, evidencias: { some: qa } },
+    select: { id: true, rotulo: true, evidencias: { where: qa, select: { ocorridaEm: true } } },
+  })
+  const versoesEmQa = versoes
+    .map((v) => ({
+      id: v.id,
+      rotulo: v.rotulo,
+      implantadaEm: new Date(Math.min(...v.evidencias.map((e) => e.ocorridaEm.getTime()))),
+    }))
+    .sort((a, b) => b.implantadaEm.getTime() - a.implantadaEm.getTime())
+
+  const alvos = item.solicitacoes.map((s) => {
+    const issue =
+      s.estado === 'CORRECAO_CRIADA'
+        ? s.issueCorrecao
+        : s.estado === 'REABERTA_NO_GITHUB'
+          ? { id: item.issueId, ...item.issue }
+          : null
+    return { s, issue }
+  })
+  const alvoIds = alvos.flatMap(({ issue }) => (issue ? [issue.id] : []))
+  const presencas = await db.presencaIssueVersao.findMany({
+    where: { issueId: { in: alvoIds }, versaoId: { in: versoesEmQa.map((v) => v.id) } },
+    select: { issueId: true, versaoId: true, estado: true },
+  })
+  const implantadaEm = new Map(versoesEmQa.map((v) => [v.id, v.implantadaEm]))
+
+  const resultado = detectarReteste({
+    estadoDoItem: item.estado,
+    versaoAvaliadaId: item.versaoAvaliadaId,
+    correcoes: alvos.map(({ s, issue }) => ({
+      solicitacaoId: s.id,
+      estado: s.estado,
+      issueAlvoId: issue?.id ?? null,
+      liberadaEm: s.tarefasGitHub[0]?.concluidaEm ?? null,
+      issueAlvoFechadaEm: issue?.estado === 'FECHADA' ? issue.fechadaNoGitHub : null,
+    })),
+    presencasEmQa: presencas.map((p) => ({ ...p, implantadaEm: implantadaEm.get(p.versaoId)! })),
+  })
+  return {
+    disponivel: true,
+    motivo: resultado.reteste ? 'sem-presenca-em-qa' : resultado.motivo,
+    versoesEmQa,
   }
 }
