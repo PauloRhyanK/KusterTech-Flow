@@ -162,4 +162,24 @@ describe('autorizar', () => {
       expect(ACOES_COM_CLIENTE_OBRIGATORIO).not.toContain(acao)
     }
   })
+  test('desenvolvimento.ler: ADMIN sim; APROVADOR global e TESTADOR escopado não; não exige cliente', () => {
+    const aprovadorGlobal: Sujeito = {
+      usuarioId: 'u-aprovador-global',
+      papeis: [{ papel: 'APROVADOR', clienteId: null }],
+    }
+    const testadorAcme: Sujeito = {
+      usuarioId: 'u-testador-acme',
+      papeis: [{ papel: 'TESTADOR', clienteId: 'acme' }],
+    }
+    expect(autorizar(admin, 'desenvolvimento.ler')).toBe(true)
+    expect(autorizar(admin, 'desenvolvimento.ler', { clienteId: 'acme' })).toBe(true)
+    for (const s of [aprovadorGlobal, testadorAcme, aprovadorAcme, testadorGlobal]) {
+      expect(autorizar(s, 'desenvolvimento.ler')).toBe(false)
+      expect(autorizar(s, 'desenvolvimento.ler', { clienteId: 'acme' })).toBe(false)
+    }
+    expect(TODAS_AS_ACOES).toContain('desenvolvimento.ler')
+    expect(PERMISSOES.APROVADOR).not.toContain('desenvolvimento.ler')
+    expect(PERMISSOES.TESTADOR).not.toContain('desenvolvimento.ler')
+    expect(ACOES_COM_CLIENTE_OBRIGATORIO).not.toContain('desenvolvimento.ler')
+  })
 })
