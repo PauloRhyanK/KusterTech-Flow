@@ -2,7 +2,13 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { ErroDeIntegracao } from './erros'
 import type { FonteGitHub } from './fonte'
-import { limitarCorpo, repositorioDevido, resumirChecks, resumirErroParaLog } from './model'
+import {
+  catalogoDevido,
+  limitarCorpo,
+  repositorioDevido,
+  resumirChecks,
+  resumirErroParaLog,
+} from './model'
 
 const ID_INTEGRACAO = 'github'
 
@@ -215,11 +221,8 @@ export async function executarCiclo(
   }
 
   const integracao = await db.integracaoGitHub.findUniqueOrThrow({ where: { id: ID_INTEGRACAO } })
-  const venceu = (desde: Date | null) =>
-    desde === null || agora.getTime() - desde.getTime() >= intervaloMs
-  const catalogoDevido =
-    venceu(integracao.catalogoSincronizadoEm) && venceu(integracao.ultimaFalhaEm)
-  if (catalogoDevido) {
+  const devido = catalogoDevido(integracao, agora, intervaloMs)
+  if (devido) {
     await sincronizarCatalogo(fonte, agora)
   }
 
@@ -238,5 +241,5 @@ export async function executarCiclo(
       falhas += 1
     }
   }
-  return { catalogo: catalogoDevido, repositorios, falhas }
+  return { catalogo: devido, repositorios, falhas }
 }
