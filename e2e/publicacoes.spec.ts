@@ -6,15 +6,19 @@ import {
   configurarAmbientesDePublicacaoNoBanco,
   contarAutorizacoesProd,
   contarEvidenciasProd,
+  contarVerificacoesProd,
   criarClienteNoBanco,
   criarMilestoneNoBanco,
   criarProjetoNoBanco,
   criarUsuarioNoBanco,
   deixarHomologacaoPendenteNoBanco,
+  desfazerReconhecimentoNoBanco,
   limparPublicacaoE2E,
   nomeDeTeste,
+  obterDivergenciasNoBanco,
   obterIssueNoBanco,
   obterVersaoNoBanco,
+  registrarDeployProdNoBanco,
   repositoriosDoProjetoE2E,
   vincularIssuesNoBanco,
   vincularNoBanco,
@@ -52,6 +56,20 @@ function commitsDoCenario(nomeCompleto: string): { base: string; alvo: string } 
     return d.sha
   }
   return { base: sha('producao-publicacao'), alvo: sha('qa-publicacao') }
+}
+
+// Dn: o deploy de PROD mais recente da fixture do repositório de divergência (o outro é a base Bn).
+function commitDeDivergencia(nomeCompleto: string): string {
+  const arquivo = `src/modules/github/fixtures/${nomeCompleto.replace('/', '__')}/deployments.json`
+  const deployments = JSON.parse(readFileSync(arquivo, 'utf8')) as (DeploymentDeFixture & {
+    created_at: string
+  })[]
+  const producao = deployments
+    .filter((d) => d.environment === 'producao-publicacao')
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const ultimo = producao.at(-1)
+  if (producao.length < 2 || !ultimo) throw new Error('Fixture sem a divergência de PROD.')
+  return ultimo.sha
 }
 
 interface Cenario {
@@ -229,4 +247,117 @@ test('testador escopado de Acme vê "Sem permissão para esta área."; POST de a
   // Controle positivo: a mesma requisição, enviada pelo admin, autoriza.
   await reenviar(page)
   expect(await contarAutorizacoesProd(c.repoUm)).toBe(1)
+})
+
+test('repoDois: a seção mostra uma divergência de <Dn curto> com "Deploy em PROD sem autorização registrada"; nenhum "bloque" na seção; reconhecer → "Reconhecida por Admin E2E em"; contarAutorizacoesProd(repoDois) = 0', async ({
+  page,
+}, testInfo) => {
+  const admin = obterAdmin()
+  const c = await prepararCenario(testInfo.project.name, admin.id)
+  const dn = commitDeDivergencia(c.repoDois)
+  await fazerLogin(page, admin.email, admin.senha)
+
+  await page.goto(`/projetos/${c.projetoId}/publicacoes`)
+
+  const dois = secao(page, c.repoDois)
+  await expect(dois.getByText('Deploy em PROD sem autorização registrada')).toBeVisible()
+  await expect(dois.getByText(new RegExp(`${dn.slice(0, 7)} · GitHub Deployments`))).toBeVisible()
+  expect(await dois.innerText()).not.toMatch(/bloque/i)
+  expect(await obterDivergenciasNoBanco(c.repoDois)).toMatchObject([{ commitSha: dn }])
+
+  await dois.getByRole('button', { name: 'Reconhecer divergência' }).click()
+  await dois.getByRole('button', { name: 'Confirmar reconhecimento' }).click()
+
+  await expect(
+    dois.getByText(/Reconhecida por .+ em .*Reconhecer não autoriza a versão\./),
+  ).toBeVisible()
+  await expect(dois.getByRole('button', { name: 'Reconhecer divergência' })).toHaveCount(0)
+  expect(await contarAutorizacoesProd(c.repoDois)).toBe(0)
+  expect((await obterDivergenciasNoBanco(c.repoDois))[0]?.reconhecidaEm).not.toBeNull()
+})
+
+test('repoUm autorizado, registrarDeployProdNoBanco(Mn) e worker: "Em PROD" mostra <Mn curto>, nenhuma divergência; registra verificação → "Verificação registrada." e "Verificada manualmente em produção"', async ({
+  page,
+}, testInfo) => {
+  const admin = obterAdmin()
+  const c = await prepararCenario(testInfo.project.name, admin.id)
+  const { alvo } = commitsDoCenario(c.repoUm)
+  await fazerLogin(page, admin.email, admin.senha)
+
+  await page.goto(`/projetos/${c.projetoId}/publicacoes`)
+  const um = secao(page, c.repoUm)
+  await um.getByLabel('Conferi o projeto, o repositório, a versão e a composição acima.').check()
+  await um.getByRole('button', { name: 'Autorizar publicação em PROD' }).click()
+  await expect(
+    um.getByText('Publicação autorizada. A autorização não dispara o deploy.'),
+  ).toBeVisible()
+
+  await registrarDeployProdNoBanco(c.projetoId, c.repoUm, alvo)
+  rodarWorkerUmaVez()
+  await page.goto(`/projetos/${c.projetoId}/publicacoes`)
+
+  await expect(
+    um.getByText(new RegExp(`${alvo.slice(0, 7)} · .+ · Endpoint de evidência`)),
+  ).toBeVisible()
+  await expect(um.getByText('Nenhuma divergência de deploy.')).toBeVisible()
+  expect(await obterDivergenciasNoBanco(c.repoUm)).toEqual([])
+  await expect(um.getByText('Verificada manualmente em produção', { exact: true })).toHaveCount(0)
+
+  await um
+    .getByLabel('O que foi verificado em produção')
+    .fill('Fluxo de login conferido em produção.')
+  await um.getByRole('button', { name: 'Registrar verificação' }).click()
+
+  await expect(um.getByText('Verificação registrada.')).toBeVisible()
+  await expect(um.getByText('Verificada manualmente em produção', { exact: true })).toBeVisible()
+  expect(await contarVerificacoesProd(c.repoUm)).toBe(1)
+})
+
+test('testador escopado reenvia o POST de reconhecer capturado do admin (desfeito antes pelo banco): reconhecidaEm continua nulo', async ({
+  page,
+  browser,
+}, testInfo) => {
+  const admin = obterAdmin()
+  const c = await prepararCenario(testInfo.project.name, admin.id)
+  await fazerLogin(page, admin.email, admin.senha)
+
+  await page.goto(`/projetos/${c.projetoId}/publicacoes`)
+  const dois = secao(page, c.repoDois)
+  await dois.getByRole('button', { name: 'Reconhecer divergência' }).click()
+  const [requisicao] = await Promise.all([
+    page.waitForRequest((r) => r.method() === 'POST' && 'next-action' in r.headers()),
+    dois.getByRole('button', { name: 'Confirmar reconhecimento' }).click(),
+  ])
+  await expect(dois.getByText(/Reconhecida por .+ em /)).toBeVisible()
+  const corpo = requisicao.postDataBuffer()
+  expect(corpo).not.toBeNull()
+  const [divergencia] = await obterDivergenciasNoBanco(c.repoDois)
+  if (!divergencia) throw new Error('Divergência não encontrada.')
+  await desfazerReconhecimentoNoBanco(divergencia.id)
+
+  const email = `e2e+testador-div-${Date.now()}@local.test`
+  const senha = 'SenhaForte123!'
+  await criarUsuarioNoBanco({
+    email,
+    nome: 'E2E Testador Divergência',
+    senha,
+    papel: 'TESTADOR',
+    clienteId: c.acmeId,
+  })
+  const contexto = await browser.newContext()
+  try {
+    const pagina = await contexto.newPage()
+    await fazerLogin(pagina, email, senha)
+    const resposta = await contexto.request.post(requisicao.url(), {
+      headers: {
+        'next-action': requisicao.headers()['next-action'] as string,
+        'content-type': requisicao.headers()['content-type'] as string,
+      },
+      data: corpo as Buffer,
+    })
+    expect(resposta.status()).toBeLessThan(500)
+  } finally {
+    await contexto.close()
+  }
+  expect((await obterDivergenciasNoBanco(c.repoDois))[0]?.reconhecidaEm).toBeNull()
 })

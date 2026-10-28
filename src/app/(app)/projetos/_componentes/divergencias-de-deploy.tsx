@@ -5,16 +5,10 @@ import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-c
 import { formatarDataHora } from '@/lib/data'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
-import type { OrigemEvidencia } from '@/modules/ambientes/model'
 import type { DivergenciaApresentada } from '@/modules/publicacao/queries'
 import { reconhecerDivergenciaAction } from '../[p]/(abas)/publicacoes/actions'
 import { MensagensDeEstado } from './mensagens-de-estado'
-
-export const ORIGEM_DA_EVIDENCIA: Record<OrigemEvidencia, string> = {
-  GITHUB_DEPLOYMENT: 'GitHub Deployments',
-  ENDPOINT: 'Endpoint de evidência',
-  MANUAL: 'Confirmação manual',
-}
+import { ORIGEM_DA_EVIDENCIA } from './origem-da-evidencia'
 
 export interface DivergenciasDeDeployProps {
   projetoId: string

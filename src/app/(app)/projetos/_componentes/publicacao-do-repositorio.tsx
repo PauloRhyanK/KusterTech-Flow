@@ -5,10 +5,11 @@ import type { SituacaoDaIntegracao } from '@/modules/github/service'
 import type { PublicacaoDoRepositorio } from '@/modules/publicacao/queries'
 import { AvisoDeIntegracao } from './aviso-de-integracao'
 import { ComposicaoDaPublicacao } from './composicao-de-publicacao'
-import { DivergenciasDeDeploy, ORIGEM_DA_EVIDENCIA } from './divergencias-de-deploy'
+import { DivergenciasDeDeploy } from './divergencias-de-deploy'
 import { EstadosDaPublicacao } from './estados-de-publicacao'
 import { FormularioDeAutorizacao } from './formulario-de-autorizacao'
 import { FormularioDeVerificacao } from './formulario-de-verificacao'
+import { ORIGEM_DA_EVIDENCIA } from './origem-da-evidencia'
 
 export interface PublicacaoDoRepositorioProps {
   projeto: { id: string; nome: string }
