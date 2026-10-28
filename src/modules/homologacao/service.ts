@@ -6,7 +6,7 @@ import { estadoDoRepositorio } from '@/modules/github/model'
 import { intervaloDaIntegracao } from '@/modules/github/service'
 import {
   ACAO_PARA_PERMISSAO,
-  type AcaoDeHomologacao,
+  type AcaoDeRegistro,
   type EstadoItemHomologacao,
   type TipoEventoTimeline,
   transicaoDeHomologacao,
@@ -14,7 +14,7 @@ import {
 import { obterVersaoCorrenteEmQA } from './versao-corrente'
 
 export interface EntradaDeAcao {
-  acao: AcaoDeHomologacao
+  acao: AcaoDeRegistro
   itemId: string
   clienteId: string
   milestoneId: string
@@ -29,7 +29,7 @@ const NAO_ENCONTRADA = 'Homologação não encontrada.'
 const LIMITE_DO_TEXTO = 4000
 
 const TIPO_DO_EVENTO: Record<
-  AcaoDeHomologacao,
+  AcaoDeRegistro,
   Extract<
     TipoEventoTimeline,
     'DISPONIBILIZACAO' | 'APROVACAO' | 'SOLICITACAO_CORRECAO' | 'COMENTARIO'
@@ -41,7 +41,7 @@ const TIPO_DO_EVENTO: Record<
   COMENTAR: 'COMENTARIO',
 }
 
-function validarTexto(acao: AcaoDeHomologacao, bruto: string | null): string | null {
+function validarTexto(acao: AcaoDeRegistro, bruto: string | null): string | null {
   const texto = (bruto ?? '').trim()
   if (acao === 'COMENTAR') {
     if (texto.length < 1 || texto.length > LIMITE_DO_TEXTO) {

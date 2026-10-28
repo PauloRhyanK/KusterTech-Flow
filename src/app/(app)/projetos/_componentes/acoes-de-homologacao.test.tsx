@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AcaoDeHomologacao } from '@/modules/homologacao/model'
+import type { AcaoDeRegistro } from '@/modules/homologacao/model'
 
 const registrar = vi.fn()
 vi.mock('../acoes-de-homologacao', () => ({
@@ -26,7 +26,7 @@ const base = {
   podeEscolherVisibilidade: false,
 }
 
-function renderizar(acoes: AcaoDeHomologacao[], extra: Partial<typeof base> = {}) {
+function renderizar(acoes: AcaoDeRegistro[], extra: Partial<typeof base> = {}) {
   return render(<AcoesDeHomologacao {...base} {...extra} acoes={acoes} />)
 }
 

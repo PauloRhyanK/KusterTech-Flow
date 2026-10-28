@@ -19,20 +19,23 @@ enum Tema {
 }
 
 model Usuario {
-  id                    String                @id @default(uuid())
-  email                 String                @unique
+  id                    String                  @id @default(uuid())
+  email                 String                  @unique
   nome                  String
   senhaHash             String
-  ativo                 Boolean               @default(true)
-  tema                  Tema                  @default(SISTEMA)
-  criadoEm              DateTime              @default(now())
-  atualizadoEm          DateTime              @updatedAt
+  ativo                 Boolean                 @default(true)
+  tema                  Tema                    @default(SISTEMA)
+  criadoEm              DateTime                @default(now())
+  atualizadoEm          DateTime                @updatedAt
   papeis                UsuarioPapel[]
   sessoes               Sessao[]
   vinculosCriados       IssueVinculo[]
   eventosTimeline       EventoTimeline[]
   evidenciasRegistradas EvidenciaDeploy[]
   presencasConfirmadas  PresencaIssueVersao[]
+  tarefasGitHub         TarefaGitHub[]
+  solicitacoesTriadas   SolicitacaoDeCorrecao[]
+  homologacoesAprovadas Homologacao[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -168,6 +171,7 @@ model RepositorioGitHub {
   issues                     IssueGitHub[]
   pullRequests               PullRequestGitHub[]
   versoes                    Versao[]
+  tarefasGitHub              TarefaGitHub[]
 
   @@index([projetoId])
 }
@@ -329,18 +333,19 @@ model Ambiente {
 }
 
 model Versao {
-  id             String                @id @default(uuid())
-  projetoId      String
-  repositorioId  String
-  commitSha      String
-  rotulo         String
-  criadaEm       DateTime              @default(now())
-  projeto        Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
-  repositorio    RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
-  evidencias     EvidenciaDeploy[]
-  presencas      PresencaIssueVersao[]
-  itensAvaliados HomologacaoItem[]
-  eventos        EventoTimeline[]
+  id                     String                  @id @default(uuid())
+  projetoId              String
+  repositorioId          String
+  commitSha              String
+  rotulo                 String
+  criadaEm               DateTime                @default(now())
+  projeto                Projeto                 @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio            RepositorioGitHub       @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  evidencias             EvidenciaDeploy[]
+  presencas              PresencaIssueVersao[]
+  itensAvaliados         HomologacaoItem[]
+  eventos                EventoTimeline[]
+  solicitacoesResolvidas SolicitacaoDeCorrecao[]
 
   @@unique([repositorioId, commitSha])
   @@index([projetoId])
@@ -418,6 +423,17 @@ enum OrigemEvento {
   SISTEMA
 }
 
+enum TipoTarefaGitHub {
+  REABRIR_ISSUE
+  CRIAR_ISSUE
+}
+
+enum EstadoTarefaGitHub {
+  PENDENTE
+  CONCLUIDA
+  FALHOU
+}
+
 enum EstadoSolicitacaoCorrecao {
   ABERTA
   REABERTA_NO_GITHUB
@@ -427,15 +443,19 @@ enum EstadoSolicitacaoCorrecao {
 }
 
 model Homologacao {
-  id           String                     @id @default(uuid())
-  clienteId    String
-  milestoneId  String
-  estado       EstadoHomologacaoMilestone @default(EM_ANDAMENTO)
-  criadoEm     DateTime                   @default(now())
-  atualizadoEm DateTime                   @updatedAt
-  cliente      Cliente                    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
-  milestone    Milestone                  @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
-  itens        HomologacaoItem[]
+  id                  String                     @id @default(uuid())
+  clienteId           String
+  milestoneId         String
+  estado              EstadoHomologacaoMilestone @default(EM_ANDAMENTO)
+  criadoEm            DateTime                   @default(now())
+  atualizadoEm        DateTime                   @updatedAt
+  aprovadaEm          DateTime?
+  aprovadaPorId       String?
+  versoesAprovadasIds String[]                   @default([])
+  cliente             Cliente                    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  milestone           Milestone                  @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+  aprovadaPor         Usuario?                   @relation(fields: [aprovadaPorId], references: [id], onDelete: Restrict)
+  itens               HomologacaoItem[]
 
   @@unique([clienteId, milestoneId])
   @@index([milestoneId])
@@ -491,18 +511,49 @@ model EventoTimeline {
 }
 
 model SolicitacaoDeCorrecao {
-  id              String                    @id @default(uuid())
-  itemId          String
-  eventoId        String                    @unique
-  estado          EstadoSolicitacaoCorrecao @default(ABERTA)
-  foraDoEscopo    Boolean                   @default(false)
-  justificativa   String?
-  issueCorrecaoId String?
-  criadoEm        DateTime                  @default(now())
-  atualizadoEm    DateTime                  @updatedAt
-  item            HomologacaoItem           @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  evento          EventoTimeline            @relation(fields: [eventoId], references: [id], onDelete: Restrict)
-  issueCorrecao   IssueGitHub?              @relation(fields: [issueCorrecaoId], references: [id], onDelete: Restrict)
+  id                  String                    @id @default(uuid())
+  itemId              String
+  eventoId            String                    @unique
+  estado              EstadoSolicitacaoCorrecao @default(ABERTA)
+  foraDoEscopo        Boolean                   @default(false)
+  justificativa       String?
+  issueCorrecaoId     String?
+  criadoEm            DateTime                  @default(now())
+  atualizadoEm        DateTime                  @updatedAt
+  triadaEm            DateTime?
+  triadaPorId         String?
+  resolvidaEm         DateTime?
+  versaoDaResolucaoId String?
+  item                HomologacaoItem           @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  evento              EventoTimeline            @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  issueCorrecao       IssueGitHub?              @relation(fields: [issueCorrecaoId], references: [id], onDelete: Restrict)
+  triadaPor           Usuario?                  @relation(fields: [triadaPorId], references: [id], onDelete: Restrict)
+  versaoDaResolucao   Versao?                   @relation(fields: [versaoDaResolucaoId], references: [id], onDelete: Restrict)
+  tarefasGitHub       TarefaGitHub[]
 
   @@index([itemId])
+}
+
+// A web grava; só o worker fala com o GitHub (5b, decisões 1 e 6).
+model TarefaGitHub {
+  id                 String                 @id @default(uuid())
+  tipo               TipoTarefaGitHub
+  repositorioId      String
+  dados              Json
+  estado             EstadoTarefaGitHub     @default(PENDENTE)
+  tentativas         Int                    @default(0)
+  resultado          Json?
+  falhaMotivo        String?
+  solicitadaPorId    String
+  criadaEm           DateTime               @default(now())
+  concluidaEm        DateTime?
+  solicitacaoId      String?
+  iniciadaEm         DateTime?
+  proximaTentativaEm DateTime?
+  repositorio        RepositorioGitHub      @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  solicitadaPor      Usuario                @relation(fields: [solicitadaPorId], references: [id], onDelete: Restrict)
+  solicitacao        SolicitacaoDeCorrecao? @relation(fields: [solicitacaoId], references: [id], onDelete: Restrict)
+
+  @@index([estado, proximaTentativaEm])
+  @@index([solicitacaoId])
 }
