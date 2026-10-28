@@ -52,6 +52,12 @@ export default async function globalSetup(): Promise<void> {
         ],
       },
     })
+    // Publicação antes de tudo o que ela referencia (versões, evidências, issues e usuários).
+    await db.autorizacaoItem.deleteMany({ where: { autorizacao: dosExemplos } })
+    await db.autorizacaoProd.deleteMany({ where: dosExemplos })
+    await db.composicaoDePublicacao.deleteMany({ where: dosExemplos })
+    await db.divergenciaDeDeploy.deleteMany({ where: { versao: dosExemplos } })
+    await db.verificacaoProd.deleteMany({ where: { versao: dosExemplos } })
     // Homologação (criada pela tarefa do worker) antes de milestones, versões e issues; as tarefas
     // do GitHub apontam para as solicitações.
     await db.tarefaGitHub.deleteMany({ where: dosExemplos })

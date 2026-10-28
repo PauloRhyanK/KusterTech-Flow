@@ -34,17 +34,20 @@ async function clienteComNome(nome: string): Promise<string> {
 }
 
 // Grava Homologacao, HomologacaoItem e eventos direto no banco, com `versaoAvaliadaId` = a versão
-// alvo, sem passar pelo cenário do 5b (que cria outro Ambiente QA; errata 3.8, item 1).
-async function gravarHomologacao(e: {
+// alvo, sem passar pelo cenário do 5b (que cria outro Ambiente QA; errata 3.8, item 1). Idempotente
+// por (cliente, milestone, issue): repetir muda o estado do item e acrescenta eventos.
+export async function gravarHomologacaoDePublicacao(e: {
   clienteId: string
   milestoneId: string
   issueId: string
   versaoId: string
-  adminId: string
+  adminId?: string
   aprovada: boolean
 }): Promise<void> {
-  const homologacao = await db.homologacao.create({
-    data: { clienteId: e.clienteId, milestoneId: e.milestoneId },
+  const homologacao = await db.homologacao.upsert({
+    where: { clienteId_milestoneId: { clienteId: e.clienteId, milestoneId: e.milestoneId } },
+    create: { clienteId: e.clienteId, milestoneId: e.milestoneId },
+    update: {},
   })
   const base = {
     clienteId: e.clienteId,
@@ -67,7 +70,7 @@ async function gravarHomologacao(e: {
       tipo: 'DISPONIBILIZACAO',
       visibilidade: 'COMPARTILHAVEL',
       origem: 'HUMANO',
-      autorId: e.adminId,
+      autorId: e.adminId ?? null,
       estadoAnterior: 'AGUARDANDO_DISPONIBILIZACAO',
       estadoNovo: 'PENDENTE_DE_TESTE',
       eventoAnteriorId: entrada.id,
@@ -82,7 +85,7 @@ async function gravarHomologacao(e: {
         tipo: 'APROVACAO',
         visibilidade: 'COMPARTILHAVEL',
         origem: 'HUMANO',
-        autorId: e.adminId,
+        autorId: e.adminId ?? null,
         estadoAnterior: 'PENDENTE_DE_TESTE',
         estadoNovo: 'APROVADA',
         eventoAnteriorId: disponibilizacao.id,
@@ -90,14 +93,15 @@ async function gravarHomologacao(e: {
     })
     ultimoEventoId = aprovacao.id
   }
-  await db.homologacaoItem.create({
-    data: {
-      homologacaoId: homologacao.id,
-      issueId: e.issueId,
-      estado: e.aprovada ? 'APROVADA' : 'PENDENTE_DE_TESTE',
-      versaoAvaliadaId: e.versaoId,
-      ultimoEventoId,
-    },
+  const dados = {
+    estado: e.aprovada ? ('APROVADA' as const) : ('PENDENTE_DE_TESTE' as const),
+    versaoAvaliadaId: e.versaoId,
+    ultimoEventoId,
+  }
+  await db.homologacaoItem.upsert({
+    where: { homologacaoId_issueId: { homologacaoId: homologacao.id, issueId: e.issueId } },
+    create: { homologacaoId: homologacao.id, issueId: e.issueId, ...dados },
+    update: dados,
   })
 }
 
@@ -168,7 +172,7 @@ export async function criarCenarioDePublicacao(
     [acmeId, true],
     [betaId, false],
   ] as const) {
-    await gravarHomologacao({
+    await gravarHomologacaoDePublicacao({
       clienteId,
       milestoneId: milestone.id,
       issueId: issue2.id,
