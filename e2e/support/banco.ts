@@ -890,3 +890,44 @@ export async function desfazerReconhecimentoNoBanco(divergenciaId: string): Prom
     data: { reconhecidaPorId: null, reconhecidaEm: null },
   })
 }
+
+export async function criarRecursoNoBanco(d: {
+  tipo: 'SERVIDOR' | 'CONTAINER' | 'BANCO' | 'STORAGE' | 'OUTRO'
+  nome: string
+  hospedadoEmId?: string
+  urlBeszel?: string
+  urlGlitchTip?: string
+  urlHostDocker?: string
+  projetosIds?: string[]
+}): Promise<{ id: string; nome: string }> {
+  return db.recurso.create({
+    data: {
+      tipo: d.tipo,
+      nome: d.nome,
+      nomeNormalizado: normalizarNome(d.nome),
+      hospedadoEmId: d.hospedadoEmId ?? null,
+      urlBeszel: d.urlBeszel ?? null,
+      urlGlitchTip: d.urlGlitchTip ?? null,
+      urlHostDocker: d.urlHostDocker ?? null,
+      projetos: d.projetosIds?.length
+        ? { create: d.projetosIds.map((projetoId) => ({ projetoId })) }
+        : undefined,
+    },
+    select: { id: true, nome: true },
+  })
+}
+
+export async function contarRecursos(): Promise<number> {
+  return db.recurso.count()
+}
+
+export async function removerRecursoNoBanco(recursoId: string): Promise<void> {
+  await db.recursoProjeto.deleteMany({ where: { recursoId } })
+  await db.recurso.delete({ where: { id: recursoId } })
+}
+
+export async function obterRecursoNoBanco(
+  nome: string,
+): Promise<{ id: string; nome: string } | null> {
+  return db.recurso.findFirst({ where: { nome }, select: { id: true, nome: true } })
+}
