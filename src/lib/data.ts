@@ -27,3 +27,15 @@ export function lerDataHoraDeSaoPaulo(valor: string): Date | null {
   const data = new Date(`${valor}:00-03:00`)
   return Number.isNaN(data.getTime()) ? null : data
 }
+
+const FORMATADOR_DE_CUSTO = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+})
+
+// Custo do run em dólares, como o Warren o informa: "0.538" → "US$ 0,538".
+export function formatarCusto(valorUsd: string): string {
+  return FORMATADOR_DE_CUSTO.format(Number(valorUsd))
+}

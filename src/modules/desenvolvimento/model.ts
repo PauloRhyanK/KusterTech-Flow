@@ -351,3 +351,52 @@ export function leituraWarrenDevida(
   }
   return agora.getTime() - r.warrenLidoEm.getTime() >= intervaloMs
 }
+
+export type SituacaoNaFila = 'intervencao' | 'aberto' | 'encerrado'
+
+export type ItemParaSituacao =
+  | { tipo: 'issue'; estado: 'ABERTA' | 'FECHADA' }
+  | {
+      tipo: 'pull-request'
+      estado: 'ABERTO' | 'FECHADO' | 'MERGEADO'
+      checks: 'SUCESSO' | 'FALHA' | 'PENDENTE' | 'SEM_CHECKS'
+    }
+  | { tipo: 'execucao'; estado: EstadoExecucao }
+
+// Intervenção só vem de fato observável: checks com falha numa PR aberta ou o estado
+// `INTERVENCAO_NECESSARIA` (que nenhuma fonte atual produz). A execução concluída
+// não é intervenção nem sinal de PR aprovada (UX-14, A15).
+export function situacaoNaFila(i: ItemParaSituacao): {
+  situacao: SituacaoNaFila
+  motivo: string | null
+} {
+  switch (i.tipo) {
+    case 'issue':
+      return { situacao: i.estado === 'FECHADA' ? 'encerrado' : 'aberto', motivo: null }
+    case 'pull-request':
+      if (i.estado !== 'ABERTO') return { situacao: 'encerrado', motivo: null }
+      return i.checks === 'FALHA'
+        ? { situacao: 'intervencao', motivo: 'Checks com falha no GitHub.' }
+        : { situacao: 'aberto', motivo: null }
+    case 'execucao':
+      if (i.estado === 'INTERVENCAO_NECESSARIA') {
+        return { situacao: 'intervencao', motivo: 'A execução precisa de intervenção.' }
+      }
+      return { situacao: i.estado === 'CONCLUIDA' ? 'encerrado' : 'aberto', motivo: null }
+  }
+}
+
+export function prioridadeNaFila(i: ItemParaSituacao): number {
+  const { situacao } = situacaoNaFila(i)
+  if (situacao === 'intervencao') return 0
+  if (situacao === 'encerrado') return 6
+  switch (i.tipo) {
+    case 'execucao':
+      if (i.estado === 'EXECUTANDO') return 1
+      return i.estado === 'SEM_DADOS' ? 3 : 2
+    case 'pull-request':
+      return 4
+    case 'issue':
+      return 5
+  }
+}

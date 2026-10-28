@@ -61,7 +61,14 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
     }
 
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(m)
-    await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
+    // A Central de Desenvolvimento mostra "Conectada" na situação das fontes; a regra
+    // vale para a fila, que é onde o estado de entrega aparece.
+    const regiaoDaFila = page.getByRole('region', { name: 'Fila de desenvolvimento' })
+    if (m === 'Central de Desenvolvimento') {
+      await expect(regiaoDaFila.locator('[data-tom="sucesso"]')).toHaveCount(0)
+    } else {
+      await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
+    }
 
     if (m === 'Clientes') {
       const lista = page.getByRole('list', { name: 'Lista de clientes' })
@@ -77,6 +84,8 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
       await expect(lista.or(vazio)).toBeVisible()
     } else if (m === 'Visão Geral') {
       await expect(page.getByRole('heading', { level: 2, name: 'Pendências' })).toBeVisible()
+    } else if (m === 'Central de Desenvolvimento') {
+      await expect(regiaoDaFila).toBeVisible()
     } else {
       await expect(page.getByRole('status')).toBeVisible()
     }
