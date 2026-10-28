@@ -10,7 +10,11 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { rotuloDoTipo } from '@/modules/infra/model'
-import { lerFiltrosDoInventario, listarRecursos } from '@/modules/infra/queries'
+import {
+  contarAlertasNaoResolvidos,
+  lerFiltrosDoInventario,
+  listarRecursos,
+} from '@/modules/infra/queries'
 import { FiltrosDoInventario } from './_componentes/filtros-do-inventario'
 import { NavegacaoDeInfraestrutura } from './_componentes/navegacao-de-infraestrutura'
 
@@ -41,7 +45,10 @@ export default async function PaginaInfraestrutura({ searchParams }: PaginaInfra
   }
 
   const filtros = lerFiltrosDoInventario(await searchParams)
-  const { recursos, total, projetos } = await listarRecursos(sessao.sujeito, filtros)
+  const [{ recursos, total, projetos }, naoResolvidos] = await Promise.all([
+    listarRecursos(sessao.sujeito, filtros),
+    contarAlertasNaoResolvidos(sessao.sujeito),
+  ])
   const comFiltros =
     filtros.tipo !== null || filtros.projetoId !== null || filtros.situacao !== 'todas'
 
@@ -72,7 +79,7 @@ export default async function PaginaInfraestrutura({ searchParams }: PaginaInfra
         contexto={CONTEXTO}
         acoes={acaoCadastrar}
       />
-      <NavegacaoDeInfraestrutura ativo="inventario" />
+      <NavegacaoDeInfraestrutura ativo="inventario" alertasNaoResolvidos={naoResolvidos} />
 
       <div className="flex flex-wrap items-center gap-3 rounded-padrao border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
         <BadgeDeEstado tom="neutro">Inventário manual</BadgeDeEstado>

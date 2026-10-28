@@ -7,7 +7,7 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { rotuloDoTipo } from '@/modules/infra/model'
-import { obterRecursoDaPagina } from '@/modules/infra/queries'
+import { listarAlertasDoRecurso, obterRecursoDaPagina } from '@/modules/infra/queries'
 import { DetalheDoRecurso } from '../../_componentes/detalhe-do-recurso'
 
 export interface PaginaRecursoProps {
@@ -57,6 +57,8 @@ export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
     throw erro
   }
 
+  const alertas = await listarAlertasDoRecurso(sessao.sujeito, r)
+
   return (
     <div className="space-y-6">
       <CabecalhoDePagina
@@ -69,7 +71,7 @@ export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
           </div>
         }
       />
-      <DetalheDoRecurso recurso={recurso} />
+      <DetalheDoRecurso recurso={recurso} alertas={alertas} />
     </div>
   )
 }

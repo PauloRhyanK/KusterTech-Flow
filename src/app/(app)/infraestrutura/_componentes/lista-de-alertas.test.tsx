@@ -35,8 +35,12 @@ describe('ListaDeAlertas', () => {
     )
     expect(screen.getByText('VPS Produção · Recebido 3 vezes')).toBeInTheDocument()
     expect(screen.getByText('Recebido 1 vez')).toBeInTheDocument()
-    expect(screen.getByText('Reconhecido')).toHaveAttribute('data-tom', 'atencao')
-    expect(screen.getByText('Alta')).toHaveAttribute('data-tom', 'erro')
+    for (const badge of screen.getAllByText('Reconhecido')) {
+      expect(badge).toHaveAttribute('data-tom', 'atencao')
+    }
+    for (const badge of screen.getAllByText('Alta')) {
+      expect(badge).toHaveAttribute('data-tom', 'erro')
+    }
     expect(screen.getAllByText(/^Última: /)).toHaveLength(2)
   })
 

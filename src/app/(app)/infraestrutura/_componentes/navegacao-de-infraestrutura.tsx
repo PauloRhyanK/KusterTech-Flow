@@ -2,15 +2,27 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
 export interface NavegacaoDeInfraestruturaProps {
-  ativo: 'inventario'
+  ativo: 'inventario' | 'alertas'
+  alertasNaoResolvidos?: number
 }
 
-const ITENS = [{ chave: 'inventario', rotulo: 'Inventário', href: '/infraestrutura' }] as const
+export function NavegacaoDeInfraestrutura({
+  ativo,
+  alertasNaoResolvidos = 0,
+}: NavegacaoDeInfraestruturaProps) {
+  const itens = [
+    { chave: 'inventario', rotulo: 'Inventário', href: '/infraestrutura' },
+    {
+      chave: 'alertas',
+      rotulo:
+        alertasNaoResolvidos > 0 ? `Alertas (${alertasNaoResolvidos} não resolvidos)` : 'Alertas',
+      href: '/infraestrutura/alertas',
+    },
+  ] as const
 
-export function NavegacaoDeInfraestrutura({ ativo }: NavegacaoDeInfraestruturaProps) {
   return (
     <nav aria-label="Seções de Infraestrutura" className="flex gap-1 border-b border-border">
-      {ITENS.map((item) => (
+      {itens.map((item) => (
         <Link
           key={item.chave}
           href={item.href}
