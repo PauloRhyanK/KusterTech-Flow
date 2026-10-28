@@ -1,9 +1,14 @@
+import { randomBytes } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { normalizarNome } from '@/modules/clientes/model'
 import {
+  chaveDedupeManual,
+  estadoDoAlerta,
+  hashDoTokenDeAlertas,
+  type SeveridadeAlerta,
   type TipoRecurso,
   validarHospedagem,
   validarNomeDeRecurso,
@@ -234,4 +239,186 @@ export async function desassociarProjetoDoRecurso(
   exigirPermissao(sujeito, 'infraestrutura.gerenciar')
 
   await db.recursoProjeto.deleteMany({ where: { recursoId, projetoId } })
+}
+
+const LIMITE_TITULO_ALERTA = 200
+const LIMITE_DETALHE_ALERTA = 2000
+const LIMITE_NOME_FONTE = 80
+
+export interface DadosDoAlertaManual {
+  titulo: string
+  severidade: SeveridadeAlerta
+  recursoId?: string | null
+  projetoId?: string | null
+  detalhe?: string | null
+}
+
+export async function registrarAlertaManual(
+  sujeito: Sujeito,
+  dados: DadosDoAlertaManual,
+): Promise<{ id: string }> {
+  exigirPermissao(sujeito, 'infraestrutura.gerenciar')
+
+  const titulo = dados.titulo.trim()
+  if (titulo === '') {
+    throw new ErroDeDominio('O título é obrigatório.')
+  }
+  if (titulo.length > LIMITE_TITULO_ALERTA) {
+    throw new ErroDeDominio(`O título não pode ter mais de ${LIMITE_TITULO_ALERTA} caracteres.`)
+  }
+  const detalhe = opcional(dados.detalhe)
+  if (detalhe !== null && detalhe.length > LIMITE_DETALHE_ALERTA) {
+    throw new ErroDeDominio(`O detalhe não pode ter mais de ${LIMITE_DETALHE_ALERTA} caracteres.`)
+  }
+  const recursoId = opcional(dados.recursoId)
+  const projetoId = opcional(dados.projetoId)
+  if (
+    recursoId !== null &&
+    !(await db.recurso.findUnique({ where: { id: recursoId }, select: { id: true } }))
+  ) {
+    throw new ErroDeDominio('Recurso não encontrado.')
+  }
+  if (
+    projetoId !== null &&
+    !(await db.projeto.findUnique({ where: { id: projetoId }, select: { id: true } }))
+  ) {
+    throw new ErroDeDominio('Projeto não encontrado.')
+  }
+
+  const agora = new Date()
+  return db.$transaction(async (tx) => {
+    const id = crypto.randomUUID()
+    await tx.alerta.create({
+      data: {
+        id,
+        chaveDedupe: chaveDedupeManual(id),
+        origem: 'MANUAL',
+        titulo,
+        severidade: dados.severidade,
+        estado: 'ATIVO',
+        recursoId,
+        projetoId,
+        primeiraOcorrenciaEm: agora,
+        ultimaOcorrenciaEm: agora,
+        ocorrencias: 1,
+        detalhe,
+        criadoPorId: sujeito.usuarioId,
+      },
+    })
+    await tx.eventoDeAlerta.create({
+      data: { alertaId: id, tipo: 'CRIADO', autorId: sujeito.usuarioId },
+    })
+    return { id }
+  })
+}
+
+// Reconhecer e registrar resolução leem o estado atual, aplicam a regra pura e gravam só se o
+// estado lido ainda vale (invariante 8). Se mudou no meio, relê e reavalia uma vez.
+async function aplicarDecisaoHumana(
+  sujeito: Sujeito,
+  alertaId: string,
+  evento: 'reconhecer' | 'registrar-resolucao',
+): Promise<void> {
+  for (let tentativa = 0; tentativa < 2; tentativa++) {
+    const atual = await db.alerta.findUnique({
+      where: { id: alertaId },
+      select: { estado: true, origem: true, ultimaOcorrenciaEm: true, resolvidoEm: true },
+    })
+    const transicao = estadoDoAlerta(atual, { tipo: evento })
+    if ('recusa' in transicao) {
+      throw new ErroDeDominio(transicao.recusa)
+    }
+    if (atual === null || transicao.estado === null) {
+      throw new ErroDeDominio('Alerta não encontrado.')
+    }
+
+    const agora = new Date()
+    const gravou = await db.$transaction(async (tx) => {
+      const { count } = await tx.alerta.updateMany({
+        where: { id: alertaId, estado: atual.estado },
+        data:
+          evento === 'reconhecer'
+            ? {
+                estado: transicao.estado ?? undefined,
+                reconhecidoPorId: sujeito.usuarioId,
+                reconhecidoEm: agora,
+              }
+            : {
+                estado: transicao.estado ?? undefined,
+                resolvidoPorId: sujeito.usuarioId,
+                resolvidoEm: agora,
+              },
+      })
+      if (count === 0) {
+        return false
+      }
+      await tx.eventoDeAlerta.create({
+        data: {
+          alertaId,
+          tipo: evento === 'reconhecer' ? 'RECONHECIDO' : 'RESOLVIDO',
+          autorId: sujeito.usuarioId,
+        },
+      })
+      return true
+    })
+    if (gravou) {
+      return
+    }
+  }
+  throw new ErroDeDominio(
+    'O alerta foi alterado por outra pessoa. Atualize a página e tente de novo.',
+  )
+}
+
+export async function reconhecerAlerta(sujeito: Sujeito, alertaId: string): Promise<void> {
+  exigirPermissao(sujeito, 'infraestrutura.gerenciar')
+  await aplicarDecisaoHumana(sujeito, alertaId, 'reconhecer')
+}
+
+export async function registrarResolucaoDoAlerta(
+  sujeito: Sujeito,
+  alertaId: string,
+): Promise<void> {
+  exigirPermissao(sujeito, 'infraestrutura.gerenciar')
+  await aplicarDecisaoHumana(sujeito, alertaId, 'registrar-resolucao')
+}
+
+// O token é devolvido só aqui; no banco fica apenas o hash (decisão 10).
+export async function criarFonteDeAlertas(
+  sujeito: Sujeito,
+  nome: string,
+): Promise<{ id: string; token: string }> {
+  exigirPermissao(sujeito, 'infraestrutura.gerenciar')
+
+  const aparado = nome.trim()
+  if (aparado === '') {
+    throw new ErroDeDominio('O nome é obrigatório.')
+  }
+  if (aparado.length > LIMITE_NOME_FONTE) {
+    throw new ErroDeDominio(`O nome não pode ter mais de ${LIMITE_NOME_FONTE} caracteres.`)
+  }
+
+  const token = `fa_${randomBytes(32).toString('base64url')}`
+  const criada = await db.fonteDeAlertas.create({
+    data: { nome: aparado, tokenHash: hashDoTokenDeAlertas(token), criadaPorId: sujeito.usuarioId },
+    select: { id: true },
+  })
+  return { id: criada.id, token }
+}
+
+export async function revogarFonteDeAlertas(sujeito: Sujeito, fonteId: string): Promise<void> {
+  exigirPermissao(sujeito, 'infraestrutura.gerenciar')
+
+  const { count } = await db.fonteDeAlertas.updateMany({
+    where: { id: fonteId, revogadaEm: null },
+    data: { revogadaEm: new Date() },
+  })
+  if (count > 0) {
+    return
+  }
+  const existe = await db.fonteDeAlertas.findUnique({
+    where: { id: fonteId },
+    select: { id: true },
+  })
+  throw new ErroDeDominio(existe ? 'Esta fonte já foi revogada.' : 'Fonte não encontrada.')
 }

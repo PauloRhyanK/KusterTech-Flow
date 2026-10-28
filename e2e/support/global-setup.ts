@@ -98,6 +98,18 @@ export default async function globalSetup(): Promise<void> {
     // Sem esta linha o worker considera o catálogo recente e não recataloga os repositórios apagados.
     await db.integracaoGitHub.deleteMany({})
 
+    // Alertas e fontes antes dos recursos e projetos (FK RESTRICT em recursoId); eventos em cascata.
+    await db.alerta.deleteMany({
+      where: {
+        OR: [
+          { titulo: { startsWith: 'E2E ' } },
+          { recurso: { nome: { startsWith: 'E2E ' } } },
+          { projeto: { nome: { startsWith: 'E2E ' } } },
+        ],
+      },
+    })
+    await db.fonteDeAlertas.deleteMany({ where: { nome: { startsWith: 'E2E ' } } })
+
     // Infraestrutura: vínculos e hospedagem antes dos recursos (FK RESTRICT em hospedadoEmId).
     await db.recursoProjeto.deleteMany({
       where: {

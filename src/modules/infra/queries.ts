@@ -3,7 +3,14 @@ import { cache } from 'react'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
-import { linksDeFerramentas, situacaoDoRecurso, type TipoRecurso } from './model'
+import {
+  type EstadoAlerta,
+  linksDeFerramentas,
+  type OrigemAlerta,
+  type SeveridadeAlerta,
+  situacaoDoRecurso,
+  type TipoRecurso,
+} from './model'
 
 const LIMITE_DA_LISTA = 100
 const TIPOS: readonly TipoRecurso[] = ['SERVIDOR', 'CONTAINER', 'BANCO', 'STORAGE', 'OUTRO']
@@ -206,4 +213,254 @@ export async function listarHospedeirosDisponiveis(
     orderBy: { nomeNormalizado: 'asc' },
     select: { id: true, nome: true },
   })
+}
+
+const FILTROS_DE_ESTADO = [
+  'nao-resolvidos',
+  'ativos',
+  'reconhecidos',
+  'resolvidos',
+  'todos',
+] as const
+const SEVERIDADES: readonly SeveridadeAlerta[] = ['CRITICA', 'ALTA', 'MEDIA', 'BAIXA']
+
+export interface FiltrosDeAlertas {
+  estado: (typeof FILTROS_DE_ESTADO)[number]
+  severidade: SeveridadeAlerta | null
+}
+
+export function lerFiltrosDeAlertas(
+  sp: Record<string, string | string[] | undefined>,
+): FiltrosDeAlertas {
+  const estado = primeiro(sp.estado)
+  const severidade = primeiro(sp.severidade)
+  return {
+    estado: FILTROS_DE_ESTADO.find((e) => e === estado) ?? 'nao-resolvidos',
+    severidade: SEVERIDADES.find((s) => s === severidade) ?? null,
+  }
+}
+
+// Ordem da fila (decisão 12): o Postgres ordena enums pela ordem de declaração no schema.
+const ORDEM_DA_FILA = [
+  { severidade: 'asc' },
+  { estado: 'asc' },
+  { ultimaOcorrenciaEm: 'desc' },
+] as const satisfies Prisma.AlertaOrderByWithRelationInput[]
+
+const SELECT_DA_LISTA = {
+  id: true,
+  titulo: true,
+  severidade: true,
+  estado: true,
+  origem: true,
+  ocorrencias: true,
+  ultimaOcorrenciaEm: true,
+  recurso: { select: { id: true, nome: true } },
+} as const satisfies Prisma.AlertaSelect
+
+export interface AlertaNaLista {
+  id: string
+  titulo: string
+  severidade: SeveridadeAlerta
+  estado: EstadoAlerta
+  origem: OrigemAlerta
+  ocorrencias: number
+  ultimaOcorrenciaEm: Date
+  recurso: { id: string; nome: string } | null
+}
+
+function estadosDoFiltro(estado: FiltrosDeAlertas['estado']): Prisma.AlertaWhereInput {
+  switch (estado) {
+    case 'nao-resolvidos':
+      return NAO_RESOLVIDO
+    case 'ativos':
+      return { estado: 'ATIVO' }
+    case 'reconhecidos':
+      return { estado: 'RECONHECIDO' }
+    case 'resolvidos':
+      return { estado: 'RESOLVIDO_NA_ORIGEM' }
+    case 'todos':
+      return {}
+  }
+}
+
+export async function listarAlertas(
+  sujeito: Sujeito,
+  filtros: FiltrosDeAlertas,
+): Promise<{ alertas: AlertaNaLista[]; total: number }> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  const where: Prisma.AlertaWhereInput = {
+    ...estadosDoFiltro(filtros.estado),
+    ...(filtros.severidade !== null ? { severidade: filtros.severidade } : {}),
+  }
+  const [alertas, total] = await Promise.all([
+    db.alerta.findMany({
+      where,
+      orderBy: [...ORDEM_DA_FILA],
+      take: LIMITE_DA_LISTA,
+      select: SELECT_DA_LISTA,
+    }),
+    db.alerta.count({ where }),
+  ])
+  return { alertas, total }
+}
+
+export async function listarAlertasDoRecurso(
+  sujeito: Sujeito,
+  recursoId: string,
+): Promise<AlertaNaLista[]> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  return db.alerta.findMany({
+    where: { recursoId, ...NAO_RESOLVIDO },
+    orderBy: [...ORDEM_DA_FILA],
+    take: LIMITE_DA_LISTA,
+    select: SELECT_DA_LISTA,
+  })
+}
+
+export async function listarAlertasNaoResolvidos(
+  sujeito: Sujeito,
+  limite: number,
+): Promise<AlertaNaLista[]> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  return db.alerta.findMany({
+    where: NAO_RESOLVIDO,
+    orderBy: [...ORDEM_DA_FILA],
+    take: limite,
+    select: SELECT_DA_LISTA,
+  })
+}
+
+export async function contarAlertasNaoResolvidos(sujeito: Sujeito): Promise<number> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  return db.alerta.count({ where: NAO_RESOLVIDO })
+}
+
+export interface AlertaDetalhado extends AlertaNaLista {
+  detalhe: string | null
+  primeiraOcorrenciaEm: Date
+  origemTexto: string
+  reconhecido: { por: string; em: Date } | null
+  resolucao: { por: string | null; em: Date } | null
+  projetosAfetados: { id: string; nome: string }[]
+  historico: {
+    tipo: 'CRIADO' | 'RECONHECIDO' | 'RESOLVIDO' | 'REABERTO'
+    autor: string | null
+    em: Date
+  }[]
+  podeRegistrarResolucao: boolean
+}
+
+export async function obterAlerta(sujeito: Sujeito, alertaId: string): Promise<AlertaDetalhado> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  const alerta = await db.alerta.findUnique({
+    where: { id: alertaId },
+    include: {
+      recurso: {
+        select: {
+          id: true,
+          nome: true,
+          projetos: { select: { projeto: { select: { id: true, nome: true } } } },
+        },
+      },
+      projeto: { select: { id: true, nome: true } },
+      fonte: { select: { nome: true } },
+      criadoPor: { select: { nome: true } },
+      reconhecidoPor: { select: { nome: true } },
+      resolvidoPor: { select: { nome: true } },
+      eventos: {
+        orderBy: { criadoEm: 'asc' },
+        select: { tipo: true, criadoEm: true, autor: { select: { nome: true } } },
+      },
+    },
+  })
+  if (!alerta) {
+    throw new ErroDeDominio('Alerta não encontrado.')
+  }
+
+  // Projeto do alerta ∪ projetos do recurso, sem repetição (decisão 8).
+  const afetados = new Map<string, { id: string; nome: string }>()
+  if (alerta.projeto) {
+    afetados.set(alerta.projeto.id, alerta.projeto)
+  }
+  for (const v of alerta.recurso?.projetos ?? []) {
+    afetados.set(v.projeto.id, v.projeto)
+  }
+
+  const origemTexto =
+    alerta.origem === 'WEBHOOK'
+      ? `Webhook · ${alerta.fonte?.nome ?? 'fonte removida'}`
+      : `Registro manual · ${alerta.criadoPor?.nome ?? 'autor desconhecido'}`
+
+  return {
+    id: alerta.id,
+    titulo: alerta.titulo,
+    severidade: alerta.severidade,
+    estado: alerta.estado,
+    origem: alerta.origem,
+    ocorrencias: alerta.ocorrencias,
+    ultimaOcorrenciaEm: alerta.ultimaOcorrenciaEm,
+    recurso: alerta.recurso ? { id: alerta.recurso.id, nome: alerta.recurso.nome } : null,
+    detalhe: alerta.detalhe,
+    primeiraOcorrenciaEm: alerta.primeiraOcorrenciaEm,
+    origemTexto,
+    reconhecido:
+      alerta.reconhecidoEm !== null
+        ? { por: alerta.reconhecidoPor?.nome ?? 'Sistema', em: alerta.reconhecidoEm }
+        : null,
+    resolucao:
+      alerta.resolvidoEm !== null
+        ? { por: alerta.resolvidoPor?.nome ?? null, em: alerta.resolvidoEm }
+        : null,
+    projetosAfetados: [...afetados.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+    historico: alerta.eventos.map((e) => ({
+      tipo: e.tipo,
+      autor: e.autor?.nome ?? null,
+      em: e.criadoEm,
+    })),
+    podeRegistrarResolucao: alerta.origem === 'MANUAL' && alerta.estado !== 'RESOLVIDO_NA_ORIGEM',
+  }
+}
+
+export async function listarFontesDeAlertas(sujeito: Sujeito): Promise<
+  {
+    id: string
+    nome: string
+    criadoEm: Date
+    ultimoUsoEm: Date | null
+    revogadaEm: Date | null
+  }[]
+> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  return db.fonteDeAlertas.findMany({
+    orderBy: { criadoEm: 'desc' },
+    select: { id: true, nome: true, criadoEm: true, ultimoUsoEm: true, revogadaEm: true },
+  })
+}
+
+export interface ResumoDeInfraestrutura {
+  recursos: number
+  recursosComAlerta: number
+  alertasAtivos: number
+  alertasReconhecidos: number
+}
+
+export async function obterResumoDeInfraestrutura(
+  sujeito: Sujeito,
+): Promise<ResumoDeInfraestrutura> {
+  exigirPermissao(sujeito, 'infraestrutura.ler')
+
+  const [recursos, recursosComAlerta, alertasAtivos, alertasReconhecidos] = await Promise.all([
+    db.recurso.count({ where: { arquivadoEm: null } }),
+    db.recurso.count({ where: { arquivadoEm: null, alertas: { some: NAO_RESOLVIDO } } }),
+    db.alerta.count({ where: { estado: 'ATIVO' } }),
+    db.alerta.count({ where: { estado: 'RECONHECIDO' } }),
+  ])
+  return { recursos, recursosComAlerta, alertasAtivos, alertasReconhecidos }
 }

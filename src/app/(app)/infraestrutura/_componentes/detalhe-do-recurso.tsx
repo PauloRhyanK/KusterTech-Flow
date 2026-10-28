@@ -3,12 +3,14 @@ import { buttonVariants } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { rotuloDoTipo } from '@/modules/infra/model'
-import type { RecursoDetalhado } from '@/modules/infra/queries'
+import type { AlertaNaLista, RecursoDetalhado } from '@/modules/infra/queries'
 import { ArquivamentoDoRecurso } from './arquivamento-do-recurso'
+import { ListaDeAlertas } from './lista-de-alertas'
 import { ProjetosDoRecurso } from './projetos-do-recurso'
 
 export interface DetalheDoRecursoProps {
   recurso: RecursoDetalhado
+  alertas?: readonly AlertaNaLista[]
 }
 
 const SECAO = 'space-y-3 rounded-padrao border border-border bg-surface p-4'
@@ -25,7 +27,7 @@ function DadoSemFonte({ rotulo }: { rotulo: string }) {
 }
 
 // Sem fonte de métricas, logs ou saúde (decisão 1): tudo que depende de fonte aparece como "Sem dados".
-export function DetalheDoRecurso({ recurso }: DetalheDoRecursoProps) {
+export function DetalheDoRecurso({ recurso, alertas = [] }: DetalheDoRecursoProps) {
   const urlDeEdicao = `/infraestrutura/recursos/${recurso.id}/editar`
   const arquivado = recurso.arquivadoEm !== null
 
@@ -34,10 +36,16 @@ export function DetalheDoRecurso({ recurso }: DetalheDoRecursoProps) {
       <div className="min-w-0 space-y-6">
         <section className={SECAO}>
           <h2 className="text-[15px] font-[600] text-text-primary">Problemas prioritários</h2>
-          <EstadoVazio
-            tipo="nenhum-registro"
-            titulo="Nenhum alerta aberto para este recurso."
-            descricao="Isso não confirma que o recurso está saudável."
+          <ListaDeAlertas
+            rotulo="Problemas prioritários do recurso"
+            alertas={alertas}
+            vazio={
+              <EstadoVazio
+                tipo="nenhum-registro"
+                titulo="Nenhum alerta aberto para este recurso."
+                descricao="Isso não confirma que o recurso está saudável."
+              />
+            }
           />
         </section>
 
