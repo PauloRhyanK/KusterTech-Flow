@@ -56,5 +56,25 @@
       "created_at": "2026-10-18T12:05:00Z",
       "updated_at": "2026-10-18T12:05:00Z"
     }
+  ],
+  "946001": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/946001/statuses/945001",
+      "id": 945001,
+      "state": "success",
+      "environment": "producao-publicacao",
+      "created_at": "2026-10-10T12:00:00Z",
+      "updated_at": "2026-10-10T12:00:00Z"
+    }
+  ],
+  "946003": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/946003/statuses/945003",
+      "id": 945003,
+      "state": "success",
+      "environment": "producao-publicacao",
+      "created_at": "2026-10-18T12:00:00Z",
+      "updated_at": "2026-10-18T12:00:00Z"
+    }
   ]
 }

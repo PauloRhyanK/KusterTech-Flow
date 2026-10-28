@@ -63,5 +63,31 @@
     "created_at": "2026-10-10T12:00:00Z",
     "updated_at": "2026-10-10T12:05:00Z",
     "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/6003001/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/946001",
+    "id": 946001,
+    "sha": "46b0000000000000000000000000000000000000",
+    "ref": "v1.3.1",
+    "task": "deploy",
+    "environment": "producao-publicacao",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-10T12:00:00Z",
+    "updated_at": "2026-10-10T12:00:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/946001/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/946003",
+    "id": 946003,
+    "sha": "46d0000000000000000000000000000000000000",
+    "ref": "v1.5.1",
+    "task": "deploy",
+    "environment": "producao-publicacao",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-18T12:00:00Z",
+    "updated_at": "2026-10-18T12:00:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/app-mobile/deployments/946003/statuses"
   }
 ]

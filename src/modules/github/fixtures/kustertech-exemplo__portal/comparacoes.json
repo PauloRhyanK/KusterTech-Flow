@@ -19,5 +19,19 @@
     "behind_by": 1,
     "total_commits": 1,
     "commits": [{ "sha": "1fffffffffffffffffffffffffffffffffffffff" }]
+  },
+  "16b0000000000000000000000000000000000000...1ccccccccccccccccccccccccccccccccccccccc": {
+    "status": "ahead",
+    "ahead_by": 1,
+    "behind_by": 0,
+    "total_commits": 1,
+    "commits": [{ "sha": "1ccccccccccccccccccccccccccccccccccccccc" }]
+  },
+  "1ccccccccccccccccccccccccccccccccccccccc...16b0000000000000000000000000000000000000": {
+    "status": "behind",
+    "ahead_by": 0,
+    "behind_by": 1,
+    "total_commits": 0,
+    "commits": []
   }
 }
