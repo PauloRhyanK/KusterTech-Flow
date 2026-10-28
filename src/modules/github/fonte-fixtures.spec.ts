@@ -45,11 +45,11 @@ describe('fonte de fixtures', () => {
     expect(await fonte.listarChecks(repo!, 'f'.repeat(40))).toEqual([])
   })
 
-  test('listarDeployments: 5 por repositório; desde 2026-10-16T11:00:00Z → 3; compararCommits(portal, M, V1/V2/V3) → behind/ahead/diverged; par desconhecido → commit-desconhecido', async () => {
+  test('listarDeployments: 7 por repositório; desde 2026-10-16T11:00:00Z → 4; compararCommits(portal, M, V1/V2/V3) → behind/ahead/diverged; par desconhecido → commit-desconhecido', async () => {
     const repos = await fonte.listarRepositorios()
     for (const repo of repos) {
-      expect(await fonte.listarDeployments(repo, null)).toHaveLength(5)
-      expect(await fonte.listarDeployments(repo, new Date('2026-10-16T11:00:00Z'))).toHaveLength(3)
+      expect(await fonte.listarDeployments(repo, null)).toHaveLength(7)
+      expect(await fonte.listarDeployments(repo, new Date('2026-10-16T11:00:00Z'))).toHaveLength(4)
     }
     const portal = repos[0]!
     const M = '1' + 'c'.repeat(39)
@@ -80,7 +80,58 @@ describe('fonte de fixtures', () => {
       'success',
       'success',
       'success',
+      'success',
+      'success',
     ])
+  })
+
+  test('portal tem 916001 producao-publicacao B1 e 916002 qa-publicacao M1; compararCommits(portal, B1, M1) → ahead [M1] não truncada', async () => {
+    const [portal] = await fonte.listarRepositorios()
+    const B1 = '16b' + '0'.repeat(37)
+    const M1 = '1' + 'c'.repeat(39)
+    const itens = await fonte.listarDeployments(portal!, null)
+    const novos = itens
+      .filter((d) => d.githubId < BigInt(1_000_000))
+      .sort((a, b) => Number(a.githubId - b.githubId))
+    expect(
+      novos.map((d) => [d.githubId, d.ambiente, d.sha, d.criadoEm.toISOString(), d.status?.estado]),
+    ).toEqual([
+      [BigInt(916001), 'producao-publicacao', B1, '2026-10-10T12:00:00.000Z', 'success'],
+      [BigInt(916002), 'qa-publicacao', M1, '2026-10-16T12:00:00.000Z', 'success'],
+    ])
+    expect(novos.map((d) => d.status?.githubId)).toEqual([BigInt(915001), BigInt(915002)])
+    expect(await fonte.compararCommits(portal!, B1, M1)).toEqual({
+      status: 'ahead',
+      commits: [M1],
+      truncada: false,
+    })
+    expect((await fonte.compararCommits(portal!, M1, B1)).status).toBe('behind')
+  })
+
+  test('api (n=2) e app-mobile (n=4): 9n6001 producao-publicacao Bn e 9n6003 producao-publicacao Dn; Mn…Bn → behind; Mn…Dn → ahead [Dn]', async () => {
+    const repos = await fonte.listarRepositorios()
+    for (const [indice, n] of [
+      [1, 2],
+      [3, 4],
+    ] as const) {
+      const repo = repos[indice]!
+      const M = String(n) + 'c'.repeat(39)
+      const B = `${n}6b` + '0'.repeat(37)
+      const D = `${n}6d` + '0'.repeat(37)
+      const itens = (await fonte.listarDeployments(repo, null))
+        .filter((d) => d.githubId < BigInt(1_000_000))
+        .sort((a, b) => Number(a.githubId - b.githubId))
+      expect(itens.map((d) => [d.githubId, d.ambiente, d.sha, d.criadoEm.toISOString()])).toEqual([
+        [BigInt(`9${n}6001`), 'producao-publicacao', B, '2026-10-10T12:00:00.000Z'],
+        [BigInt(`9${n}6003`), 'producao-publicacao', D, '2026-10-18T12:00:00.000Z'],
+      ])
+      expect((await fonte.compararCommits(repo, M, B)).status).toBe('behind')
+      expect(await fonte.compararCommits(repo, M, D)).toEqual({
+        status: 'ahead',
+        commits: [D],
+        truncada: false,
+      })
+    }
   })
 
   test('PR #5 dos quatro repositórios tem shaMerge n+"c"×39; PR #6 tem null', async () => {

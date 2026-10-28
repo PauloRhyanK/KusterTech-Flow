@@ -56,5 +56,25 @@
       "created_at": "2026-10-18T12:05:00Z",
       "updated_at": "2026-10-18T12:05:00Z"
     }
+  ],
+  "926001": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/api/deployments/926001/statuses/925001",
+      "id": 925001,
+      "state": "success",
+      "environment": "producao-publicacao",
+      "created_at": "2026-10-10T12:00:00Z",
+      "updated_at": "2026-10-10T12:00:00Z"
+    }
+  ],
+  "926003": [
+    {
+      "url": "https://api.github.com/repos/kustertech-exemplo/api/deployments/926003/statuses/925003",
+      "id": 925003,
+      "state": "success",
+      "environment": "producao-publicacao",
+      "created_at": "2026-10-18T12:00:00Z",
+      "updated_at": "2026-10-18T12:00:00Z"
+    }
   ]
 }

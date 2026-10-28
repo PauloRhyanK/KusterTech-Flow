@@ -7,6 +7,7 @@ import { executarCiclo } from '@/modules/github/reconciliacao'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
+import { calcularComposicoes } from '@/modules/publicacao/composicoes'
 
 export interface TarefaDoWorker {
   nome: string
@@ -64,6 +65,15 @@ export function criarTarefasDoCiclo(d: {
         const resumo = await detectarRetestes(agora)
         if (resumo.retestes > 0) {
           log.info({ tarefa: 'detectar-retestes', ...resumo }, 'retestes detectados')
+        }
+      },
+    },
+    {
+      nome: 'calcular-composicoes',
+      async executar(agora) {
+        const resumo = await calcularComposicoes(d.obterFonte(), agora)
+        if (resumo.calculadas + resumo.revogadas + resumo.falhas > 0) {
+          log.info({ tarefa: 'calcular-composicoes', ...resumo }, 'composições calculadas')
         }
       },
     },

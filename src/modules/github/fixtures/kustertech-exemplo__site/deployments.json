@@ -39,6 +39,19 @@
     "statuses_url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/6002003/statuses"
   },
   {
+    "url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/936002",
+    "id": 936002,
+    "sha": "3ccccccccccccccccccccccccccccccccccccccc",
+    "ref": "v1.5.0",
+    "task": "deploy",
+    "environment": "qa-publicacao",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-16T12:00:00Z",
+    "updated_at": "2026-10-16T12:00:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/936002/statuses"
+  },
+  {
     "url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/6002002",
     "id": 6002002,
     "sha": "3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -63,5 +76,18 @@
     "created_at": "2026-10-10T12:00:00Z",
     "updated_at": "2026-10-10T12:05:00Z",
     "statuses_url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/6002001/statuses"
+  },
+  {
+    "url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/936001",
+    "id": 936001,
+    "sha": "36b0000000000000000000000000000000000000",
+    "ref": "v1.3.1",
+    "task": "deploy",
+    "environment": "producao-publicacao",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-10T12:00:00Z",
+    "updated_at": "2026-10-10T12:00:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/site/deployments/936001/statuses"
   }
 ]

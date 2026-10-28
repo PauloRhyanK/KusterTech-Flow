@@ -351,7 +351,7 @@ describe('deployments e comparação de commits', () => {
   const M = '1' + 'c'.repeat(39)
   const V2 = '1' + 'e'.repeat(39)
 
-  test('listarDeployments(portal, null): 1 GET de deployments + 5 GET de statuses (per_page=1); 5 itens; k=3 traz o status success, não o in_progress', async () => {
+  test('listarDeployments(portal, null): 1 GET de deployments + 7 GET de statuses (per_page=1); 7 itens; k=3 traz o status success, não o in_progress', async () => {
     const { fonte, chamadas } = criar({
       [TOKEN_PATH]: tokenRota(),
       'GET /repos/kustertech-exemplo/portal/deployments': { corpo: deploymentsPortal },
@@ -359,15 +359,15 @@ describe('deployments e comparação de commits', () => {
     })
     const itens = await fonte.listarDeployments(repo, null)
     const gets = chamadas.filter((c) => c.metodo === 'GET')
-    expect(gets).toHaveLength(6)
+    expect(gets).toHaveLength(8)
     expect(gets[0]!.url.searchParams.get('per_page')).toBe('100')
     expect(gets.slice(1).every((c) => c.url.searchParams.get('per_page') === '1')).toBe(true)
-    expect(itens).toHaveLength(5)
+    expect(itens).toHaveLength(7)
     const k3 = itens.find((d) => d.githubId === BigInt(6000003))!
     expect(k3.status).toMatchObject({ githubId: BigInt(5000003), estado: 'success' })
   })
 
-  test('listarDeployments com desde 2026-10-16T11:00:00Z → ids 6000005, 6000004, 6000003; para na página com item anterior a desde (Link com segunda página não é pedido)', async () => {
+  test('listarDeployments com desde 2026-10-16T11:00:00Z → ids 6000005, 6000004, 6000003, 916002; para na página com item anterior a desde (Link com segunda página não é pedido)', async () => {
     const { fonte, chamadas } = criar({
       [TOKEN_PATH]: tokenRota(),
       'GET /repos/kustertech-exemplo/portal/deployments': {
@@ -383,6 +383,7 @@ describe('deployments e comparação de commits', () => {
       BigInt(6000005),
       BigInt(6000004),
       BigInt(6000003),
+      BigInt(916002),
     ])
     expect(
       chamadas.filter(

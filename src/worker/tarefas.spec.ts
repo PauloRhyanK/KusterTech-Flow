@@ -7,7 +7,7 @@ import { log } from '@/lib/log'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 describe('tarefas do worker', () => {
-  test('TAREFAS_DO_CICLO termina com executar-tarefas-github e detectar-retestes, depois de atualizar-fila-de-homologacao', () => {
+  test('TAREFAS_DO_CICLO termina com calcular-composicoes, depois de calcular-presencas e detectar-retestes', () => {
     expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
       'reconciliar-github',
       'sincronizar-deployments',
@@ -15,7 +15,15 @@ describe('tarefas do worker', () => {
       'atualizar-fila-de-homologacao',
       'executar-tarefas-github',
       'detectar-retestes',
+      'calcular-composicoes',
     ])
+    const nomes = TAREFAS_DO_CICLO.map((t) => t.nome)
+    expect(nomes.indexOf('calcular-composicoes')).toBeGreaterThan(
+      nomes.indexOf('calcular-presencas'),
+    )
+    expect(nomes.indexOf('calcular-composicoes')).toBeGreaterThan(
+      nomes.indexOf('detectar-retestes'),
+    )
   })
 
   test('executarTarefas: a segunda lança Error("segredo ghs_x"), a terceira roda; resultado [ok, falha, ok]; log.error recebe { tarefa: "b", erro: { tipo: "Error" } } e nenhum argumento contém "ghs_x"', async () => {
