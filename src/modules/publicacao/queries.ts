@@ -40,6 +40,15 @@ export interface VersaoCurta {
   commitCurto: string
 }
 
+export interface DivergenciaApresentada {
+  id: string
+  commitCurto: string
+  origem: OrigemEvidencia
+  ocorridaEm: Date
+  detectadaEm: Date
+  reconhecida: { porNome: string; em: Date } | null
+}
+
 export interface PublicacaoDoRepositorio {
   repositorio: {
     id: string
@@ -69,6 +78,7 @@ export interface PublicacaoDoRepositorio {
     revogadaEm: Date | null
     motivoRevogacao: string | null
   }[]
+  divergencias: DivergenciaApresentada[]
 }
 
 export interface PublicacoesDoProjeto {
@@ -86,6 +96,7 @@ export interface PublicacoesDoProjeto {
 
 const curto = (sha: string) => sha.slice(0, 7)
 const LIMITE_DE_AUTORIZACOES = 10
+const LIMITE_DE_DIVERGENCIAS = 20
 
 async function apresentar(
   composicao: LinhaDaComposicao,
@@ -195,6 +206,20 @@ export async function obterPublicacoesDoProjeto(
       },
     })
 
+    const divergencias = await db.divergenciaDeDeploy.findMany({
+      where: { versao: { repositorioId: id } },
+      orderBy: { detectadaEm: 'desc' },
+      take: LIMITE_DE_DIVERGENCIAS,
+      select: {
+        id: true,
+        detectadaEm: true,
+        reconhecidaEm: true,
+        versao: { select: { commitSha: true } },
+        evidencia: { select: { origem: true, ocorridaEm: true } },
+        reconhecidaPor: { select: { nome: true } },
+      },
+    })
+
     repositorios.push({
       repositorio,
       emProd: emProd
@@ -220,6 +245,17 @@ export async function obterPublicacoesDoProjeto(
         autorNome: a.autor.nome,
         revogadaEm: a.revogadaEm,
         motivoRevogacao: a.motivoRevogacao,
+      })),
+      divergencias: divergencias.map((d) => ({
+        id: d.id,
+        commitCurto: curto(d.versao.commitSha),
+        origem: d.evidencia.origem,
+        ocorridaEm: d.evidencia.ocorridaEm,
+        detectadaEm: d.detectadaEm,
+        reconhecida:
+          d.reconhecidaEm && d.reconhecidaPor
+            ? { porNome: d.reconhecidaPor.nome, em: d.reconhecidaEm }
+            : null,
       })),
     })
   }

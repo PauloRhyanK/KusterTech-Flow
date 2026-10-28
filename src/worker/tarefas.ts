@@ -8,6 +8,7 @@ import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
 import { calcularComposicoes } from '@/modules/publicacao/composicoes'
+import { detectarDivergencias } from '@/modules/publicacao/divergencias'
 
 export interface TarefaDoWorker {
   nome: string
@@ -74,6 +75,18 @@ export function criarTarefasDoCiclo(d: {
         const resumo = await calcularComposicoes(d.obterFonte(), agora)
         if (resumo.calculadas + resumo.revogadas + resumo.falhas > 0) {
           log.info({ tarefa: 'calcular-composicoes', ...resumo }, 'composições calculadas')
+        }
+      },
+    },
+    {
+      nome: 'detectar-divergencias',
+      async executar(agora) {
+        const resumo = await detectarDivergencias(agora)
+        if (resumo.novas > 0) {
+          log.info(
+            { tarefa: 'detectar-divergencias', ...resumo },
+            'divergências de deploy detectadas',
+          )
         }
       },
     },

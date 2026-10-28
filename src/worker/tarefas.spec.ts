@@ -7,7 +7,7 @@ import { log } from '@/lib/log'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 describe('tarefas do worker', () => {
-  test('TAREFAS_DO_CICLO termina com calcular-composicoes, depois de calcular-presencas e detectar-retestes', () => {
+  test('TAREFAS_DO_CICLO termina com calcular-composicoes e detectar-divergencias, depois de calcular-presencas e detectar-retestes', () => {
     expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
       'reconciliar-github',
       'sincronizar-deployments',
@@ -16,6 +16,7 @@ describe('tarefas do worker', () => {
       'executar-tarefas-github',
       'detectar-retestes',
       'calcular-composicoes',
+      'detectar-divergencias',
     ])
     const nomes = TAREFAS_DO_CICLO.map((t) => t.nome)
     expect(nomes.indexOf('calcular-composicoes')).toBeGreaterThan(
@@ -23,6 +24,12 @@ describe('tarefas do worker', () => {
     )
     expect(nomes.indexOf('calcular-composicoes')).toBeGreaterThan(
       nomes.indexOf('detectar-retestes'),
+    )
+    expect(nomes.indexOf('detectar-divergencias')).toBeGreaterThan(
+      nomes.indexOf('sincronizar-deployments'),
+    )
+    expect(nomes.indexOf('detectar-divergencias')).toBeGreaterThan(
+      nomes.indexOf('calcular-composicoes'),
     )
   })
 
