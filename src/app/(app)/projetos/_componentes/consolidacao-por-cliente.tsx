@@ -27,7 +27,10 @@ export function ConsolidacaoPorCliente({ consolidacao }: ConsolidacaoPorClienteP
         Homologação por cliente
       </h2>
       <p className="text-sm text-text-secondary">{consolidacao.resumo}</p>
-      <ul className="divide-y divide-border rounded-padrao border border-border bg-surface">
+      <ul
+        aria-labelledby="homologacao-por-cliente"
+        className="divide-y divide-border rounded-padrao border border-border bg-surface"
+      >
         {consolidacao.clientes.map((c) => (
           <li key={c.clienteId} className="space-y-2 p-4">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -44,15 +47,11 @@ export function ConsolidacaoPorCliente({ consolidacao }: ConsolidacaoPorClienteP
               )}
             </div>
             <p className="text-sm text-text-secondary">{c.situacoes}</p>
-            <details>
-              <summary className="cursor-pointer text-sm text-text-link hover:underline">
-                Ver itens de {c.nome}
-              </summary>
-              {c.itens.length === 0 ? (
-                <p className="mt-2 text-sm text-text-secondary">
-                  Nenhum item em homologação ainda.
-                </p>
-              ) : (
+            {c.itens.length > 0 && (
+              <details>
+                <summary className="cursor-pointer text-sm text-text-link hover:underline">
+                  Ver itens de {c.nome}
+                </summary>
                 <ul className="mt-2 space-y-1">
                   {c.itens.map((i) => {
                     const { texto, tom } = apresentarEstadoDoItem(i.estado)
@@ -67,8 +66,8 @@ export function ConsolidacaoPorCliente({ consolidacao }: ConsolidacaoPorClienteP
                     )
                   })}
                 </ul>
-              )}
-            </details>
+              </details>
+            )}
             <Link href={c.href} className="inline-block text-sm text-text-link hover:underline">
               Abrir homologação de {c.nome}
             </Link>

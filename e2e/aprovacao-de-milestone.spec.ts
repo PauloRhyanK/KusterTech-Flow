@@ -119,7 +119,7 @@ test('com #2 fechada no banco, aprovador do cliente A confere cliente, milestone
   ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Aprovar milestone' })).toHaveCount(0)
   const itensDeB = page.locator('details').filter({ hasText: `Ver itens de ${h.clienteBNome}` })
-  await expect(itensDeB.getByText('Pendente de teste')).toBeHidden()
+  await expect(itensDeB.getByText('Pendente de teste').first()).toBeHidden()
   await itensDeB.locator('summary').click()
   await expect(itensDeB.getByText('Pendente de teste')).toHaveCount(2)
   await expect(itensDeB.getByText(/^#2 /)).toBeVisible()

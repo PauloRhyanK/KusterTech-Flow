@@ -84,6 +84,7 @@ export function AprovacaoDaMilestone(props: AprovacaoDaMilestoneProps) {
             rotuloDeConfirmacao={`Confirmar aprovação para ${props.clienteNome}`}
             action={enviar}
             pendente={pendente}
+            classeDoBotao="h-auto max-w-full whitespace-normal py-2 text-left"
             camposOcultos={{
               projetoId: props.projetoId,
               clienteId: props.clienteId,
