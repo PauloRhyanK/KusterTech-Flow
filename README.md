@@ -188,3 +188,56 @@ O Incremento 6 separa, por repositório, quatro estados que variam de forma inde
 
 - **Worker:** `calcular-composicoes` e `detectar-divergencias` fazem parte do ciclo de `pnpm worker` e `pnpm worker:uma-vez`.
 - **Verificação:** `e2e/publicacoes.spec.ts` cobre a página e o isolamento por POST forjado; `e2e/jornada-c-publicacao.spec.ts` percorre o fim da Jornada C (autorizar, ver o deploy, verificar e a divergência), no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
+
+## Infraestrutura e alertas
+
+O Incremento 8 entrega um **inventário manual** de recursos (servidor, container, banco, storage, outro) e uma **fila única de alertas**. Só o administrador lê e altera essa área; os demais perfis veem "Sem permissão para esta área.".
+
+- **O que o inventário é:** o cadastro de cada recurso, com identidade única (nome normalizado e identificador externo opcional), vínculo N:N com projetos, hospedagem em um servidor e atalhos para Beszel, GlitchTip, host Docker e para os repositórios GitHub dos projetos associados. Recurso é arquivado, nunca apagado.
+- **O que não é:** não há descoberta automática, métricas, terminal nem logs. CPU, memória, disco, estado do container e prévia de logs aparecem como "Sem dados", em tom neutro: ausência de alerta não prova que o recurso está saudável.
+- **Um registro por alerta:** o mesmo alerta (`/infraestrutura/alertas/<id>`) aparece na fila, no recurso e na aba Saúde e Erros de cada projeto associado, sempre com o mesmo link.
+
+### Como criar uma fonte de alertas
+
+Em **Infraestrutura → Alertas → Fontes de alertas → Criar fonte**, informe um nome. O token (`fa_…`) aparece **uma única vez**; no banco fica só o hash SHA-256. Guarde-o no sistema que vai notificar. Revogar a fonte faz o webhook responder 401. Nunca coloque o token em repositório, log ou URL.
+
+### Webhook `POST /api/alertas`
+
+```sh
+curl -X POST "$URL_DA_CENTRAL/api/alertas" \
+  -H "Authorization: Bearer $TOKEN_DA_FONTE" \
+  -H "Content-Type: application/json" \
+  -d '{"chave":"disco-cheio-vps-1","titulo":"Disco acima de 90%","severidade":"alta"}'
+```
+
+Corpo mínimo: `chave`, `titulo` e `severidade`. Campos aceitos:
+
+| Campo        | Obrigatório | Regra                                                                                                             |
+| ------------ | ----------- | ----------------------------------------------------------------------------------------------------------------- |
+| `chave`      | sim         | Texto de 1 a 200 caracteres; identifica o alerta na fonte (nunca é truncada).                                     |
+| `titulo`     | sim         | Texto não vazio; gravado com até 200 caracteres.                                                                  |
+| `severidade` | sim         | `critica`, `alta`, `media` ou `baixa`.                                                                            |
+| `situacao`   | não         | `ativo` (padrão) ou `resolvido`.                                                                                  |
+| `recurso`    | não         | Identificador externo ou nome do recurso (até 120 caracteres); desconhecido grava sem recurso e devolve um aviso. |
+| `ocorridoEm` | não         | Data ISO 8601 com fuso; ausente ou mais de 5 minutos no futuro vale o momento do recebimento.                     |
+| `detalhe`    | não         | Texto gravado com até 2000 caracteres.                                                                            |
+
+**Descartado:** qualquer outro campo do corpo (por exemplo `token`, `senha`, `html`) é ignorado e nunca chega ao banco.
+
+| Status | Significado                                                                                               |
+| ------ | --------------------------------------------------------------------------------------------------------- |
+| `201`  | Alerta criado (`"resultado":"criado"`).                                                                   |
+| `200`  | Repetição, reabertura, resolução ou nenhuma mudança (`repetido`, `reaberto`, `resolvido`, `sem-mudanca`). |
+| `202`  | Resolução de uma chave desconhecida: ignorada, nada é gravado (`ignorado`).                               |
+| `400`  | Corpo inválido; `campos` lista os campos com erro.                                                        |
+| `401`  | Token ausente, desconhecido ou de fonte revogada (`{"erro":"Token inválido."}`).                          |
+| `413`  | Corpo maior que 16 KB.                                                                                    |
+| `415`  | `Content-Type` diferente de `application/json`.                                                           |
+
+Falha inesperada responde `500` com mensagem fixa. Nenhuma resposta ou log inclui o token, o cabeçalho ou o corpo.
+
+### Deduplicação e reconhecer ≠ resolver
+
+- **Deduplicação:** a identidade do alerta é `<fonte>:<chave>`; duas fontes com a mesma `chave` não se misturam. Repetir a chave soma `ocorrencias` ("Recebido 2 vezes") e atualiza título, severidade e detalhe; não cria outro alerta. Uma resolução anterior à última ocorrência não fecha o alerta, e uma ocorrência anterior à resolução não o reabre.
+- **Reconhecer ≠ resolver:** reconhecer é uma decisão humana ("estou vendo"); o alerta continua entre os não resolvidos, no projeto e no resumo, e a tela diz "O alerta foi reconhecido, mas continua ativo na origem.". Alerta de webhook só é resolvido pela fonte (`"situacao":"resolvido"`); alerta registrado à mão é resolvido por "Registrar resolução", que grava quem resolveu.
+- **Verificação:** `e2e/webhook-alertas.spec.ts` cobre o contrato do webhook; `e2e/jornada-d.spec.ts` percorre a Jornada D (alerta no projeto, mesmo registro na Infraestrutura, no recurso e na VPS, reconhecer e resolver), no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).

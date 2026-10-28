@@ -1030,3 +1030,13 @@ export async function reativarAlertaNoBanco(id: string): Promise<void> {
     data: { estado: 'ATIVO', reconhecidoPorId: null, reconhecidoEm: null },
   })
 }
+
+// Alertas de webhook cuja chave (sem o prefixo da fonte) é `chave`.
+export async function obterAlertasPorChaveNoBanco(
+  chave: string,
+): Promise<{ id: string; ocorrencias: number }[]> {
+  return db.alerta.findMany({
+    where: { chaveDedupe: { endsWith: `:${chave}` } },
+    select: { id: true, ocorrencias: true },
+  })
+}
