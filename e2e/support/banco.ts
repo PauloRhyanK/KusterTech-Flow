@@ -1306,3 +1306,15 @@ export async function limparCenarioDaVisaoGeral(projectName: string): Promise<vo
   })
   await db.cliente.deleteMany({ where: doCenario })
 }
+
+export async function contarEventosDeWebhook(deliveryId: string): Promise<number> {
+  return db.eventoIntegracao.count({ where: { deliveryId } })
+}
+
+export async function githubIdDoRepositorioNoBanco(nomeCompleto: string): Promise<number> {
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto },
+    select: { githubId: true },
+  })
+  return Number(repositorio.githubId)
+}
