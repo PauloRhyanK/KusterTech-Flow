@@ -12,12 +12,13 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterAmbientesDoProjeto } from '@/modules/ambientes/queries'
 import { contarMilestonesAtivasDoProjeto } from '@/modules/entregas/queries'
-import { obterRepositoriosDoProjeto } from '@/modules/github/queries'
+import { obterRepositoriosDoProjeto, obterSituacaoDoWebhook } from '@/modules/github/queries'
 import { obterProjetoParaConfiguracao } from '@/modules/projetos/queries'
 import { AmbientesDoProjeto } from '@/app/(app)/projetos/_componentes/ambientes-do-projeto'
 import { AssociacaoDeClientes } from '@/app/(app)/projetos/_componentes/associacao-de-clientes'
 import { FormularioProjeto } from '@/app/(app)/projetos/_componentes/formulario-projeto'
 import { RepositoriosDoProjeto } from '@/app/(app)/projetos/_componentes/repositorios-do-projeto'
+import { SituacaoDoWebhook } from '@/app/(app)/projetos/_componentes/situacao-do-webhook'
 import {
   alternarArquivamentoDoProjetoAction,
   editarProjetoAction,
@@ -56,10 +57,12 @@ export default async function PaginaConfiguracaoProjeto({
   let projeto: Awaited<ReturnType<typeof obterProjetoParaConfiguracao>>
   let github: Awaited<ReturnType<typeof obterRepositoriosDoProjeto>>
   let ambientes: Awaited<ReturnType<typeof obterAmbientesDoProjeto>>
+  let webhook: Awaited<ReturnType<typeof obterSituacaoDoWebhook>>
   let milestonesAtivas: number
   try {
     projeto = await obterProjetoParaConfiguracao(sessao.sujeito, p)
     github = await obterRepositoriosDoProjeto(sessao.sujeito, p)
+    webhook = await obterSituacaoDoWebhook(sessao.sujeito)
     ambientes = await obterAmbientesDoProjeto(sessao.sujeito, p)
     milestonesAtivas = await contarMilestonesAtivasDoProjeto(sessao.sujeito, p, {
       tipo: 'global',
@@ -129,6 +132,7 @@ export default async function PaginaConfiguracaoProjeto({
           vinculados={github.vinculados}
           disponiveis={github.disponiveis}
         />
+        <SituacaoDoWebhook situacao={webhook} />
       </section>
 
       <section id="ambientes" className="space-y-3">
