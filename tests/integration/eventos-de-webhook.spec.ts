@@ -6,6 +6,7 @@ import { processarEventosDeWebhook } from '@/modules/github/eventos'
 import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
 import type { FonteGitHub } from '@/modules/github/fonte'
 import {
+  type EventoDeWebhook,
   MENSAGEM_EVENTO_ABANDONADO,
   MENSAGEM_FALHA_DO_EVENTO,
   repositorioDevido,
@@ -16,7 +17,7 @@ import { limparBanco } from './banco-de-teste'
 
 const t0 = new Date('2026-10-26T15:00:00.000Z')
 const INTERVALO = 600_000
-const PORTAL_ID = 5001n
+const PORTAL_ID = BigInt(5001)
 const minutos = (h: number, m: number, s = 0) => new Date(Date.UTC(2026, 9, 26, h, m, s))
 
 function fonteMutavel() {
@@ -53,7 +54,7 @@ async function vincularPortal() {
 const portal = () => db.repositorioGitHub.findUniqueOrThrow({ where: { githubId: PORTAL_ID } })
 const evento = (
   deliveryId: string,
-  tipo = 'issues',
+  tipo: EventoDeWebhook = 'issues',
   repositorioGitHubId: bigint | null = PORTAL_ID,
 ) => ({ tipo: 'registrar' as const, deliveryId, evento: tipo, repositorioGitHubId })
 
@@ -186,7 +187,7 @@ describe('processar-eventos-de-webhook', () => {
     ).toBeNull()
 
     // fora do catálogo
-    await registrarEventoDeWebhook(evento('d-fora', 'issues', 999999n), minutos(15, 2))
+    await registrarEventoDeWebhook(evento('d-fora', 'issues', BigInt(999999)), minutos(15, 2))
     await processarEventosDeWebhook(agora)
     const integracao = await db.integracaoGitHub.findUniqueOrThrow({ where: { id: 'github' } })
     expect(integracao.catalogoSolicitadoEm).toEqual(agora)
