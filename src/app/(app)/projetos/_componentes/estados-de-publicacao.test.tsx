@@ -70,3 +70,25 @@ describe('EstadosDaPublicacao', () => {
     }
   })
 })
+
+describe('EstadosDaPublicacao nas páginas de milestone e issue', () => {
+  test('os quatro estados variam de forma independente (D68)', () => {
+    const estados = estadosDePublicacao({
+      qa: { estados: ['APROVADA'], correcoesBloqueadoras: 0 },
+      autorizacao: null,
+      deploy: { tipo: 'presenca', estado: 'PRESENCA_CONFIRMADA' },
+      divergente: true,
+      verificacao: { origem: 'ENDPOINT' },
+    })
+
+    render(<EstadosDaPublicacao estados={estados} />)
+
+    const definicoes = screen.getAllByRole('definition').map((d) => d.textContent)
+    expect(definicoes).toEqual([
+      'QA aprovado',
+      'Não autorizada para PROD',
+      'Em PROD sem autorização registrada',
+      'Verificada em produção por evidência',
+    ])
+  })
+})

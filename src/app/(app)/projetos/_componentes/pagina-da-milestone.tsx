@@ -24,6 +24,7 @@ import {
 } from '@/modules/homologacao/queries'
 import { type Contexto, rotasDoProjeto, trilhasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
+import { obterPublicacaoDaMilestone } from '@/modules/publicacao/queries'
 import { AbasDaMilestone } from './abas-da-milestone'
 import { AdicionarIssues } from './adicionar-issues'
 import { AvisoDeIntegracao } from './aviso-de-integracao'
@@ -31,6 +32,7 @@ import { DetalheDaMilestone } from './detalhe-da-milestone'
 import { FormularioMilestone } from './formulario-milestone'
 import { HomologacaoDaMilestone } from './homologacao-da-milestone'
 import { IssuesDaMilestone } from './issues-da-milestone'
+import { ResumoDePublicacao } from './resumo-de-publicacao'
 
 export interface PaginaDaMilestoneProps {
   sujeito: Sujeito
@@ -72,9 +74,13 @@ export async function PaginaDaMilestone({
     null
   let aprovacao: Awaited<ReturnType<typeof obterAprovacaoDaMilestone>> | null = null
   let consolidacao: Awaited<ReturnType<typeof obterConsolidacaoDaMilestone>> | null = null
+  let publicacao: Awaited<ReturnType<typeof obterPublicacaoDaMilestone>> | null = null
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
     dados = await obterMilestone(sujeito, projetoId, milestoneId, contexto, filtros)
+    if (global) {
+      publicacao = await obterPublicacaoDaMilestone(sujeito, projetoId, milestoneId)
+    }
     if (filtros.aba === 'issues') {
       presencaEmQA = await listarPresencaEmQA(
         sujeito,
@@ -198,6 +204,16 @@ export async function PaginaDaMilestone({
         podeGerenciar={podeGerenciar}
         hrefConfiguracao={hrefConfiguracao}
         cliente={cliente}
+        publicacao={
+          publicacao && (
+            <ResumoDePublicacao
+              projetoId={projetoId}
+              prodConfigurado={publicacao.prodConfigurado}
+              resumo={publicacao.resumo}
+              hrefAmbientes={admin ? `/projetos/${projetoId}/configuracao#ambientes` : null}
+            />
+          )
+        }
       />
 
       <AbasDaMilestone

@@ -164,13 +164,13 @@ export async function composicaoMaisRecenteDaVersao(
 
 type HomologacoesDaIssue = EntradaDeAutorizacao['issues'][number]['homologacoes']
 
-interface DadosDeHomologacao {
+export interface DadosDeHomologacao {
   homologacoes: HomologacoesDaIssue[number][]
   estados: EstadoItemHomologacao[]
   correcoesBloqueadoras: { cliente: string }[]
 }
 
-async function homologacoesPorIssue(
+export async function homologacoesPorIssue(
   cliente: Cliente,
   issueIds: readonly string[],
 ): Promise<Map<string, DadosDeHomologacao>> {
@@ -202,7 +202,7 @@ async function homologacoesPorIssue(
 }
 
 // Errata §3.8, item 6: a correção não tem item próprio; herda os itens da issue original.
-async function originaisDasCorrecoes(
+export async function originaisDasCorrecoes(
   cliente: Cliente,
   issueIds: readonly string[],
 ): Promise<Map<string, string[]>> {

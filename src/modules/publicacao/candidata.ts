@@ -37,6 +37,45 @@ export interface SituacaoDePublicacao {
   base: BaseEscolhida | null
 }
 
+type EvidenciaComVersao = Prisma.EvidenciaDeployGetPayload<{
+  include: { versao: { select: { rotulo: true; commitSha: true } } }
+}>
+
+// Versão da evidência `SUCESSO` vigente (Incremento 4) entre as evidências de um ambiente.
+function vigenteDasEvidencias(evidencias: readonly EvidenciaComVersao[]): VersaoEmAmbiente | null {
+  const paraEstado: EvidenciaParaEstado[] = evidencias.map((e) => ({
+    versaoId: e.versaoId,
+    rotulo: e.versao.rotulo,
+    origem: e.origem,
+    situacao: e.situacao,
+    ocorridaEm: e.ocorridaEm,
+    registradaEm: e.registradaEm,
+  }))
+  const vigente = evidenciaVigente(paraEstado)
+  const evidencia = vigente && evidencias.find((e) => e.versaoId === vigente.versaoId)
+  if (!vigente || !evidencia) return null
+  return {
+    versaoId: vigente.versaoId,
+    rotulo: vigente.rotulo,
+    commitSha: evidencia.versao.commitSha,
+    origem: vigente.origem,
+    ocorridaEm: vigente.ocorridaEm,
+  }
+}
+
+// Versão vigente de um repositório num ambiente, sem exigir que QA e PROD existam juntos.
+export async function localizarVersaoNoAmbiente(
+  cliente: Prisma.TransactionClient,
+  repositorioId: string,
+  ambienteId: string,
+): Promise<VersaoEmAmbiente | null> {
+  const evidencias = await cliente.evidenciaDeploy.findMany({
+    where: { ambienteId, situacao: 'SUCESSO', versao: { repositorioId } },
+    include: { versao: { select: { rotulo: true, commitSha: true } } },
+  })
+  return vigenteDasEvidencias(evidencias)
+}
+
 // Decisão 3 do Incremento 6: autorização da própria candidata, senão a última autorização do
 // repositório, senão a versão em PROD pela evidência, senão sem base.
 export function escolherBase(e: {
@@ -89,28 +128,8 @@ export async function localizarSituacaoDePublicacao(
     },
     include: { versao: { select: { rotulo: true, commitSha: true } } },
   })
-  const doAmbiente = (ambienteId: string): VersaoEmAmbiente | null => {
-    const paraEstado: EvidenciaParaEstado[] = evidencias
-      .filter((e) => e.ambienteId === ambienteId)
-      .map((e) => ({
-        versaoId: e.versaoId,
-        rotulo: e.versao.rotulo,
-        origem: e.origem,
-        situacao: e.situacao,
-        ocorridaEm: e.ocorridaEm,
-        registradaEm: e.registradaEm,
-      }))
-    const vigente = evidenciaVigente(paraEstado)
-    const evidencia = vigente && evidencias.find((e) => e.versaoId === vigente.versaoId)
-    if (!vigente || !evidencia) return null
-    return {
-      versaoId: vigente.versaoId,
-      rotulo: vigente.rotulo,
-      commitSha: evidencia.versao.commitSha,
-      origem: vigente.origem,
-      ocorridaEm: vigente.ocorridaEm,
-    }
-  }
+  const doAmbiente = (ambienteId: string) =>
+    vigenteDasEvidencias(evidencias.filter((e) => e.ambienteId === ambienteId))
   const emProd = doAmbiente(prod.id)
   const candidata = doAmbiente(qa.id)
   // Quando a candidata é a versão em PROD, não há candidata.

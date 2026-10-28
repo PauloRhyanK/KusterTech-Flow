@@ -35,6 +35,7 @@ export interface DetalheDaIssueProps {
   modo: 'global' | 'cliente'
   lateral: React.ReactNode
   homologacao: React.ReactNode
+  publicacao?: React.ReactNode
 }
 
 // No modo cliente os dados técnicos internos ficam de fora (decisão 8 do Incremento 3).
@@ -45,6 +46,7 @@ export function DetalheDaIssue({
   modo,
   lateral,
   homologacao,
+  publicacao,
 }: DetalheDaIssueProps) {
   const global = modo === 'global'
 
@@ -147,6 +149,8 @@ export function DetalheDaIssue({
             dados={implantacao}
           />
         </section>
+
+        {publicacao}
       </aside>
     </div>
   )
