@@ -20,11 +20,13 @@ import {
 } from '@/modules/homologacao/queries'
 import { type Contexto, rotasDoProjeto, trilhasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
+import { obterPublicacaoDaIssue } from '@/modules/publicacao/queries'
 import { AvisoDeIntegracao } from './aviso-de-integracao'
 import { CorrecoesDaIssue } from './correcoes-da-issue'
 import { DetalheDaIssue } from './detalhe-da-issue'
 import { HomologacaoDaIssueNoCliente, HomologacaoDaIssuePorCliente } from './homologacao-da-issue'
 import { MilestonesDaIssue } from './milestones-da-issue'
+import { PublicacaoDaIssue } from './resumo-de-publicacao'
 
 export interface PaginaDaIssueProps {
   sujeito: Sujeito
@@ -60,6 +62,7 @@ export async function PaginaDaIssue({
   let correcoes: Awaited<ReturnType<typeof obterCorrecoesDaIssue>> | null = null
   let reteste: SituacaoDoReteste | undefined
   let homologacaoPorCliente: Awaited<ReturnType<typeof listarHomologacaoDaIssuePorCliente>> = []
+  let publicacao: Awaited<ReturnType<typeof obterPublicacaoDaIssue>> | null = null
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
     dados = await obterIssueNoContexto(
@@ -98,6 +101,7 @@ export async function PaginaDaIssue({
       }
     } else {
       homologacaoPorCliente = await listarHomologacaoDaIssuePorCliente(sujeito, projetoId, issueId)
+      publicacao = await obterPublicacaoDaIssue(sujeito, projetoId, issueId)
     }
     if (admin) {
       repositorios = (await obterRepositoriosDoProjeto(sujeito, projetoId)).vinculados.map((r) => ({
@@ -193,6 +197,16 @@ export async function PaginaDaIssue({
         implantacao={implantacao}
         modo={global ? 'global' : 'cliente'}
         lateral={lateral}
+        publicacao={
+          publicacao && (
+            <PublicacaoDaIssue
+              projetoId={projetoId}
+              prodConfigurado={publicacao.prodConfigurado}
+              estados={publicacao.estados}
+              hrefAmbientes={admin ? `/projetos/${projetoId}/configuracao#ambientes` : null}
+            />
+          )
+        }
         homologacao={
           homologacaoNoCliente ? (
             <HomologacaoDaIssueNoCliente

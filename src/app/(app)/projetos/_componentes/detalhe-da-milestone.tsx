@@ -19,6 +19,7 @@ export interface DetalheDaMilestoneProps {
   podeGerenciar: boolean
   hrefConfiguracao: string | null
   cliente: { nome: string } | null
+  publicacao?: React.ReactNode
 }
 
 export function DetalheDaMilestone({
@@ -26,6 +27,7 @@ export function DetalheDaMilestone({
   podeGerenciar,
   hrefConfiguracao,
   cliente,
+  publicacao,
 }: DetalheDaMilestoneProps) {
   const [estado, formAction, pendente] = useActionState<EstadoEntregas, FormData>(
     associarClienteAMilestoneAction,
@@ -62,6 +64,8 @@ export function DetalheDaMilestone({
           </p>
         )}
       </section>
+
+      {publicacao}
 
       {cliente ? (
         <p className="text-sm text-text-secondary">

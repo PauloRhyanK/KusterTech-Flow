@@ -9,12 +9,17 @@ import {
   composicaoMaisRecenteDaVersao,
   desatualizada,
   estadosDaVersao,
+  homologacoesPorIssue,
+  originaisDasCorrecoes,
   prepararAvaliacao,
   type AvaliacaoPreparada,
   type LinhaDaComposicao,
 } from './avaliacao'
+import { localizarVersaoNoAmbiente } from './candidata'
 import {
   avaliarAutorizacaoProd,
+  estadosDePublicacao,
+  resumirEstadosDaMilestone,
   type AvaliacaoDeAutorizacao,
   type EstadosDePublicacao,
   type ItemDaComposicao,
@@ -300,4 +305,149 @@ async function versaoSelecionada(
     composicao: apresentada,
     somenteLeitura: candidata?.versao.id !== versao.id,
   }
+}
+
+interface IssueParaEstados {
+  id: string
+  repositorioId: string
+}
+
+// Os quatro estados de cada issue (D68), em lote: uma leitura por tipo de dado, sem N+1.
+async function estadosDasIssues(
+  projetoId: string,
+  issues: readonly IssueParaEstados[],
+): Promise<{ prodConfigurado: boolean; porIssue: Map<string, EstadosDePublicacao> }> {
+  const prod = await db.ambiente.findFirst({
+    where: { projetoId, tipo: 'PROD' },
+    select: { id: true, criadoEm: true },
+  })
+  const porIssue = new Map<string, EstadosDePublicacao>()
+  if (!prod) return { prodConfigurado: false, porIssue }
+
+  const ids = issues.map((i) => i.id)
+  // Errata §3.8, item 6: a correção não tem item próprio e herda a situação da issue original.
+  const originais = await originaisDasCorrecoes(db, ids)
+  const homologacoes = await homologacoesPorIssue(db, [
+    ...new Set([...ids, ...[...originais.values()].flat()]),
+  ])
+
+  const versaoEmProdPorRepositorio = new Map<
+    string,
+    Awaited<ReturnType<typeof localizarVersaoNoAmbiente>>
+  >()
+  for (const repositorioId of new Set(issues.map((i) => i.repositorioId))) {
+    versaoEmProdPorRepositorio.set(
+      repositorioId,
+      await localizarVersaoNoAmbiente(db, repositorioId, prod.id),
+    )
+  }
+  const versaoIds = [
+    ...new Set([...versaoEmProdPorRepositorio.values()].flatMap((v) => (v ? [v.versaoId] : []))),
+  ]
+
+  const [presencas, divergencias, verificacoes, itensAutorizados] = await Promise.all([
+    db.presencaIssueVersao.findMany({
+      where: { issueId: { in: ids }, versaoId: { in: versaoIds } },
+      select: { issueId: true, versaoId: true, estado: true },
+    }),
+    db.divergenciaDeDeploy.findMany({
+      where: { versaoId: { in: versaoIds }, evidencia: { ambienteId: prod.id } },
+      select: { versaoId: true },
+    }),
+    db.verificacaoProd.findMany({
+      where: { versaoId: { in: versaoIds } },
+      orderBy: { criadaEm: 'desc' },
+      select: { versaoId: true, origem: true },
+    }),
+    db.autorizacaoItem.findMany({
+      where: { issueId: { in: ids } },
+      select: { issueId: true, autorizacao: { select: { criadaEm: true, revogadaEm: true } } },
+    }),
+  ])
+  const estadoDaPresenca = new Map(presencas.map((p) => [`${p.issueId}:${p.versaoId}`, p.estado]))
+  const comDivergencia = new Set(divergencias.map((d) => d.versaoId))
+  const verificacaoDaVersao = new Map<string, { origem: OrigemEvidencia }>()
+  for (const v of verificacoes) {
+    if (!verificacaoDaVersao.has(v.versaoId)) verificacaoDaVersao.set(v.versaoId, v)
+  }
+  // A autorização mais recente com item da issue; a revogada também conta (mostra "revogada").
+  const autorizacaoDaIssue = new Map<string, { criadaEm: Date; revogadaEm: Date | null }>()
+  for (const { issueId, autorizacao } of itensAutorizados) {
+    const atual = autorizacaoDaIssue.get(issueId)
+    if (!atual || autorizacao.criadaEm > atual.criadaEm)
+      autorizacaoDaIssue.set(issueId, autorizacao)
+  }
+
+  const vazio = { estados: [], correcoesBloqueadoras: [] }
+  for (const issue of issues) {
+    const donas = [issue.id, ...(originais.get(issue.id) ?? [])]
+    const dados = donas.map((id) => homologacoes.get(id) ?? vazio)
+    const versaoEmProd = versaoEmProdPorRepositorio.get(issue.repositorioId) ?? null
+    const presenca = versaoEmProd
+      ? (estadoDaPresenca.get(`${issue.id}:${versaoEmProd.versaoId}`) ?? 'SEM_EVIDENCIA')
+      : null
+    const presente = presenca === 'PRESENCA_CONFIRMADA' || presenca === 'CONFIRMACAO_MANUAL'
+
+    porIssue.set(
+      issue.id,
+      estadosDePublicacao({
+        qa: {
+          estados: dados.flatMap((d) => d.estados),
+          correcoesBloqueadoras: dados.reduce((t, d) => t + d.correcoesBloqueadoras.length, 0),
+        },
+        autorizacao: autorizacaoDaIssue.get(issue.id) ?? null,
+        deploy: presenca ? { tipo: 'presenca', estado: presenca } : null,
+        divergente: presente && !!versaoEmProd && comDivergencia.has(versaoEmProd.versaoId),
+        verificacao:
+          presente && versaoEmProd
+            ? (verificacaoDaVersao.get(versaoEmProd.versaoId) ?? null)
+            : null,
+      }),
+    )
+  }
+  return { prodConfigurado: true, porIssue }
+}
+
+// Estados de publicação da issue (só visão global, D31).
+export async function obterPublicacaoDaIssue(
+  sujeito: Sujeito,
+  projetoId: string,
+  issueId: string,
+): Promise<{ prodConfigurado: boolean; estados: EstadosDePublicacao | null }> {
+  exigirLeituraGlobal(sujeito)
+
+  const issue = await db.issueGitHub.findFirst({
+    where: { id: issueId, repositorio: { projetoId } },
+    select: { id: true, repositorioId: true },
+  })
+  if (!issue) {
+    throw new ErroDeDominio('Issue não encontrada.')
+  }
+  const { prodConfigurado, porIssue } = await estadosDasIssues(projetoId, [issue])
+  return { prodConfigurado, estados: porIssue.get(issue.id) ?? null }
+}
+
+// Resumo da milestone sobre as issues no escopo (`foraDoEscopo = false`) de repositórios vinculados.
+export async function obterPublicacaoDaMilestone(
+  sujeito: Sujeito,
+  projetoId: string,
+  milestoneId: string,
+): Promise<{ prodConfigurado: boolean; resumo: ReturnType<typeof resumirEstadosDaMilestone> }> {
+  exigirLeituraGlobal(sujeito)
+
+  const milestone = await db.milestone.findFirst({
+    where: { id: milestoneId, projetoId },
+    select: {
+      issues: {
+        where: { foraDoEscopo: false, issue: { repositorio: { projetoId } } },
+        select: { issue: { select: { id: true, repositorioId: true } } },
+      },
+    },
+  })
+  if (!milestone) {
+    throw new ErroDeDominio('Milestone não encontrada.')
+  }
+  const issues = milestone.issues.map((v) => v.issue)
+  const { prodConfigurado, porIssue } = await estadosDasIssues(projetoId, issues)
+  return { prodConfigurado, resumo: resumirEstadosDaMilestone([...porIssue.values()]) }
 }
