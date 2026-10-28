@@ -340,10 +340,16 @@ async function registrarEventoDeTriagem(
     },
     select: { id: true },
   })
-  await tx.homologacaoItem.update({
-    where: { id: s.item.id },
+  // Mesma guarda da ação do usuário: se outro evento entrou no item desde a leitura, desfaz tudo.
+  const encadeado = await tx.homologacaoItem.updateMany({
+    where: { id: s.item.id, ultimoEventoId: s.item.ultimoEventoId },
     data: { ultimoEventoId: evento.id },
   })
+  if (encadeado.count === 0) {
+    throw new ErroDeDominio(
+      'Esta homologação mudou desde que você abriu a página. Confira o estado atual e tente de novo.',
+    )
+  }
 }
 
 async function exigirSolicitacaoDoCliente(

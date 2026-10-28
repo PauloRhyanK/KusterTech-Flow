@@ -383,6 +383,41 @@ describe('triarSolicitacao', () => {
     expect(await estadoGravado()).toEqual(antes)
   })
 
+  test('a triagem encadeia o evento no último evento do item, inclusive o de outra pessoa', async () => {
+    const m = await montar()
+    const item = await db.homologacaoItem.findFirstOrThrow({
+      where: { issueId: m.issue4Id, homologacao: { clienteId: m.clienteA } },
+    })
+    // Simula uma aprovação concorrente: o ponteiro do item muda enquanto a triagem decide.
+    const concorrente = await db.eventoTimeline.create({
+      data: {
+        clienteId: m.clienteA,
+        milestoneId: m.c.milestoneId,
+        issueId: m.issue4Id,
+        tipo: 'COMENTARIO',
+        visibilidade: 'INTERNA',
+        origem: 'HUMANO',
+        autorId: m.admin.usuarioId,
+        texto: 'Comentário concorrente',
+        eventoAnteriorId: item.ultimoEventoId,
+      },
+    })
+    await db.homologacaoItem.update({
+      where: { id: item.id },
+      data: { ultimoEventoId: concorrente.id },
+    })
+    // Sem concorrência a triagem passa e encadeia no evento mais novo.
+    await triarSolicitacao(m.admin, {
+      clienteId: m.clienteA,
+      solicitacaoId: m.solicitacaoDa4,
+      decisao: { tipo: 'responder', resposta: 'Ok.', visibilidade: 'INTERNA' },
+    })
+    const triagem = await db.eventoTimeline.findFirstOrThrow({
+      where: { tipo: 'TRIAGEM', issueId: m.issue4Id },
+    })
+    expect(triagem.eventoAnteriorId).toBe(concorrente.id)
+  })
+
   test('duas triagens simultâneas da mesma solicitação gravam uma só tarefa', async () => {
     const m = await montar()
     const resultados = await Promise.allSettled([
