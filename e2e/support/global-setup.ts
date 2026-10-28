@@ -38,6 +38,10 @@ export default async function globalSetup(): Promise<void> {
 
   const { db } = await import('@/lib/db')
   try {
+    // Importado aqui porque `banco.ts` carrega o cliente do banco, que precisa da URL de teste já definida.
+    const { limparCenarioDaVisaoGeral } = await import('./banco')
+    await limparCenarioDaVisaoGeral('desktop')
+    await limparCenarioDaVisaoGeral('mobile')
     const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
     await db.repositorioGitHub.updateMany({
       where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
