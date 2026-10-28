@@ -52,7 +52,9 @@ export default async function globalSetup(): Promise<void> {
         ],
       },
     })
-    // Homologação (criada pela tarefa do worker) antes de milestones, versões e issues.
+    // Homologação (criada pela tarefa do worker) antes de milestones, versões e issues; as tarefas
+    // do GitHub apontam para as solicitações.
+    await db.tarefaGitHub.deleteMany({ where: dosExemplos })
     await db.solicitacaoDeCorrecao.deleteMany({})
     await db.homologacaoItem.deleteMany({})
     await db.eventoTimeline.deleteMany({})

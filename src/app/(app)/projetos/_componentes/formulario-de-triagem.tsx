@@ -16,6 +16,9 @@ export interface FormularioDeTriagemProps {
   reabrivel: boolean
   integracaoConfigurada: boolean
   repositorioPublico: boolean
+  // Falso depois da triagem: o formulário some, mas a região de status continua montada para
+  // anunciar o resultado da ação que acabou de acontecer.
+  ofertar?: boolean
 }
 
 type Opcao = 'reabrir' | 'criar_correcao' | 'responder'
@@ -51,6 +54,14 @@ export function FormularioDeTriagem(props: FormularioDeTriagemProps) {
   const [escolhida, setEscolhida] = useState<Opcao>(opcoes[0]!)
   const [foraDoEscopo, setForaDoEscopo] = useState(false)
   const opcao = opcoes.includes(escolhida) ? escolhida : opcoes[0]!
+
+  if (props.ofertar === false) {
+    return (
+      <form action={enviar} aria-busy={pendente}>
+        <MensagensDeEstado estado={estado} />
+      </form>
+    )
+  }
 
   const rotulos: Record<Opcao, string> = {
     reabrir: `Reabrir a issue #${props.issueNumero} no GitHub`,
@@ -203,7 +214,7 @@ export function FormularioDeTriagem(props: FormularioDeTriagemProps) {
   )
 }
 
-export function ClassificarForaDoEscopo(props: Ids) {
+export function ClassificarForaDoEscopo(props: Ids & { ofertar?: boolean }) {
   const [estado, enviar, pendente] = useActionState(reclassificarSolicitacaoAction, {})
   const [aberto, setAberto] = useState(false)
 
@@ -211,7 +222,7 @@ export function ClassificarForaDoEscopo(props: Ids) {
     <form action={enviar} aria-busy={pendente} className="space-y-3">
       <MensagensDeEstado estado={estado} />
       <CamposOcultos {...props} />
-      {!aberto ? (
+      {props.ofertar === false ? null : !aberto ? (
         <Button type="button" variant="outline" onClick={() => setAberto(true)}>
           Classificar como fora do escopo
         </Button>

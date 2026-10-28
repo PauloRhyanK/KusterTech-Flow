@@ -56,9 +56,10 @@ export function BlocoDaCorrecao(props: BlocoDaCorrecaoProps) {
         Correção
       </h3>
       <SituacaoDaCorrecao correcao={correcao} />
-      {podeTriar && correcao.triavel && (
+      {podeTriar && (
         <FormularioDeTriagem
           {...ids}
+          ofertar={correcao.triavel}
           issueNumero={props.issueNumero}
           issueTitulo={props.issueTitulo}
           reabrivel={correcao.reabrivel}
@@ -66,7 +67,7 @@ export function BlocoDaCorrecao(props: BlocoDaCorrecaoProps) {
           repositorioPublico={correcao.repositorioPublico}
         />
       )}
-      {podeTriar && correcao.reclassificavel && <ClassificarForaDoEscopo {...ids} />}
+      {podeTriar && <ClassificarForaDoEscopo {...ids} ofertar={correcao.reclassificavel} />}
     </section>
   )
 }

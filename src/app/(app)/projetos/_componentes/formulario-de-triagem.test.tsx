@@ -94,6 +94,14 @@ describe('FormularioDeTriagem', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Triagem registrada.')
   })
 
+  test('depois da triagem (ofertar=false) o formulário some mas as regiões de status continuam montadas', () => {
+    render(<FormularioDeTriagem {...base} ofertar={false} />)
+    expect(screen.queryByRole('group', { name: 'Decisão da triagem' })).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
   test('erro da action aparece em role="alert"', async () => {
     triar.mockResolvedValue({ erro: 'Esta solicitação já foi triada.' })
     render(<FormularioDeTriagem {...base} />)
