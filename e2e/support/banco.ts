@@ -10,7 +10,7 @@ import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { rodarWorkerUmaVez } from './worker'
-import { gravarHomologacaoDePublicacao } from '../../tests/support/cenario-de-publicacao'
+import { gravarHomologacaoDePublicacao } from '../../tests/support/homologacao-de-publicacao'
 import {
   aprovarItemNoCenario,
   criarCenarioDeHomologacao,
