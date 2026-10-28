@@ -2,7 +2,9 @@ import type { Prisma } from '@prisma/client'
 import { type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import { MAX_TENTATIVAS_DO_EVENTO } from './model'
 import { exigirLeituraGlobal, lerSituacao, type SituacaoDaIntegracao } from './service'
+import { obterSegredoDoWebhook } from './webhook'
 
 export {
   contarRepositoriosPorProjeto,
@@ -219,5 +221,28 @@ export async function obterIssueDoProjeto(
         urlHtml: pr.urlHtml,
       })),
     },
+  }
+}
+
+export interface SituacaoDoWebhook {
+  ativo: boolean
+  ultimoEventoEm: Date | null
+  eventosNaoProcessados: number
+}
+
+// "Ativo" só diz que a web tem o segredo; quem confirma que o GitHub entrega é `ultimoEventoEm`.
+export async function obterSituacaoDoWebhook(sujeito: Sujeito): Promise<SituacaoDoWebhook> {
+  exigirLeituraGlobal(sujeito)
+
+  const [ultimo, eventosNaoProcessados] = await Promise.all([
+    db.eventoIntegracao.aggregate({ _max: { recebidoEm: true } }),
+    db.eventoIntegracao.count({
+      where: { processadoEm: null, tentativas: { gte: MAX_TENTATIVAS_DO_EVENTO } },
+    }),
+  ])
+  return {
+    ativo: obterSegredoDoWebhook(process.env) !== null,
+    ultimoEventoEm: ultimo._max.recebidoEm,
+    eventosNaoProcessados,
   }
 }
