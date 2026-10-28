@@ -4,6 +4,7 @@ import { useActionState } from 'react'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
 import { formatarDataHora } from '@/lib/data'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
+import { MENSAGEM_DADOS_DESATUALIZADOS } from '@/modules/homologacao/model'
 import type { AprovacaoDaMilestone } from '@/modules/homologacao/queries'
 import { aprovarMilestoneAction } from '../acoes-de-aprovacao'
 import { AvisoDeIntegracao } from './aviso-de-integracao'
@@ -17,9 +18,6 @@ export interface AprovacaoDaMilestoneProps {
   milestoneTitulo: string
   aprovacao: AprovacaoDaMilestone
 }
-
-const TEXTO_DESATUALIZADO =
-  'Os dados do GitHub podem estar desatualizados; a aprovação fica disponível depois da próxima sincronização.'
 
 // Painel do contexto do cliente (D63): confere o que a aprovação cobre e só oferece o botão
 // quando a regra pura libera e os dados do GitHub estão atuais (D22, A11).
@@ -64,7 +62,7 @@ export function AprovacaoDaMilestone(props: AprovacaoDaMilestoneProps) {
         </div>
       ) : desatualizado ? (
         <div className="space-y-3">
-          <p className="text-sm text-text-secondary">{TEXTO_DESATUALIZADO}</p>
+          <p className="text-sm text-text-secondary">{MENSAGEM_DADOS_DESATUALIZADOS}</p>
           <AvisoDeIntegracao
             situacao={aprovacao.situacao}
             sincronizadoEm={null}

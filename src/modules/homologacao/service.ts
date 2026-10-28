@@ -10,6 +10,7 @@ import {
   ACAO_PARA_PERMISSAO,
   type AcaoDeRegistro,
   MENSAGEM_CORPO,
+  MENSAGEM_DADOS_DESATUALIZADOS,
   MENSAGEM_JUSTIFICATIVA,
   MENSAGEM_RESPOSTA,
   MENSAGEM_TITULO,
@@ -33,6 +34,8 @@ export interface EntradaDeAcao {
   visibilidade: 'INTERNA' | 'COMPARTILHAVEL'
 }
 
+const MENSAGEM_MILESTONE_APROVADA =
+  'A milestone já foi aprovada por este cliente; registre um comentário.'
 const NAO_ENCONTRADA = 'Homologação não encontrada.'
 const LIMITE_DO_TEXTO = 4000
 
@@ -179,6 +182,16 @@ export async function registrarAcaoDeHomologacao(
   const visibilidade = e.acao === 'COMENTAR' && !escopado ? e.visibilidade : 'COMPARTILHAVEL'
 
   const eventoId = await db.$transaction(async (tx) => {
+    if (e.acao === 'SOLICITAR_CORRECAO') {
+      await travarHomologacao(tx, homologacao.clienteId, homologacao.milestoneId)
+      const atual = await tx.homologacao.findUnique({
+        where: { id: homologacao.id },
+        select: { estado: true },
+      })
+      if (atual?.estado === 'APROVADA') {
+        throw new ErroDeDominio(MENSAGEM_MILESTONE_APROVADA)
+      }
+    }
     const evento = await tx.eventoTimeline.create({
       data: {
         clienteId: homologacao.clienteId,
@@ -616,8 +629,16 @@ export async function confirmarReteste(
   }
 }
 
-const DADOS_DESATUALIZADOS =
-  'Os dados do GitHub podem estar desatualizados; a aprovação fica disponível depois da próxima sincronização.'
+// Serializa a aprovação com "Solicitar correção" do mesmo cliente e milestone: quem chega depois
+// lê o estado e as solicitações que o primeiro já confirmou.
+async function travarHomologacao(
+  tx: Prisma.TransactionClient,
+  clienteId: string,
+  milestoneId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "Homologacao" WHERE "clienteId" = ${clienteId} AND "milestoneId" = ${milestoneId} FOR UPDATE`
+}
+
 const SITUACAO_MUDOU = 'A situação mudou desde que a página foi aberta. Confira e tente de novo.'
 const MILESTONE_NAO_ENCONTRADA = 'Milestone não encontrada.'
 
@@ -632,6 +653,7 @@ export async function aprovarMilestone(
   exigirPermissao(sujeito, 'homologacao.aprovar', { clienteId: e.clienteId })
 
   return db.$transaction(async (tx) => {
+    await travarHomologacao(tx, e.clienteId, e.milestoneId)
     const base = await carregarBaseDaAprovacao(tx, e)
     if (!base || base.milestone.arquivadaEm !== null) {
       throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
@@ -652,7 +674,7 @@ export async function aprovarMilestone(
       intervaloDaIntegracao(),
     )
     if (situacao === 'indisponivel' || situacao === 'sem-dados-recentes') {
-      throw new ErroDeDominio(DADOS_DESATUALIZADOS)
+      throw new ErroDeDominio(MENSAGEM_DADOS_DESATUALIZADOS)
     }
     if (base.versoesEsperadas !== e.versoesEsperadas) {
       throw new ErroDeDominio(SITUACAO_MUDOU)

@@ -531,6 +531,9 @@ export function podeAprovarMilestone(
   return motivos.length === 0 ? { pode: true } : { pode: false, motivos }
 }
 
+export const MENSAGEM_DADOS_DESATUALIZADOS =
+  'Os dados do GitHub podem estar desatualizados; a aprovação fica disponível depois da próxima sincronização.'
+
 export const MAXIMO_DE_TENTATIVAS = 3
 export const MENSAGEM_RESULTADO_INCERTO =
   'Resultado incerto: confira no GitHub se a issue foi criada antes de tentar de novo.'

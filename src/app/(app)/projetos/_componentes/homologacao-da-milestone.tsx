@@ -53,19 +53,28 @@ function NoCliente({
   aprovacao: DadosDaAprovacao
   hrefAmbientes: string | null
 }) {
+  const painel = (
+    <AprovacaoDaMilestone
+      projetoId={projetoId}
+      clienteId={cliente.id}
+      clienteNome={cliente.nome}
+      milestoneId={milestone.id}
+      milestoneTitulo={milestone.titulo}
+      aprovacao={aprovacao}
+    />
+  )
+  // Uma aprovação já feita continua visível mesmo que o ambiente QA seja removido depois.
   if (dados.semAmbienteQa) {
-    return <EstadoSemAmbienteQa hrefConfigurarAmbientes={hrefAmbientes} />
+    return (
+      <div className="space-y-4">
+        {aprovacao.estado === 'APROVADA' && painel}
+        <EstadoSemAmbienteQa hrefConfigurarAmbientes={hrefAmbientes} />
+      </div>
+    )
   }
   return (
     <div className="space-y-4">
-      <AprovacaoDaMilestone
-        projetoId={projetoId}
-        clienteId={cliente.id}
-        clienteNome={cliente.nome}
-        milestoneId={milestone.id}
-        milestoneTitulo={milestone.titulo}
-        aprovacao={aprovacao}
-      />
+      {painel}
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-text-secondary">
           Versões em QA:{' '}

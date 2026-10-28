@@ -139,6 +139,25 @@ describe('HomologacaoDaMilestone', () => {
     expect(screen.queryByRole('list')).toBeNull()
   })
 
+  test('aprovada e sem ambiente QA: o painel com a aprovação continua visível acima do vazio', () => {
+    render(
+      <HomologacaoDaMilestone
+        {...doCliente}
+        dados={dados({ semAmbienteQa: true, linhas: [] })}
+        aprovacao={aprovacao({
+          estado: 'APROVADA',
+          aprovadaEm: new Date('2026-10-22T12:00:00Z'),
+          aprovadaPor: 'Ana',
+        })}
+        hrefAmbientes={null}
+      />,
+    )
+    expect(screen.getByText('Milestone aprovada')).toBeInTheDocument()
+    expect(
+      screen.getByText('O ambiente QA ainda não está configurado neste projeto.'),
+    ).toBeInTheDocument()
+  })
+
   test('global: delega a consolidação por cliente (h2, resumo e link para o contexto do cliente)', () => {
     render(
       <HomologacaoDaMilestone
