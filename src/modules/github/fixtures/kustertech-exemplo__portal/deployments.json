@@ -39,6 +39,19 @@
     "statuses_url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/6000003/statuses"
   },
   {
+    "url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/916002",
+    "id": 916002,
+    "sha": "1ccccccccccccccccccccccccccccccccccccccc",
+    "ref": "v1.5.0",
+    "task": "deploy",
+    "environment": "qa-publicacao",
+    "description": null,
+    "creator": { "login": "exemplo-bia", "id": 200002 },
+    "created_at": "2026-10-16T12:00:00Z",
+    "updated_at": "2026-10-16T12:00:00Z",
+    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/916002/statuses"
+  },
+  {
     "url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/6000002",
     "id": 6000002,
     "sha": "1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -76,18 +89,5 @@
     "created_at": "2026-10-10T12:00:00Z",
     "updated_at": "2026-10-10T12:00:00Z",
     "statuses_url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/916001/statuses"
-  },
-  {
-    "url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/916002",
-    "id": 916002,
-    "sha": "1ccccccccccccccccccccccccccccccccccccccc",
-    "ref": "v1.5.0",
-    "task": "deploy",
-    "environment": "qa-publicacao",
-    "description": null,
-    "creator": { "login": "exemplo-bia", "id": 200002 },
-    "created_at": "2026-10-16T12:00:00Z",
-    "updated_at": "2026-10-16T12:00:00Z",
-    "statuses_url": "https://api.github.com/repos/kustertech-exemplo/portal/deployments/916002/statuses"
   }
 ]

@@ -90,7 +90,9 @@ describe('fonte de fixtures', () => {
     const B1 = '16b' + '0'.repeat(37)
     const M1 = '1' + 'c'.repeat(39)
     const itens = await fonte.listarDeployments(portal!, null)
-    const novos = itens.filter((d) => d.githubId < BigInt(1_000_000))
+    const novos = itens
+      .filter((d) => d.githubId < BigInt(1_000_000))
+      .sort((a, b) => Number(a.githubId - b.githubId))
     expect(
       novos.map((d) => [d.githubId, d.ambiente, d.sha, d.criadoEm.toISOString(), d.status?.estado]),
     ).toEqual([
@@ -116,9 +118,9 @@ describe('fonte de fixtures', () => {
       const M = String(n) + 'c'.repeat(39)
       const B = `${n}6b` + '0'.repeat(37)
       const D = `${n}6d` + '0'.repeat(37)
-      const itens = (await fonte.listarDeployments(repo, null)).filter(
-        (d) => d.githubId < BigInt(1_000_000),
-      )
+      const itens = (await fonte.listarDeployments(repo, null))
+        .filter((d) => d.githubId < BigInt(1_000_000))
+        .sort((a, b) => Number(a.githubId - b.githubId))
       expect(itens.map((d) => [d.githubId, d.ambiente, d.sha, d.criadoEm.toISOString()])).toEqual([
         [BigInt(`9${n}6001`), 'producao-publicacao', B, '2026-10-10T12:00:00.000Z'],
         [BigInt(`9${n}6003`), 'producao-publicacao', D, '2026-10-18T12:00:00.000Z'],
