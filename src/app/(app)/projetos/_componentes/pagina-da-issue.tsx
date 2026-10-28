@@ -15,6 +15,8 @@ import {
   listarHomologacaoDaIssuePorCliente,
   obterCorrecoesDaIssue,
   obterHomologacaoDaIssue,
+  obterSituacaoDoReteste,
+  type SituacaoDoReteste,
 } from '@/modules/homologacao/queries'
 import { type Contexto, rotasDoProjeto, trilhasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
@@ -56,6 +58,7 @@ export async function PaginaDaIssue({
   let repositorios: { id: string; nomeCompleto: string }[] = []
   let homologacaoNoCliente: Awaited<ReturnType<typeof obterHomologacaoDaIssue>> | null = null
   let correcoes: Awaited<ReturnType<typeof obterCorrecoesDaIssue>> | null = null
+  let reteste: SituacaoDoReteste | undefined
   let homologacaoPorCliente: Awaited<ReturnType<typeof listarHomologacaoDaIssuePorCliente>> = []
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
@@ -83,6 +86,16 @@ export async function PaginaDaIssue({
         issueId,
         homologacaoNoCliente.milestone?.id ?? null,
       )
+      const itemDoCliente = homologacaoNoCliente.item
+      // Também depois da confirmação (AGUARDANDO_RETESTE): o bloco segue montado para anunciar o resultado.
+      if (
+        itemDoCliente &&
+        (itemDoCliente.estado === 'CORRECAO_SOLICITADA' ||
+          itemDoCliente.estado === 'AGUARDANDO_RETESTE') &&
+        correcoes.podeTriar
+      ) {
+        reteste = await obterSituacaoDoReteste(sujeito, clienteId, itemDoCliente.id)
+      }
     } else {
       homologacaoPorCliente = await listarHomologacaoDaIssuePorCliente(sujeito, projetoId, issueId)
     }
@@ -195,6 +208,7 @@ export async function PaginaDaIssue({
                     }
                   : undefined
               }
+              reteste={reteste}
               issue={{ id: issue.id, numero: issue.numero, repositorio: issue.repositorio }}
               hrefDaMilestone={(milestoneId) => rotas.issue(issue.id, milestoneId)}
             />

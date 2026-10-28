@@ -163,7 +163,7 @@ test('Jornada C até a solicitação de correção: entrada pelo worker, disponi
       await expect(
         p.getByRole('status').filter({ hasText: `Aprovação registrada para ${c.acme.nome}.` }),
       ).toBeVisible()
-      const grupo = p.locator('details[open]').filter({ hasText: 'Versão atual em QA · E2E qa-1' })
+      const grupo = p.locator('details[open]').filter({ hasText: 'Versão atual em QA: E2E qa-1' })
       await expect(grupo).toContainText('Testado e aprovado')
       await verificarSemRolagem(p)
       await capturar(p, projeto, 'c3-aprovacao.png')
@@ -197,7 +197,7 @@ test('Jornada C até a solicitação de correção: entrada pelo worker, disponi
         p.getByRole('status').filter({ hasText: `Correção solicitada para ${c.acme.nome}.` }),
       ).toBeVisible()
 
-      const grupo = p.locator('details[open]').filter({ hasText: 'Versão atual em QA · E2E qa-1' })
+      const grupo = p.locator('details[open]').filter({ hasText: 'Versão atual em QA: E2E qa-1' })
       await expect(grupo).toContainText('O botão Salvar não responde no Safari.')
       await expect(p.getByText('Entrou na fila de homologação')).toHaveCount(0)
       await verificarSemRolagem(p)

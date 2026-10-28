@@ -13,6 +13,7 @@ import { rodarWorkerUmaVez } from './worker'
 import {
   aprovarItemNoCenario,
   criarCenarioDeHomologacao,
+  registrarVersaoEmQa,
   solicitarCorrecaoNoCenario,
   type CenarioDeHomologacao,
 } from '../../tests/support/cenario-de-homologacao'
@@ -675,4 +676,38 @@ export async function obterSolicitacaoNoBanco(
     where: { id: solicitacaoId },
     select: { estado: true, triadaEm: true },
   })
+}
+
+// Fecha a issue no banco, como se o GitHub a tivesse fechado. Só depois do último
+// `rodarWorkerUmaVez()` que reconcilia o repositório: o repositório só volta a ficar devido após
+// 10 min, e a reconciliação devolveria a issue ao estado das fixtures.
+export async function fecharIssueNoBanco(
+  issueId: string,
+  fechadaEm: Date = new Date(),
+): Promise<void> {
+  await db.issueGitHub.update({
+    where: { id: issueId },
+    data: { estado: 'FECHADA', fechadaNoGitHub: fechadaEm, atualizadaNoGitHub: fechadaEm },
+  })
+}
+
+// Nova versão em QA agora, com evidência manual e presença confirmada pelo admin do cenário.
+export async function registrarVersaoEmQaNoBanco(
+  cenario: CenarioDeHomologacao,
+  rotulo: string,
+  issueIds: readonly string[],
+): Promise<string> {
+  return registrarVersaoEmQa(cenario, rotulo, issueIds, new Date())
+}
+
+// Issue de correção criada pela tarefa do worker para a issue original (a de maior número).
+export async function obterCorrecaoCriadaNoBanco(
+  issueOriginalId: string,
+): Promise<{ id: string; numero: number } | null> {
+  const vinculo = await db.issueVinculo.findFirst({
+    where: { issueOriginalId },
+    orderBy: { correcao: { numero: 'desc' } },
+    select: { correcao: { select: { id: true, numero: true } } },
+  })
+  return vinculo?.correcao ?? null
 }

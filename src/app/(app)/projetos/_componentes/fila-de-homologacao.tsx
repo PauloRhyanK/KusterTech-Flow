@@ -208,7 +208,15 @@ export function FilaDeHomologacao(props: FilaDeHomologacaoProps) {
                 rotulo={`Fila da milestone ${grupo.milestone.titulo}`}
                 vazio={null}
                 linhas={grupo.itens.map((item) => {
-                  const estado = apresentarEstadoDoItem(item.estado)
+                  const apresentado = apresentarEstadoDoItem(item.estado)
+                  // O reteste é sempre numa versão: a fila diz qual (5b.4).
+                  const estado =
+                    item.estado === 'AGUARDANDO_RETESTE' && item.versaoRotulo
+                      ? {
+                          ...apresentado,
+                          texto: `${apresentado.texto} na versão ${item.versaoRotulo}`,
+                        }
+                      : apresentado
                   return {
                     id: item.id,
                     nome: (

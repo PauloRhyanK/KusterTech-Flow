@@ -218,7 +218,7 @@ const APRESENTACAO: Record<EstadoItemHomologacao, { texto: string; tom: TomDeEst
   AGUARDANDO_DISPONIBILIZACAO: { texto: 'Aguardando disponibilização', tom: 'neutro' },
   PENDENTE_DE_TESTE: { texto: 'Pendente de teste', tom: 'informacao' },
   CORRECAO_SOLICITADA: { texto: 'Correção solicitada', tom: 'atencao' },
-  AGUARDANDO_RETESTE: { texto: 'Aguardando reteste', tom: 'informacao' },
+  AGUARDANDO_RETESTE: { texto: 'Aguardando reteste', tom: 'atencao' },
   APROVADA: { texto: 'Aprovada', tom: 'sucesso' },
 }
 

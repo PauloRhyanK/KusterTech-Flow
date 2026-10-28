@@ -189,7 +189,7 @@ describe('apresentação', () => {
       ['AGUARDANDO_DISPONIBILIZACAO', 'neutro'],
       ['PENDENTE_DE_TESTE', 'informacao'],
       ['CORRECAO_SOLICITADA', 'atencao'],
-      ['AGUARDANDO_RETESTE', 'informacao'],
+      ['AGUARDANDO_RETESTE', 'atencao'],
       ['APROVADA', 'sucesso'],
     ])
     expect(apresentarEstadoDoItem('AGUARDANDO_DISPONIBILIZACAO').texto).toBe(

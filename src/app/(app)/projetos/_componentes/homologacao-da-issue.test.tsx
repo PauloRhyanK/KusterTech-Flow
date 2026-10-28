@@ -6,6 +6,7 @@ vi.mock('../acoes-de-homologacao', () => ({ registrarAcaoDeHomologacaoAction: vi
 vi.mock('../acoes-de-triagem', () => ({
   triarSolicitacaoAction: vi.fn(),
   reclassificarSolicitacaoAction: vi.fn(),
+  confirmarRetesteAction: vi.fn(),
 }))
 
 import { HomologacaoDaIssueNoCliente, HomologacaoDaIssuePorCliente } from './homologacao-da-issue'
@@ -165,6 +166,79 @@ describe('bloco de correção na timeline', () => {
     comCorrecao(false)
     expect(screen.getByText('Aguardando triagem')).toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Decisão da triagem' })).toBeNull()
+  })
+})
+
+describe('reteste e rodadas', () => {
+  const evento = (id: string, minuto: number, versao: { id: string; rotulo: string } | null) => ({
+    id,
+    titulo: `Evento ${id}`,
+    origem: 'humano' as const,
+    autor: 'Maria',
+    quando: new Date(Date.UTC(2026, 9, 26, 12, minuto)),
+    versao,
+    visibilidade: 'compartilhavel' as const,
+    texto: null,
+  })
+  const v1 = { id: 'v1', rotulo: 'E2E v1' }
+  const v2 = { id: 'v2', rotulo: 'E2E v2' }
+  const item = (estado: 'CORRECAO_SOLICITADA' | 'AGUARDANDO_RETESTE') => ({
+    id: '55555555-5555-4555-8555-555555555555',
+    estado,
+    ultimoEventoId: null,
+    versaoAvaliada: v2,
+  })
+
+  test('item aguardando reteste: badge atencao, rodada atual aberta e a anterior recolhida', () => {
+    const { container } = renderizar(
+      dados({
+        item: item('AGUARDANDO_RETESTE'),
+        eventos: [evento('a', 1, v1), evento('b', 2, v1), evento('c', 3, v2)],
+      }),
+    )
+    const badge = screen.getByText('Aguardando reteste')
+    expect(badge).toHaveAttribute('data-tom', 'atencao')
+    expect(screen.getByText('Versão atual em QA: E2E v2')).toBeInTheDocument()
+    expect(screen.getByText('Versão E2E v1 · 2 eventos')).toBeInTheDocument()
+    expect(container.querySelectorAll('details[open]')).toHaveLength(1)
+  })
+
+  test('correção solicitada: o admin vê o motivo e o formulário; sem o dado do reteste, nada', () => {
+    const base = dados({ item: item('CORRECAO_SOLICITADA'), eventos: [evento('a', 1, v1)] })
+    const { unmount } = render(
+      <HomologacaoDaIssueNoCliente
+        dados={base}
+        projetoId={projetoId}
+        issue={issue}
+        hrefDaMilestone={(id) => `/issue?milestone=${id}`}
+        reteste={{
+          disponivel: true,
+          motivo: 'correcao-nao-fechada',
+          versoesEmQa: [
+            { id: 'v1', rotulo: 'E2E v1', implantadaEm: new Date('2026-10-26T10:00:00Z') },
+          ],
+        }}
+      />,
+    )
+    expect(screen.getByText('A correção ainda está aberta no GitHub.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirmar reteste' })).toBeInTheDocument()
+    unmount()
+
+    renderizar(base)
+    expect(screen.queryByRole('button', { name: 'Confirmar reteste' })).not.toBeInTheDocument()
+  })
+
+  test('fora de CORRECAO_SOLICITADA o bloco de reteste não aparece, mesmo com o dado', () => {
+    render(
+      <HomologacaoDaIssueNoCliente
+        dados={dados({ item: item('AGUARDANDO_RETESTE') })}
+        projetoId={projetoId}
+        issue={issue}
+        hrefDaMilestone={(id) => `/issue?milestone=${id}`}
+        reteste={{ disponivel: true, motivo: 'sem-presenca-em-qa', versoesEmQa: [] }}
+      />,
+    )
+    expect(screen.queryByRole('heading', { name: 'Reteste' })).not.toBeInTheDocument()
   })
 })
 
