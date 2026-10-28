@@ -26,7 +26,11 @@ function dataOuNada(data: Date | null, quando: (d: string) => string, semData: s
   return data ? quando(formatarDataHora(data)) : semData
 }
 
-function Avisos({ fontes }: { fontes: SituacaoDasFontes }) {
+export function AvisosDasFontes({
+  fontes,
+}: {
+  fontes: Pick<SituacaoDasFontes, 'github' | 'githubSincronizadoEm' | 'repositorios'>
+}) {
   const falhas = fontes.repositorios.filter((r) => r.situacao === 'falha')
   const desatualizados = fontes.repositorios.filter((r) => r.situacao === 'desatualizado')
   const leituras = fontes.repositorios.flatMap((r) => (r.lidoEm ? [r.lidoEm] : []))
@@ -154,7 +158,7 @@ export function FilaDeDesenvolvimento({
 
   return (
     <section aria-label="Fila de desenvolvimento" className="space-y-4">
-      <Avisos fontes={fontes} />
+      <AvisosDasFontes fontes={fontes} />
       <ListaOperacional
         rotulo="Fila de desenvolvimento"
         linhas={itens.map(linhaDoItem)}

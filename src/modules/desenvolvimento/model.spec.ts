@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
+import type { StatusDeSeed } from '@prisma/client'
 import {
   apresentarEstadoDaExecucao,
   apresentarStatusDeSeed,
@@ -10,6 +11,8 @@ import {
   estadoDaExecucao,
   JANELA_SEM_SINAL_MS,
   leituraWarrenDevida,
+  linhaDoTempoDaExecucao,
+  motivoDeEsperaDaSeed,
   lerCorpoDePrWarren,
   lerPlanosDeSeeds,
   lerSeeds,
@@ -581,5 +584,114 @@ describe('fila unificada', () => {
     expect(prioridadeNaFila({ tipo: 'pull-request', estado: 'MERGEADO', checks: 'SUCESSO' })).toBe(
       6,
     )
+  })
+})
+
+describe('linhaDoTempoDaExecucao', () => {
+  const iniciadaEm = new Date('2026-10-20T10:00:00.000Z')
+  const criado = new Date('2026-10-20T10:20:00.000Z')
+  const mergeado = new Date('2026-10-20T11:00:00.000Z')
+
+  test('linhaDoTempoDaExecucao: só iniciadaEm → 1 evento; PR mergeada → 3 eventos em ordem; PR fechada sem merge → "PR #4 fechada sem merge"; nenhum título contém "%" nem "etapa"', () => {
+    const so = linhaDoTempoDaExecucao({ iniciadaEm, pr: null })
+    expect(so).toEqual([
+      { em: iniciadaEm, titulo: 'Execução registrada no Seeds', origem: 'Seeds' },
+    ])
+
+    const mergeada = linhaDoTempoDaExecucao({
+      iniciadaEm,
+      pr: {
+        numero: 4,
+        estado: 'MERGEADO',
+        criadoNoGitHub: criado,
+        mergeadoNoGitHub: mergeado,
+        atualizadoNoGitHub: mergeado,
+      },
+    })
+    expect(mergeada).toEqual([
+      { em: iniciadaEm, titulo: 'Execução registrada no Seeds', origem: 'Seeds' },
+      { em: criado, titulo: 'PR #4 aberta pelo Warren', origem: 'GitHub' },
+      { em: mergeado, titulo: 'PR #4 mergeada', origem: 'GitHub' },
+    ])
+
+    const fechada = linhaDoTempoDaExecucao({
+      iniciadaEm: null,
+      pr: {
+        numero: 4,
+        estado: 'FECHADO',
+        criadoNoGitHub: criado,
+        mergeadoNoGitHub: null,
+        atualizadoNoGitHub: mergeado,
+      },
+    })
+    expect(fechada.map((e) => e.titulo)).toEqual([
+      'PR #4 aberta pelo Warren',
+      'PR #4 fechada sem merge',
+    ])
+
+    const aberta = linhaDoTempoDaExecucao({
+      iniciadaEm,
+      pr: {
+        numero: 3,
+        estado: 'ABERTO',
+        criadoNoGitHub: null,
+        mergeadoNoGitHub: null,
+        atualizadoNoGitHub: mergeado,
+      },
+    })
+    expect(aberta).toHaveLength(1)
+    for (const e of [...so, ...mergeada, ...fechada, ...aberta]) {
+      expect(e.titulo).not.toMatch(/%|etapa/i)
+    }
+  })
+
+  test('eventos ficam em ordem crescente mesmo quando o Seeds registra depois da PR', () => {
+    const eventos = linhaDoTempoDaExecucao({
+      iniciadaEm: mergeado,
+      pr: {
+        numero: 3,
+        estado: 'ABERTO',
+        criadoNoGitHub: criado,
+        mergeadoNoGitHub: null,
+        atualizadoNoGitHub: mergeado,
+      },
+    })
+    expect(eventos.map((e) => e.origem)).toEqual(['GitHub', 'Seeds'])
+  })
+})
+
+describe('motivoDeEsperaDaSeed', () => {
+  const conhecidas = new Map<string, StatusDeSeed>([
+    ['EXEM-a003', 'EM_ANDAMENTO'],
+    ['EXEM-a002', 'FECHADA'],
+    ['EXEM-a005', 'ABERTA'],
+  ])
+
+  test('motivoDeEsperaDaSeed: EXEM-a004 com EXEM-a003 em andamento → "Aguarda EXEM-a003 (em andamento)."; dependência fechada → null; desconhecida → "(não encontrada no .seeds)"; seed EM_ANDAMENTO → null', () => {
+    expect(
+      motivoDeEsperaDaSeed({ status: 'ABERTA', bloqueadaPor: ['EXEM-a003'] }, conhecidas),
+    ).toBe('Aguarda EXEM-a003 (em andamento).')
+    expect(
+      motivoDeEsperaDaSeed({ status: 'ABERTA', bloqueadaPor: ['EXEM-a005'] }, conhecidas),
+    ).toBe('Aguarda EXEM-a005 (aberta).')
+    expect(
+      motivoDeEsperaDaSeed({ status: 'ABERTA', bloqueadaPor: ['EXEM-a002'] }, conhecidas),
+    ).toBeNull()
+    expect(
+      motivoDeEsperaDaSeed({ status: 'ABERTA', bloqueadaPor: ['EXEM-z999'] }, conhecidas),
+    ).toBe('Aguarda EXEM-z999 (não encontrada no .seeds).')
+    expect(
+      motivoDeEsperaDaSeed({ status: 'EM_ANDAMENTO', bloqueadaPor: ['EXEM-a003'] }, conhecidas),
+    ).toBeNull()
+    expect(motivoDeEsperaDaSeed({ status: 'ABERTA', bloqueadaPor: [] }, conhecidas)).toBeNull()
+  })
+
+  test('usa a primeira dependência que ainda não está fechada', () => {
+    expect(
+      motivoDeEsperaDaSeed(
+        { status: 'ABERTA', bloqueadaPor: ['EXEM-a002', 'EXEM-a003'] },
+        conhecidas,
+      ),
+    ).toBe('Aguarda EXEM-a003 (em andamento).')
   })
 })

@@ -1,17 +1,19 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { autorizar } from '@/lib/auth/autorizar'
+import { autorizar, type Sujeito } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
-import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import {
   lerFiltrosDaFila,
   lerVisao,
+  listarExecucoesAgrupadas,
   listarFilaDeDesenvolvimento,
+  type FiltrosDaFila,
 } from '@/modules/desenvolvimento/queries'
 import { cn } from '@/lib/utils'
+import { ExecucoesAgrupadas } from './_componentes/execucoes-agrupadas'
 import { FilaDeDesenvolvimento } from './_componentes/fila-de-desenvolvimento'
 import { SituacaoDasFontes } from './_componentes/situacao-das-fontes'
 
@@ -25,6 +27,32 @@ export interface PaginaDesenvolvimentoProps {
 
 const TRILHAS = [{ rotulo: 'Central de Desenvolvimento' }]
 const CONTEXTO = 'Issues, PRs e execuções de agentes'
+
+async function Fila({ sujeito, filtros }: { sujeito: Sujeito; filtros: FiltrosDaFila }) {
+  const { fontes, projetos, itens, total } = await listarFilaDeDesenvolvimento(sujeito, filtros)
+  return (
+    <>
+      <SituacaoDasFontes fontes={fontes} />
+      <FilaDeDesenvolvimento
+        fontes={fontes}
+        itens={itens}
+        total={total}
+        filtros={filtros}
+        projetos={projetos}
+      />
+    </>
+  )
+}
+
+async function Agrupada({ sujeito, projetoId }: { sujeito: Sujeito; projetoId: string | null }) {
+  const { fontes, projetos, grupos } = await listarExecucoesAgrupadas(sujeito, projetoId)
+  return (
+    <>
+      <SituacaoDasFontes fontes={fontes} />
+      <ExecucoesAgrupadas grupos={grupos} projetos={projetos} projetoId={projetoId} />
+    </>
+  )
+}
 
 export default async function PaginaDesenvolvimento({ searchParams }: PaginaDesenvolvimentoProps) {
   const sessao = await obterSessao()
@@ -48,11 +76,6 @@ export default async function PaginaDesenvolvimento({ searchParams }: PaginaDese
   const parametros = await searchParams
   const visao = lerVisao(parametros)
   const filtros = lerFiltrosDaFila(parametros)
-  const { fontes, projetos, itens, total } = await listarFilaDeDesenvolvimento(
-    sessao.sujeito,
-    filtros,
-  )
-
   const visoes = [
     { chave: 'fila', rotulo: 'Fila', href: '/desenvolvimento' },
     {
@@ -82,21 +105,10 @@ export default async function PaginaDesenvolvimento({ searchParams }: PaginaDese
           </Link>
         ))}
       </nav>
-      <SituacaoDasFontes fontes={fontes} />
       {visao === 'fila' ? (
-        <FilaDeDesenvolvimento
-          fontes={fontes}
-          itens={itens}
-          total={total}
-          filtros={filtros}
-          projetos={projetos}
-        />
+        <Fila sujeito={sessao.sujeito} filtros={filtros} />
       ) : (
-        <EstadoVazio
-          tipo="sem-evidencia"
-          titulo="Esta visão ainda não está disponível."
-          descricao="Use a Fila para ver issues, PRs e execuções."
-        />
+        <Agrupada sujeito={sessao.sujeito} projetoId={filtros.projetoId} />
       )}
     </div>
   )
