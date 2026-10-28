@@ -178,6 +178,11 @@ model RepositorioGitHub {
   deploymentsSincronizadosEm DateTime?
   deploymentsFalhaEm         DateTime?
   deploymentsFalhaMotivo     String?
+  warrenLidoEm               DateTime?
+  warrenFalhaEm              DateTime?
+  warrenFalhaMotivo          String?
+  seedsEncontrado            Boolean?
+  seedsLinhasInvalidas       Int                      @default(0)
   catalogadoEm               DateTime
   projeto                    Projeto?                 @relation(fields: [projetoId], references: [id], onDelete: SetNull)
   issues                     IssueGitHub[]
@@ -186,6 +191,8 @@ model RepositorioGitHub {
   tarefasGitHub              TarefaGitHub[]
   composicoesDePublicacao    ComposicaoDePublicacao[]
   autorizacoesProd           AutorizacaoProd[]
+  execucoes                  ExecucaoAgente[]
+  seeds                      SeedDoRepositorio[]
 
   @@index([projetoId])
 }
@@ -238,7 +245,10 @@ model PullRequestGitHub {
   atualizadoNoGitHub  DateTime
   mergeadoNoGitHub    DateTime?
   sincronizadoEm      DateTime
+  corpo               String?
+  criadoNoGitHub      DateTime?
   repositorio         RepositorioGitHub       @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  execucao            ExecucaoAgente?
 
   @@unique([repositorioId, numero])
 }
@@ -812,4 +822,59 @@ model EventoDeAlerta {
   autor    Usuario?         @relation(fields: [autorId], references: [id], onDelete: Restrict)
 
   @@index([alertaId, criadoEm])
+}
+
+enum EstadoExecucao {
+  NA_FILA
+  AGUARDANDO_CAPACIDADE
+  AGUARDANDO_DEPENDENCIA
+  EXECUTANDO
+  INTERVENCAO_NECESSARIA
+  CONCLUIDA
+  SEM_DADOS
+}
+
+enum StatusDeSeed {
+  ABERTA
+  EM_ANDAMENTO
+  FECHADA
+}
+
+model ExecucaoAgente {
+  id             String             @id @default(uuid())
+  repositorioId  String
+  runId          String             @unique
+  seedId         String?
+  papel          String?
+  agente         String?
+  estado         EstadoExecucao
+  motivoDoEstado String
+  iniciadaEm     DateTime?
+  atualizadaEm   DateTime
+  sincronizadaEm DateTime
+  pullRequestId  String?            @unique
+  custo          Decimal?           @db.Decimal(12, 4)
+  fonte          String
+  repositorio    RepositorioGitHub  @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  pullRequest    PullRequestGitHub? @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+
+  @@index([repositorioId, seedId])
+}
+
+model SeedDoRepositorio {
+  id                String            @id @default(uuid())
+  repositorioId     String
+  seedId            String
+  titulo            String
+  status            StatusDeSeed
+  tipo              String
+  planoId           String?
+  planoNome         String?
+  bloqueadaPor      String[]
+  atualizadaNoSeeds DateTime?
+  ausenteDesde      DateTime?
+  lidaEm            DateTime
+  repositorio       RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+
+  @@unique([repositorioId, seedId])
 }

@@ -15,6 +15,7 @@ export type Acao =
   | 'publicacao.autorizar'
   | 'infraestrutura.ler'
   | 'infraestrutura.gerenciar'
+  | 'desenvolvimento.ler'
 
 export interface PapelAtribuido {
   papel: Papel
@@ -45,6 +46,7 @@ export const TODAS_AS_ACOES: readonly Acao[] = [
   'publicacao.autorizar',
   'infraestrutura.ler',
   'infraestrutura.gerenciar',
+  'desenvolvimento.ler',
 ]
 
 export const ACOES_COM_CLIENTE_OBRIGATORIO: readonly Acao[] = [
