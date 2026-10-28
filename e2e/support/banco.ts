@@ -10,6 +10,12 @@ import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { rodarWorkerUmaVez } from './worker'
+import {
+  aprovarItemNoCenario,
+  criarCenarioDeHomologacao,
+  solicitarCorrecaoNoCenario,
+  type CenarioDeHomologacao,
+} from '../../tests/support/cenario-de-homologacao'
 
 export function nomeDeTeste(base: string): string {
   const sufixo = process.env.E2E_SUFIXO || 'teste'
@@ -270,16 +276,37 @@ export async function contarEvidencias(projetoId: string): Promise<number> {
   return db.evidenciaDeploy.count({ where: { ambiente: { projetoId } } })
 }
 
-// Apaga a homologação das issues dos repositórios, na ordem das FKs: solicitações → itens →
-// eventos → homologações sem itens. A tarefa do worker recria os itens a partir das presenças.
+// Issues criadas pela tarefa `executar-tarefas-github` com a fonte de fixtures: o número vem de
+// 100_000 em diante, longe dos números do catálogo.
+const NUMERO_DAS_ISSUES_CRIADAS = 100_000
+
+// Apaga a homologação das issues dos repositórios, na ordem das FKs: tarefas do GitHub →
+// solicitações → itens → eventos → homologações sem itens → issues criadas pela triagem. A tarefa
+// do worker recria os itens a partir das presenças.
 export async function limparHomologacaoDosRepositoriosNoBanco(
   nomes: readonly string[],
 ): Promise<void> {
-  const dasIssues = { issue: { repositorio: { nomeCompleto: { in: [...nomes] } } } }
+  const repositorios = { repositorio: { nomeCompleto: { in: [...nomes] } } }
+  const dasIssues = { issue: repositorios }
+  await db.tarefaGitHub.deleteMany({ where: repositorios })
   await db.solicitacaoDeCorrecao.deleteMany({ where: { item: dasIssues } })
   await db.homologacaoItem.deleteMany({ where: dasIssues })
   await db.eventoTimeline.deleteMany({ where: dasIssues })
   await db.homologacao.deleteMany({ where: { itens: { none: {} } } })
+  await apagarIssuesCriadasPelaTriagemNoBanco(nomes)
+}
+
+async function apagarIssuesCriadasPelaTriagemNoBanco(nomes: readonly string[]): Promise<void> {
+  const criadas = {
+    numero: { gte: NUMERO_DAS_ISSUES_CRIADAS },
+    repositorio: { nomeCompleto: { in: [...nomes] } },
+  }
+  await db.issueVinculo.deleteMany({
+    where: { OR: [{ original: criadas }, { correcao: criadas }] },
+  })
+  await db.milestoneIssue.deleteMany({ where: { issue: criadas } })
+  await db.presencaIssueVersao.deleteMany({ where: { issue: criadas } })
+  await db.issueGitHub.deleteMany({ where: criadas })
 }
 
 // Apaga presenças, evidências e versões dos repositórios e devolve a leitura de deployments
@@ -492,5 +519,160 @@ export async function prepararCenarioDeHomologacaoE2E(
 export async function contarSolicitacoesAbertasNoBanco(milestoneId: string): Promise<number> {
   return db.solicitacaoDeCorrecao.count({
     where: { estado: 'ABERTA', item: { homologacao: { milestoneId } } },
+  })
+}
+
+export interface HomologacaoE2E {
+  projetoId: string
+  clienteAId: string
+  clienteBId: string
+  clienteANome: string
+  clienteBNome: string
+  milestoneId: string
+  repositorio: string
+  issues: { n2: string; n4: string }
+  versaoV1Id: string
+  cenario: CenarioDeHomologacao
+}
+
+// Dois clientes (A e B) numa milestone com as issues #2 (aberta) e #4 (fechada) do primeiro
+// repositório do projeto, ambas já disponibilizadas e pendentes de teste (cenário de integração).
+export async function prepararHomologacaoE2E(
+  projectName: string,
+  adminId: string,
+): Promise<HomologacaoE2E> {
+  const repositorios = repositoriosDoProjetoE2E(projectName)
+  await liberarRepositoriosNoBanco(repositorios)
+  await limparImplantacaoDosRepositoriosNoBanco(repositorios)
+  const [repositorio] = repositorios
+  const clienteA = await criarClienteNoBanco(nomeDeTeste('Cliente A'))
+  const clienteB = await criarClienteNoBanco(nomeDeTeste('Cliente B'))
+  const projeto = await criarProjetoNoBanco(nomeDeTeste('Projeto Homologação'), [
+    clienteA.id,
+    clienteB.id,
+  ])
+  await vincularNoBanco(projeto.id, repositorio)
+  rodarWorkerUmaVez()
+
+  const n2 = await obterIssueNoBanco(repositorio, 2)
+  const n4 = await obterIssueNoBanco(repositorio, 4)
+  const cenario = await criarCenarioDeHomologacao({
+    projetoId: projeto.id,
+    repositorioId: (await obterRepositorioNoBanco(repositorio)).id,
+    issueIds: [n2.id, n4.id],
+    clienteIds: [clienteA.id, clienteB.id],
+    adminId,
+    prefixo: nomeDeTeste('Cenário'),
+  })
+  return {
+    projetoId: projeto.id,
+    clienteAId: clienteA.id,
+    clienteBId: clienteB.id,
+    clienteANome: clienteA.nome,
+    clienteBNome: clienteB.nome,
+    milestoneId: cenario.milestoneId,
+    repositorio,
+    issues: { n2: n2.id, n4: n4.id },
+    versaoV1Id: cenario.versaoV1Id,
+    cenario,
+  }
+}
+
+// Remove a homologação, as tarefas do GitHub e as issues criadas pela triagem nos repositórios
+// de exemplo (para o `beforeEach` dos arquivos que dependem de estado limpo).
+export async function apagarHomologacaoE2E(): Promise<void> {
+  await limparHomologacaoDosRepositoriosNoBanco(
+    (
+      await db.repositorioGitHub.findMany({
+        where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
+        select: { nomeCompleto: true },
+      })
+    ).map((r) => r.nomeCompleto),
+  )
+}
+
+export async function solicitarCorrecaoNoBanco(
+  e: HomologacaoE2E,
+  clienteId: string,
+  issueId: string,
+  texto: string,
+): Promise<string> {
+  return solicitarCorrecaoNoCenario(e.cenario, clienteId, issueId, texto)
+}
+
+export async function aprovarItemNoBanco(
+  e: HomologacaoE2E,
+  clienteId: string,
+  issueId: string,
+): Promise<void> {
+  await aprovarItemNoCenario(e.cenario, clienteId, issueId)
+}
+
+// Sem argumento conta as tarefas de todos os repositórios de exemplo; os projetos `desktop` e
+// `mobile` usam repositórios diferentes, então os testes passam o do seu projeto.
+export async function contarTarefasGitHub(nomeCompleto?: string): Promise<number> {
+  return db.tarefaGitHub.count({
+    where: {
+      repositorio: nomeCompleto
+        ? { nomeCompleto }
+        : { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
+    },
+  })
+}
+
+export async function definirTarefaNoBanco(
+  id: string,
+  dados: { estado: 'PENDENTE' | 'CONCLUIDA' | 'FALHOU'; falhaMotivo?: string | null },
+): Promise<void> {
+  await db.tarefaGitHub.update({
+    where: { id },
+    data: {
+      estado: dados.estado,
+      falhaMotivo: dados.falhaMotivo ?? null,
+      concluidaEm: dados.estado === 'PENDENTE' ? null : new Date(),
+    },
+  })
+}
+
+export async function obterTarefaDaSolicitacao(
+  solicitacaoId: string,
+): Promise<{ id: string; tipo: string; estado: string; falhaMotivo: string | null } | null> {
+  return db.tarefaGitHub.findFirst({
+    where: { solicitacaoId },
+    orderBy: { criadaEm: 'desc' },
+    select: { id: true, tipo: true, estado: true, falhaMotivo: true },
+  })
+}
+
+export async function obterItemNoBanco(
+  clienteId: string,
+  issueId: string,
+): Promise<{ id: string; estado: string; ultimoEventoId: string | null }> {
+  return db.homologacaoItem.findFirstOrThrow({
+    where: { issueId, homologacao: { clienteId } },
+    select: { id: true, estado: true, ultimoEventoId: true },
+  })
+}
+
+export async function contarEventosNoBanco(clienteId: string, issueId: string): Promise<number> {
+  return db.eventoTimeline.count({ where: { clienteId, issueId } })
+}
+
+// Devolve a solicitação ao estado de recém-solicitada (sem tarefas nem triagem), para repetir uma
+// requisição capturada contra o mesmo registro.
+export async function restaurarSolicitacaoNoBanco(solicitacaoId: string): Promise<void> {
+  await db.tarefaGitHub.deleteMany({ where: { solicitacaoId } })
+  await db.solicitacaoDeCorrecao.update({
+    where: { id: solicitacaoId },
+    data: { estado: 'ABERTA', triadaEm: null, triadaPorId: null },
+  })
+}
+
+export async function obterSolicitacaoNoBanco(
+  solicitacaoId: string,
+): Promise<{ estado: string; triadaEm: Date | null }> {
+  return db.solicitacaoDeCorrecao.findUniqueOrThrow({
+    where: { id: solicitacaoId },
+    select: { estado: true, triadaEm: true },
   })
 }

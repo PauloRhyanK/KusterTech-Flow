@@ -11,6 +11,7 @@ import {
   MENSAGEM_TENTATIVAS_ESGOTADAS,
   podeAprovarMilestone,
   resumoDaHomologacao,
+  situacaoDaCorrecao,
   tituloDoEvento,
   transicaoDeHomologacao,
   type ContextoDaTransicao,
@@ -599,5 +600,78 @@ describe('transicaoDeHomologacao — reteste', () => {
     expect(transicaoDeHomologacao('AGUARDANDO_RETESTE', 'COMENTAR', ok)).toEqual({
       novoEstado: 'AGUARDANDO_RETESTE',
     })
+  })
+})
+
+describe('situacaoDaCorrecao', () => {
+  const tarefa = (
+    tipo: 'REABRIR_ISSUE' | 'CRIAR_ISSUE',
+    estado: 'PENDENTE' | 'FALHOU',
+    falhaMotivo: string | null = null,
+  ) => ({
+    tipo,
+    estado,
+    falhaMotivo,
+  })
+
+  test('as sete correspondências; nenhuma com tom sucesso', () => {
+    const casos = [
+      [{ estado: 'ABERTA', tarefa: null, numeroAlvo: null }, 'Aguardando triagem', 'atencao'],
+      [
+        { estado: 'ABERTA', tarefa: tarefa('REABRIR_ISSUE', 'PENDENTE'), numeroAlvo: null },
+        'Reabertura no GitHub pendente',
+        'informacao',
+      ],
+      [
+        { estado: 'ABERTA', tarefa: tarefa('CRIAR_ISSUE', 'PENDENTE'), numeroAlvo: null },
+        'Criação da issue de correção pendente',
+        'informacao',
+      ],
+      [
+        {
+          estado: 'ABERTA',
+          tarefa: tarefa('CRIAR_ISSUE', 'FALHOU', MENSAGEM_TENTATIVAS_ESGOTADAS),
+          numeroAlvo: null,
+        },
+        `Falha no GitHub: ${MENSAGEM_TENTATIVAS_ESGOTADAS}`,
+        'erro',
+      ],
+      [
+        { estado: 'REABERTA_NO_GITHUB', tarefa: null, numeroAlvo: 4 },
+        'Issue #4 reaberta no GitHub',
+        'informacao',
+      ],
+      [
+        { estado: 'CORRECAO_CRIADA', tarefa: null, numeroAlvo: 316000 },
+        'Correção #316000 criada no GitHub',
+        'informacao',
+      ],
+      [
+        { estado: 'RESPONDIDA_SEM_TAREFA', tarefa: null, numeroAlvo: null },
+        'Respondida sem tarefa',
+        'neutro',
+      ],
+      [
+        { estado: 'RESOLVIDA', tarefa: null, numeroAlvo: 4 },
+        'Correção disponível em QA',
+        'informacao',
+      ],
+    ] as const
+    for (const [entrada, texto, tom] of casos) {
+      expect(situacaoDaCorrecao(entrada)).toEqual({ texto, tom })
+      expect(situacaoDaCorrecao(entrada).tom).not.toBe('sucesso')
+    }
+  })
+})
+
+describe('classificarNaFila com triagem pendente (base §3.8, item 10)', () => {
+  const admin = { disponibilizar: true, aprovar: true, solicitarCorrecao: true, triar: true }
+
+  test('CORRECAO_SOLICITADA com solicitação a triar → requer-minha-acao só para quem triar', () => {
+    expect(classificarNaFila('CORRECAO_SOLICITADA', admin, true)).toBe('requer-minha-acao')
+    expect(classificarNaFila('CORRECAO_SOLICITADA', admin, false)).toBe('aguardando-outros')
+    expect(classificarNaFila('CORRECAO_SOLICITADA', { ...admin, triar: false }, true)).toBe(
+      'aguardando-outros',
+    )
   })
 })

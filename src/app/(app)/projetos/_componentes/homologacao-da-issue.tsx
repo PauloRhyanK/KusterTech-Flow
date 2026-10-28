@@ -5,8 +5,13 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { Timeline } from '@/lib/ui/timeline'
 import { apresentarEstadoDoItem } from '@/modules/homologacao/model'
-import type { HomologacaoDaIssue, HomologacaoDaIssueDoCliente } from '@/modules/homologacao/queries'
+import type {
+  CorrecaoNaTela,
+  HomologacaoDaIssue,
+  HomologacaoDaIssueDoCliente,
+} from '@/modules/homologacao/queries'
 import { AcoesDeHomologacao } from './acoes-de-homologacao'
+import { BlocoDaCorrecao } from './situacao-da-correcao'
 
 export interface HomologacaoDaIssueNoClienteProps {
   dados: HomologacaoDaIssue
@@ -14,6 +19,11 @@ export interface HomologacaoDaIssueNoClienteProps {
   issue: { id: string; numero: number; repositorio: string }
   hrefDaMilestone: (milestoneId: string) => string
   hrefDeRetorno?: string | null
+  correcoes?: {
+    lista: readonly CorrecaoNaTela[]
+    podeTriar: boolean
+    integracaoConfigurada: boolean
+  }
 }
 
 function VoltarParaAFila({ href }: { href: string }) {
@@ -48,6 +58,7 @@ function Conteudo({
   issue,
   hrefDaMilestone,
   hrefDeRetorno,
+  correcoes,
 }: HomologacaoDaIssueNoClienteProps) {
   switch (dados.situacao) {
     case 'sem-ambiente-qa':
@@ -103,12 +114,33 @@ function Conteudo({
         return null
       }
       const estado = apresentarEstadoDoItem(item.estado)
+      const eventos = dados.eventos.map((evento) => {
+        const correcao = correcoes?.lista.find((c) => c.eventoId === evento.id)
+        return correcao
+          ? {
+              ...evento,
+              anexo: (
+                <BlocoDaCorrecao
+                  correcao={correcao}
+                  podeTriar={correcoes?.podeTriar ?? false}
+                  integracaoConfigurada={correcoes?.integracaoConfigurada ?? false}
+                  projetoId={projetoId}
+                  clienteId={dados.cliente.id}
+                  issueId={issue.id}
+                  milestoneId={milestone.id}
+                  issueNumero={issue.numero}
+                  issueTitulo={correcao.issueOriginal.titulo}
+                />
+              ),
+            }
+          : evento
+      })
       return (
         <div className="space-y-4">
           <BadgeDeEstado tom={estado.tom}>{estado.texto}</BadgeDeEstado>
           <Timeline
             rotulo="Histórico de homologação"
-            eventos={dados.eventos}
+            eventos={eventos}
             versaoCorrenteId={dados.versaoCorrente?.id ?? null}
             vazio="Nenhum evento registrado."
           />

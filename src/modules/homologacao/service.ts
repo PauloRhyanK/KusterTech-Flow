@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import type { Prisma } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
@@ -7,6 +9,10 @@ import { intervaloDaIntegracao } from '@/modules/github/service'
 import {
   ACAO_PARA_PERMISSAO,
   type AcaoDeRegistro,
+  MENSAGEM_CORPO,
+  MENSAGEM_JUSTIFICATIVA,
+  MENSAGEM_RESPOSTA,
+  MENSAGEM_TITULO,
   type EstadoItemHomologacao,
   type TipoEventoTimeline,
   transicaoDeHomologacao,
@@ -212,4 +218,304 @@ export async function registrarAcaoDeHomologacao(
   })
 
   return { eventoId, novoEstado, clienteNome: homologacao.cliente.nome }
+}
+
+export type DecisaoDeTriagem =
+  | { tipo: 'reabrir' }
+  | {
+      tipo: 'criar_correcao'
+      titulo: string
+      corpo: string
+      foraDoEscopo: boolean
+      justificativa: string | null
+    }
+  | { tipo: 'responder'; resposta: string; visibilidade: 'INTERNA' | 'COMPARTILHAVEL' }
+
+const SOLICITACAO_NAO_ENCONTRADA = 'Solicitação não encontrada.'
+const SEM_INTEGRACAO =
+  'A integração com o GitHub não está configurada; não é possível reabrir nem criar issues agora.'
+
+function justificativaValida(bruta: string | null): string {
+  const justificativa = (bruta ?? '').trim()
+  if (justificativa.length < 10 || justificativa.length > 1000) {
+    throw new ErroDeDominio(MENSAGEM_JUSTIFICATIVA)
+  }
+  return justificativa
+}
+
+// Limites da triagem num só lugar: a action só confere o formato dos campos.
+export function validarDecisaoDeTriagem(decisao: DecisaoDeTriagem): DecisaoDeTriagem {
+  if (decisao.tipo === 'reabrir') {
+    return decisao
+  }
+  if (decisao.tipo === 'responder') {
+    const resposta = decisao.resposta.trim()
+    if (resposta.length < 1 || resposta.length > 2000) {
+      throw new ErroDeDominio(MENSAGEM_RESPOSTA)
+    }
+    return { ...decisao, resposta }
+  }
+  const titulo = decisao.titulo.trim()
+  if (titulo.length < 1 || titulo.length > 200) {
+    throw new ErroDeDominio(MENSAGEM_TITULO)
+  }
+  const corpo = decisao.corpo.trim()
+  if (corpo.length > 5000) {
+    throw new ErroDeDominio(MENSAGEM_CORPO)
+  }
+  return {
+    ...decisao,
+    titulo,
+    corpo,
+    justificativa: decisao.foraDoEscopo ? justificativaValida(decisao.justificativa) : null,
+  }
+}
+
+async function carregarSolicitacaoParaTriagem(tx: Prisma.TransactionClient, id: string) {
+  return tx.solicitacaoDeCorrecao.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      estado: true,
+      foraDoEscopo: true,
+      issueCorrecaoId: true,
+      atualizadoEm: true,
+      tarefasGitHub: { select: { estado: true } },
+      item: {
+        select: {
+          id: true,
+          issueId: true,
+          versaoAvaliadaId: true,
+          ultimoEventoId: true,
+          issue: {
+            select: {
+              numero: true,
+              estado: true,
+              repositorioId: true,
+              repositorio: { select: { projetoId: true, removidoDaInstalacaoEm: true } },
+            },
+          },
+          homologacao: {
+            select: {
+              id: true,
+              clienteId: true,
+              milestoneId: true,
+              milestone: { select: { projetoId: true, arquivadaEm: true } },
+            },
+          },
+        },
+      },
+    },
+  })
+}
+
+type SolicitacaoParaTriagem = NonNullable<
+  Awaited<ReturnType<typeof carregarSolicitacaoParaTriagem>>
+>
+
+// Evento de triagem do humano, encadeado no item e gravado como seu último evento.
+async function registrarEventoDeTriagem(
+  tx: Prisma.TransactionClient,
+  s: SolicitacaoParaTriagem,
+  e: {
+    autorId: string
+    texto: string
+    visibilidade: 'INTERNA' | 'COMPARTILHAVEL'
+    agora: Date
+  },
+): Promise<void> {
+  const evento = await tx.eventoTimeline.create({
+    data: {
+      clienteId: s.item.homologacao.clienteId,
+      milestoneId: s.item.homologacao.milestoneId,
+      issueId: s.item.issueId,
+      versaoId: s.item.versaoAvaliadaId,
+      tipo: 'TRIAGEM',
+      visibilidade: e.visibilidade,
+      origem: 'HUMANO',
+      autorId: e.autorId,
+      texto: e.texto,
+      eventoAnteriorId: s.item.ultimoEventoId,
+      criadoEm: e.agora,
+    },
+    select: { id: true },
+  })
+  // Mesma guarda da ação do usuário: se outro evento entrou no item desde a leitura, desfaz tudo.
+  const encadeado = await tx.homologacaoItem.updateMany({
+    where: { id: s.item.id, ultimoEventoId: s.item.ultimoEventoId },
+    data: { ultimoEventoId: evento.id },
+  })
+  if (encadeado.count === 0) {
+    throw new ErroDeDominio(
+      'Esta homologação mudou desde que você abriu a página. Confira o estado atual e tente de novo.',
+    )
+  }
+}
+
+async function exigirSolicitacaoDoCliente(
+  tx: Prisma.TransactionClient,
+  solicitacaoId: string,
+  clienteId: string,
+): Promise<SolicitacaoParaTriagem> {
+  const s = await carregarSolicitacaoParaTriagem(tx, solicitacaoId)
+  if (!s || s.item.homologacao.clienteId !== clienteId) {
+    throw new ErroDeDominio(SOLICITACAO_NAO_ENCONTRADA)
+  }
+  if (s.estado === 'RESOLVIDA') {
+    throw new ErroDeDominio('Esta solicitação já foi resolvida.')
+  }
+  return s
+}
+
+// Triagem manual (D27, 5b decisão 1): reabrir e criar correção só gravam a tarefa; o worker
+// fala com o GitHub. Responder sem tarefa fecha a solicitação na hora.
+export async function triarSolicitacao(
+  sujeito: Sujeito,
+  e: { clienteId: string; solicitacaoId: string; decisao: DecisaoDeTriagem },
+  agora: Date = new Date(),
+): Promise<{ tarefaId: string | null }> {
+  exigirPermissao(sujeito, 'homologacao.triar', { clienteId: e.clienteId })
+  const decisao = validarDecisaoDeTriagem(e.decisao)
+
+  return db.$transaction(async (tx) => {
+    const s = await exigirSolicitacaoDoCliente(tx, e.solicitacaoId, e.clienteId)
+    if (s.estado !== 'ABERTA') {
+      throw new ErroDeDominio('Esta solicitação já foi triada.')
+    }
+    if (s.tarefasGitHub.some((t) => t.estado === 'PENDENTE')) {
+      throw new ErroDeDominio('Já existe uma tarefa no GitHub em andamento para esta solicitação.')
+    }
+    const { homologacao, issue } = s.item
+    if (homologacao.milestone.arquivadaEm !== null) {
+      throw new ErroDeDominio('Esta milestone está arquivada.')
+    }
+
+    // Guarda otimista: duas triagens simultâneas da mesma solicitação não gravam duas tarefas.
+    const reivindicada = await tx.solicitacaoDeCorrecao.updateMany({
+      where: {
+        id: s.id,
+        estado: 'ABERTA',
+        atualizadoEm: s.atualizadoEm,
+      },
+      data: {
+        triadaEm: agora,
+        triadaPorId: sujeito.usuarioId,
+        ...(decisao.tipo === 'responder' ? { estado: 'RESPONDIDA_SEM_TAREFA' as const } : {}),
+      },
+    })
+    if (reivindicada.count === 0) {
+      throw new ErroDeDominio('Esta solicitação já foi triada.')
+    }
+
+    if (decisao.tipo === 'responder') {
+      await registrarEventoDeTriagem(tx, s, {
+        autorId: sujeito.usuarioId,
+        texto: decisao.resposta,
+        visibilidade: decisao.visibilidade,
+        agora,
+      })
+      return { tarefaId: null }
+    }
+
+    if (decisao.tipo === 'reabrir' && issue.estado === 'ABERTA') {
+      throw new ErroDeDominio(
+        `A issue #${issue.numero} já está aberta no GitHub; escolha criar uma correção ou responder.`,
+      )
+    }
+    const integracao = await tx.integracaoGitHub.findUnique({
+      where: { id: 'github' },
+      select: { configurada: true },
+    })
+    if (
+      !integracao?.configurada ||
+      issue.repositorio.removidoDaInstalacaoEm !== null ||
+      issue.repositorio.projetoId !== homologacao.milestone.projetoId
+    ) {
+      throw new ErroDeDominio(SEM_INTEGRACAO)
+    }
+
+    const tarefaId = randomUUID()
+    if (decisao.tipo === 'reabrir') {
+      await tx.tarefaGitHub.create({
+        data: {
+          id: tarefaId,
+          tipo: 'REABRIR_ISSUE',
+          repositorioId: issue.repositorioId,
+          dados: { issueId: s.item.issueId, numero: issue.numero },
+          solicitacaoId: s.id,
+          solicitadaPorId: sujeito.usuarioId,
+        },
+      })
+      await registrarEventoDeTriagem(tx, s, {
+        autorId: sujeito.usuarioId,
+        texto: `Triagem: reabrir a issue #${issue.numero} no GitHub.`,
+        visibilidade: 'INTERNA',
+        agora,
+      })
+      return { tarefaId }
+    }
+
+    const rodape = `Registrada pela Central de Operações (tarefa ${tarefaId}).`
+    await tx.tarefaGitHub.create({
+      data: {
+        id: tarefaId,
+        tipo: 'CRIAR_ISSUE',
+        repositorioId: issue.repositorioId,
+        dados: {
+          issueOriginalId: s.item.issueId,
+          titulo: decisao.titulo,
+          corpo: decisao.corpo === '' ? rodape : `${decisao.corpo}\n\n${rodape}`,
+          foraDoEscopo: decisao.foraDoEscopo,
+          justificativa: decisao.justificativa,
+        },
+        solicitacaoId: s.id,
+        solicitadaPorId: sujeito.usuarioId,
+      },
+    })
+    await registrarEventoDeTriagem(tx, s, {
+      autorId: sujeito.usuarioId,
+      texto:
+        'Triagem: criar issue de correção vinculada.' +
+        (decisao.foraDoEscopo ? ` Fora do escopo desta milestone: ${decisao.justificativa}` : ''),
+      visibilidade: 'INTERNA',
+      agora,
+    })
+    return { tarefaId }
+  })
+}
+
+// Classificar como fora do escopo tira a correção da lista de bloqueadoras (D22).
+export async function reclassificarSolicitacao(
+  sujeito: Sujeito,
+  e: { clienteId: string; solicitacaoId: string; justificativa: string },
+  agora: Date = new Date(),
+): Promise<void> {
+  exigirPermissao(sujeito, 'homologacao.triar', { clienteId: e.clienteId })
+  const justificativa = justificativaValida(e.justificativa)
+
+  await db.$transaction(async (tx) => {
+    const s = await exigirSolicitacaoDoCliente(tx, e.solicitacaoId, e.clienteId)
+    if (s.foraDoEscopo) {
+      throw new ErroDeDominio('Esta correção já está classificada como fora do escopo.')
+    }
+    const atualizada = await tx.solicitacaoDeCorrecao.updateMany({
+      where: { id: s.id, foraDoEscopo: false, estado: { not: 'RESOLVIDA' } },
+      data: { foraDoEscopo: true, justificativa },
+    })
+    if (atualizada.count === 0) {
+      throw new ErroDeDominio('Esta solicitação mudou. Recarregue a página.')
+    }
+    if (s.issueCorrecaoId) {
+      await tx.milestoneIssue.updateMany({
+        where: { milestoneId: s.item.homologacao.milestoneId, issueId: s.issueCorrecaoId },
+        data: { foraDoEscopo: true, justificativaForaDoEscopo: justificativa },
+      })
+    }
+    await registrarEventoDeTriagem(tx, s, {
+      autorId: sujeito.usuarioId,
+      texto: `Correção classificada como fora do escopo: ${justificativa}`,
+      visibilidade: 'INTERNA',
+      agora,
+    })
+  })
 }
