@@ -4,8 +4,8 @@ import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
-import { estadoDoRepositorio } from '@/modules/github/model'
-import { intervaloDaIntegracao, lerSituacao } from '@/modules/github/service'
+import { estadoDoProjeto, estadoDoRepositorio } from '@/modules/github/model'
+import { intervaloDaIntegracao } from '@/modules/github/service'
 import {
   ACAO_PARA_PERMISSAO,
   type AcaoDeRegistro,
@@ -636,11 +636,22 @@ export async function aprovarMilestone(
     if (!base || base.milestone.arquivadaEm !== null) {
       throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
     }
-    const { situacao } = await lerSituacao(base.milestone.projetoId, agora)
-    if (
-      situacao.estadoDoProjeto === 'indisponivel' ||
-      situacao.estadoDoProjeto === 'sem-dados-recentes'
-    ) {
+    // Mesma leitura de `lerSituacao`, mas na transação: sem segunda conexão e no mesmo instante.
+    const integracao = await tx.integracaoGitHub.findUnique({
+      where: { id: 'github' },
+      select: { configurada: true },
+    })
+    const repositorios = await tx.repositorioGitHub.findMany({
+      where: { projetoId: base.milestone.projetoId },
+      select: { sincronizadoEm: true, ultimaFalhaEm: true, removidoDaInstalacaoEm: true },
+    })
+    const situacao = estadoDoProjeto(
+      repositorios,
+      integracao?.configurada ?? false,
+      agora,
+      intervaloDaIntegracao(),
+    )
+    if (situacao === 'indisponivel' || situacao === 'sem-dados-recentes') {
       throw new ErroDeDominio(DADOS_DESATUALIZADOS)
     }
     if (base.versoesEsperadas !== e.versoesEsperadas) {
