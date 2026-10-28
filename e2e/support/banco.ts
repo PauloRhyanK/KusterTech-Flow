@@ -167,6 +167,44 @@ export async function limparExecucoesDosRepositoriosNoBanco(
   await db.seedDoRepositorio.deleteMany({ where: dosRepositorios })
 }
 
+// Tira o projeto de teste das consultas de projetos ativos (Visão Geral, checklist de configuração).
+export async function arquivarProjetoNoBanco(projetoId: string): Promise<void> {
+  await db.projeto.updateMany({ where: { id: projetoId }, data: { arquivadoEm: new Date() } })
+}
+
+export function repositorioDeAgentesE2E(projectName: string): string {
+  return projectName === 'mobile'
+    ? 'kustertech-exemplo/automacao-mobile'
+    : 'kustertech-exemplo/automacao'
+}
+
+// Runs de exemplo das fixtures do Warren: `run_exemplo000n` (desktop) e `run_exemplo100n` (mobile).
+export function runDeExemploE2E(projectName: string, n: 1 | 2 | 3): string {
+  return `run_exemplo${projectName === 'mobile' ? '1' : '0'}00${n}`
+}
+
+export async function obterExecucaoNoBanco(runId: string): Promise<{ id: string; estado: string }> {
+  return db.execucaoAgente.findFirstOrThrow({
+    where: { runId },
+    select: { id: true, estado: true },
+  })
+}
+
+export async function definirLeituraWarren(
+  nomeCompleto: string,
+  leitura: {
+    warrenLidoEm?: Date | null
+    warrenFalhaEm?: Date | null
+    warrenFalhaMotivo?: string | null
+  },
+): Promise<void> {
+  await db.repositorioGitHub.updateMany({ where: { nomeCompleto }, data: leitura })
+}
+
+export async function contarExecucoes(): Promise<number> {
+  return db.execucaoAgente.count()
+}
+
 export async function definirSituacaoDoRepositorio(
   nomeCompleto: string,
   situacao: {
@@ -1257,6 +1295,12 @@ export async function limparCenarioDaVisaoGeral(projectName: string): Promise<vo
     where: { OR: [{ projetoId: { in: projetosIds } }, { cliente: doCenario }] },
   })
   await db.projeto.deleteMany({ where: { id: { in: projetosIds } } })
+  // Projetos de outros arquivos continuam ativos e sem configuração; como cada grupo da Visão Geral
+  // mostra só 5 pendências, eles empurrariam o Projeto Q para fora do grupo "configuracao".
+  await db.projeto.updateMany({
+    where: { nome: { startsWith: 'E2E ' }, arquivadoEm: null },
+    data: { arquivadoEm: new Date() },
+  })
   await db.usuario.deleteMany({
     where: { email: { startsWith: PREFIXO_DE_EMAIL_DA_VISAO_GERAL, endsWith: '@local.test' } },
   })

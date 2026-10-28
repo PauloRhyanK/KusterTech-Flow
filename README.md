@@ -274,3 +274,28 @@ Cada grupo mostra até 5 pendências. Com mais, "Ver todas (N)" abre `/?grupo=<t
 ### Verificação
 
 `e2e/visao-geral.spec.ts` monta uma pendência de cada tipo, confere a ordem dos grupos, o destino de cada link (e que voltar preserva `?grupo`), o que o testador do cliente A vê e o layout dos resumos, no desktop e no mobile, com capturas em `e2e/capturas/` (ignoradas pelo git).
+
+## Central de Desenvolvimento
+
+`/desenvolvimento` junta, numa fila só, issues e PRs dos repositórios vinculados e as execuções do Warren, com filtros por projeto, situação e origem. A visão "Por projeto e issue" (`?visao=execucoes`) agrupa as execuções por projeto e seed, e `/desenvolvimento/execucoes/<id>` mostra uma execução. Só leitura: não há formulário de escrita.
+
+### De onde vêm os dados do Warren
+
+O Warren não tem API. O worker (`sincronizar-execucoes-warren`, logo depois de `reconciliar-github`) usa apenas:
+
+- `.seeds/issues.jsonl` e `.seeds/plans.jsonl` no branch padrão de cada repositório vinculado, lidos com `FonteGitHub.lerArquivo`. Só ficam `id`, título, status, tipo, plano, dependências, data e `extensions.{lastRunId, lastRunAt, role}`; descrição e fechamento não são guardados. Linha truncada, status desconhecido ou `lastRunId` malformado é ignorado e contado em `seedsLinhasInvalidas`.
+- PRs abertas pelo app `warren-forge` em branches `warren/run_*`, já espelhadas pelo `reconciliar-github`. PR humana nesse branch não vira execução. O corpo da PR nunca é exibido; a tela mostra só run, agente e custo extraídos dele.
+
+Falha na leitura mantém tudo o que já foi lido, com texto fixo e a data dos últimos dados.
+
+### Estados alcançáveis e capacidade
+
+Uma execução é `CONCLUIDA` (o Warren abriu a PR dela; isso não significa PR aprovada, CI verde nem issue fechada), `EXECUTANDO` (seed em andamento nas últimas 24 h, sem PR) ou `SEM_DADOS` (as fontes não informam). `NA_FILA`, `AGUARDANDO_CAPACIDADE`, `AGUARDANDO_DEPENDENCIA` e `INTERVENCAO_NECESSARIA` existem no modelo, mas nenhuma fonte atual os produz. Capacidade é sempre "Sem dados": o Warren não informa ocupação nem limites. Nada de porcentagem, etapa ou duração estimada, e nenhum badge de sucesso.
+
+### Permissão
+
+Toda leitura exige `desenvolvimento.ler` (só administrador, sem cliente), verificada no servidor. Aprovador e testador veem "Sem permissão para esta área.".
+
+### Verificação
+
+`e2e/jornada-e.spec.ts` (Jornada E do Blueprint) percorre a fila e seus filtros, a intervenção, a seed expandida com a dependência, a execução concluída com PR aberta com checks em falha e a issue ainda aberta, a falha de leitura e a recusa a aprovador e testador, no desktop e no mobile, com capturas em `e2e/capturas/` (ignoradas pelo git).

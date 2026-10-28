@@ -170,7 +170,7 @@ test('cada pendência leva ao registro único no contexto certo e voltar mostra 
   })
 })
 
-test('/?grupo=homologacao: clicar na pendência de A e voltar mantém ?grupo=homologacao e "Mostrar menos" quando houver mais de 5', async ({
+test('/?grupo=homologacao: clicar na pendência de A e voltar mantém ?grupo=homologacao e "Mostrar menos" no grupo expandido', async ({
   page,
 }) => {
   const c = cenario
@@ -179,14 +179,13 @@ test('/?grupo=homologacao: clicar na pendência de A e voltar mantém ?grupo=hom
 
   await page.goto('/?grupo=homologacao')
   const grupo = page.locator('#grupo-homologacao')
-  const total = Number((await grupo.locator('h3 + span').innerText()).replace(/[^0-9]/g, ''))
   await grupo.locator('li', { hasText: c.clienteA.nome }).getByRole('link').first().click()
   await expect(page).toHaveURL(new RegExp(`/clientes/${c.clienteA.id}/`))
 
   await page.goBack()
   await expect(page).toHaveURL(/\/\?grupo=homologacao/)
   await expect(page.getByRole('heading', { level: 1, name: 'Visão Geral' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Mostrar menos' })).toHaveCount(total > 5 ? 1 : 0)
+  await expect(page.getByRole('link', { name: 'Mostrar menos' })).toHaveCount(1)
 })
 
 test('testador do cliente A: só #grupo-homologacao com 1 linha (cliente A, "Pendente de teste"); nenhum texto do cliente B, do alerta, de "E2E v1.4.0" ou do projeto Q; nenhum h2 "Infraestrutura"; /?grupo=alerta igual; /infraestrutura/alertas mostra "Sem permissão"; captura 7-visao-geral-testador.png', async ({
