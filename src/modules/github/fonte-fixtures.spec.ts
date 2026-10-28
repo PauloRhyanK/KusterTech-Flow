@@ -91,4 +91,38 @@ describe('fonte de fixtures', () => {
       expect(prs.find((p) => p.numero === 6)?.shaMerge).toBeNull()
     }
   })
+
+  test('criarIssue em portal com relógio 2026-10-26T12:00:00Z → { numero: 316000, githubId: BigInt(5001316000), urlHtml: ".../portal/issues/316000" }; segunda chamada → 316001; escritas tem 2 itens; listarIssuesAtualizadas(portal, null) continua com 4', async () => {
+    const f = criarFonteFixtures(() => new Date('2026-10-26T12:00:00Z'))
+    const [portal] = await f.listarRepositorios()
+    expect(await f.criarIssue(portal!, { titulo: 'Correção: x', corpo: 'y' })).toEqual({
+      numero: 316000,
+      githubId: BigInt(5001316000),
+      urlHtml: 'https://github.com/kustertech-exemplo/portal/issues/316000',
+    })
+    expect((await f.criarIssue(portal!, { titulo: 'Correção: x', corpo: 'y' })).numero).toBe(316001)
+    expect(f.escritas).toHaveLength(2)
+    expect(f.escritas).toEqual([
+      { tipo: 'criar', repositorio: 'kustertech-exemplo/portal', numero: 316000 },
+      { tipo: 'criar', repositorio: 'kustertech-exemplo/portal', numero: 316001 },
+    ])
+    expect(await f.listarIssuesAtualizadas(portal!, null)).toHaveLength(4)
+  })
+
+  test('reabrirIssue(portal, 4) → ABERTA, fechadaEm null, atualizadaEm = relógio; reabrirIssue(portal, 99) → ErroDeIntegracao sem-acesso', async () => {
+    const agora = new Date('2026-10-26T12:00:00Z')
+    const f = criarFonteFixtures(() => agora)
+    const [portal] = await f.listarRepositorios()
+    const issue = await f.reabrirIssue(portal!, 4)
+    expect(issue).toMatchObject({
+      numero: 4,
+      estado: 'ABERTA',
+      fechadaEm: null,
+      atualizadaEm: agora,
+    })
+    await expect(f.reabrirIssue(portal!, 99)).rejects.toMatchObject({ categoria: 'sem-acesso' })
+    expect(f.escritas).toEqual([
+      { tipo: 'reabrir', repositorio: 'kustertech-exemplo/portal', numero: 4 },
+    ])
+  })
 })

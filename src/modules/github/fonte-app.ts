@@ -6,6 +6,7 @@ import {
   mapearComparacao,
   mapearDeployment,
   mapearIssue,
+  mapearIssueCriada,
   mapearPullRequest,
   mapearRepositorio,
   type ComparacaoDaFonte,
@@ -82,8 +83,13 @@ export function criarFonteApp(
     if (r.status === 401) {
       return new ErroDeIntegracao('autenticacao')
     }
-    if (r.status === 403 || r.status === 404) {
+    // 410: issues desativadas no repositório.
+    if (r.status === 403 || r.status === 404 || r.status === 410) {
       return new ErroDeIntegracao('sem-acesso')
+    }
+    // 422: o GitHub recusou o conteúdo enviado.
+    if (r.status === 422) {
+      return new ErroDeIntegracao('resposta-invalida')
     }
     if (r.status === 429) {
       return new ErroDeIntegracao('limite')
@@ -95,10 +101,11 @@ export function criarFonteApp(
   }
 
   async function chamar(
-    metodo: 'GET' | 'POST',
+    metodo: 'GET' | 'POST' | 'PATCH',
     url: string,
     autorizacao: string,
     em404?: CategoriaDeFalha,
+    corpoJson?: unknown,
   ): Promise<{ corpo: unknown; link: string | null }> {
     let resposta: Response
     try {
@@ -108,7 +115,9 @@ export function criarFonteApp(
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
           Authorization: `Bearer ${autorizacao}`,
+          ...(corpoJson === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
+        ...(corpoJson === undefined ? {} : { body: JSON.stringify(corpoJson) }),
       })
     } catch {
       throw new ErroDeIntegracao('rede')
@@ -291,6 +300,34 @@ export function criarFonteApp(
       // 404 do compare é commit que o GitHub não conhece, não perda de acesso ao repositório.
       const { corpo } = await chamar('GET', `${apiUrl}${caminho}`, token, 'commit-desconhecido')
       return mapearComparacao(corpo)
+    },
+
+    async reabrirIssue(repo, numero): Promise<IssueDaFonte> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo } = await chamar(
+        'PATCH',
+        `${apiUrl}${caminhoDoRepo(repo)}/issues/${numero}`,
+        token,
+        undefined,
+        { state: 'open' },
+      )
+      const issue = mapearIssue(corpo)
+      if (!issue) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      return issue
+    },
+
+    async criarIssue(repo, issue) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo } = await chamar(
+        'POST',
+        `${apiUrl}${caminhoDoRepo(repo)}/issues`,
+        token,
+        undefined,
+        { title: issue.titulo, body: issue.corpo },
+      )
+      return mapearIssueCriada(corpo)
     },
   }
 }

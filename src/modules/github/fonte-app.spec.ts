@@ -3,6 +3,8 @@ import { describe, expect, test } from 'vitest'
 import { ErroDeIntegracao } from './erros'
 import { criarFonteApp } from './fonte-app'
 import type { RefRepositorio } from './fonte'
+import issueReaberta from './fixtures/escritas/issue-reaberta.json'
+import issueCriada from './fixtures/escritas/issue-criada.json'
 import instalacoes from './fixtures/instalacoes.json'
 import repositorios from './fixtures/repositorios.json'
 import issuesPortal from './fixtures/kustertech-exemplo__portal/issues.json'
@@ -29,6 +31,7 @@ interface Chamada {
   url: URL
   metodo: string
   cabecalhos: Record<string, string>
+  corpo?: string
 }
 type Resposta = { status?: number; corpo?: unknown; cabecalhos?: Record<string, string> }
 type Rota = Resposta | ((c: Chamada) => Resposta)
@@ -45,7 +48,12 @@ function criar(rotas: Record<string, Rota>, relogio: () => Date = () => AGORA) {
   const fetchFalso = (async (entrada: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(entrada))
     const metodo = init?.method ?? 'GET'
-    const chamada = { url, metodo, cabecalhos: init?.headers as Record<string, string> }
+    const chamada = {
+      url,
+      metodo,
+      cabecalhos: init?.headers as Record<string, string>,
+      corpo: typeof init?.body === 'string' ? init.body : undefined,
+    }
     chamadas.push(chamada)
     const rota = rotas[`${metodo} ${url.pathname}`]
     if (!rota) return json({ status: 404, corpo: { message: 'rota inesperada' } })
@@ -57,6 +65,23 @@ function criar(rotas: Record<string, Rota>, relogio: () => Date = () => AGORA) {
     relogio,
   )
   return { fonte, chamadas }
+}
+
+// O token da instalação responde; qualquer outra chamada rejeita o fetch.
+function criarComFetchQueFalha() {
+  const fetchFalso = (async (entrada: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(entrada))
+    if (`${init?.method ?? 'GET'} ${url.pathname}` === TOKEN_PATH) {
+      return json({ status: 201, corpo: { token: TOKEN, expires_at: '2026-10-26T16:00:00Z' } })
+    }
+    throw new TypeError('rede fora do ar')
+  }) as typeof fetch
+  const fonte = criarFonteApp(
+    { appId: '123456', chavePrivada: privateKey, apiUrl: API },
+    fetchFalso,
+    () => AGORA,
+  )
+  return { fonte }
 }
 
 const tokenRota = (expiraEm = '2026-10-26T16:00:00Z'): Rota => ({
@@ -389,6 +414,110 @@ describe('deployments e comparação de commits', () => {
       expect(erro).toBeInstanceOf(ErroDeIntegracao)
       expect((erro as ErroDeIntegracao).categoria).toBe(categoria)
       expect((erro as Error).message).not.toContain(TOKEN)
+    }
+  })
+})
+
+describe('escrita de issues', () => {
+  const ISSUE_4 = 'PATCH /repos/kustertech-exemplo/portal/issues/4'
+  const ISSUES_POST = 'POST /repos/kustertech-exemplo/portal/issues'
+  const TITULO = 'Correção: Item 2 de portal'
+  const CORPO_ENVIADO = 'Correção da issue #2 solicitada na homologação. Segredo-do-corpo'
+
+  test('reabrirIssue: PATCH /repos/kustertech-exemplo/portal/issues/4 com {"state":"open"}, Content-Type json e token da instalação; devolve estado ABERTA e fechadaEm null', async () => {
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [ISSUE_4]: { corpo: issueReaberta },
+    })
+    const issue = await fonte.reabrirIssue(repo, 4)
+    const patch = chamadas.find((c) => c.metodo === 'PATCH')!
+    expect(patch.url.pathname).toBe('/repos/kustertech-exemplo/portal/issues/4')
+    expect(patch.cabecalhos['Content-Type']).toBe('application/json')
+    expect(patch.cabecalhos.Authorization).toBe(`Bearer ${TOKEN}`)
+    expect(patch.corpo).toBe('{"state":"open"}')
+    expect(JSON.parse(patch.corpo!)).toEqual({ state: 'open' })
+    expect(issue).toMatchObject({ numero: 4, estado: 'ABERTA', fechadaEm: null })
+  })
+
+  test('criarIssue: POST /repos/kustertech-exemplo/portal/issues com {"title":"Correção: Item 2 de portal","body":"…"}; devolve { numero: 41, githubId: BigInt(7000041), urlHtml: "https://github.com/kustertech-exemplo/portal/issues/41" }', async () => {
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [ISSUES_POST]: { status: 201, corpo: issueCriada },
+    })
+    const criada = await fonte.criarIssue(repo, { titulo: TITULO, corpo: CORPO_ENVIADO })
+    expect(criada).toEqual({
+      numero: 41,
+      githubId: BigInt(7000041),
+      urlHtml: 'https://github.com/kustertech-exemplo/portal/issues/41',
+    })
+    const post = chamadas.find((c) => c.url.pathname.endsWith('/portal/issues'))!
+    expect(post.cabecalhos['Content-Type']).toBe('application/json')
+    expect(JSON.parse(post.corpo!)).toEqual({ title: TITULO, body: CORPO_ENVIADO })
+  })
+
+  test('criarIssue: resposta sem number, id ou html_url → resposta-invalida', async () => {
+    const { fonte } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [ISSUES_POST]: { status: 201, corpo: { id: 1, number: 2 } },
+    })
+    await expect(fonte.criarIssue(repo, { titulo: TITULO, corpo: 'x' })).rejects.toMatchObject({
+      categoria: 'resposta-invalida',
+    })
+  })
+
+  test('escrita: 401 → autenticacao; 404 e 410 → sem-acesso; 422 → resposta-invalida; 502 e fetch rejeitado → rede', async () => {
+    const casos: [number | 'fetch', string][] = [
+      [401, 'autenticacao'],
+      [404, 'sem-acesso'],
+      [410, 'sem-acesso'],
+      [422, 'resposta-invalida'],
+      [502, 'rede'],
+      ['fetch', 'rede'],
+    ]
+    for (const [status, categoria] of casos) {
+      const rotas: Record<string, Rota> =
+        status === 'fetch'
+          ? { [TOKEN_PATH]: tokenRota() }
+          : { [TOKEN_PATH]: tokenRota(), [ISSUES_POST]: { status }, [ISSUE_4]: { status } }
+      const { fonte } = status === 'fetch' ? criarComFetchQueFalha() : criar(rotas)
+      const criar1 = await fonte
+        .criarIssue(repo, { titulo: TITULO, corpo: 'x' })
+        .catch((e: unknown) => e)
+      const reabrir = await fonte.reabrirIssue(repo, 4).catch((e: unknown) => e)
+      for (const erro of [criar1, reabrir]) {
+        expect(erro).toBeInstanceOf(ErroDeIntegracao)
+        expect((erro as ErroDeIntegracao).categoria).toBe(categoria)
+      }
+    }
+  })
+
+  test('nenhuma mensagem de erro de escrita contém o token, o JWT, o título ou o corpo enviados', async () => {
+    const CORPO_RESPOSTA = 'mensagem-secreta-da-resposta'
+    const erros: Error[] = []
+    for (const status of [401, 404, 422, 502]) {
+      const { fonte } = criar({
+        [TOKEN_PATH]: tokenRota(),
+        [ISSUES_POST]: { status, corpo: { message: CORPO_RESPOSTA, token: TOKEN } },
+      })
+      erros.push(
+        (await fonte
+          .criarIssue(repo, { titulo: TITULO, corpo: CORPO_ENVIADO })
+          .catch((e: unknown) => e)) as Error,
+      )
+    }
+    erros.push(
+      (await criarComFetchQueFalha()
+        .fonte.criarIssue(repo, { titulo: TITULO, corpo: CORPO_ENVIADO })
+        .catch((e: unknown) => e)) as Error,
+    )
+    for (const e of erros) {
+      expect(e).toBeInstanceOf(ErroDeIntegracao)
+      const texto = `${e.message} ${e.stack ?? ''} ${JSON.stringify(e)}`
+      for (const proibido of [TOKEN, TITULO, CORPO_ENVIADO, CORPO_RESPOSTA, 'PRIVATE KEY']) {
+        expect(texto).not.toContain(proibido)
+      }
+      expect(texto).not.toMatch(/eyJ[\w-]+\.[\w-]+\.[\w-]+/)
+      expect((e as Error & { cause?: unknown }).cause).toBeUndefined()
     }
   })
 })

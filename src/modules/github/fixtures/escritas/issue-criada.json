@@ -1,0 +1,17 @@
+{
+  "id": 7000041,
+  "number": 41,
+  "title": "Correção: Item 2 de portal",
+  "body": "Correção da issue #2 solicitada na homologação.",
+  "state": "open",
+  "user": {
+    "login": "exemplo-app",
+    "id": 200009
+  },
+  "assignees": [],
+  "labels": [],
+  "html_url": "https://github.com/kustertech-exemplo/portal/issues/41",
+  "created_at": "2026-10-26T15:00:00Z",
+  "updated_at": "2026-10-26T15:00:00Z",
+  "closed_at": null
+}

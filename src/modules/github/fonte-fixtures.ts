@@ -93,7 +93,19 @@ function desdeFiltro<T extends { updated_at: string }>(itens: T[], desde: Date |
   return desde ? itens.filter((i) => new Date(i.updated_at) >= desde) : itens
 }
 
-export function criarFonteFixtures(): FonteGitHub {
+export interface EscritaDaFonte {
+  tipo: 'reabrir' | 'criar'
+  repositorio: string
+  numero: number
+}
+
+// `escritas` só existe em memória: as listagens não enxergam o que foi escrito.
+export function criarFonteFixtures(
+  relogio: () => Date = () => new Date(),
+): FonteGitHub & { readonly escritas: readonly EscritaDaFonte[] } {
+  const escritas: EscritaDaFonte[] = []
+  let contador = 0
+
   const dados = (repo: RefRepositorio) => {
     const d = POR_REPOSITORIO[repo.nomeCompleto]
     if (!d) {
@@ -104,6 +116,7 @@ export function criarFonteFixtures(): FonteGitHub {
 
   return {
     tipo: 'fixtures',
+    escritas,
     async listarRepositorios() {
       const instalacaoId = BigInt(instalacoes[0]!.id)
       return repositorios.repositories.map((r) => mapearRepositorio(r, instalacaoId))
@@ -136,6 +149,28 @@ export function criarFonteFixtures(): FonteGitHub {
         throw new ErroDeIntegracao('commit-desconhecido')
       }
       return mapearComparacao(bruto)
+    },
+
+    async reabrirIssue(repo, numero) {
+      const bruto = (dados(repo).issues as { number: number }[]).find((i) => i.number === numero)
+      const issue = bruto && mapearIssue({ ...bruto, state: 'open', closed_at: null })
+      if (!issue) {
+        throw new ErroDeIntegracao('sem-acesso')
+      }
+      escritas.push({ tipo: 'reabrir', repositorio: repo.nomeCompleto, numero })
+      return { ...issue, estado: 'ABERTA', fechadaEm: null, atualizadaEm: relogio() }
+    },
+    async criarIssue(repo) {
+      dados(repo)
+      const agora = relogio()
+      const numero = 100_000 + (Math.floor(agora.getTime() / 1000) % 800_000) + contador
+      contador += 1
+      escritas.push({ tipo: 'criar', repositorio: repo.nomeCompleto, numero })
+      return {
+        numero,
+        githubId: repo.githubId * BigInt(1_000_000) + BigInt(numero),
+        urlHtml: `https://github.com/${repo.nomeCompleto}/issues/${numero}`,
+      }
     },
   }
 }
