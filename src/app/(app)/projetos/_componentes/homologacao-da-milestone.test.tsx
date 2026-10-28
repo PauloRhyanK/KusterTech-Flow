@@ -1,6 +1,12 @@
 import { render, screen, within } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
-import type { HomologacaoDaMilestoneNoCliente } from '@/modules/homologacao/queries'
+import { describe, expect, test, vi } from 'vitest'
+
+vi.mock('../acoes-de-aprovacao', () => ({ aprovarMilestoneAction: vi.fn() }))
+
+import type {
+  AprovacaoDaMilestone,
+  HomologacaoDaMilestoneNoCliente,
+} from '@/modules/homologacao/queries'
 import { HomologacaoDaMilestone } from './homologacao-da-milestone'
 
 const dados = (
@@ -57,16 +63,38 @@ const dados = (
   ...o,
 })
 
+const aprovacao = (o: Partial<AprovacaoDaMilestone> = {}): AprovacaoDaMilestone => ({
+  estado: 'EM_ANDAMENTO',
+  aprovadaEm: null,
+  aprovadaPor: null,
+  avaliacao: { pode: false, motivos: ['1 issue do escopo ainda está aberta no GitHub.'] },
+  versoes: [],
+  versoesEsperadas: '',
+  issuesFechadas: 0,
+  issuesNoEscopo: 1,
+  bloqueadoras: 0,
+  podeAprovar: true,
+  situacao: {
+    configurada: true,
+    fonte: 'app',
+    catalogoSincronizadoEm: null,
+    falhaDoCatalogo: null,
+    estadoDoProjeto: 'conectada',
+  },
+  ...o,
+})
+
+const doCliente = {
+  contexto: 'cliente',
+  projetoId: 'p-1',
+  cliente: { id: 'c-1', nome: 'Acme' },
+  milestone: { id: 'm-1', titulo: 'Entrega 1' },
+  aprovacao: aprovacao(),
+} as const
+
 describe('HomologacaoDaMilestone', () => {
   test('cliente: faixa de versões, resumo e uma linha por issue com o estado certo e link só quando há item visível', () => {
-    render(
-      <HomologacaoDaMilestone
-        contexto="cliente"
-        cliente={{ nome: 'Acme' }}
-        dados={dados()}
-        hrefAmbientes={null}
-      />,
-    )
+    render(<HomologacaoDaMilestone {...doCliente} dados={dados()} hrefAmbientes={null} />)
     expect(
       screen.getByText('Versões em QA: org/portal v1 · org/api sem evidência'),
     ).toBeInTheDocument()
@@ -99,8 +127,7 @@ describe('HomologacaoDaMilestone', () => {
   test('cliente sem ambiente QA mostra o mesmo vazio da fila, sem lista', () => {
     render(
       <HomologacaoDaMilestone
-        contexto="cliente"
-        cliente={{ nome: 'Acme' }}
+        {...doCliente}
         dados={dados({ semAmbienteQa: true, linhas: [] })}
         hrefAmbientes="/projetos/p-1/configuracao#ambientes"
       />,
@@ -112,50 +139,50 @@ describe('HomologacaoDaMilestone', () => {
     expect(screen.queryByRole('list')).toBeNull()
   })
 
-  test('global: uma linha por cliente com o resumo e o link "Abrir homologação de <cliente>"', () => {
+  test('aprovada e sem ambiente QA: o painel com a aprovação continua visível acima do vazio', () => {
+    render(
+      <HomologacaoDaMilestone
+        {...doCliente}
+        dados={dados({ semAmbienteQa: true, linhas: [] })}
+        aprovacao={aprovacao({
+          estado: 'APROVADA',
+          aprovadaEm: new Date('2026-10-22T12:00:00Z'),
+          aprovadaPor: 'Ana',
+        })}
+        hrefAmbientes={null}
+      />,
+    )
+    expect(screen.getByText('Milestone aprovada')).toBeInTheDocument()
+    expect(
+      screen.getByText('O ambiente QA ainda não está configurado neste projeto.'),
+    ).toBeInTheDocument()
+  })
+
+  test('global: delega a consolidação por cliente (h2, resumo e link para o contexto do cliente)', () => {
     render(
       <HomologacaoDaMilestone
         contexto="global"
         hrefAmbientes={null}
-        consolidado={{
+        consolidacao={{
+          resumo: '1 cliente · 1 em andamento',
           clientes: [
             {
               clienteId: 'c-1',
               nome: 'Acme',
-              resumo: {
-                texto: '1 pendente de teste · 1 aguardando disponibilização',
-                tom: 'informacao',
-              },
+              estado: 'EM_ANDAMENTO',
+              aprovadaEm: null,
+              situacoes: '1 pendente de teste',
+              itens: [],
               href: '/clientes/c-1/projetos/p-1/entregas/milestones/m-1?aba=homologacao',
             },
           ],
         }}
       />,
     )
-    const lista = screen.getByRole('list', { name: 'Homologação por cliente' })
-    expect(
-      within(lista).getByText('1 pendente de teste · 1 aguardando disponibilização'),
-    ).toHaveAttribute('data-tom', 'informacao')
+    expect(screen.getByRole('heading', { level: 2, name: 'Homologação por cliente' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Abrir homologação de Acme' })).toHaveAttribute(
       'href',
       '/clientes/c-1/projetos/p-1/entregas/milestones/m-1?aba=homologacao',
     )
-  })
-
-  test('global sem clientes: nao-configurado com a orientação', () => {
-    const { container } = render(
-      <HomologacaoDaMilestone
-        contexto="global"
-        hrefAmbientes={null}
-        consolidado={{ clientes: [] }}
-      />,
-    )
-    expect(
-      screen.getByText('Esta milestone não está associada a nenhum cliente.'),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('Associe clientes à milestone para iniciar a homologação.'),
-    ).toBeInTheDocument()
-    expect(container.querySelector('[data-tipo="nao-configurado"]')).not.toBeNull()
   })
 })

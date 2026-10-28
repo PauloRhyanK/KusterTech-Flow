@@ -163,7 +163,7 @@ test('aba Homologação: a global lista Entrega 1 por cliente e o contexto de A,
 
   await page.goto(`/projetos/${projeto.id}/entregas/milestones/${milestone.id}?aba=homologacao`)
   const lista = page.getByRole('list', { name: 'Homologação por cliente' })
-  await expect(lista.getByText('Nenhuma issue em homologação')).toBeVisible()
+  await expect(lista.getByText('Nenhum item em homologação ainda.')).toBeVisible()
   await expect(
     lista.getByRole('link', { name: `Abrir homologação de ${clienteA.nome}` }),
   ).toHaveAttribute(

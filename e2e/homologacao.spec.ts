@@ -311,7 +311,7 @@ test('após disponibilizar #1 para Acme: aba Homologação global mostra Acme "1
   await page.goto(`/projetos/${c.projeto.id}/entregas/milestones/${c.milestone.id}?aba=homologacao`)
   const porCliente = page.getByRole('list', { name: 'Homologação por cliente' })
   await expect(porCliente.getByRole('listitem').filter({ hasText: c.acme.nome })).toContainText(
-    '1 pendente de teste · 1 aguardando disponibilização',
+    '1 aguardando disponibilização · 1 pendente de teste',
   )
   await expect(porCliente.getByRole('listitem').filter({ hasText: c.beta.nome })).toContainText(
     '2 aguardando disponibilização',

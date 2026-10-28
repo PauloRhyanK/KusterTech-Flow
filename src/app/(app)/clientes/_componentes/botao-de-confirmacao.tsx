@@ -9,6 +9,8 @@ export interface BotaoDeConfirmacaoProps {
   action: (formData: FormData) => void | Promise<unknown>
   camposOcultos?: Record<string, string>
   pendente?: boolean
+  // Para rótulos longos (nome do cliente na confirmação): permite quebrar linha no mobile.
+  classeDoBotao?: string
 }
 
 export function BotaoDeConfirmacao({
@@ -17,6 +19,7 @@ export function BotaoDeConfirmacao({
   action,
   camposOcultos,
   pendente = false,
+  classeDoBotao,
 }: BotaoDeConfirmacaoProps) {
   const [confirmando, setConfirmando] = useState(false)
 
@@ -35,7 +38,7 @@ export function BotaoDeConfirmacao({
   return (
     <form
       action={action as unknown as (formData: FormData) => Promise<void>}
-      className="inline-block"
+      className={classeDoBotao ? 'block max-w-full' : 'inline-block'}
     >
       {camposOcultos &&
         Object.entries(camposOcultos).map(([chave, valor]) => (
@@ -48,6 +51,7 @@ export function BotaoDeConfirmacao({
         type={confirmando ? 'submit' : 'button'}
         variant={confirmando ? 'destructive' : 'outline'}
         aria-busy={pendente}
+        className={classeDoBotao}
         onClick={(e) => {
           if (pendente) {
             e.preventDefault()

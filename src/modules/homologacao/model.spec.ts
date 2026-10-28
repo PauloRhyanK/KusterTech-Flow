@@ -12,6 +12,8 @@ import {
   MENSAGEM_TENTATIVAS_ESGOTADAS,
   podeAprovarMilestone,
   resumoDaHomologacao,
+  resumoDeSituacoes,
+  resumoDosClientes,
   situacaoDaCorrecao,
   tituloDoEvento,
   transicaoDeHomologacao,
@@ -722,5 +724,52 @@ describe('agruparRodadas', () => {
       ['v1', ['a', 'c']],
       ['v2', ['b']],
     ])
+  })
+})
+
+describe('resumoDeSituacoes', () => {
+  test('2 PENDENTE_DE_TESTE + 1 CORRECAO_SOLICITADA → "2 pendentes de teste · 1 correção solicitada"; [] → "Nenhum item em homologação ainda."', () => {
+    expect(
+      resumoDeSituacoes([
+        { estado: 'CORRECAO_SOLICITADA' },
+        { estado: 'PENDENTE_DE_TESTE' },
+        { estado: 'PENDENTE_DE_TESTE' },
+      ]),
+    ).toBe('2 pendentes de teste · 1 correção solicitada')
+    expect(resumoDeSituacoes([])).toBe('Nenhum item em homologação ainda.')
+  })
+
+  test('ordem do Blueprint §6 e singular/plural de cada estado', () => {
+    expect(
+      resumoDeSituacoes([
+        { estado: 'APROVADA' },
+        { estado: 'AGUARDANDO_RETESTE' },
+        { estado: 'AGUARDANDO_DISPONIBILIZACAO' },
+        { estado: 'AGUARDANDO_DISPONIBILIZACAO' },
+        { estado: 'CORRECAO_SOLICITADA' },
+        { estado: 'CORRECAO_SOLICITADA' },
+        { estado: 'PENDENTE_DE_TESTE' },
+      ]),
+    ).toBe(
+      '2 aguardando disponibilização · 1 pendente de teste · 2 correções solicitadas · 1 aguardando reteste · 1 aprovada',
+    )
+    expect(resumoDeSituacoes([{ estado: 'APROVADA' }, { estado: 'APROVADA' }])).toBe('2 aprovadas')
+  })
+})
+
+describe('resumoDosClientes', () => {
+  test('[APROVADA, EM_ANDAMENTO] → "2 clientes · 1 com milestone aprovada · 1 em andamento"; [APROVADA] → "1 cliente · 1 com milestone aprovada"', () => {
+    expect(resumoDosClientes(['APROVADA', 'EM_ANDAMENTO'])).toBe(
+      '2 clientes · 1 com milestone aprovada · 1 em andamento',
+    )
+    expect(resumoDosClientes(['APROVADA'])).toBe('1 cliente · 1 com milestone aprovada')
+  })
+
+  test('partes zeradas são omitidas; dois aprovados; sem clientes', () => {
+    expect(resumoDosClientes(['APROVADA', 'APROVADA'])).toBe(
+      '2 clientes · 2 com milestone aprovada',
+    )
+    expect(resumoDosClientes(['EM_ANDAMENTO'])).toBe('1 cliente · 1 em andamento')
+    expect(resumoDosClientes([])).toBe('Nenhum cliente associado.')
   })
 })
