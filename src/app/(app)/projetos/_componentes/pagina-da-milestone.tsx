@@ -18,8 +18,9 @@ import {
   obterMilestone,
 } from '@/modules/entregas/queries'
 import {
-  consolidadoDaMilestone,
   homologacaoDaMilestoneNoCliente,
+  obterAprovacaoDaMilestone,
+  obterConsolidacaoDaMilestone,
 } from '@/modules/homologacao/queries'
 import { type Contexto, rotasDoProjeto, trilhasDoProjeto } from '@/modules/projetos/model'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
@@ -69,7 +70,8 @@ export async function PaginaDaMilestone({
   let presencaEmQA: Awaited<ReturnType<typeof listarPresencaEmQA>> | undefined
   let homologacaoNoCliente: Awaited<ReturnType<typeof homologacaoDaMilestoneNoCliente>> | null =
     null
-  let consolidado: Awaited<ReturnType<typeof consolidadoDaMilestone>> | null = null
+  let aprovacao: Awaited<ReturnType<typeof obterAprovacaoDaMilestone>> | null = null
+  let consolidacao: Awaited<ReturnType<typeof obterConsolidacaoDaMilestone>> | null = null
   try {
     projeto = await obterProjetoParaResumo(sujeito, projetoId, clienteId)
     dados = await obterMilestone(sujeito, projetoId, milestoneId, contexto, filtros)
@@ -83,7 +85,7 @@ export async function PaginaDaMilestone({
     }
     if (filtros.aba === 'homologacao') {
       if (clienteId === null) {
-        consolidado = await consolidadoDaMilestone(sujeito, projetoId, milestoneId)
+        consolidacao = await obterConsolidacaoDaMilestone(sujeito, projetoId, milestoneId)
       } else {
         homologacaoNoCliente = await homologacaoDaMilestoneNoCliente(
           sujeito,
@@ -91,6 +93,7 @@ export async function PaginaDaMilestone({
           projetoId,
           milestoneId,
         )
+        aprovacao = await obterAprovacaoDaMilestone(sujeito, clienteId, projetoId, milestoneId)
       }
     }
     if (clienteId !== null) {
@@ -206,17 +209,20 @@ export async function PaginaDaMilestone({
       />
 
       {filtros.aba === 'homologacao' ? (
-        cliente && homologacaoNoCliente ? (
+        cliente && homologacaoNoCliente && aprovacao ? (
           <HomologacaoDaMilestone
             contexto="cliente"
+            projetoId={projetoId}
             cliente={cliente}
+            milestone={{ id: milestone.id, titulo: milestone.titulo }}
             dados={homologacaoNoCliente}
+            aprovacao={aprovacao}
             hrefAmbientes={null}
           />
-        ) : consolidado ? (
+        ) : consolidacao ? (
           <HomologacaoDaMilestone
             contexto="global"
-            consolidado={consolidado}
+            consolidacao={consolidacao}
             hrefAmbientes={admin ? `/projetos/${projetoId}/configuracao#ambientes` : null}
           />
         ) : null

@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { estadoDoRepositorio } from '@/modules/github/model'
-import { intervaloDaIntegracao } from '@/modules/github/service'
+import { intervaloDaIntegracao, lerSituacao } from '@/modules/github/service'
 import {
   ACAO_PARA_PERMISSAO,
   type AcaoDeRegistro,
@@ -17,6 +17,7 @@ import {
   type TipoEventoTimeline,
   transicaoDeHomologacao,
 } from './model'
+import { carregarBaseDaAprovacao } from './aprovacao'
 import { aplicarReteste, ItemMudou } from './retestes'
 import { obterVersaoCorrenteEmQA } from './versao-corrente'
 
@@ -83,6 +84,7 @@ export async function registrarAcaoDeHomologacao(
           id: true,
           clienteId: true,
           milestoneId: true,
+          estado: true,
           cliente: { select: { nome: true } },
           milestone: { select: { projetoId: true, arquivadaEm: true } },
         },
@@ -128,6 +130,11 @@ export async function registrarAcaoDeHomologacao(
   })
   if (!associado || homologacao.milestone.arquivadaEm !== null) {
     throw new ErroDeDominio('Este cliente não está mais associado a esta milestone.')
+  }
+
+  // Milestone aprovada é final no MVP (5b, decisão 9): só comentário.
+  if (e.acao === 'SOLICITAR_CORRECAO' && homologacao.estado === 'APROVADA') {
+    throw new ErroDeDominio('A milestone já foi aprovada por este cliente; registre um comentário.')
   }
 
   const texto = validarTexto(e.acao, e.texto)
@@ -607,4 +614,75 @@ export async function confirmarReteste(
     }
     throw erro
   }
+}
+
+const DADOS_DESATUALIZADOS =
+  'Os dados do GitHub podem estar desatualizados; a aprovação fica disponível depois da próxima sincronização.'
+const SITUACAO_MUDOU = 'A situação mudou desde que a página foi aberta. Confira e tente de novo.'
+const MILESTONE_NAO_ENCONTRADA = 'Milestone não encontrada.'
+
+// Aprovação da milestone por cliente (D22, D63, D67). Tudo é relido dentro da transação: escopo,
+// itens, solicitações, versões avaliadas e a situação do GitHub; nada vem da página aberta além
+// do conjunto de versões que o usuário viu e confirmou.
+export async function aprovarMilestone(
+  sujeito: Sujeito,
+  e: { clienteId: string; milestoneId: string; versoesEsperadas: string },
+  agora: Date = new Date(),
+): Promise<{ clienteNome: string }> {
+  exigirPermissao(sujeito, 'homologacao.aprovar', { clienteId: e.clienteId })
+
+  return db.$transaction(async (tx) => {
+    const base = await carregarBaseDaAprovacao(tx, e)
+    if (!base || base.milestone.arquivadaEm !== null) {
+      throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
+    }
+    const { situacao } = await lerSituacao(base.milestone.projetoId, agora)
+    if (
+      situacao.estadoDoProjeto === 'indisponivel' ||
+      situacao.estadoDoProjeto === 'sem-dados-recentes'
+    ) {
+      throw new ErroDeDominio(DADOS_DESATUALIZADOS)
+    }
+    if (base.versoesEsperadas !== e.versoesEsperadas) {
+      throw new ErroDeDominio(SITUACAO_MUDOU)
+    }
+    if (!base.avaliacao.pode) {
+      throw new ErroDeDominio(base.avaliacao.motivos.join(' '))
+    }
+    if (!base.homologacao) {
+      throw new ErroDeDominio('Homologação não encontrada.')
+    }
+
+    const atualizadas = await tx.homologacao.updateMany({
+      where: { id: base.homologacao.id, estado: 'EM_ANDAMENTO' },
+      data: {
+        estado: 'APROVADA',
+        aprovadaEm: agora,
+        aprovadaPorId: sujeito.usuarioId,
+        versoesAprovadasIds: base.versoes.map((v) => v.id),
+      },
+    })
+    if (atualizadas.count !== 1) {
+      throw new ErroDeDominio(SITUACAO_MUDOU)
+    }
+    const avaliadas = base.versoes.map((v) => `${v.rotulo} (${v.repositorio})`).join(', ')
+    await tx.eventoTimeline.create({
+      data: {
+        clienteId: e.clienteId,
+        milestoneId: e.milestoneId,
+        issueId: null,
+        versaoId: base.versoes.length === 1 ? base.versoes[0]!.id : null,
+        tipo: 'APROVACAO_MILESTONE',
+        visibilidade: 'COMPARTILHAVEL',
+        origem: 'HUMANO',
+        autorId: sujeito.usuarioId,
+        texto:
+          base.versoes.length > 0
+            ? `Milestone aprovada. Versões avaliadas: ${avaliadas}.`
+            : 'Milestone aprovada.',
+        criadoEm: agora,
+      },
+    })
+    return { clienteNome: base.cliente.nome }
+  })
 }

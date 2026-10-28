@@ -1,18 +1,27 @@
-import Link from 'next/link'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { apresentarEstadoDoItem } from '@/modules/homologacao/model'
 import type {
-  ConsolidadoDaMilestone,
+  AprovacaoDaMilestone as DadosDaAprovacao,
+  ConsolidacaoDaMilestone,
   HomologacaoDaMilestoneNoCliente,
   LinhaDaHomologacaoDaMilestone,
 } from '@/modules/homologacao/queries'
+import { AprovacaoDaMilestone } from './aprovacao-da-milestone'
+import { ConsolidacaoPorCliente } from './consolidacao-por-cliente'
 import { EstadoSemAmbienteQa } from './fila-de-homologacao'
 
 export type HomologacaoDaMilestoneProps = { hrefAmbientes: string | null } & (
-  | { contexto: 'cliente'; cliente: { nome: string }; dados: HomologacaoDaMilestoneNoCliente }
-  | { contexto: 'global'; consolidado: ConsolidadoDaMilestone }
+  | {
+      contexto: 'cliente'
+      projetoId: string
+      cliente: { id: string; nome: string }
+      milestone: { id: string; titulo: string }
+      dados: HomologacaoDaMilestoneNoCliente
+      aprovacao: DadosDaAprovacao
+    }
+  | { contexto: 'global'; consolidacao: ConsolidacaoDaMilestone }
 )
 
 function estadoDaLinha(linha: LinhaDaHomologacaoDaMilestone) {
@@ -30,12 +39,18 @@ function estadoDaLinha(linha: LinhaDaHomologacaoDaMilestone) {
 }
 
 function NoCliente({
+  projetoId,
   cliente,
+  milestone,
   dados,
+  aprovacao,
   hrefAmbientes,
 }: {
-  cliente: { nome: string }
+  projetoId: string
+  cliente: { id: string; nome: string }
+  milestone: { id: string; titulo: string }
   dados: HomologacaoDaMilestoneNoCliente
+  aprovacao: DadosDaAprovacao
   hrefAmbientes: string | null
 }) {
   if (dados.semAmbienteQa) {
@@ -43,6 +58,14 @@ function NoCliente({
   }
   return (
     <div className="space-y-4">
+      <AprovacaoDaMilestone
+        projetoId={projetoId}
+        clienteId={cliente.id}
+        clienteNome={cliente.nome}
+        milestoneId={milestone.id}
+        milestoneTitulo={milestone.titulo}
+        aprovacao={aprovacao}
+      />
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-text-secondary">
           Versões em QA:{' '}
@@ -75,35 +98,17 @@ function NoCliente({
   )
 }
 
-function Global({ consolidado }: { consolidado: ConsolidadoDaMilestone }) {
-  return (
-    <ListaOperacional
-      rotulo="Homologação por cliente"
-      linhas={consolidado.clientes.map((c) => ({
-        id: c.clienteId,
-        nome: c.nome,
-        estado: <BadgeDeEstado tom={c.resumo.tom}>{c.resumo.texto}</BadgeDeEstado>,
-        acoes: (
-          <Link href={c.href} className="text-sm text-text-link hover:underline">
-            Abrir homologação de {c.nome}
-          </Link>
-        ),
-      }))}
-      vazio={
-        <EstadoVazio
-          tipo="nao-configurado"
-          titulo="Esta milestone não está associada a nenhum cliente."
-          descricao="Associe clientes à milestone para iniciar a homologação."
-        />
-      }
-    />
-  )
-}
-
 export function HomologacaoDaMilestone(props: HomologacaoDaMilestoneProps) {
   return props.contexto === 'cliente' ? (
-    <NoCliente cliente={props.cliente} dados={props.dados} hrefAmbientes={props.hrefAmbientes} />
+    <NoCliente
+      projetoId={props.projetoId}
+      cliente={props.cliente}
+      milestone={props.milestone}
+      dados={props.dados}
+      aprovacao={props.aprovacao}
+      hrefAmbientes={props.hrefAmbientes}
+    />
   ) : (
-    <Global consolidado={props.consolidado} />
+    <ConsolidacaoPorCliente consolidacao={props.consolidacao} />
   )
 }

@@ -260,6 +260,35 @@ export function resumoDaHomologacao(estados: readonly EstadoItemHomologacao[]): 
   return { texto: partes.join(' · '), tom }
 }
 
+const ROTULOS_DAS_SITUACOES: readonly [EstadoItemHomologacao, string, string][] = [
+  ['AGUARDANDO_DISPONIBILIZACAO', 'aguardando disponibilização', 'aguardando disponibilização'],
+  ['PENDENTE_DE_TESTE', 'pendente de teste', 'pendentes de teste'],
+  ['CORRECAO_SOLICITADA', 'correção solicitada', 'correções solicitadas'],
+  ['AGUARDANDO_RETESTE', 'aguardando reteste', 'aguardando reteste'],
+  ['APROVADA', 'aprovada', 'aprovadas'],
+]
+
+// Contagens por situação na ordem do Blueprint §6 (consolidação por cliente, D62).
+export function resumoDeSituacoes(itens: readonly { estado: EstadoItemHomologacao }[]): string {
+  const partes = ROTULOS_DAS_SITUACOES.flatMap(([estado, singular, plural]) => {
+    const n = itens.filter((i) => i.estado === estado).length
+    return n > 0 ? [`${n} ${n === 1 ? singular : plural}`] : []
+  })
+  return partes.length === 0 ? 'Nenhum item em homologação ainda.' : partes.join(' · ')
+}
+
+export function resumoDosClientes(estados: readonly ('EM_ANDAMENTO' | 'APROVADA')[]): string {
+  if (estados.length === 0) {
+    return 'Nenhum cliente associado.'
+  }
+  const aprovados = estados.filter((e) => e === 'APROVADA').length
+  const emAndamento = estados.length - aprovados
+  const partes = [`${estados.length} ${estados.length === 1 ? 'cliente' : 'clientes'}`]
+  if (aprovados > 0) partes.push(`${aprovados} com milestone aprovada`)
+  if (emAndamento > 0) partes.push(`${emAndamento} em andamento`)
+  return partes.join(' · ')
+}
+
 const TITULOS_DE_EVENTO: Record<TipoEventoTimeline, string> = {
   COMENTARIO: 'Comentário',
   ENTRADA_NA_FILA: 'Entrou na fila de homologação',

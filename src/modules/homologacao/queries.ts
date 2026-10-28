@@ -25,11 +25,15 @@ import {
   detectarReteste,
   hrefDaFila,
   type MotivoSemReteste,
+  podeAprovarMilestone,
   resumoDaHomologacao,
+  resumoDeSituacoes,
+  resumoDosClientes,
   situacaoDaCorrecao,
   tituloDoEvento,
   transicaoDeHomologacao,
 } from './model'
+import { carregarBaseDaAprovacao } from './aprovacao'
 import { obterVersaoCorrenteEmQA, versoesCorrentesEmQA } from './versao-corrente'
 
 export type SituacaoDaHomologacaoDaIssue =
@@ -693,16 +697,75 @@ export async function homologacaoDaMilestoneNoCliente(
   }
 }
 
-export interface ConsolidadoDaMilestone {
-  clientes: { clienteId: string; nome: string; resumo: ResumoApresentado; href: string }[]
+export interface AprovacaoDaMilestone {
+  estado: 'EM_ANDAMENTO' | 'APROVADA'
+  aprovadaEm: Date | null
+  aprovadaPor: string | null
+  avaliacao: ReturnType<typeof podeAprovarMilestone>
+  versoes: { id: string; rotulo: string; repositorio: string }[]
+  versoesEsperadas: string
+  issuesFechadas: number
+  issuesNoEscopo: number
+  bloqueadoras: number
+  podeAprovar: boolean
+  situacao: SituacaoDaIntegracao
 }
 
-// Aba Homologação da milestone na visão global (D62): uma linha por cliente, só contagens.
-export async function consolidadoDaMilestone(
+// Painel "Aprovação da milestone" do contexto do cliente (D22, D63): o que a aprovação confere.
+export async function obterAprovacaoDaMilestone(
+  sujeito: Sujeito,
+  clienteId: string,
+  projetoId: string,
+  milestoneId: string,
+  agora: Date = new Date(),
+): Promise<AprovacaoDaMilestone> {
+  exigirPermissao(sujeito, 'projetos.ler', { clienteId })
+
+  const base = await carregarBaseDaAprovacao(db, { clienteId, projetoId, milestoneId })
+  if (!base) {
+    throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
+  }
+  const { situacao } = await lerSituacao(projetoId, agora)
+  return {
+    estado: base.entrada.estado,
+    aprovadaEm: base.homologacao?.aprovadaEm ?? null,
+    aprovadaPor: base.homologacao?.aprovadaPor ?? null,
+    avaliacao: base.avaliacao,
+    versoes: base.versoes,
+    versoesEsperadas: base.versoesEsperadas,
+    issuesFechadas: base.issuesFechadas,
+    issuesNoEscopo: base.issuesNoEscopo,
+    bloqueadoras: base.bloqueadoras,
+    podeAprovar: autorizar(sujeito, 'homologacao.aprovar', { clienteId }),
+    situacao,
+  }
+}
+
+export interface ConsolidacaoDaMilestone {
+  resumo: string
+  clientes: {
+    clienteId: string
+    nome: string
+    estado: 'EM_ANDAMENTO' | 'APROVADA'
+    aprovadaEm: Date | null
+    situacoes: string
+    itens: {
+      issueId: string
+      numero: number
+      titulo: string
+      estado: EstadoItemHomologacao
+      versao: string | null
+    }[]
+    href: string
+  }[]
+}
+
+// Aba Homologação da milestone na visão global (D42, D62): uma linha por cliente, sem ação de aprovar.
+export async function obterConsolidacaoDaMilestone(
   sujeito: Sujeito,
   projetoId: string,
   milestoneId: string,
-): Promise<ConsolidadoDaMilestone> {
+): Promise<ConsolidacaoDaMilestone> {
   exigirLeituraGlobal(sujeito)
 
   const milestone = await db.milestone.findFirst({
@@ -712,32 +775,52 @@ export async function consolidadoDaMilestone(
         where: { cliente: { arquivadoEm: null } },
         select: { cliente: { select: { id: true, nome: true } } },
       },
+      homologacoes: {
+        select: {
+          clienteId: true,
+          estado: true,
+          aprovadaEm: true,
+          itens: {
+            select: {
+              estado: true,
+              issue: { select: { id: true, numero: true, titulo: true } },
+              versaoAvaliada: { select: { rotulo: true } },
+            },
+          },
+        },
+      },
     },
   })
   if (!milestone) {
     throw new ErroDeDominio(MILESTONE_NAO_ENCONTRADA)
   }
-  const itens = await db.homologacaoItem.findMany({
-    where: { homologacao: { milestoneId } },
-    select: { estado: true, homologacao: { select: { clienteId: true } } },
-  })
-  const estadosPorCliente = new Map<string, EstadoItemHomologacao[]>()
-  for (const i of itens) {
-    const lista = estadosPorCliente.get(i.homologacao.clienteId) ?? []
-    lista.push(i.estado)
-    estadosPorCliente.set(i.homologacao.clienteId, lista)
-  }
+  const homologacoes = new Map(milestone.homologacoes.map((h) => [h.clienteId, h]))
 
-  return {
-    clientes: milestone.clientes
-      .map(({ cliente }) => ({
+  const clientes = milestone.clientes
+    .map(({ cliente }) => {
+      const h = homologacoes.get(cliente.id)
+      const itens = h?.itens ?? []
+      return {
         clienteId: cliente.id,
         nome: cliente.nome,
-        resumo: resumoDaHomologacao(estadosPorCliente.get(cliente.id) ?? []),
+        estado: h?.estado ?? ('EM_ANDAMENTO' as const),
+        aprovadaEm: h?.aprovadaEm ?? null,
+        situacoes: resumoDeSituacoes(itens),
+        itens: itens
+          .map((i) => ({
+            issueId: i.issue.id,
+            numero: i.issue.numero,
+            titulo: i.issue.titulo,
+            estado: i.estado,
+            versao: i.versaoAvaliada?.rotulo ?? null,
+          }))
+          .sort((a, b) => a.numero - b.numero),
         href: hrefDaMilestoneNoCliente(cliente.id, projetoId, milestoneId),
-      }))
-      .sort((a, b) => porTexto(a.nome, b.nome)),
-  }
+      }
+    })
+    .sort((a, b) => porTexto(a.nome, b.nome))
+
+  return { resumo: resumoDosClientes(clientes.map((c) => c.estado)), clientes }
 }
 
 interface ItemParaResumo {

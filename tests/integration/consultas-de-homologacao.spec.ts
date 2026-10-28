@@ -5,7 +5,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
 import { hrefDaFila, type FiltrosDaFila } from '@/modules/homologacao/model'
 import {
-  consolidadoDaMilestone,
+  obterConsolidacaoDaMilestone,
   homologacaoDaMilestoneNoCliente,
   listarFilaDoProjeto,
   listarHomologacaoDaIssuePorCliente,
@@ -427,24 +427,35 @@ describe('homologação na milestone, em Entregas, no cliente e no resumo do pro
 
   const global = { tipo: 'global' } as const
 
-  test('consolidadoDaMilestone: A "1 correção solicitada · 1 aprovada" atencao; B "2 aguardando disponibilização" neutro', async () => {
-    const { clientes } = await consolidadoDaMilestone(c.admin, c.projetoId, c.milestoneId)
-    expect(clientes).toEqual([
-      {
-        clienteId: c.clienteAId,
-        nome: 'Cliente A',
-        resumo: { texto: '1 correção solicitada · 1 aprovada', tom: 'atencao' },
-        href: `/clientes/${c.clienteAId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`,
-      },
-      {
-        clienteId: c.clienteBId,
-        nome: 'Cliente B',
-        resumo: { texto: '2 aguardando disponibilização', tom: 'neutro' },
-        href: `/clientes/${c.clienteBId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`,
-      },
+  test('obterConsolidacaoDaMilestone: A "1 correção solicitada · 1 aprovada"; B "2 aguardando disponibilização"', async () => {
+    const { resumo, clientes } = await obterConsolidacaoDaMilestone(
+      c.admin,
+      c.projetoId,
+      c.milestoneId,
+    )
+    expect(resumo).toBe('2 clientes · 2 em andamento')
+    expect(clientes.map((x) => [x.clienteId, x.nome, x.estado, x.situacoes, x.href])).toEqual([
+      [
+        c.clienteAId,
+        'Cliente A',
+        'EM_ANDAMENTO',
+        '1 correção solicitada · 1 aprovada',
+        `/clientes/${c.clienteAId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`,
+      ],
+      [
+        c.clienteBId,
+        'Cliente B',
+        'EM_ANDAMENTO',
+        '2 aguardando disponibilização',
+        `/clientes/${c.clienteBId}/projetos/${c.projetoId}/entregas/milestones/${c.milestoneId}?aba=homologacao`,
+      ],
+    ])
+    expect(clientes[0]!.itens.map((i) => [i.numero, i.estado])).toEqual([
+      [1, 'APROVADA'],
+      [2, 'CORRECAO_SOLICITADA'],
     ])
     await expect(
-      consolidadoDaMilestone(c.aprovadorA, c.projetoId, c.milestoneId),
+      obterConsolidacaoDaMilestone(c.aprovadorA, c.projetoId, c.milestoneId),
     ).rejects.toBeInstanceOf(ErroDeAutorizacao)
   })
 
