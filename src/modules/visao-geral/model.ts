@@ -1,4 +1,9 @@
-import type { EstadoComposicao, EstadoItemHomologacao, SeveridadeAlerta } from '@prisma/client'
+import type {
+  EstadoComposicao,
+  EstadoItemHomologacao,
+  SeveridadeAlerta,
+  TipoRecurso,
+} from '@prisma/client'
 import { autorizar, type Acao, type Sujeito } from '@/lib/auth/autorizar'
 import { formatarDataHora } from '@/lib/data'
 import type { TomDeEstado } from '@/lib/ui/badge-de-estado'
@@ -417,4 +422,182 @@ export function pendenciaDeConfiguracao(
     peso: 0,
     desde: p.criadoEm,
   }
+}
+
+export interface Indicador {
+  rotulo: string
+  valor: string
+  detalhe: string
+  semDados: boolean
+}
+
+export interface DadosDoResumoDeProjetos {
+  escopo: 'global' | 'cliente'
+  projetosAtivos: number
+  configuracaoIncompleta: number | null
+  milestonesAtivas: number | null
+  homologacoesEmAndamento: number
+  github: {
+    configurada: boolean
+    vinculados: number
+    semDadosRecentes: number
+    indisponiveis: number
+    sincronizacaoMaisAntiga: Date | null
+  } | null
+}
+
+function plural(n: number, singular: string, pluralDe: string): string {
+  return `${n} ${n === 1 ? singular : pluralDe}`
+}
+
+function indicadorGitHub(github: NonNullable<DadosDoResumoDeProjetos['github']>): Indicador {
+  const rotulo = 'GitHub'
+  if (!github.configurada) {
+    return {
+      rotulo,
+      valor: 'Sem dados',
+      detalhe: 'A GitHub App da Central ainda não está configurada.',
+      semDados: true,
+    }
+  }
+  const valor = plural(github.vinculados, 'repositório', 'repositórios')
+  if (github.vinculados === 0) {
+    return { rotulo, valor, detalhe: 'Nenhum repositório vinculado.', semDados: false }
+  }
+  const problemas = [
+    github.semDadosRecentes > 0 ? `${github.semDadosRecentes} sem dados recentes` : null,
+    github.indisponiveis > 0 ? plural(github.indisponiveis, 'indisponível', 'indisponíveis') : null,
+  ].filter((parte): parte is string => parte !== null)
+  if (problemas.length > 0) {
+    return { rotulo, valor, detalhe: problemas.join(' · '), semDados: false }
+  }
+  const antiga = github.sincronizacaoMaisAntiga
+  return {
+    rotulo,
+    valor,
+    detalhe: antiga
+      ? `Sincronização mais antiga: ${formatarDataHora(antiga)}`
+      : 'Nenhuma sincronização concluída.',
+    semDados: false,
+  }
+}
+
+export function indicadoresDeProjetos(d: DadosDoResumoDeProjetos): Indicador[] {
+  const homologacoes: Indicador = {
+    rotulo: 'Homologações em andamento',
+    valor: String(d.homologacoesEmAndamento),
+    detalhe: 'milestones em homologação, por cliente',
+    semDados: false,
+  }
+  if (d.escopo === 'cliente') {
+    return [
+      {
+        rotulo: 'Projetos dos seus clientes',
+        valor: String(d.projetosAtivos),
+        detalhe:
+          d.projetosAtivos === 0 ? 'Nenhum projeto dos seus clientes.' : 'projetos não arquivados',
+        semDados: false,
+      },
+      homologacoes,
+    ]
+  }
+  const indicadores: Indicador[] = [
+    {
+      rotulo: 'Projetos ativos',
+      valor: String(d.projetosAtivos),
+      detalhe: d.projetosAtivos === 0 ? 'Nenhum projeto cadastrado.' : 'projetos não arquivados',
+      semDados: false,
+    },
+  ]
+  if (d.configuracaoIncompleta !== null) {
+    indicadores.push({
+      rotulo: 'Configuração incompleta',
+      valor: String(d.configuracaoIncompleta),
+      detalhe: 'projetos com itens pendentes no checklist',
+      semDados: false,
+    })
+  }
+  if (d.milestonesAtivas !== null) {
+    indicadores.push({
+      rotulo: 'Milestones ativas',
+      valor: String(d.milestonesAtivas),
+      detalhe: 'milestones não arquivadas',
+      semDados: false,
+    })
+  }
+  indicadores.push(homologacoes)
+  if (d.github) {
+    indicadores.push(indicadorGitHub(d.github))
+  }
+  return indicadores
+}
+
+export interface DadosDoResumoDeInfraestrutura {
+  recursosPorTipo: Partial<Record<TipoRecurso, number>>
+  alertasAtivos: number
+  alertasCriticos: number
+  alertasReconhecidos: number
+  fontesDeAlertas: number
+  alertasJaRegistrados: number
+}
+
+const TIPOS_DE_RECURSO: readonly { tipo: TipoRecurso; singular: string; plural: string }[] = [
+  { tipo: 'SERVIDOR', singular: 'servidor', plural: 'servidores' },
+  { tipo: 'CONTAINER', singular: 'container', plural: 'containers' },
+  { tipo: 'BANCO', singular: 'banco', plural: 'bancos' },
+  { tipo: 'STORAGE', singular: 'storage', plural: 'storages' },
+  { tipo: 'OUTRO', singular: 'outro', plural: 'outros' },
+]
+
+function indicadorDeRecursos(porTipo: DadosDoResumoDeInfraestrutura['recursosPorTipo']): Indicador {
+  const partes = TIPOS_DE_RECURSO.flatMap(({ tipo, singular, plural: pluralDe }) => {
+    const n = porTipo[tipo] ?? 0
+    return n > 0 ? [plural(n, singular, pluralDe)] : []
+  })
+  const total = TIPOS_DE_RECURSO.reduce((soma, { tipo }) => soma + (porTipo[tipo] ?? 0), 0)
+  return {
+    rotulo: 'Recursos',
+    valor: String(total),
+    detalhe: total === 0 ? 'Nenhum recurso cadastrado.' : partes.join(' · '),
+    semDados: false,
+  }
+}
+
+function indicadorDeAlertas(d: DadosDoResumoDeInfraestrutura): Indicador {
+  const rotulo = 'Alertas ativos'
+  if (d.fontesDeAlertas === 0 && d.alertasJaRegistrados === 0) {
+    return {
+      rotulo,
+      valor: 'Sem dados',
+      detalhe: 'Nenhuma fonte de alertas configurada.',
+      semDados: true,
+    }
+  }
+  const partes = [
+    d.alertasCriticos > 0 ? plural(d.alertasCriticos, 'crítico', 'críticos') : null,
+    d.alertasReconhecidos > 0
+      ? `${plural(d.alertasReconhecidos, 'reconhecido', 'reconhecidos')} ainda ${
+          d.alertasReconhecidos === 1 ? 'ativo' : 'ativos'
+        } na origem`
+      : null,
+  ].filter((parte): parte is string => parte !== null)
+  let detalhe = partes.join(' · ')
+  if (detalhe === '') {
+    detalhe =
+      d.alertasAtivos === 0 ? 'Nenhum alerta ativo nas fontes configuradas.' : 'Nenhum crítico.'
+  }
+  return { rotulo, valor: String(d.alertasAtivos), detalhe, semDados: false }
+}
+
+export function indicadoresDeInfraestrutura(d: DadosDoResumoDeInfraestrutura): Indicador[] {
+  return [
+    indicadorDeRecursos(d.recursosPorTipo),
+    indicadorDeAlertas(d),
+    {
+      rotulo: 'Saúde dos recursos',
+      valor: 'Sem dados',
+      detalhe: 'A Central ainda não recebe métricas; consulte o Beszel de cada recurso.',
+      semDados: true,
+    },
+  ]
 }
