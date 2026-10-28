@@ -151,9 +151,23 @@ model IntegracaoGitHub {
   fonte                  String
   configurada            Boolean
   catalogoSincronizadoEm DateTime?
+  catalogoSolicitadoEm   DateTime?
   ultimaFalhaEm          DateTime?
   ultimaFalhaMotivo      String?
   atualizadoEm           DateTime  @updatedAt
+}
+
+model EventoIntegracao {
+  id                  String    @id @default(uuid())
+  deliveryId          String    @unique // X-GitHub-Delivery
+  evento              String // X-GitHub-Event, sempre de EVENTOS_DE_WEBHOOK
+  repositorioGitHubId BigInt? // repository.id do payload; sem FK (pode não estar no catálogo)
+  recebidoEm          DateTime  @default(now())
+  processadoEm        DateTime?
+  tentativas          Int       @default(0)
+  falhaMotivo         String?
+
+  @@index([processadoEm, recebidoEm])
 }
 
 model RepositorioGitHub {
