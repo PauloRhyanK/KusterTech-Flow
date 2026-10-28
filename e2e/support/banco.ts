@@ -1318,3 +1318,24 @@ export async function githubIdDoRepositorioNoBanco(nomeCompleto: string): Promis
   })
   return Number(repositorio.githubId)
 }
+
+// Deixa a issue como se o espelho estivesse velho: aberta, com `titulo` e sem data de fechamento.
+// Zera `cursorIssues` para que a próxima sincronização releia a fixture inteira.
+export async function envelhecerIssueNoBanco(
+  nomeCompleto: string,
+  numero: number,
+  titulo: string,
+): Promise<void> {
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto },
+    select: { id: true },
+  })
+  await db.issueGitHub.updateMany({
+    where: { repositorioId: repositorio.id, numero },
+    data: { estado: 'ABERTA', titulo, fechadaNoGitHub: null },
+  })
+  await db.repositorioGitHub.update({
+    where: { id: repositorio.id },
+    data: { cursorIssues: null },
+  })
+}

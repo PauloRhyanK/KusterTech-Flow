@@ -10,8 +10,8 @@ Em GitHub → Settings → Developer settings → GitHub Apps → New GitHub App
 | --- | --- |
 | Nome | `KusterTech Flow Central` (sugestão) |
 | Homepage URL | URL pública da Central |
-| Webhook | **Desativado** (Active desmarcado) |
-| Subscribe to events | **Nenhum** |
+| Webhook | Desativado por padrão; ver §9 |
+| Subscribe to events | Nenhum (ou os da §9, se ativar webhooks) |
 | Where can this app be installed | Only on this account |
 
 ### Permissões
@@ -61,7 +61,7 @@ Depois de apagar o `.pem` baixado, guarde a chave apenas no gerenciador de segre
 docker compose up -d --force-recreate worker
 ```
 
-A web não lê essas variáveis e não precisa reiniciar.
+A web lê só `GITHUB_WEBHOOK_SECRET` (§9) e não precisa reiniciar para estas variáveis.
 
 ## 6. Conferir
 
@@ -87,7 +87,7 @@ Os dados ficam "Sem dados recentes" após 3 intervalos sem sincronização bem-s
 
 Cada projeto tem até três ambientes (DEV, QA e PROD), configurados em Projeto → Configuração → Ambientes.
 
-- **GitHub Deployments:** o `nomeNoGitHub` do ambiente é o `environment:` do job do workflow (por exemplo `qa` ou `production`). O worker lê os Deployments desse nome e seus status pela App (permissão Deployments: leitura) e grava a evidência; a leitura é periódica, sem webhooks.
+- **GitHub Deployments:** o `nomeNoGitHub` do ambiente é o `environment:` do job do workflow (por exemplo `qa` ou `production`). O worker lê os Deployments desse nome e seus status pela App (permissão Deployments: leitura) e grava a evidência; a leitura é periódica.
 - **Ambientes sem Deployments:** o pipeline envia a evidência pelo endpoint `POST /api/evidencias/deploy` com o token do ambiente (gerado em Configuração → Ambientes, mostrado uma única vez), ou um administrador registra o deploy manualmente em Versões.
 
 ```bash
@@ -98,3 +98,27 @@ curl -sS -X POST "$FLOW_URL/api/evidencias/deploy" \
 ```
 
 O token fica **somente** em segredo do pipeline (por exemplo, GitHub Actions secrets): nunca no repositório, em log ou em chat. Gerar um novo token invalida o anterior; "Revogar token" encerra o envio.
+
+## 9. Webhooks (opcional)
+
+Webhooks deixam issues, pull requests e checks atualizarem em até um tique do worker (30 s) em vez de esperar o intervalo da reconciliação. A reconciliação periódica continua sendo o caminho base e a rede de segurança: com webhooks desativados nada muda.
+
+1. **Pré-requisito:** URL pública HTTPS alcançável pelo GitHub (`https://<central>/api/github/webhook`). Sem ela, deixe desativado: a reconciliação cobre tudo, com atraso de até um intervalo.
+2. **Segredo:** gere com `openssl rand -hex 32` e grave `GITHUB_WEBHOOK_SECRET` só no `.env` do servidor. Reinicie só a web: `docker compose up -d --force-recreate web`. O worker não recebe o segredo.
+3. **Na App:** Active marcado; Webhook URL; Webhook secret com o mesmo valor; SSL verification ativo. Eventos: Issues, Pull request, Check suite, Deployment status. `installation` e `installation_repositories` chegam sem assinar.
+4. **Conferir:** em Advanced → Recent Deliveries, o `ping` responde 200. A Configuração do projeto mostra "Webhooks ativos" e, após a primeira mudança, "Último evento recebido em …". "Ativo" só diz que a web tem o segredo; quem confirma que o GitHub entrega é o último evento recebido.
+5. **Respostas da rota:**
+
+| Resposta | Significado |
+| --- | --- |
+| 202 | evento registrado |
+| 200 | duplicado, `pong` (ping) ou ignorado (evento fora da lista) |
+| 401 | assinatura ausente ou segredo divergente |
+| 404 | segredo ausente no `.env` da web (webhook desligado) |
+| 413 | corpo acima de 1 MiB |
+| 400 | requisição inválida |
+
+6. **Falhas:** o GitHub não reenvia entregas com falha sozinho; use "Redeliver" ou aguarde a reconciliação. Eventos cujo processamento falha são reprocessados até 5 vezes e depois abandonados; a reconciliação cobre a mudança.
+7. **Trocar o segredo:** altere nos dois lados; entre uma troca e outra as entregas dão 401 e a reconciliação cobre. **Desativar:** desmarque Active na App e remova a variável.
+
+404 nas entregas do GitHub: o segredo não está no `.env` da web.
