@@ -7,9 +7,10 @@ import { log } from '@/lib/log'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 describe('tarefas do worker', () => {
-  test('TAREFAS_DO_CICLO termina com calcular-composicoes e detectar-divergencias, depois de calcular-presencas e detectar-retestes', () => {
+  test('TAREFAS_DO_CICLO tem sincronizar-execucoes-warren logo depois de reconciliar-github e termina com calcular-composicoes e detectar-divergencias, depois de calcular-presencas e detectar-retestes', () => {
     expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
       'reconciliar-github',
+      'sincronizar-execucoes-warren',
       'sincronizar-deployments',
       'calcular-presencas',
       'atualizar-fila-de-homologacao',

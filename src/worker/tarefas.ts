@@ -1,4 +1,5 @@
 import { log } from '@/lib/log'
+import { sincronizarExecucoesWarren } from '@/modules/desenvolvimento/sincronizacao'
 import { sincronizarDeployments } from '@/modules/ambientes/deployments'
 import { calcularPresencas } from '@/modules/ambientes/presencas'
 import { obterFonteGitHub, type FonteGitHub } from '@/modules/github/fonte'
@@ -30,6 +31,13 @@ export function criarTarefasDoCiclo(d: {
             'ciclo de reconciliação do GitHub',
           )
         }
+      },
+    },
+    {
+      nome: 'sincronizar-execucoes-warren',
+      async executar(agora) {
+        // Os repositórios lidos e as contagens saem no log da própria sincronização.
+        await sincronizarExecucoesWarren(d.obterFonte(), agora, d.intervaloMs)
       },
     },
     {

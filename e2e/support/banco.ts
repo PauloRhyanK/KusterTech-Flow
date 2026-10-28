@@ -149,8 +149,22 @@ export async function liberarRepositoriosNoBanco(nomes: readonly string[]): Prom
       deploymentsSincronizadosEm: null,
       deploymentsFalhaEm: null,
       deploymentsFalhaMotivo: null,
+      warrenLidoEm: null,
+      warrenFalhaEm: null,
+      warrenFalhaMotivo: null,
+      seedsEncontrado: null,
+      seedsLinhasInvalidas: 0,
     },
   })
+}
+
+// Execuções e seeds do Warren lidas dos repositórios (para o `beforeEach` de quem as consome).
+export async function limparExecucoesDosRepositoriosNoBanco(
+  nomes: readonly string[],
+): Promise<void> {
+  const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomes] } } }
+  await db.execucaoAgente.deleteMany({ where: dosRepositorios })
+  await db.seedDoRepositorio.deleteMany({ where: dosRepositorios })
 }
 
 export async function definirSituacaoDoRepositorio(

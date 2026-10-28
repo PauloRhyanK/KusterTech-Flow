@@ -94,6 +94,9 @@ export default async function globalSetup(): Promise<void> {
     })
     await db.versao.deleteMany({ where: { OR: [dosExemplos, projetosE2E] } })
     await db.ambiente.deleteMany({ where: projetosE2E })
+    // Execuções e seeds do Warren antes dos PRs e do repositório (FK RESTRICT no repositório).
+    await db.execucaoAgente.deleteMany({ where: dosExemplos })
+    await db.seedDoRepositorio.deleteMany({ where: dosExemplos })
     await db.pullRequestGitHub.deleteMany({ where: dosExemplos })
     await db.issueGitHub.deleteMany({ where: dosExemplos })
     await db.repositorioGitHub.deleteMany({
