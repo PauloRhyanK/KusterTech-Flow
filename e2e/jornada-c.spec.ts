@@ -2,8 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 import {
+  contarEventosNoBanco,
   contarSolicitacoesAbertasNoBanco,
   criarUsuarioNoBanco,
+  fecharIssueNoBanco,
+  obterCorrecaoCriadaNoBanco,
+  obterEstadoDaHomologacaoNoBanco,
+  obterItemNoBanco,
+  prepararHomologacaoE2E,
+  registrarVersaoEmQaNoBanco,
   liberarRepositoriosNoBanco,
   limparImplantacaoDosRepositoriosNoBanco,
   obterItemDeHomologacaoNoBanco,
@@ -251,5 +258,178 @@ test('Jornada C até a solicitação de correção: entrada pelo worker, disponi
     await aprovador.fechar()
     await testador.fechar()
     await aprovadorBeta.fechar()
+  }
+})
+
+test('Jornada C com dois clientes e uma correção: solicitar, triar, criar a correção, reteste, aprovar issue e milestone por cliente', async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000)
+  const projeto = testInfo.project.name
+  const mobile = projeto === 'mobile'
+  const admin = obterAdmin()
+  await fazerLogin(page, admin.email, admin.senha)
+  const h = await prepararHomologacaoE2E(projeto, admin.id)
+  const rotuloV1 = `${h.cenario.prefixo} v1`
+  const rotuloV2 = `${h.cenario.prefixo} v2`
+
+  const verificarSemRolagem = async (p: Page) => {
+    if (mobile) {
+      expect(
+        await p.evaluate(
+          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        ),
+      ).toBe(true)
+    }
+  }
+  const urlDaIssue = (clienteId: string, issueId: string) =>
+    `/clientes/${clienteId}/projetos/${h.projetoId}/entregas/issues/${issueId}?milestone=${h.milestoneId}`
+  const urlDaMilestone = (clienteId: string) =>
+    `/clientes/${clienteId}/projetos/${h.projetoId}/entregas/milestones/${h.milestoneId}?aba=homologacao`
+  const urlGlobal = `/projetos/${h.projetoId}/entregas/milestones/${h.milestoneId}?aba=homologacao`
+
+  const aprovadorA = await entrarComo(browser, 'APROVADOR', h.clienteAId, 'aprovador-a')
+  const aprovadorB = await entrarComo(browser, 'APROVADOR', h.clienteBId, 'aprovador-b')
+  const aprovarIssue = async (p: Page, clienteId: string, clienteNome: string, issueId: string) => {
+    await p.goto(urlDaIssue(clienteId, issueId))
+    await p.getByRole('button', { name: 'Testado e aprovado' }).click()
+    await p.getByRole('button', { name: 'Revisar aprovação' }).click()
+    await p.getByRole('button', { name: 'Confirmar aprovação' }).click()
+    await expect(
+      p.getByRole('status').filter({ hasText: `Aprovação registrada para ${clienteNome}.` }),
+    ).toBeVisible()
+  }
+
+  try {
+    await test.step('1. A solicita correção da #2; B aprova a #2 e a #4; A aprova a #4', async () => {
+      const p = aprovadorA.page
+      await p.goto(urlDaIssue(h.clienteAId, h.issues.n2))
+      await p.getByRole('button', { name: 'Solicitar correção' }).click()
+      await p.getByLabel('O que precisa ser corrigido').fill('E2E o filtro não respeita a data')
+      await p.getByRole('button', { name: 'Revisar solicitação' }).click()
+      await p.getByRole('button', { name: 'Confirmar solicitação de correção' }).click()
+      await expect(
+        p.getByRole('status').filter({ hasText: `Correção solicitada para ${h.clienteANome}.` }),
+      ).toBeVisible()
+
+      await aprovarIssue(aprovadorB.page, h.clienteBId, h.clienteBNome, h.issues.n2)
+      await aprovarIssue(aprovadorB.page, h.clienteBId, h.clienteBNome, h.issues.n4)
+      await aprovarIssue(p, h.clienteAId, h.clienteANome, h.issues.n4)
+    })
+
+    await test.step('2. Admin cria a issue de correção vinculada na #2 de A', async () => {
+      await page.goto(urlDaIssue(h.clienteAId, h.issues.n2))
+      await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
+      await page.getByLabel('Criar issue de correção vinculada').check()
+      await page.getByLabel('Título', { exact: true }).fill('E2E Correção do item 2')
+      await page.getByRole('button', { name: 'Criar issue no GitHub' }).click()
+      await expect(page.getByText('Criação da issue de correção pendente')).toBeVisible()
+      await verificarSemRolagem(page)
+      await capturar(page, projeto, 'c8-triagem.png')
+    })
+
+    const correcao =
+      await test.step('3. Worker cria a correção; ela entra na milestone como herdada', async () => {
+        rodarWorkerUmaVez()
+        const criada = await obterCorrecaoCriadaNoBanco(h.issues.n2)
+        expect(criada).not.toBeNull()
+        await page.goto(urlDaIssue(h.clienteAId, h.issues.n2))
+        await expect(
+          page.getByText(`Correção #${criada!.numero} criada no GitHub`).first(),
+        ).toBeVisible()
+
+        await page.goto(`/projetos/${h.projetoId}/entregas/milestones/${h.milestoneId}`)
+        const lista = page.getByRole('list', { name: 'Issues da milestone' })
+        await expect(lista.getByRole('listitem')).toHaveCount(3)
+        await expect(lista.getByText('Correção herdada')).toHaveCount(1)
+        await expect(page.getByText('1 de 3 issues fechadas · 33%').first()).toBeVisible()
+        return criada!
+      })
+
+    await test.step('4. Aprovação de A fica bloqueada pela issue aberta e pela correção bloqueadora', async () => {
+      const p = aprovadorA.page
+      await p.goto(urlDaMilestone(h.clienteAId))
+      await expect(p.getByText('2 issues do escopo ainda estão abertas no GitHub.')).toBeVisible()
+      await expect(p.getByText('1 correção bloqueadora em aberto.')).toBeVisible()
+      await expect(p.getByRole('button', { name: 'Aprovar milestone' })).toHaveCount(0)
+    })
+
+    await test.step('5. Correção fechada e v2 em QA: só a #2 de A vai a reteste; B segue aprovada', async () => {
+      const eventosA = await contarEventosNoBanco(h.clienteAId, h.issues.n2)
+      const eventosB = await contarEventosNoBanco(h.clienteBId, h.issues.n2)
+      await fecharIssueNoBanco(correcao.id)
+      await registrarVersaoEmQaNoBanco(h.cenario, 'v2', [correcao.id, h.issues.n2])
+      rodarWorkerUmaVez()
+
+      await page.goto(urlDaIssue(h.clienteAId, h.issues.n2))
+      await expect(page.getByText('Aguardando reteste', { exact: true }).first()).toBeVisible()
+      await expect(page.getByText(`Versão atual em QA: ${rotuloV2}`)).toBeVisible()
+      const rodada = page.locator('details').filter({ hasText: `Versão ${rotuloV1} ·` })
+      await expect(rodada).toHaveCount(1)
+      await expect(rodada).not.toHaveAttribute('open', '')
+      await rodada.locator('summary').click()
+      await expect(rodada.getByText('Disponibilizada ao cliente')).toBeVisible()
+      await verificarSemRolagem(page)
+      await capturar(page, projeto, 'c9-reteste.png')
+
+      await page.goto(urlDaIssue(h.clienteBId, h.issues.n2))
+      await expect(page.getByText('Aprovada', { exact: true }).first()).toBeVisible()
+      expect((await obterItemNoBanco(h.clienteBId, h.issues.n2)).estado).toBe('APROVADA')
+      expect(await contarEventosNoBanco(h.clienteAId, h.issues.n2)).toBeGreaterThan(eventosA)
+      expect(await contarEventosNoBanco(h.clienteBId, h.issues.n2)).toBe(eventosB)
+    })
+
+    await test.step('6. A aprova a #2 na v2', async () => {
+      await aprovarIssue(aprovadorA.page, h.clienteAId, h.clienteANome, h.issues.n2)
+      await expect(aprovadorA.page.getByText(rotuloV2).first()).toBeVisible()
+      expect((await obterItemNoBanco(h.clienteAId, h.issues.n2)).estado).toBe('APROVADA')
+    })
+
+    await test.step('7. Com a #2 fechada, A aprova a milestone', async () => {
+      await fecharIssueNoBanco(h.issues.n2)
+      const p = aprovadorA.page
+      await p.goto(urlDaMilestone(h.clienteAId))
+      await expect(p.getByText(`Cliente: ${h.clienteANome}`)).toBeVisible()
+      await expect(p.getByText('Issues do escopo fechadas: 3 de 3')).toBeVisible()
+      await expect(p.getByText('Correções bloqueadoras: 0')).toBeVisible()
+      await p.getByRole('button', { name: 'Aprovar milestone' }).click()
+      await p.getByRole('button', { name: `Confirmar aprovação para ${h.clienteANome}` }).click()
+      await expect(
+        p.getByRole('status').filter({ hasText: `Milestone aprovada para ${h.clienteANome}.` }),
+      ).toBeVisible()
+      await verificarSemRolagem(p)
+      await capturar(p, projeto, 'c10-aprovacao.png')
+    })
+
+    await test.step('8. Visão global consolida; B aprova no próprio contexto', async () => {
+      await page.goto(urlGlobal)
+      await expect(
+        page.getByText('2 clientes · 1 com milestone aprovada · 1 em andamento'),
+      ).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Aprovar milestone' })).toHaveCount(0)
+
+      const p = aprovadorB.page
+      await p.goto(urlDaMilestone(h.clienteBId))
+      await p.getByRole('button', { name: 'Aprovar milestone' }).click()
+      await p.getByRole('button', { name: `Confirmar aprovação para ${h.clienteBNome}` }).click()
+      await expect(
+        p.getByRole('status').filter({ hasText: `Milestone aprovada para ${h.clienteBNome}.` }),
+      ).toBeVisible()
+
+      await page.goto(urlGlobal)
+      await expect(page.getByText('2 clientes · 2 com milestone aprovada')).toBeVisible()
+      await verificarSemRolagem(page)
+      await capturar(page, projeto, 'c11-consolidacao.png')
+      expect((await obterEstadoDaHomologacaoNoBanco(h.clienteAId, h.milestoneId)).estado).toBe(
+        'APROVADA',
+      )
+      expect((await obterEstadoDaHomologacaoNoBanco(h.clienteBId, h.milestoneId)).estado).toBe(
+        'APROVADA',
+      )
+    })
+  } finally {
+    await aprovadorA.fechar()
+    await aprovadorB.fechar()
   }
 })
