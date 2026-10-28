@@ -1,5 +1,5 @@
 {
-  "total_count": 4,
+  "total_count": 6,
   "repository_selection": "all",
   "repositories": [
     {
@@ -45,6 +45,30 @@
       "private": true,
       "archived": false,
       "html_url": "https://github.com/kustertech-exemplo/app-mobile",
+      "owner": {
+        "login": "kustertech-exemplo",
+        "id": 100001
+      }
+    },
+    {
+      "id": 5005,
+      "name": "automacao",
+      "full_name": "kustertech-exemplo/automacao",
+      "private": false,
+      "archived": false,
+      "html_url": "https://github.com/kustertech-exemplo/automacao",
+      "owner": {
+        "login": "kustertech-exemplo",
+        "id": 100001
+      }
+    },
+    {
+      "id": 5006,
+      "name": "automacao-mobile",
+      "full_name": "kustertech-exemplo/automacao-mobile",
+      "private": true,
+      "archived": false,
+      "html_url": "https://github.com/kustertech-exemplo/automacao-mobile",
       "owner": {
         "login": "kustertech-exemplo",
         "id": 100001

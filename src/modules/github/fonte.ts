@@ -45,6 +45,8 @@ export interface PullRequestDaFonte {
   atualizadoEm: Date
   mergeadoEm: Date | null
   shaMerge: string | null
+  corpo: string | null
+  criadoEm: Date | null
 }
 
 export interface DeploymentDaFonte {
@@ -62,6 +64,8 @@ export interface ComparacaoDaFonte {
   truncada: boolean
 }
 
+export const TAMANHO_MAXIMO_ARQUIVO = 2_000_000
+
 export interface FonteGitHub {
   readonly tipo: 'app' | 'fixtures'
   listarRepositorios(): Promise<RepositorioDaFonte[]>
@@ -74,6 +78,8 @@ export interface FonteGitHub {
   /** Deployments com `created_at >= desde`, cada um com o status mais recente. */
   listarDeployments(repo: RefRepositorio, desde: Date | null): Promise<DeploymentDaFonte[]>
   compararCommits(repo: RefRepositorio, base: string, cabeca: string): Promise<ComparacaoDaFonte>
+  /** Texto do arquivo no branch padrão; `null` quando o arquivo não existe. */
+  lerArquivo(repo: RefRepositorio, caminho: string): Promise<string | null>
   /** Idempotente: reabrir uma issue já aberta devolve a issue. */
   reabrirIssue(repo: RefRepositorio, numero: number): Promise<IssueDaFonte>
   /** Não idempotente: quem chama não pode repetir depois de um resultado incerto. */
@@ -142,6 +148,7 @@ const esquemaPullRequest = z.object({
   user: usuario,
   html_url: z.string(),
   head: z.object({ ref: z.string(), sha: z.string() }),
+  created_at: data.nullish(),
   updated_at: data,
   merged_at: data.nullish(),
   merge_commit_sha: z.string().nullish(),
@@ -228,6 +235,8 @@ export function mapearPullRequest(bruto: unknown): PullRequestDaFonte {
     atualizadoEm: p.updated_at,
     mergeadoEm,
     shaMerge: mergeadoEm ? (p.merge_commit_sha ?? null) : null,
+    corpo: p.body ?? null,
+    criadoEm: p.created_at ?? null,
   }
 }
 

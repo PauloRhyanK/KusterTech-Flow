@@ -1,0 +1,36 @@
+[
+  {
+    "id": 7004001,
+    "number": 1,
+    "title": "Exportar relatório de entregas",
+    "body": "Descrição fictícia da issue 1.",
+    "state": "open",
+    "user": {
+      "login": "exemplo-ana",
+      "id": 200001
+    },
+    "assignees": [],
+    "labels": [],
+    "html_url": "https://github.com/kustertech-exemplo/automacao/issues/1",
+    "created_at": "2026-10-18T10:00:00Z",
+    "updated_at": "2026-10-20T10:25:00Z",
+    "closed_at": null
+  },
+  {
+    "id": 7004002,
+    "number": 2,
+    "title": "Ajustar filtro de clientes",
+    "body": "Descrição fictícia da issue 2.",
+    "state": "closed",
+    "user": {
+      "login": "exemplo-ana",
+      "id": 200001
+    },
+    "assignees": [],
+    "labels": [],
+    "html_url": "https://github.com/kustertech-exemplo/automacao/issues/2",
+    "created_at": "2026-10-17T10:00:00Z",
+    "updated_at": "2026-10-19T15:00:00Z",
+    "closed_at": "2026-10-19T15:00:00Z"
+  }
+]

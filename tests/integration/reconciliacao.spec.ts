@@ -38,6 +38,7 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
     listarChecks: guardar(base.listarChecks),
     listarDeployments: guardar(base.listarDeployments),
     compararCommits: guardar(base.compararCommits),
+    lerArquivo: guardar(base.lerArquivo),
     reabrirIssue: async () => {
       throw new Error('não usado')
     },
@@ -73,13 +74,13 @@ beforeEach(async () => {
 })
 
 describe('reconciliação do GitHub', () => {
-  test('catálogo: quatro repositórios sem projeto; segundo ciclo não duplica; repositório que sumiu da fonte ganha removidoDaInstalacaoEm e continua no banco', async () => {
+  test('catálogo: seis repositórios sem projeto; segundo ciclo não duplica; repositório que sumiu da fonte ganha removidoDaInstalacaoEm e continua no banco', async () => {
     const fonte = criarFonteFixtures()
     await sincronizarCatalogo(fonte, t0)
     await sincronizarCatalogo(fonte, t1)
 
     const repos = await db.repositorioGitHub.findMany()
-    expect(repos).toHaveLength(4)
+    expect(repos).toHaveLength(6)
     expect(repos.every((r) => r.projetoId === null && r.removidoDaInstalacaoEm === null)).toBe(true)
     expect(repos.every((r) => r.catalogadoEm.getTime() === t0.getTime())).toBe(true)
     const integracao = await db.integracaoGitHub.findUniqueOrThrow({ where: { id: 'github' } })
@@ -96,7 +97,7 @@ describe('reconciliação do GitHub', () => {
       where: { nomeCompleto: 'kustertech-exemplo/site' },
     })
     expect(site.removidoDaInstalacaoEm).toEqual(t2)
-    expect(await db.repositorioGitHub.count()).toBe(4)
+    expect(await db.repositorioGitHub.count()).toBe(6)
 
     await sincronizarCatalogo(base, new Date('2026-10-26T15:30:00.000Z'))
     const volta = await db.repositorioGitHub.findUniqueOrThrow({ where: { id: site.id } })
@@ -113,7 +114,7 @@ describe('reconciliação do GitHub', () => {
     expect(integracao.ultimaFalhaEm).toEqual(t1)
     expect(integracao.ultimaFalhaMotivo).toBe('A GitHub App recusou as credenciais.')
     expect(integracao.catalogoSincronizadoEm).toEqual(t0)
-    expect(await db.repositorioGitHub.count({ where: { removidoDaInstalacaoEm: null } })).toBe(4)
+    expect(await db.repositorioGitHub.count({ where: { removidoDaInstalacaoEm: null } })).toBe(6)
   })
 
   test('sincronizarRepositorio de portal vinculado: 4 issues (nenhum PR entre elas), 2 PRs, PR mergeado com issuesReferenciadas [2] e checks SUCESSO, PR aberto com FALHA', async () => {
@@ -237,6 +238,76 @@ describe('reconciliação do GitHub', () => {
     logDeErro.mockRestore()
   })
 
+  test('sincronizarRepositorio de automacao: 2 issues e 3 PRs; PR #3 com branch warren/run_exemplo0001, corpo começando por "## Summary" sem "## Prompt" nem "run_falso999", criadoNoGitHub 2026-10-20T10:20:00Z, checks FALHA', async () => {
+    const fonte = criarFonteFixtures()
+    await sincronizarCatalogo(fonte, t0)
+    const projeto = await db.projeto.create({
+      data: { nome: 'Automação', nomeNormalizado: 'automacao' },
+    })
+    const { id } = await db.repositorioGitHub.findFirstOrThrow({
+      where: { nomeCompleto: 'kustertech-exemplo/automacao' },
+    })
+    const repo = await db.repositorioGitHub.update({
+      where: { id },
+      data: { projetoId: projeto.id, vinculadoEm: t0 },
+    })
+
+    expect(await sincronizarRepositorio(fonte, repo.id, t0)).toBe('ok')
+
+    expect(await db.issueGitHub.count({ where: { repositorioId: repo.id } })).toBe(2)
+    const prs = await db.pullRequestGitHub.findMany({
+      where: { repositorioId: repo.id },
+      orderBy: { numero: 'asc' },
+    })
+    expect(prs.map((p) => p.numero)).toEqual([3, 4, 5])
+    const pr3 = prs[0]!
+    expect(pr3.branch).toBe('warren/run_exemplo0001')
+    expect(pr3.autor).toBe('warren-forge-exemplo[bot]')
+    expect(pr3.corpo?.startsWith('## Summary')).toBe(true)
+    expect(pr3.corpo).not.toContain('## Prompt')
+    expect(pr3.corpo).not.toContain('run_falso999')
+    expect(pr3.corpo).not.toContain('<script>')
+    expect(pr3.corpo).toContain('run_exemplo0001')
+    expect(pr3.criadoNoGitHub).toEqual(new Date('2026-10-20T10:20:00Z'))
+    expect(pr3.checks).toBe('FALHA')
+    expect(prs[1]!.checks).toBe('SUCESSO')
+    expect(prs[2]!.checks).toBe('SEM_CHECKS')
+  })
+
+  test('PR com corpo nulo no banco faz o ciclo seguinte reler os PRs desde o início e preencher o corpo; o ciclo depois volta a usar o cursor', async () => {
+    const base = criarFonteFixtures()
+    const desdes: (Date | null)[] = []
+    const fonte: FonteGitHub = {
+      ...base,
+      listarPullRequestsAtualizados: async (repo, desde) => {
+        desdes.push(desde)
+        return base.listarPullRequestsAtualizados(repo, desde)
+      },
+    }
+    await sincronizarCatalogo(fonte, t0)
+    const repo = await repositorioPortal(true)
+    await sincronizarRepositorio(fonte, repo.id, t0)
+    const cursor = (await db.repositorioGitHub.findUniqueOrThrow({ where: { id: repo.id } }))
+      .cursorPullRequests
+    expect(cursor).not.toBeNull()
+    expect(desdes).toEqual([null])
+
+    // Espelhado antes do +9: um PR sem corpo.
+    await db.pullRequestGitHub.updateMany({
+      where: { repositorioId: repo.id, numero: 5 },
+      data: { corpo: null },
+    })
+    await sincronizarRepositorio(fonte, repo.id, t05)
+    expect(desdes).toEqual([null, null])
+    const pr5 = await db.pullRequestGitHub.findFirstOrThrow({
+      where: { repositorioId: repo.id, numero: 5 },
+    })
+    expect(pr5.corpo).toBe('Closes #2')
+
+    await sincronizarRepositorio(fonte, repo.id, t1)
+    expect(desdes).toEqual([null, null, cursor])
+  })
+
   test('repositório não vinculado não é sincronizado; desvincular não apaga issues', async () => {
     const fonte = criarFonteFixtures()
     await sincronizarCatalogo(fonte, t0)
@@ -286,7 +357,7 @@ describe('reconciliação do GitHub', () => {
     const integracao = await db.integracaoGitHub.findUniqueOrThrow({ where: { id: 'github' } })
     expect(integracao.configurada).toBe(false)
     expect(integracao.fonte).toBe('app')
-    expect(await db.repositorioGitHub.count()).toBe(4)
+    expect(await db.repositorioGitHub.count()).toBe(6)
     expect(await contagens()).toEqual({ issues: 0, prs: 0 })
   })
 

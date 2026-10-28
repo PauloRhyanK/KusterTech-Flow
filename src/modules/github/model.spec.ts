@@ -6,12 +6,14 @@ import {
   estadoDoProjeto,
   estadoDoRepositorio,
   issuesReferenciadas,
+  limitarCorpo,
   mensagemDeFalha,
   repositorioDevido,
   resumirChecks,
   resumirErroParaLog,
   type CategoriaDeFalha,
   type EstadoIntegracao,
+  TAMANHO_MAXIMO_CORPO,
   type SituacaoDoRepositorio,
 } from './model'
 
@@ -352,5 +354,17 @@ describe('resumirErroParaLog', () => {
   test('valor que não é Error vira o typeof', () => {
     expect(resumirErroParaLog('ghs_segredo')).toEqual({ tipo: 'string' })
     expect(resumirErroParaLog(null)).toEqual({ tipo: 'object' })
+  })
+})
+
+describe('limitarCorpo', () => {
+  test('limitarCorpo: null → ""; corta no ## Prompt; 25 000 caracteres → 20 000; remove \\u0000', () => {
+    expect(limitarCorpo(null)).toBe('')
+    expect(limitarCorpo('## Summary\nfeito\n\n## Prompt\nsegredo interno')).toBe(
+      '## Summary\nfeito\n\n',
+    )
+    expect(limitarCorpo('x'.repeat(25_000))).toHaveLength(20_000)
+    expect(TAMANHO_MAXIMO_CORPO).toBe(20_000)
+    expect(limitarCorpo('a\u0000b')).toBe('ab')
   })
 })

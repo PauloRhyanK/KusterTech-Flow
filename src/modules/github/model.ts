@@ -111,6 +111,18 @@ export function issuesReferenciadas(corpo: string | null): number[] {
   return [...numeros].sort((a, b) => a - b)
 }
 
+export const TAMANHO_MAXIMO_CORPO = 20_000
+
+/** Corta no primeiro `## Prompt` (o Warren cola ali o prompt inteiro), tira NUL e limita o tamanho. */
+export function limitarCorpo(corpo: string | null): string {
+  if (!corpo) {
+    return ''
+  }
+  const corte = corpo.search(/^## Prompt\s*$/m)
+  const util = corte === -1 ? corpo : corpo.slice(0, corte)
+  return util.replaceAll('\u0000', '').slice(0, TAMANHO_MAXIMO_CORPO)
+}
+
 export interface AgendaDoRepositorio {
   sincronizadoEm: Date | null
   ultimaFalhaEm: Date | null
