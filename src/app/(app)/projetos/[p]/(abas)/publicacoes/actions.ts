@@ -8,7 +8,11 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { resumirErroParaLog } from '@/modules/github/model'
-import { autorizarPublicacao } from '@/modules/publicacao/service'
+import {
+  autorizarPublicacao,
+  reconhecerDivergencia,
+  registrarVerificacaoProd,
+} from '@/modules/publicacao/service'
 
 export interface EstadoDaAutorizacao {
   erro?: string
@@ -73,5 +77,80 @@ export async function autorizarPublicacaoAction(
     }
     log.error({ erro: resumirErroParaLog(erro) }, 'Erro inesperado ao autorizar a publicação.')
     return { erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.' }
+  }
+}
+
+const idsSchema = z.object({
+  projetoId: z.uuid({ error: DADOS_INVALIDOS }),
+  divergenciaId: z.uuid({ error: DADOS_INVALIDOS }),
+})
+
+const verificacaoSchema = z.object({
+  projetoId: z.uuid({ error: DADOS_INVALIDOS }),
+  versaoId: z.uuid({ error: DADOS_INVALIDOS }),
+  observacao: z.string({ error: DADOS_INVALIDOS }).max(2000, DADOS_INVALIDOS),
+})
+
+function erroDaAcao(erro: unknown, mensagem: string): EstadoDaAutorizacao {
+  if (erro instanceof ErroDeAutorizacao) {
+    return { erro: 'Somente administradores autorizam publicação em PROD.' }
+  }
+  if (erro instanceof ErroDeDominio) {
+    return { erro: erro.message }
+  }
+  log.error({ erro: resumirErroParaLog(erro) }, mensagem)
+  return { erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.' }
+}
+
+export async function reconhecerDivergenciaAction(
+  _anterior: EstadoDaAutorizacao,
+  formData: FormData,
+): Promise<EstadoDaAutorizacao> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = idsSchema.safeParse({
+    projetoId: campo(formData, 'projetoId'),
+    divergenciaId: campo(formData, 'divergenciaId'),
+  })
+  if (!parse.success) {
+    return { erro: DADOS_INVALIDOS }
+  }
+
+  try {
+    await reconhecerDivergencia(sessao.sujeito, parse.data)
+    revalidatePath(`/projetos/${parse.data.projetoId}/publicacoes`)
+    return { sucesso: 'Divergência reconhecida.' }
+  } catch (erro) {
+    return erroDaAcao(erro, 'Erro inesperado ao reconhecer a divergência.')
+  }
+}
+
+export async function registrarVerificacaoAction(
+  _anterior: EstadoDaAutorizacao,
+  formData: FormData,
+): Promise<EstadoDaAutorizacao> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = verificacaoSchema.safeParse({
+    projetoId: campo(formData, 'projetoId'),
+    versaoId: campo(formData, 'versaoId'),
+    observacao: campo(formData, 'observacao'),
+  })
+  if (!parse.success) {
+    return { erro: DADOS_INVALIDOS }
+  }
+
+  try {
+    await registrarVerificacaoProd(sessao.sujeito, parse.data)
+    revalidatePath(`/projetos/${parse.data.projetoId}/publicacoes`)
+    return { sucesso: 'Verificação registrada.' }
+  } catch (erro) {
+    return erroDaAcao(erro, 'Erro inesperado ao registrar a verificação.')
   }
 }

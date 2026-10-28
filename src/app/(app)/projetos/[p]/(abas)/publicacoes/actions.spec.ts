@@ -4,24 +4,41 @@ import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import type { SessaoAtual } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 
-const { redirectMock, revalidatePathMock, logErrorMock, obterSessaoMock, autorizarMock } =
-  vi.hoisted(() => ({
-    redirectMock: vi.fn((url: string) => {
-      throw new Error(`NEXT_REDIRECT:${url}`)
-    }),
-    revalidatePathMock: vi.fn(),
-    logErrorMock: vi.fn(),
-    obterSessaoMock: vi.fn<() => Promise<SessaoAtual | null>>(),
-    autorizarMock: vi.fn(),
-  }))
+const {
+  redirectMock,
+  revalidatePathMock,
+  logErrorMock,
+  obterSessaoMock,
+  autorizarMock,
+  reconhecerMock,
+  verificarMock,
+} = vi.hoisted(() => ({
+  redirectMock: vi.fn((url: string) => {
+    throw new Error(`NEXT_REDIRECT:${url}`)
+  }),
+  revalidatePathMock: vi.fn(),
+  logErrorMock: vi.fn(),
+  obterSessaoMock: vi.fn<() => Promise<SessaoAtual | null>>(),
+  autorizarMock: vi.fn(),
+  reconhecerMock: vi.fn(),
+  verificarMock: vi.fn(),
+}))
 
 vi.mock('next/navigation', () => ({ redirect: redirectMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('@/lib/log', () => ({ log: { error: logErrorMock } }))
 vi.mock('@/lib/auth/sessao', () => ({ obterSessao: obterSessaoMock }))
-vi.mock('@/modules/publicacao/service', () => ({ autorizarPublicacao: autorizarMock }))
+vi.mock('@/modules/publicacao/service', () => ({
+  autorizarPublicacao: autorizarMock,
+  reconhecerDivergencia: reconhecerMock,
+  registrarVerificacaoProd: verificarMock,
+}))
 
-import { autorizarPublicacaoAction } from './actions'
+import {
+  autorizarPublicacaoAction,
+  reconhecerDivergenciaAction,
+  registrarVerificacaoAction,
+} from './actions'
 
 const sujeito: Sujeito = { usuarioId: randomUUID(), papeis: [{ papel: 'ADMIN', clienteId: null }] }
 const sessao: SessaoAtual = {
@@ -139,5 +156,115 @@ describe('autorizarPublicacaoAction', () => {
       erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.',
     })
     expect(JSON.stringify(logErrorMock.mock.calls)).not.toContain('segredo-na-mensagem')
+  })
+})
+
+describe('reconhecerDivergenciaAction', () => {
+  const divergenciaId = randomUUID()
+
+  function form(extra: Record<string, string> = {}): FormData {
+    const f = new FormData()
+    for (const [k, v] of Object.entries({ projetoId, divergenciaId, ...extra })) f.set(k, v)
+    return f
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    obterSessaoMock.mockResolvedValue(sessao)
+    reconhecerMock.mockResolvedValue(undefined)
+  })
+
+  test('sessão nula redireciona para /entrar sem chamar o service', async () => {
+    obterSessaoMock.mockResolvedValue(null)
+
+    await expect(reconhecerDivergenciaAction({}, form())).rejects.toThrow('NEXT_REDIRECT:/entrar')
+    expect(reconhecerMock).not.toHaveBeenCalled()
+  })
+
+  test('sucesso: delega ao service e revalida Publicações', async () => {
+    expect(await reconhecerDivergenciaAction({}, form())).toEqual({
+      sucesso: 'Divergência reconhecida.',
+    })
+    expect(reconhecerMock).toHaveBeenCalledWith(sujeito, { projetoId, divergenciaId })
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projetos/${projetoId}/publicacoes`)
+  })
+
+  test('id inválido: "Dados inválidos."; sem permissão e já reconhecida: mensagens fixas', async () => {
+    expect(await reconhecerDivergenciaAction({}, form({ divergenciaId: 'x' }))).toEqual({
+      erro: 'Dados inválidos.',
+    })
+    expect(reconhecerMock).not.toHaveBeenCalled()
+
+    reconhecerMock.mockRejectedValueOnce(new ErroDeAutorizacao('publicacao.autorizar'))
+    expect(await reconhecerDivergenciaAction({}, form())).toEqual({
+      erro: 'Somente administradores autorizam publicação em PROD.',
+    })
+    reconhecerMock.mockRejectedValueOnce(new ErroDeDominio('Esta divergência já foi reconhecida.'))
+    expect(await reconhecerDivergenciaAction({}, form())).toEqual({
+      erro: 'Esta divergência já foi reconhecida.',
+    })
+  })
+
+  test('erro inesperado → mensagem genérica e log sem a mensagem do erro', async () => {
+    reconhecerMock.mockRejectedValue(new Error('segredo-na-mensagem'))
+
+    const estado = await reconhecerDivergenciaAction({}, form())
+
+    expect(estado.erro).toBe(
+      'Não foi possível completar a operação agora. Tente novamente em instantes.',
+    )
+    expect(JSON.stringify(logErrorMock.mock.calls)).not.toContain('segredo-na-mensagem')
+  })
+})
+
+describe('registrarVerificacaoAction', () => {
+  const versaoId = randomUUID()
+
+  function form(extra: Record<string, string> = {}): FormData {
+    const f = new FormData()
+    const campos = { projetoId, versaoId, observacao: '  Login conferido em produção.  ', ...extra }
+    for (const [k, v] of Object.entries(campos)) f.set(k, v)
+    return f
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    obterSessaoMock.mockResolvedValue(sessao)
+    verificarMock.mockResolvedValue(undefined)
+  })
+
+  test('sessão nula redireciona para /entrar sem chamar o service', async () => {
+    obterSessaoMock.mockResolvedValue(null)
+
+    await expect(registrarVerificacaoAction({}, form())).rejects.toThrow('NEXT_REDIRECT:/entrar')
+    expect(verificarMock).not.toHaveBeenCalled()
+  })
+
+  test('sucesso: delega ao service, revalida e confirma', async () => {
+    expect(await registrarVerificacaoAction({}, form())).toEqual({
+      sucesso: 'Verificação registrada.',
+    })
+    expect(verificarMock).toHaveBeenCalledWith(sujeito, {
+      projetoId,
+      versaoId,
+      observacao: '  Login conferido em produção.  ',
+    })
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projetos/${projetoId}/publicacoes`)
+  })
+
+  test('ids inválidos, sem permissão e erro de domínio', async () => {
+    expect(await registrarVerificacaoAction({}, form({ versaoId: 'x' }))).toEqual({
+      erro: 'Dados inválidos.',
+    })
+    verificarMock.mockRejectedValueOnce(new ErroDeAutorizacao('publicacao.autorizar'))
+    expect(await registrarVerificacaoAction({}, form())).toEqual({
+      erro: 'Somente administradores autorizam publicação em PROD.',
+    })
+    verificarMock.mockRejectedValueOnce(
+      new ErroDeDominio('Registre primeiro a evidência de deploy desta versão em PROD.'),
+    )
+    expect(await registrarVerificacaoAction({}, form())).toEqual({
+      erro: 'Registre primeiro a evidência de deploy desta versão em PROD.',
+    })
   })
 })

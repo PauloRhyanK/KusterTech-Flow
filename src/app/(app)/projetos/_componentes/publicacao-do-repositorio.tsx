@@ -1,24 +1,20 @@
 import { formatarDataHora } from '@/lib/data'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
-import type { OrigemEvidencia } from '@/modules/ambientes/model'
 import type { SituacaoDaIntegracao } from '@/modules/github/service'
 import type { PublicacaoDoRepositorio } from '@/modules/publicacao/queries'
 import { AvisoDeIntegracao } from './aviso-de-integracao'
 import { ComposicaoDaPublicacao } from './composicao-de-publicacao'
+import { DivergenciasDeDeploy } from './divergencias-de-deploy'
 import { EstadosDaPublicacao } from './estados-de-publicacao'
 import { FormularioDeAutorizacao } from './formulario-de-autorizacao'
+import { FormularioDeVerificacao } from './formulario-de-verificacao'
+import { ORIGEM_DA_EVIDENCIA } from './origem-da-evidencia'
 
 export interface PublicacaoDoRepositorioProps {
   projeto: { id: string; nome: string }
   publicacao: PublicacaoDoRepositorio
   podeAutorizar: boolean
-}
-
-const ORIGEM: Record<OrigemEvidencia, string> = {
-  GITHUB_DEPLOYMENT: 'GitHub Deployments',
-  ENDPOINT: 'Endpoint de evidência',
-  MANUAL: 'Confirmação manual',
 }
 
 function situacaoDaIntegracao(p: PublicacaoDoRepositorio): SituacaoDaIntegracao {
@@ -59,9 +55,14 @@ export function PublicacaoDoRepositorioView({
           {emProd ? (
             <>
               <p className="text-sm text-text-secondary">
-                {`${emProd.commitCurto} · ${emProd.rotulo} · ${ORIGEM[emProd.origem]} · ${formatarDataHora(emProd.ocorridaEm)}`}
+                {`${emProd.commitCurto} · ${emProd.rotulo} · ${ORIGEM_DA_EVIDENCIA[emProd.origem]} · ${formatarDataHora(emProd.ocorridaEm)}`}
               </p>
               <EstadosDaPublicacao estados={emProd.estados} />
+              <FormularioDeVerificacao
+                projetoId={projeto.id}
+                versaoId={emProd.versaoId}
+                podeAutorizar={podeAutorizar}
+              />
             </>
           ) : (
             <EstadoVazio
@@ -123,6 +124,12 @@ export function PublicacaoDoRepositorioView({
             </>
           )}
         </div>
+
+        <DivergenciasDeDeploy
+          projetoId={projeto.id}
+          divergencias={publicacao.divergencias}
+          podeAutorizar={podeAutorizar}
+        />
 
         {publicacao.autorizacoes.length > 0 && (
           <div className="space-y-2">

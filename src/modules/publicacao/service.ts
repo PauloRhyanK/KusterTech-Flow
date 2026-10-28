@@ -121,3 +121,114 @@ export async function autorizarPublicacao(
     throw erro
   }
 }
+
+const DIVERGENCIA_NAO_ENCONTRADA = 'Divergência não encontrada.'
+const JA_RECONHECIDA = 'Esta divergência já foi reconhecida.'
+const VERSAO_NAO_ENCONTRADA = 'Versão não encontrada.'
+const OBSERVACAO_INVALIDA = 'Descreva o que foi verificado (de 10 a 500 caracteres).'
+const SEM_EVIDENCIA_EM_PROD = 'Registre primeiro a evidência de deploy desta versão em PROD.'
+
+// Reconhecer não autoriza a versão e não apaga a divergência (invariante 7): só registra quem viu.
+export async function reconhecerDivergencia(
+  sujeito: Sujeito,
+  e: { projetoId: string; divergenciaId: string },
+  agora: Date = new Date(),
+): Promise<void> {
+  exigirPermissao(sujeito, 'publicacao.autorizar')
+
+  const divergencia = await db.divergenciaDeDeploy.findFirst({
+    where: { id: e.divergenciaId, versao: { projetoId: e.projetoId } },
+    select: { id: true },
+  })
+  if (!divergencia) {
+    throw new ErroDeDominio(DIVERGENCIA_NAO_ENCONTRADA)
+  }
+  const { count } = await db.divergenciaDeDeploy.updateMany({
+    where: { id: divergencia.id, reconhecidaEm: null },
+    data: { reconhecidaPorId: sujeito.usuarioId, reconhecidaEm: agora },
+  })
+  if (count === 0) {
+    throw new ErroDeDominio(JA_RECONHECIDA)
+  }
+}
+
+async function existeEvidenciaEmProd(versaoId: string): Promise<boolean> {
+  const evidencia = await db.evidenciaDeploy.findFirst({
+    where: { versaoId, situacao: 'SUCESSO', ambiente: { tipo: 'PROD' } },
+    select: { id: true },
+  })
+  return evidencia !== null
+}
+
+// Verificação em produção (decisão 10): só insere, e só para versão com deploy bem-sucedido em PROD.
+export async function registrarVerificacaoProd(
+  sujeito: Sujeito,
+  e: { projetoId: string; versaoId: string; observacao: string },
+): Promise<void> {
+  exigirPermissao(sujeito, 'publicacao.autorizar')
+
+  const observacao = e.observacao.trim()
+  if (observacao.length < 10 || observacao.length > 500) {
+    throw new ErroDeDominio(OBSERVACAO_INVALIDA)
+  }
+  const versao = await db.versao.findFirst({
+    where: { id: e.versaoId, projetoId: e.projetoId },
+    select: { id: true },
+  })
+  if (!versao) {
+    throw new ErroDeDominio(VERSAO_NAO_ENCONTRADA)
+  }
+  if (!(await existeEvidenciaEmProd(versao.id))) {
+    throw new ErroDeDominio(SEM_EVIDENCIA_EM_PROD)
+  }
+  await db.verificacaoProd.create({
+    data: { versaoId: versao.id, origem: 'MANUAL', autorId: sujeito.usuarioId, observacao },
+  })
+}
+
+export type ResultadoDaVerificacaoPorEvidencia =
+  | { tipo: 'registrada'; id: string }
+  | { tipo: 'ambiente-nao-prod' | 'versao-desconhecida' | 'sem-evidencia' }
+
+// Chamada só pela rota, depois de autenticar o token do ambiente (que é o "sujeito").
+export async function registrarVerificacaoPorEvidencia(e: {
+  ambienteId: string
+  nomeCompleto: string
+  commit: string
+  observacao: string | null
+}): Promise<ResultadoDaVerificacaoPorEvidencia> {
+  const ambiente = await db.ambiente.findUnique({
+    where: { id: e.ambienteId },
+    select: { tipo: true, projetoId: true },
+  })
+  if (ambiente?.tipo !== 'PROD') {
+    return { tipo: 'ambiente-nao-prod' }
+  }
+  const versao = await db.versao.findFirst({
+    where: {
+      projetoId: ambiente.projetoId,
+      commitSha: e.commit.toLowerCase(),
+      repositorio: {
+        nomeCompleto: { equals: e.nomeCompleto, mode: 'insensitive' },
+        projetoId: ambiente.projetoId,
+        removidoDaInstalacaoEm: null,
+      },
+    },
+    select: { id: true },
+  })
+  if (!versao) {
+    return { tipo: 'versao-desconhecida' }
+  }
+  if (!(await existeEvidenciaEmProd(versao.id))) {
+    return { tipo: 'sem-evidencia' }
+  }
+  const verificacao = await db.verificacaoProd.create({
+    data: {
+      versaoId: versao.id,
+      origem: 'ENDPOINT',
+      observacao: e.observacao?.trim() || null,
+    },
+    select: { id: true },
+  })
+  return { tipo: 'registrada', id: verificacao.id }
+}

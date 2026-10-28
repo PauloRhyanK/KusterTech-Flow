@@ -824,3 +824,69 @@ export async function limparPublicacaoE2E(nomes: readonly string[]): Promise<voi
   await limparImplantacaoDosRepositoriosNoBanco(nomes)
   await liberarRepositoriosNoBanco(nomes)
 }
+
+// Deploy em PROD feito pelo pipeline do projeto, sem passar pela Central: a evidência chega pelo
+// endpoint, no momento da chamada (simula o pipeline publicando; invariante 7).
+export async function registrarDeployProdNoBanco(
+  projetoId: string,
+  nomeCompleto: string,
+  commitSha: string,
+): Promise<void> {
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto, projetoId },
+    select: { id: true },
+  })
+  const prod = await db.ambiente.findUniqueOrThrow({
+    where: { projetoId_tipo: { projetoId, tipo: 'PROD' } },
+    select: { id: true },
+  })
+  const versao = await db.versao.upsert({
+    where: { repositorioId_commitSha: { repositorioId: repositorio.id, commitSha } },
+    create: {
+      projetoId,
+      repositorioId: repositorio.id,
+      commitSha,
+      rotulo: `E2E ${commitSha.slice(0, 7)}`,
+    },
+    update: {},
+  })
+  const agora = new Date()
+  await db.evidenciaDeploy.create({
+    data: {
+      ambienteId: prod.id,
+      versaoId: versao.id,
+      origem: 'ENDPOINT',
+      situacao: 'SUCESSO',
+      ocorridaEm: agora,
+      registradaEm: agora,
+      idExterno: `e2e-${randomBytes(6).toString('hex')}`,
+    },
+  })
+}
+
+export async function obterDivergenciasNoBanco(
+  nomeCompleto: string,
+): Promise<{ id: string; commitSha: string; reconhecidaEm: Date | null }[]> {
+  const divergencias = await db.divergenciaDeDeploy.findMany({
+    where: { versao: { repositorio: { nomeCompleto } } },
+    select: { id: true, reconhecidaEm: true, versao: { select: { commitSha: true } } },
+    orderBy: { detectadaEm: 'asc' },
+  })
+  return divergencias.map((d) => ({
+    id: d.id,
+    commitSha: d.versao.commitSha,
+    reconhecidaEm: d.reconhecidaEm,
+  }))
+}
+
+export async function contarVerificacoesProd(nomeCompleto: string): Promise<number> {
+  return db.verificacaoProd.count({ where: { versao: { repositorio: { nomeCompleto } } } })
+}
+
+// Desfaz o reconhecimento para repetir a requisição capturada contra o mesmo estado.
+export async function desfazerReconhecimentoNoBanco(divergenciaId: string): Promise<void> {
+  await db.divergenciaDeDeploy.update({
+    where: { id: divergenciaId },
+    data: { reconhecidaPorId: null, reconhecidaEm: null },
+  })
+}
