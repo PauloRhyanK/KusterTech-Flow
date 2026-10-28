@@ -13,6 +13,8 @@ export type Acao =
   | 'homologacao.aprovar'
   | 'homologacao.triar'
   | 'publicacao.autorizar'
+  | 'infraestrutura.ler'
+  | 'infraestrutura.gerenciar'
 
 export interface PapelAtribuido {
   papel: Papel
@@ -41,6 +43,8 @@ export const TODAS_AS_ACOES: readonly Acao[] = [
   'homologacao.aprovar',
   'homologacao.triar',
   'publicacao.autorizar',
+  'infraestrutura.ler',
+  'infraestrutura.gerenciar',
 ]
 
 export const ACOES_COM_CLIENTE_OBRIGATORIO: readonly Acao[] = [
