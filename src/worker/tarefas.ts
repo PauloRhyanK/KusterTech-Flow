@@ -3,6 +3,7 @@ import { sincronizarExecucoesWarren } from '@/modules/desenvolvimento/sincroniza
 import { sincronizarDeployments } from '@/modules/ambientes/deployments'
 import { calcularPresencas } from '@/modules/ambientes/presencas'
 import { obterFonteGitHub, type FonteGitHub } from '@/modules/github/fonte'
+import { processarEventosDeWebhook } from '@/modules/github/eventos'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
@@ -21,6 +22,16 @@ export function criarTarefasDoCiclo(d: {
   intervaloMs: number
 }): readonly TarefaDoWorker[] {
   return [
+    {
+      nome: 'processar-eventos-de-webhook',
+      async executar(agora) {
+        // Só marca repositórios e catálogo; a reconciliação seguinte lê o estado atual do GitHub.
+        const resumo = await processarEventosDeWebhook(agora)
+        if (resumo.processados + resumo.falhas + resumo.removidos > 0) {
+          log.info({ tarefa: 'processar-eventos-de-webhook', ...resumo }, 'eventos de webhook')
+        }
+      },
+    },
     {
       nome: 'reconciliar-github',
       async executar(agora) {

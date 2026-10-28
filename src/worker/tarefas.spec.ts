@@ -7,8 +7,14 @@ import { log } from '@/lib/log'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 describe('tarefas do worker', () => {
+  test('processar-eventos-de-webhook é a primeira tarefa e reconciliar-github a segunda', () => {
+    expect(TAREFAS_DO_CICLO[0]?.nome).toBe('processar-eventos-de-webhook')
+    expect(TAREFAS_DO_CICLO[1]?.nome).toBe('reconciliar-github')
+  })
+
   test('TAREFAS_DO_CICLO tem sincronizar-execucoes-warren logo depois de reconciliar-github e termina com calcular-composicoes e detectar-divergencias, depois de calcular-presencas e detectar-retestes', () => {
     expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
+      'processar-eventos-de-webhook',
       'reconciliar-github',
       'sincronizar-execucoes-warren',
       'sincronizar-deployments',
