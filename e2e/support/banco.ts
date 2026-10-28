@@ -292,7 +292,10 @@ export async function limparHomologacaoDosRepositoriosNoBanco(
   await db.tarefaGitHub.deleteMany({ where: repositorios })
   await db.solicitacaoDeCorrecao.deleteMany({ where: { item: dasIssues } })
   await db.homologacaoItem.deleteMany({ where: dasIssues })
-  await db.eventoTimeline.deleteMany({ where: dasIssues })
+  // A aprovação da milestone (APROVACAO_MILESTONE) não tem issue: sai junto com a milestone dos repositórios.
+  await db.eventoTimeline.deleteMany({
+    where: { OR: [dasIssues, { issueId: null, milestone: { issues: { some: dasIssues } } }] },
+  })
   await db.homologacao.deleteMany({ where: { itens: { none: {} } } })
   await apagarIssuesCriadasPelaTriagemNoBanco(nomes)
 }
@@ -710,4 +713,18 @@ export async function obterCorrecaoCriadaNoBanco(
     select: { correcao: { select: { id: true, numero: true } } },
   })
   return vinculo?.correcao ?? null
+}
+
+export async function obterEstadoDaHomologacaoNoBanco(
+  clienteId: string,
+  milestoneId: string,
+): Promise<{ estado: string; aprovadaPorId: string | null; eventosDeAprovacao: number }> {
+  const h = await db.homologacao.findUniqueOrThrow({
+    where: { clienteId_milestoneId: { clienteId, milestoneId } },
+    select: { estado: true, aprovadaPorId: true },
+  })
+  const eventosDeAprovacao = await db.eventoTimeline.count({
+    where: { clienteId, milestoneId, tipo: 'APROVACAO_MILESTONE' },
+  })
+  return { ...h, eventosDeAprovacao }
 }
