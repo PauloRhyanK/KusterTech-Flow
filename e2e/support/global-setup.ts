@@ -98,6 +98,21 @@ export default async function globalSetup(): Promise<void> {
     // Sem esta linha o worker considera o catálogo recente e não recataloga os repositórios apagados.
     await db.integracaoGitHub.deleteMany({})
 
+    // Infraestrutura: vínculos e hospedagem antes dos recursos (FK RESTRICT em hospedadoEmId).
+    await db.recursoProjeto.deleteMany({
+      where: {
+        OR: [
+          { recurso: { nome: { startsWith: 'E2E ' } } },
+          { projeto: { nome: { startsWith: 'E2E ' } } },
+        ],
+      },
+    })
+    await db.recurso.updateMany({
+      where: { nome: { startsWith: 'E2E ' } },
+      data: { hospedadoEmId: null },
+    })
+    await db.recurso.deleteMany({ where: { nome: { startsWith: 'E2E ' } } })
+
     await db.tentativaLogin.deleteMany({})
     await db.usuario.deleteMany({
       where: {

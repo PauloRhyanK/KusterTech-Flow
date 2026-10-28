@@ -98,7 +98,6 @@ export default async function PaginaInfraestrutura({ searchParams }: PaginaInfra
               tipo="nenhum-registro"
               titulo="Nenhum recurso cadastrado."
               descricao="Cadastre servidores, containers, bancos e storage para relacioná-los aos projetos."
-              acao={acaoCadastrar ?? undefined}
             />
           )
         }

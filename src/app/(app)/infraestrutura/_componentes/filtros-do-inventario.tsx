@@ -16,7 +16,7 @@ const SITUACOES: readonly { valor: Filtros['situacao']; rotulo: string }[] = [
 ]
 
 const CLASSE_CAMPO =
-  'h-8 rounded-compacto border border-border bg-surface px-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
+  'h-8 w-full max-w-full rounded-compacto border border-border bg-surface px-2 sm:w-auto sm:max-w-[16rem] text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 
 export function FiltrosDoInventario({ filtros, projetos }: FiltrosDoInventarioProps) {
   return (
