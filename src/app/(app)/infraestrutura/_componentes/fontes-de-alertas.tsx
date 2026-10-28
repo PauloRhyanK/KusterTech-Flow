@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
@@ -27,17 +27,14 @@ const CLASSE_CAMPO =
 export function FontesDeAlertas({ fontes }: FontesDeAlertasProps) {
   const [estadoCriar, criar, pendenteCriar] = useActionState(criarFonteDeAlertasAction, {})
   const [estadoRevogar, revogar, pendenteRevogar] = useActionState(revogarFonteDeAlertasAction, {})
+  // Só a mensagem da última ação executada fica na tela; a das anteriores já é história.
+  const [ultima, setUltima] = useState<'criar' | 'revogar'>('criar')
+  const estadoVisivel = ultima === 'criar' ? estadoCriar : estadoRevogar
 
   return (
     <section id="fontes" className="space-y-4 rounded-padrao border border-border bg-surface p-4">
       <h2 className="text-[15px] font-[600] text-text-primary">Fontes de alertas</h2>
-      <MensagensDeEstado
-        estado={{
-          ...estadoRevogar,
-          ...estadoCriar,
-          sucesso: estadoCriar.sucesso ?? estadoRevogar.sucesso,
-        }}
-      />
+      <MensagensDeEstado estado={estadoVisivel} />
       <div role="status" aria-live="polite">
         {estadoCriar.token && (
           <div className="space-y-2 rounded-compacto border border-border bg-surface-subtle p-3 text-sm">
@@ -71,20 +68,22 @@ export function FontesDeAlertas({ fontes }: FontesDeAlertasProps) {
               {f.revogadaEm ? (
                 <BadgeDeEstado tom="neutro">Revogada</BadgeDeEstado>
               ) : (
-                <BotaoDeConfirmacao
-                  rotulo="Revogar"
-                  rotuloDeConfirmacao="Confirmar revogação"
-                  action={revogar}
-                  pendente={pendenteRevogar}
-                  camposOcultos={{ fonteId: f.id }}
-                />
+                <div onSubmit={() => setUltima('revogar')}>
+                  <BotaoDeConfirmacao
+                    rotulo="Revogar"
+                    rotuloDeConfirmacao="Confirmar revogação"
+                    action={revogar}
+                    pendente={pendenteRevogar}
+                    camposOcultos={{ fonteId: f.id }}
+                  />
+                </div>
               )}
             </li>
           ))}
         </ul>
       )}
 
-      <form action={criar} className="max-w-xl space-y-2">
+      <form action={criar} onSubmit={() => setUltima('criar')} className="max-w-xl space-y-2">
         <div className="space-y-1">
           <label htmlFor="fonte-nome" className="block text-sm font-medium text-text-primary">
             Nome

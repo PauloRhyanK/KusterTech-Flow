@@ -1003,9 +1003,7 @@ export async function criarAlertaNoBanco(d: {
   return { id }
 }
 
-export async function obterAlertaNoBanco(
-  id: string,
-): Promise<{
+export async function obterAlertaNoBanco(id: string): Promise<{
   estado: 'ATIVO' | 'RECONHECIDO' | 'RESOLVIDO_NA_ORIGEM'
   resolvidoPorId: string | null
 }> {

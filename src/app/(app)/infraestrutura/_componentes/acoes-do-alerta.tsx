@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
@@ -23,12 +23,15 @@ export function AcoesDoAlerta({
   )
   const [estadoResolver, resolver, pendenteResolver] = useActionState(registrarResolucaoAction, {})
 
+  // Só a mensagem da última ação executada fica na tela.
+  const [ultima, setUltima] = useState<'reconhecer' | 'resolver'>('reconhecer')
+
   return (
     <div className="space-y-3">
-      <MensagensDeEstado estado={{ ...estadoResolver, ...estadoReconhecer }} />
+      <MensagensDeEstado estado={ultima === 'reconhecer' ? estadoReconhecer : estadoResolver} />
       <div className="flex flex-wrap items-start gap-2">
         {podeReconhecer && (
-          <form action={reconhecer}>
+          <form action={reconhecer} onSubmit={() => setUltima('reconhecer')}>
             <input type="hidden" name="alertaId" value={alertaId} />
             <Button
               type="submit"
@@ -44,13 +47,15 @@ export function AcoesDoAlerta({
           </form>
         )}
         {podeRegistrarResolucao && (
-          <BotaoDeConfirmacao
-            rotulo="Registrar resolução"
-            rotuloDeConfirmacao="Confirmar resolução"
-            action={resolver}
-            pendente={pendenteResolver}
-            camposOcultos={{ alertaId }}
-          />
+          <div onSubmit={() => setUltima('resolver')}>
+            <BotaoDeConfirmacao
+              rotulo="Registrar resolução"
+              rotuloDeConfirmacao="Confirmar resolução"
+              action={resolver}
+              pendente={pendenteResolver}
+              camposOcultos={{ alertaId }}
+            />
+          </div>
         )}
       </div>
     </div>
