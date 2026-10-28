@@ -164,3 +164,27 @@ O Incremento 5b fecha o ciclo correção → triagem → reteste → aprovação
 - **Aprovação da milestone:** por cliente, no contexto dele, por quem tem permissão de aprovar. Exige todas as issues do escopo fechadas, nenhuma correção bloqueadora em aberto e pelo menos um item já disponibilizado. É bloqueada quando os dados do GitHub do projeto estão indisponíveis ou desatualizados, e o servidor recusa se algo mudou desde que a página foi aberta. Depois de aprovada, não há nova solicitação de correção. A visão global só consolida ("N clientes · …") e não tem ação de aprovar.
 - **Worker:** `executar-tarefas-github` (executa as tarefas pendentes, no máximo uma vez para criar) e `detectar-retestes` (aplica a regra de evidência) fazem parte do ciclo de `pnpm worker` e `pnpm worker:uma-vez`.
 - **Verificação:** `e2e/triagem.spec.ts`, `e2e/reteste.spec.ts` e `e2e/aprovacao-de-milestone.spec.ts` cobrem cada parte; `e2e/jornada-c.spec.ts` percorre a Jornada C com dois clientes e uma correção, no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
+
+## Publicação
+
+O Incremento 6 separa, por repositório, quatro estados que variam de forma independente: homologação QA, autorização PROD, deploy em PROD e verificação em produção. A página fica em `/projetos/[p]/publicacoes` (aba global do projeto; o contexto de cliente não a mostra). **Autorizar PROD não publica nada:** o deploy continua com o pipeline do projeto.
+
+- **Candidata:** a versão da evidência `SUCESSO` mais recente no ambiente QA. Se ela já é a versão em PROD, não há candidata. Sem ambiente QA ou PROD configurado, não há composição.
+- **Regra da base:** a composição é o que mudou entre uma base e a candidata (`compararCommits`). A base é, nesta ordem: o `commitBase` da própria candidata, quando ela já tem autorização; a última versão autorizada do repositório; a versão em PROD pela evidência. Sem nenhuma delas a composição é **incerta** ("Sem versão anterior conhecida em PROD") e o admin confere e justifica.
+- **Desconhecidos:** commit sem PR mergeado, PR sem issue referenciada, número referenciado sem issue espelhada, comparação truncada pelo GitHub e histórico divergente tornam a composição incerta. Para autorizar, o admin marca "Conferi manualmente os itens desconhecidos." e escreve a justificativa.
+- **Squash merge:** recomendado. Com _merge commit_, os commits intermediários do PR aparecem como desconhecidos, porque só o commit de merge (ou o último do PR) é atribuído ao PR.
+- **Autorização:** só o administrador. Exige QA aprovado nas alterações aplicáveis e nenhuma correção bloqueadora; homologações pendentes de outros clientes aparecem como aviso e não bloqueiam. Se a composição mudar depois, o worker revoga a autorização e só os itens com commits diferentes voltam a ser avaliados.
+- **Divergência:** um deploy `SUCESSO` em PROD sem autorização registrada antes dele aparece como "Deploy em PROD sem autorização registrada" na página, na milestone e na issue. Fica registrada para sempre; reconhecer (admin) não autoriza a versão, e uma autorização tardia não a remove. Deploys anteriores à criação do ambiente PROD na Central não contam.
+- **Verificação em produção:** só para versão com deploy em PROD. Manual, na página (de 10 a 500 caracteres), ou pelo endpoint `POST /api/evidencias/verificacao` com o token do ambiente PROD (o mesmo gerado em Configuração → Ambientes):
+
+  ```sh
+  curl -X POST "$URL_DA_CENTRAL/api/evidencias/verificacao" \
+    -H "Authorization: Bearer $TOKEN_DO_AMBIENTE_PROD" \
+    -H "Content-Type: application/json" \
+    -d '{"repositorio":"org/repo","commit":"<40 caracteres hexadecimais>","observacao":"Fluxo de login conferido."}'
+  ```
+
+  Respostas: `201` (`{ "id": "…" }`), `400` corpo inválido, `401` token inválido, `403` token que não é de PROD, `404` versão não encontrada, `409` sem evidência de deploy em PROD. Todas as falhas devolvem só `{ "erro": "…" }` fixo.
+
+- **Worker:** `calcular-composicoes` e `detectar-divergencias` fazem parte do ciclo de `pnpm worker` e `pnpm worker:uma-vez`.
+- **Verificação:** `e2e/publicacoes.spec.ts` cobre a página e o isolamento por POST forjado; `e2e/jornada-c-publicacao.spec.ts` percorre o fim da Jornada C (autorizar, ver o deploy, verificar e a divergência), no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
