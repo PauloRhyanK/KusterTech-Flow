@@ -143,7 +143,7 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
   })
 
   // 4. Abre /projetos/<p> e /clientes/<Acme>/projetos/<p>
-  await test.step('4. Visão global com 5 abas e contexto de Acme com 3 abas', async () => {
+  await test.step('4. Visão global com 6 abas e contexto de Acme com 3 abas', async () => {
     // Visão global (/projetos/<p>)
     await page.goto(`/projetos/${projetoId}`)
     await expect(page.getByRole('heading', { level: 1, name: nomeProjeto })).toBeVisible()
@@ -158,15 +158,16 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', as
     await expect(listaChecklist.getByText('Nenhum ambiente configurado')).toBeVisible()
     await expect(listaChecklist.getByText('Ainda não disponível')).toHaveCount(0)
 
-    // Cinco abas
+    // Seis abas
     const navAbasGlobal = page.getByRole('navigation', { name: 'Seções do projeto' })
-    await expect(navAbasGlobal.getByRole('link')).toHaveCount(5)
+    await expect(navAbasGlobal.getByRole('link')).toHaveCount(6)
     await expect(navAbasGlobal.getByRole('link', { name: /^Resumo/ })).toHaveAttribute(
       'aria-current',
       'page',
     )
     await expect(navAbasGlobal.getByRole('link', { name: /Entregas/ })).toBeVisible()
     await expect(navAbasGlobal.getByRole('link', { name: /Homologação/ })).toBeVisible()
+    await expect(navAbasGlobal.getByRole('link', { name: /Publicações/ })).toBeVisible()
     await expect(navAbasGlobal.getByRole('link', { name: /Saúde e Erros/ })).toBeVisible()
     await expect(navAbasGlobal.getByRole('link', { name: /Recursos/ })).toBeVisible()
 

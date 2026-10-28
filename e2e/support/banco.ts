@@ -10,6 +10,7 @@ import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { rodarWorkerUmaVez } from './worker'
+import { gravarHomologacaoDePublicacao } from '../../tests/support/homologacao-de-publicacao'
 import {
   aprovarItemNoCenario,
   criarCenarioDeHomologacao,
@@ -319,6 +320,8 @@ export async function limparImplantacaoDosRepositoriosNoBanco(
   nomes: readonly string[],
 ): Promise<void> {
   const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomes] } } }
+  // Composições e autorizações apontam para as versões (FK Restrict): saem antes delas.
+  await apagarPublicacaoDosRepositoriosNoBanco(nomes)
   await limparHomologacaoDosRepositoriosNoBanco(nomes)
   await db.presencaIssueVersao.deleteMany({ where: { versao: dosRepositorios } })
   await db.evidenciaDeploy.deleteMany({ where: { versao: dosRepositorios } })
@@ -727,4 +730,97 @@ export async function obterEstadoDaHomologacaoNoBanco(
     where: { clienteId, milestoneId, tipo: 'APROVACAO_MILESTONE' },
   })
   return { ...h, eventosDeAprovacao }
+}
+
+// Publicação (Incremento 6)
+
+// Ambientes QA e PROD como o cenário de publicação os grava: nomes dos deployments de 6.2 e PROD
+// criado em 11/10/2026, depois do primeiro deploy das fixtures (que não conta como divergência).
+export async function configurarAmbientesDePublicacaoNoBanco(
+  projetoId: string,
+): Promise<{ qaId: string; prodId: string }> {
+  const qa = await db.ambiente.upsert({
+    where: { projetoId_tipo: { projetoId, tipo: 'QA' } },
+    create: { projetoId, tipo: 'QA', nomeNoGitHub: 'qa-publicacao' },
+    update: { nomeNoGitHub: 'qa-publicacao' },
+  })
+  const criadoEm = new Date('2026-10-11T00:00:00Z')
+  const prod = await db.ambiente.upsert({
+    where: { projetoId_tipo: { projetoId, tipo: 'PROD' } },
+    create: { projetoId, tipo: 'PROD', nomeNoGitHub: 'producao-publicacao', criadoEm },
+    update: { nomeNoGitHub: 'producao-publicacao', criadoEm },
+  })
+  await db.repositorioGitHub.updateMany({
+    where: { projetoId },
+    data: { cursorDeployments: null, sincronizacaoSolicitadaEm: new Date() },
+  })
+  return { qaId: qa.id, prodId: prod.id }
+}
+
+export async function aprovarHomologacaoNoBanco(e: {
+  clienteId: string
+  milestoneId: string
+  issueId: string
+  versaoId: string
+  autorId: string
+}): Promise<void> {
+  await gravarHomologacaoDePublicacao({ ...e, adminId: e.autorId, aprovada: true })
+}
+
+export async function deixarHomologacaoPendenteNoBanco(e: {
+  clienteId: string
+  milestoneId: string
+  issueId: string
+  versaoId: string
+  autorId?: string
+}): Promise<void> {
+  await gravarHomologacaoDePublicacao({ ...e, adminId: e.autorId, aprovada: false })
+}
+
+export async function obterVersaoNoBanco(
+  nomeCompleto: string,
+  commitSha: string,
+): Promise<{ id: string; rotulo: string }> {
+  return db.versao.findFirstOrThrow({
+    where: { commitSha, repositorio: { nomeCompleto } },
+    select: { id: true, rotulo: true },
+  })
+}
+
+export async function contarAutorizacoesProd(nomeCompleto: string): Promise<number> {
+  return db.autorizacaoProd.count({ where: { repositorio: { nomeCompleto } } })
+}
+
+export async function contarEvidenciasProd(nomeCompleto: string): Promise<number> {
+  return db.evidenciaDeploy.count({
+    where: { ambiente: { tipo: 'PROD' }, versao: { repositorio: { nomeCompleto } } },
+  })
+}
+
+// Desfaz as autorizações (e seus itens) de um repositório, mantendo as composições, para repetir uma
+// requisição capturada contra o mesmo estado.
+export async function apagarAutorizacoesNoBanco(nomeCompleto: string): Promise<void> {
+  const doRepositorio = { repositorio: { nomeCompleto } }
+  await db.autorizacaoItem.deleteMany({ where: { autorizacao: doRepositorio } })
+  await db.autorizacaoProd.deleteMany({ where: doRepositorio })
+}
+
+// Apaga, na ordem das FKs, o que a publicação grava para os repositórios: itens e autorizações,
+// composições, divergências e verificações.
+export async function apagarPublicacaoDosRepositoriosNoBanco(
+  nomes: readonly string[],
+): Promise<void> {
+  const dosRepositorios = { repositorio: { nomeCompleto: { in: [...nomes] } } }
+  await db.autorizacaoItem.deleteMany({ where: { autorizacao: dosRepositorios } })
+  await db.autorizacaoProd.deleteMany({ where: dosRepositorios })
+  await db.composicaoDePublicacao.deleteMany({ where: dosRepositorios })
+  await db.divergenciaDeDeploy.deleteMany({ where: { versao: dosRepositorios } })
+  await db.verificacaoProd.deleteMany({ where: { versao: dosRepositorios } })
+}
+
+// Limpeza completa de um cenário de publicação: publicação, homologação (5b/5a/3), presenças,
+// evidências, versões e, por fim, os repositórios voltam a ficar sem projeto.
+export async function limparPublicacaoE2E(nomes: readonly string[]): Promise<void> {
+  await limparImplantacaoDosRepositoriosNoBanco(nomes)
+  await liberarRepositoriosNoBanco(nomes)
 }

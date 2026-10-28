@@ -1,14 +1,13 @@
-import type { OrigemDaBase, Prisma } from '@prisma/client'
+import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
-import { evidenciaVigente, type EvidenciaParaEstado } from '@/modules/ambientes/model'
 import type { FonteGitHub, RefRepositorio } from '@/modules/github/fonte'
 import { resumirErroParaLog } from '@/modules/github/model'
+import { localizarSituacaoDePublicacao } from './candidata'
 import {
   aprovacaoInalterada,
   deltaDePublicacao,
   hashDaComposicao,
-  SHA_NULO,
   type ItemDaComposicao,
   type StatusDeComparacao,
 } from './model'
@@ -22,92 +21,17 @@ interface ResultadoDoRepositorio {
   revogadas: number
 }
 
-interface BaseEscolhida {
-  commitBase: string
-  origemDaBase: OrigemDaBase
-}
-
-// Decisão 3 do Incremento 6: autorização da própria candidata, senão a última autorização do
-// repositório, senão a versão em PROD pela evidência, senão sem base.
-function escolherBase(e: {
-  candidataId: string
-  autorizacoes: readonly {
-    versaoAlvoId: string
-    commitBase: string
-    composicao: { origemDaBase: OrigemDaBase }
-    versaoAlvo: { commitSha: string }
-  }[]
-  emProd: { commitSha: string } | null
-}): BaseEscolhida {
-  const propria = e.autorizacoes.find((a) => a.versaoAlvoId === e.candidataId)
-  if (propria) {
-    return { commitBase: propria.commitBase, origemDaBase: propria.composicao.origemDaBase }
-  }
-  const ultima = e.autorizacoes[0]
-  if (ultima) {
-    return { commitBase: ultima.versaoAlvo.commitSha, origemDaBase: 'AUTORIZACAO' }
-  }
-  if (e.emProd) {
-    return { commitBase: e.emProd.commitSha, origemDaBase: 'EVIDENCIA_PROD' }
-  }
-  return { commitBase: SHA_NULO, origemDaBase: 'SEM_BASE' }
-}
-
 async function calcularDoRepositorio(
   fonte: FonteGitHub,
   repositorioId: string,
   agora: Date,
 ): Promise<ResultadoDoRepositorio> {
   const nenhum = { calculada: false, revogadas: 0 }
-  const repo = await db.repositorioGitHub.findUniqueOrThrow({ where: { id: repositorioId } })
-  if (repo.projetoId === null) return nenhum
-
-  const ambientes = await db.ambiente.findMany({
-    where: { projetoId: repo.projetoId, tipo: { in: ['QA', 'PROD'] } },
-  })
-  const qa = ambientes.find((a) => a.tipo === 'QA')
-  const prod = ambientes.find((a) => a.tipo === 'PROD')
-  if (!qa || !prod) return nenhum
-
-  const evidencias = await db.evidenciaDeploy.findMany({
-    where: {
-      ambienteId: { in: [qa.id, prod.id] },
-      situacao: 'SUCESSO',
-      versao: { repositorioId },
-    },
-    include: { versao: { select: { rotulo: true, commitSha: true } } },
-  })
-  const commitPorVersao = new Map(evidencias.map((e) => [e.versaoId, e.versao.commitSha]))
-  const paraEstado = (ambienteId: string): EvidenciaParaEstado[] =>
-    evidencias
-      .filter((e) => e.ambienteId === ambienteId)
-      .map((e) => ({
-        versaoId: e.versaoId,
-        rotulo: e.versao.rotulo,
-        origem: e.origem,
-        situacao: e.situacao,
-        ocorridaEm: e.ocorridaEm,
-        registradaEm: e.registradaEm,
-      }))
-  const candidata = evidenciaVigente(paraEstado(qa.id))
-  const emProd = evidenciaVigente(paraEstado(prod.id))
-  if (!candidata || candidata.versaoId === emProd?.versaoId) return nenhum
-  const commitAlvo = commitPorVersao.get(candidata.versaoId)
-  if (commitAlvo === undefined) return nenhum
-
-  const autorizacoes = await db.autorizacaoProd.findMany({
-    where: { repositorioId, revogadaEm: null },
-    include: {
-      composicao: { select: { origemDaBase: true } },
-      versaoAlvo: { select: { commitSha: true } },
-    },
-    orderBy: { criadaEm: 'desc' },
-  })
-  const { commitBase, origemDaBase } = escolherBase({
-    candidataId: candidata.versaoId,
-    autorizacoes,
-    emProd: emProd ? { commitSha: commitPorVersao.get(emProd.versaoId) ?? SHA_NULO } : null,
-  })
+  const situacao = await localizarSituacaoDePublicacao(db, repositorioId)
+  if (!situacao?.candidata || !situacao.base) return nenhum
+  const { repositorio: repo, candidata } = situacao
+  const { commitBase, origemDaBase } = situacao.base
+  const commitAlvo = candidata.commitSha
 
   const existente = await db.composicaoDePublicacao.findUnique({
     where: { versaoAlvoId_commitBase: { versaoAlvoId: candidata.versaoId, commitBase } },
