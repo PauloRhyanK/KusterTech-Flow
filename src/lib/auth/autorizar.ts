@@ -11,6 +11,7 @@ export type Acao =
   | 'homologacao.comentar'
   | 'homologacao.solicitar_correcao'
   | 'homologacao.aprovar'
+  | 'homologacao.triar'
   | 'publicacao.autorizar'
 
 export interface PapelAtribuido {
@@ -38,6 +39,7 @@ export const TODAS_AS_ACOES: readonly Acao[] = [
   'homologacao.comentar',
   'homologacao.solicitar_correcao',
   'homologacao.aprovar',
+  'homologacao.triar',
   'publicacao.autorizar',
 ]
 

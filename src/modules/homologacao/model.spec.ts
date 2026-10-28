@@ -2,13 +2,21 @@ import { describe, expect, test } from 'vitest'
 import {
   apresentarEstadoDoItem,
   classificarNaFila,
+  destinoDaFalhaDaTarefa,
+  detectarReteste,
   hrefDaFila,
   lerFiltrosDaFila,
   lerRetornoDaFila,
+  MENSAGEM_RESULTADO_INCERTO,
+  MENSAGEM_TENTATIVAS_ESGOTADAS,
+  podeAprovarMilestone,
   resumoDaHomologacao,
   tituloDoEvento,
   transicaoDeHomologacao,
   type ContextoDaTransicao,
+  type CorrecaoAcompanhada,
+  type EntradaDeReteste,
+  type PresencaEmQa,
   type EstadoItemHomologacao,
 } from './model'
 
@@ -298,5 +306,298 @@ describe('filtros e retorno da fila', () => {
     )
     expect(lerRetornoDaFila('/c/1/p/3/entregas/milestones/m-9', prefixos)).toBeNull()
     expect(lerRetornoDaFila('/c/1/p/2/entregas/milestones/../x', prefixos)).toBeNull()
+  })
+})
+
+const L = new Date('2026-10-20T12:00:00Z')
+const F = new Date('2026-10-21T12:00:00Z')
+const V2 = new Date('2026-10-22T12:00:00Z')
+const V3 = new Date('2026-10-23T12:00:00Z')
+
+function correcao(p: Partial<CorrecaoAcompanhada> = {}): CorrecaoAcompanhada {
+  return {
+    solicitacaoId: 's1',
+    estado: 'CORRECAO_CRIADA',
+    issueAlvoId: 'i-corr',
+    liberadaEm: L,
+    issueAlvoFechadaEm: F,
+    ...p,
+  }
+}
+
+function presenca(p: Partial<PresencaEmQa> = {}): PresencaEmQa {
+  return {
+    issueId: 'i-corr',
+    versaoId: 'v2',
+    estado: 'PRESENCA_CONFIRMADA',
+    implantadaEm: V2,
+    ...p,
+  }
+}
+
+function reteste(p: Partial<EntradaDeReteste> = {}): EntradaDeReteste {
+  return {
+    estadoDoItem: 'CORRECAO_SOLICITADA',
+    versaoAvaliadaId: 'v1',
+    correcoes: [correcao()],
+    presencasEmQa: [presenca()],
+    ...p,
+  }
+}
+
+describe('detectarReteste', () => {
+  test('PENDENTE_DE_TESTE, APROVADA e AGUARDANDO_RETESTE → { reteste: false, motivo: "item-fora-de-correcao" }', () => {
+    for (const estadoDoItem of ['PENDENTE_DE_TESTE', 'APROVADA', 'AGUARDANDO_RETESTE'] as const) {
+      expect(detectarReteste(reteste({ estadoDoItem }))).toEqual({
+        reteste: false,
+        motivo: 'item-fora-de-correcao',
+      })
+    }
+  })
+
+  test('uma ABERTA ao lado de uma CORRECAO_CRIADA pronta → triagem-pendente; só RESPONDIDA_SEM_TAREFA → sem-correcao-com-tarefa', () => {
+    expect(
+      detectarReteste(
+        reteste({
+          correcoes: [
+            correcao(),
+            correcao({
+              solicitacaoId: 's2',
+              estado: 'ABERTA',
+              issueAlvoId: null,
+              liberadaEm: null,
+              issueAlvoFechadaEm: null,
+            }),
+          ],
+        }),
+      ),
+    ).toEqual({ reteste: false, motivo: 'triagem-pendente' })
+    expect(
+      detectarReteste(
+        reteste({
+          correcoes: [
+            correcao({
+              estado: 'RESPONDIDA_SEM_TAREFA',
+              issueAlvoId: null,
+              liberadaEm: null,
+              issueAlvoFechadaEm: null,
+            }),
+          ],
+        }),
+      ),
+    ).toEqual({ reteste: false, motivo: 'sem-correcao-com-tarefa' })
+  })
+
+  test('correção sem fechamento → correcao-nao-fechada; fechada em 2026-10-19 (antes de L) → correcao-nao-fechada', () => {
+    for (const issueAlvoFechadaEm of [null, new Date('2026-10-19T12:00:00Z')]) {
+      expect(detectarReteste(reteste({ correcoes: [correcao({ issueAlvoFechadaEm })] }))).toEqual({
+        reteste: false,
+        motivo: 'correcao-nao-fechada',
+      })
+    }
+  })
+
+  test('presença só na v1 → sem-presenca-em-qa; v2 com VERIFICACAO_NECESSARIA → sem-presenca-em-qa; v2 implantada em 2026-10-21T06:00Z (antes de F) → sem-presenca-em-qa', () => {
+    const sem = { reteste: false, motivo: 'sem-presenca-em-qa' }
+    expect(detectarReteste(reteste({ presencasEmQa: [presenca({ versaoId: 'v1' })] }))).toEqual(sem)
+    expect(
+      detectarReteste(reteste({ presencasEmQa: [presenca({ estado: 'VERIFICACAO_NECESSARIA' })] })),
+    ).toEqual(sem)
+    expect(
+      detectarReteste(
+        reteste({ presencasEmQa: [presenca({ implantadaEm: new Date('2026-10-21T06:00:00Z') })] }),
+      ),
+    ).toEqual(sem)
+  })
+
+  test('CORRECAO_CRIADA s1 fechada em F e PRESENCA_CONFIRMADA na v2 → { reteste: true, versaoId: "v2", solicitacoesResolvidas: ["s1"], origem: "evidencia" }', () => {
+    expect(detectarReteste(reteste())).toEqual({
+      reteste: true,
+      versaoId: 'v2',
+      solicitacoesResolvidas: ['s1'],
+      origem: 'evidencia',
+    })
+  })
+
+  test('v2 e v3 qualificadas → v3; presença CONFIRMACAO_MANUAL → origem "presenca-manual"; s1 só na v2 e s2 só na v3 → sem-presenca-em-qa; as duas na v3 → v3 com ["s1", "s2"]', () => {
+    expect(
+      detectarReteste(
+        reteste({
+          presencasEmQa: [presenca(), presenca({ versaoId: 'v3', implantadaEm: V3 })],
+        }),
+      ),
+    ).toMatchObject({ reteste: true, versaoId: 'v3' })
+    expect(
+      detectarReteste(reteste({ presencasEmQa: [presenca({ estado: 'CONFIRMACAO_MANUAL' })] })),
+    ).toMatchObject({ reteste: true, origem: 'presenca-manual' })
+
+    const duas = [correcao(), correcao({ solicitacaoId: 's2', issueAlvoId: 'i-corr2' })]
+    expect(
+      detectarReteste(
+        reteste({
+          correcoes: duas,
+          presencasEmQa: [
+            presenca(),
+            presenca({ issueId: 'i-corr2', versaoId: 'v3', implantadaEm: V3 }),
+          ],
+        }),
+      ),
+    ).toEqual({ reteste: false, motivo: 'sem-presenca-em-qa' })
+    expect(
+      detectarReteste(
+        reteste({
+          correcoes: duas,
+          presencasEmQa: [
+            presenca({ versaoId: 'v3', implantadaEm: V3 }),
+            presenca({ issueId: 'i-corr2', versaoId: 'v3', implantadaEm: V3 }),
+          ],
+        }),
+      ),
+    ).toEqual({
+      reteste: true,
+      versaoId: 'v3',
+      solicitacoesResolvidas: ['s1', 's2'],
+      origem: 'evidencia',
+    })
+  })
+})
+
+describe('podeAprovarMilestone', () => {
+  const fechada = (issueId: string, foraDoEscopo = false) => ({
+    issueId,
+    estado: 'FECHADA' as const,
+    foraDoEscopo,
+  })
+  const aberta = (issueId: string, foraDoEscopo = false) => ({
+    issueId,
+    estado: 'ABERTA' as const,
+    foraDoEscopo,
+  })
+  const base = {
+    estado: 'EM_ANDAMENTO' as const,
+    issuesDoEscopo: [fechada('a'), fechada('b')],
+    itensDisponibilizados: 2,
+    solicitacoes: [],
+  }
+
+  test('duas FECHADA, 2 disponibilizados, sem solicitações → { pode: true }; a mesma issue ABERTA repetida conta uma vez; três abertas → plural; ABERTA com foraDoEscopo não conta', () => {
+    expect(podeAprovarMilestone(base)).toEqual({ pode: true })
+    expect(
+      podeAprovarMilestone({
+        ...base,
+        issuesDoEscopo: [fechada('a'), aberta('b'), aberta('b')],
+      }),
+    ).toEqual({ pode: false, motivos: ['1 issue do escopo ainda está aberta no GitHub.'] })
+    expect(
+      podeAprovarMilestone({
+        ...base,
+        issuesDoEscopo: [aberta('a'), aberta('b'), aberta('c')],
+      }),
+    ).toEqual({ pode: false, motivos: ['3 issues do escopo ainda estão abertas no GitHub.'] })
+    expect(
+      podeAprovarMilestone({
+        ...base,
+        issuesDoEscopo: [fechada('a'), aberta('b', true)],
+      }),
+    ).toEqual({ pode: true })
+  })
+
+  test('ABERTA, REABERTA_NO_GITHUB e CORRECAO_CRIADA → "3 correções bloqueadoras em aberto."; RESPONDIDA_SEM_TAREFA, RESOLVIDA e foraDoEscopo não bloqueiam', () => {
+    const s = (id: string, estado: string, foraDoEscopo = false) => ({
+      id,
+      estado: estado as 'ABERTA',
+      foraDoEscopo,
+    })
+    expect(
+      podeAprovarMilestone({
+        ...base,
+        solicitacoes: [
+          s('1', 'ABERTA'),
+          s('2', 'REABERTA_NO_GITHUB'),
+          s('3', 'CORRECAO_CRIADA'),
+          s('4', 'RESPONDIDA_SEM_TAREFA'),
+          s('5', 'RESOLVIDA'),
+          s('6', 'ABERTA', true),
+        ],
+      }),
+    ).toEqual({ pode: false, motivos: ['3 correções bloqueadoras em aberto.'] })
+    expect(podeAprovarMilestone({ ...base, solicitacoes: [s('1', 'ABERTA')] })).toEqual({
+      pode: false,
+      motivos: ['1 correção bloqueadora em aberto.'],
+    })
+  })
+
+  test('APROVADA → só "A milestone já foi aprovada por este cliente."; escopo vazio e 0 disponibilizados → os dois motivos nessa ordem', () => {
+    expect(
+      podeAprovarMilestone({
+        ...base,
+        estado: 'APROVADA',
+        issuesDoEscopo: [aberta('a')],
+        itensDisponibilizados: 0,
+      }),
+    ).toEqual({ pode: false, motivos: ['A milestone já foi aprovada por este cliente.'] })
+    expect(podeAprovarMilestone({ ...base, issuesDoEscopo: [], itensDisponibilizados: 0 })).toEqual(
+      {
+        pode: false,
+        motivos: [
+          'A milestone não tem issues no escopo.',
+          'Nenhum item desta milestone foi disponibilizado em QA para este cliente.',
+        ],
+      },
+    )
+  })
+})
+
+describe('destinoDaFalhaDaTarefa', () => {
+  const agora = new Date('2026-10-27T12:00:00Z')
+  const em = (hhmm: string) => new Date(`2026-10-27T${hhmm}:00Z`)
+
+  test('REABRIR rede 1 → PENDENTE 12:01; 2 → 12:02; 3 → FALHOU esgotadas; CRIAR rede 1 → FALHOU incerto; CRIAR limite com tentarApos 12:30 → PENDENTE 12:30; CRIAR autenticacao → "A GitHub App recusou as credenciais."', () => {
+    expect(destinoDaFalhaDaTarefa('REABRIR_ISSUE', 'rede', 1, undefined, agora)).toEqual({
+      estado: 'PENDENTE',
+      proximaTentativaEm: em('12:01'),
+    })
+    expect(destinoDaFalhaDaTarefa('REABRIR_ISSUE', 'rede', 2, undefined, agora)).toEqual({
+      estado: 'PENDENTE',
+      proximaTentativaEm: em('12:02'),
+    })
+    expect(destinoDaFalhaDaTarefa('REABRIR_ISSUE', 'rede', 3, undefined, agora)).toEqual({
+      estado: 'FALHOU',
+      motivo: MENSAGEM_TENTATIVAS_ESGOTADAS,
+    })
+    expect(destinoDaFalhaDaTarefa('CRIAR_ISSUE', 'rede', 1, undefined, agora)).toEqual({
+      estado: 'FALHOU',
+      motivo: MENSAGEM_RESULTADO_INCERTO,
+    })
+    expect(destinoDaFalhaDaTarefa('CRIAR_ISSUE', 'limite', 1, em('12:30'), agora)).toEqual({
+      estado: 'PENDENTE',
+      proximaTentativaEm: em('12:30'),
+    })
+    expect(destinoDaFalhaDaTarefa('CRIAR_ISSUE', 'autenticacao', 1, undefined, agora)).toEqual({
+      estado: 'FALHOU',
+      motivo: 'A GitHub App recusou as credenciais.',
+    })
+  })
+})
+
+describe('transicaoDeHomologacao — reteste', () => {
+  test('CORRECAO_SOLICITADA + CONFIRMAR_RETESTE → AGUARDANDO_RETESTE; os outros estados → recusa; AGUARDANDO_RETESTE + APROVAR → APROVADA, + SOLICITAR_CORRECAO → CORRECAO_SOLICITADA, + COMENTAR → AGUARDANDO_RETESTE', () => {
+    expect(transicaoDeHomologacao('CORRECAO_SOLICITADA', 'CONFIRMAR_RETESTE', ok)).toEqual({
+      novoEstado: 'AGUARDANDO_RETESTE',
+    })
+    for (const estado of ESTADOS.filter((e) => e !== 'CORRECAO_SOLICITADA')) {
+      expect(transicaoDeHomologacao(estado, 'CONFIRMAR_RETESTE', ok)).toEqual({
+        recusa: 'Só um item com correção solicitada volta para reteste.',
+      })
+    }
+    expect(transicaoDeHomologacao('AGUARDANDO_RETESTE', 'APROVAR', ok)).toEqual({
+      novoEstado: 'APROVADA',
+    })
+    expect(transicaoDeHomologacao('AGUARDANDO_RETESTE', 'SOLICITAR_CORRECAO', ok)).toEqual({
+      novoEstado: 'CORRECAO_SOLICITADA',
+    })
+    expect(transicaoDeHomologacao('AGUARDANDO_RETESTE', 'COMENTAR', ok)).toEqual({
+      novoEstado: 'AGUARDANDO_RETESTE',
+    })
   })
 })

@@ -120,4 +120,24 @@ describe('autorizar', () => {
     expect(autorizar(testador, 'homologacao.disponibilizar', { clienteId: 'acme' })).toBe(false)
     expect(ACOES_COM_CLIENTE_OBRIGATORIO).toContain('homologacao.disponibilizar')
   })
+
+  test('autorizar: homologacao.triar só para ADMIN; APROVADOR e TESTADOR com ou sem cliente → false; sem clienteId continua true para ADMIN', () => {
+    const admin: Sujeito = { usuarioId: 'u-admin', papeis: [{ papel: 'ADMIN', clienteId: null }] }
+    const aprovador: Sujeito = {
+      usuarioId: 'u-aprovador',
+      papeis: [{ papel: 'APROVADOR', clienteId: 'acme' }],
+    }
+    const testador: Sujeito = {
+      usuarioId: 'u-testador',
+      papeis: [{ papel: 'TESTADOR', clienteId: null }],
+    }
+    expect(autorizar(admin, 'homologacao.triar')).toBe(true)
+    expect(autorizar(admin, 'homologacao.triar', { clienteId: 'acme' })).toBe(true)
+    for (const s of [aprovador, testador]) {
+      expect(autorizar(s, 'homologacao.triar')).toBe(false)
+      expect(autorizar(s, 'homologacao.triar', { clienteId: 'acme' })).toBe(false)
+    }
+    expect(TODAS_AS_ACOES).toContain('homologacao.triar')
+    expect(ACOES_COM_CLIENTE_OBRIGATORIO).not.toContain('homologacao.triar')
+  })
 })

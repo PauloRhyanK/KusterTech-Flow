@@ -3,7 +3,7 @@
 import { useActionState, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import type { AcaoDeHomologacao } from '@/modules/homologacao/model'
+import type { AcaoDeRegistro } from '@/modules/homologacao/model'
 import { registrarAcaoDeHomologacaoAction } from '../acoes-de-homologacao'
 import { MensagensDeEstado } from './mensagens-de-estado'
 
@@ -19,7 +19,7 @@ export interface AcoesDeHomologacaoProps {
   itemId: string
   ultimoEventoId: string | null
   versao: { id: string; rotulo: string } | null
-  acoes: readonly AcaoDeHomologacao[]
+  acoes: readonly AcaoDeRegistro[]
   recusa: string | null
   podeEscolherVisibilidade: boolean
   hrefDeRetorno?: string | null
@@ -28,14 +28,14 @@ export interface AcoesDeHomologacaoProps {
 const CLASSE_CAMPO =
   'w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 
-const ROTULO_DO_BOTAO: Record<AcaoDeHomologacao, string> = {
+const ROTULO_DO_BOTAO: Record<AcaoDeRegistro, string> = {
   APROVAR: 'Testado e aprovado',
   SOLICITAR_CORRECAO: 'Solicitar correção',
   COMENTAR: 'Comentário',
   DISPONIBILIZAR: 'Disponibilizar ao cliente',
 }
 
-const ORDEM_DOS_BOTOES: readonly AcaoDeHomologacao[] = [
+const ORDEM_DOS_BOTOES: readonly AcaoDeRegistro[] = [
   'APROVAR',
   'SOLICITAR_CORRECAO',
   'COMENTAR',
@@ -47,7 +47,7 @@ const MINIMO_DA_CORRECAO = 10
 export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
   const { acoes, recusa, versao } = props
   const [estado, enviar, pendente] = useActionState(registrarAcaoDeHomologacaoAction, {})
-  const [aberta, setAberta] = useState<AcaoDeHomologacao | null>(null)
+  const [aberta, setAberta] = useState<AcaoDeRegistro | null>(null)
   const [revisando, setRevisando] = useState(false)
   const [texto, setTexto] = useState('')
   const [erroLocal, setErroLocal] = useState<string | null>(null)
@@ -68,7 +68,7 @@ export function AcoesDeHomologacao(props: AcoesDeHomologacaoProps) {
   const rotuloDaVersao = versao?.rotulo ?? 'não identificada'
   const contexto = `na issue #${props.issueNumero} (${props.repositorio}) para ${props.clienteNome}, na milestone ${props.milestoneTitulo}, versão ${rotuloDaVersao}`
 
-  function alternar(acao: AcaoDeHomologacao) {
+  function alternar(acao: AcaoDeRegistro) {
     setAberta((atual) => (atual === acao ? null : acao))
     setRevisando(false)
     setTexto('')

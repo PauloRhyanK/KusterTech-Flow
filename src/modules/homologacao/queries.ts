@@ -16,7 +16,7 @@ import type { Contexto } from '@/modules/projetos/model'
 import { obterProjeto } from '@/modules/projetos/service'
 import {
   ACAO_PARA_PERMISSAO,
-  type AcaoDeHomologacao,
+  type AcaoDeRegistro,
   apresentarEstadoDoItem,
   classificarNaFila,
   type EstadoItemHomologacao,
@@ -51,13 +51,13 @@ export interface HomologacaoDaIssue {
     versaoAvaliada: { id: string; rotulo: string } | null
   } | null
   eventos: EventoDaTimeline[]
-  acoes: { acao: AcaoDeHomologacao; disponivel: true }[]
+  acoes: { acao: AcaoDeRegistro; disponivel: true }[]
   recusa: string | null
   podeEscolherVisibilidade: boolean
 }
 
 // Ordem fixa das ações na resposta.
-const ORDEM_DAS_ACOES: readonly AcaoDeHomologacao[] = [
+const ORDEM_DAS_ACOES: readonly AcaoDeRegistro[] = [
   'DISPONIBILIZAR',
   'APROVAR',
   'SOLICITAR_CORRECAO',
