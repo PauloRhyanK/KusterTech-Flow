@@ -38,6 +38,12 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
     listarChecks: guardar(base.listarChecks),
     listarDeployments: guardar(base.listarDeployments),
     compararCommits: guardar(base.compararCommits),
+    reabrirIssue: async () => {
+      throw new Error('não usado')
+    },
+    criarIssue: async () => {
+      throw new Error('não usado')
+    },
   }
 }
 

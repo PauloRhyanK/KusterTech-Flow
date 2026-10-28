@@ -7,12 +7,13 @@ import { log } from '@/lib/log'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 describe('tarefas do worker', () => {
-  test('TAREFAS_DO_CICLO termina com atualizar-fila-de-homologacao, depois de calcular-presencas', () => {
+  test('TAREFAS_DO_CICLO termina com executar-tarefas-github, depois de atualizar-fila-de-homologacao', () => {
     expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
       'reconciliar-github',
       'sincronizar-deployments',
       'calcular-presencas',
       'atualizar-fila-de-homologacao',
+      'executar-tarefas-github',
     ])
   })
 

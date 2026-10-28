@@ -74,6 +74,13 @@ export interface FonteGitHub {
   /** Deployments com `created_at >= desde`, cada um com o status mais recente. */
   listarDeployments(repo: RefRepositorio, desde: Date | null): Promise<DeploymentDaFonte[]>
   compararCommits(repo: RefRepositorio, base: string, cabeca: string): Promise<ComparacaoDaFonte>
+  /** Idempotente: reabrir uma issue já aberta devolve a issue. */
+  reabrirIssue(repo: RefRepositorio, numero: number): Promise<IssueDaFonte>
+  /** Não idempotente: quem chama não pode repetir depois de um resultado incerto. */
+  criarIssue(
+    repo: RefRepositorio,
+    issue: { titulo: string; corpo: string },
+  ): Promise<{ numero: number; githubId: bigint; urlHtml: string }>
 }
 
 const data = z.string().transform((s, ctx) => {
@@ -109,6 +116,21 @@ const esquemaIssue = z.object({
   closed_at: data.nullish(),
   pull_request: z.unknown().optional(),
 })
+
+const esquemaIssueCriada = z.object({
+  id: z.number().int(),
+  number: z.number().int(),
+  html_url: z.string().min(1),
+})
+
+export function mapearIssueCriada(bruto: unknown): {
+  numero: number
+  githubId: bigint
+  urlHtml: string
+} {
+  const i = validar(esquemaIssueCriada, bruto)
+  return { numero: i.number, githubId: BigInt(i.id), urlHtml: i.html_url }
+}
 
 const esquemaPullRequest = z.object({
   id: z.number().int(),
