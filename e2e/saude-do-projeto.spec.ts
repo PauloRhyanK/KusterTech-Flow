@@ -76,7 +76,8 @@ test('projeto com recurso associado e sem alertas: aba Recursos lista o recurso 
     'href',
     `/projetos/${projeto.id}/saude`,
   )
-  await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
+  // O Resumo tem o checklist de configuração ("Concluído" em sucesso); a saúde não pode ter.
+  await expect(secao.locator('[data-tom="sucesso"]')).toHaveCount(0)
 })
 
 test('alerta do recurso aparece na aba Saúde e Erros e no Resumo como "1 alerta não resolvido"; o link aponta para /infraestrutura/alertas/<id do banco>', async ({
