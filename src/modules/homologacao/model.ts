@@ -149,11 +149,14 @@ export interface CapacidadesNoCliente {
   disponibilizar: boolean
   aprovar: boolean
   solicitarCorrecao: boolean
+  triar?: boolean
 }
 
+// `correcaoATriar`: o item tem solicitação ABERTA sem tarefa pendente no GitHub (base §3.8, item 10).
 export function classificarNaFila(
   estado: EstadoItemHomologacao,
   c: CapacidadesNoCliente,
+  correcaoATriar = false,
 ): Exclude<FiltroDaFila, 'todos'> {
   switch (estado) {
     case 'AGUARDANDO_DISPONIBILIZACAO':
@@ -164,7 +167,50 @@ export function classificarNaFila(
     case 'APROVADA':
       return 'aprovados'
     case 'CORRECAO_SOLICITADA':
-      return 'aguardando-outros'
+      return c.triar === true && correcaoATriar ? 'requer-minha-acao' : 'aguardando-outros'
+  }
+}
+
+export interface TarefaDaCorrecao {
+  tipo: 'REABRIR_ISSUE' | 'CRIAR_ISSUE'
+  estado: 'PENDENTE' | 'CONCLUIDA' | 'FALHOU'
+  falhaMotivo: string | null
+}
+
+// Nunca `sucesso`: uma correção em andamento não é resultado verde (invariante 9).
+export function situacaoDaCorrecao(s: {
+  estado: EstadoSolicitacaoCorrecao
+  tarefa: TarefaDaCorrecao | null
+  numeroAlvo: number | null
+}): { texto: string; tom: TomDeEstado } {
+  const alvo = s.numeroAlvo === null ? '' : ` #${s.numeroAlvo}`
+  switch (s.estado) {
+    case 'ABERTA': {
+      if (s.tarefa?.estado === 'PENDENTE') {
+        return {
+          texto:
+            s.tarefa.tipo === 'REABRIR_ISSUE'
+              ? 'Reabertura no GitHub pendente'
+              : 'Criação da issue de correção pendente',
+          tom: 'informacao',
+        }
+      }
+      if (s.tarefa?.estado === 'FALHOU') {
+        return {
+          texto: `Falha no GitHub: ${s.tarefa.falhaMotivo ?? 'motivo não informado.'}`,
+          tom: 'erro',
+        }
+      }
+      return { texto: 'Aguardando triagem', tom: 'atencao' }
+    }
+    case 'REABERTA_NO_GITHUB':
+      return { texto: `Issue${alvo} reaberta no GitHub`, tom: 'informacao' }
+    case 'CORRECAO_CRIADA':
+      return { texto: `Correção${alvo} criada no GitHub`, tom: 'informacao' }
+    case 'RESPONDIDA_SEM_TAREFA':
+      return { texto: 'Respondida sem tarefa', tom: 'neutro' }
+    case 'RESOLVIDA':
+      return { texto: 'Correção disponível em QA', tom: 'informacao' }
   }
 }
 
@@ -487,3 +533,9 @@ export function destinoDaFalhaDaTarefa(
   }
   return { estado: 'FALHOU', motivo: mensagemDeFalha(categoria) }
 }
+
+// Limites e mensagens da triagem: a action confere o formato; o service, o mesmo limite.
+export const MENSAGEM_TITULO = 'Informe um título de até 200 caracteres.'
+export const MENSAGEM_CORPO = 'A descrição pode ter até 5.000 caracteres.'
+export const MENSAGEM_JUSTIFICATIVA = 'Explique o motivo em pelo menos 10 caracteres.'
+export const MENSAGEM_RESPOSTA = 'Escreva a resposta (até 2.000 caracteres).'

@@ -24,6 +24,7 @@ import {
   type FiltrosDaFila,
   hrefDaFila,
   resumoDaHomologacao,
+  situacaoDaCorrecao,
   tituloDoEvento,
   transicaoDeHomologacao,
 } from './model'
@@ -410,6 +411,10 @@ export async function listarFilaDoProjeto(
       estado: true,
       atualizadoEm: true,
       versaoAvaliada: { select: { rotulo: true } },
+      solicitacoes: {
+        where: { estado: 'ABERTA' },
+        select: { tarefasGitHub: { where: { estado: 'PENDENTE' }, select: { id: true } } },
+      },
       issue: {
         select: {
           id: true,
@@ -458,6 +463,7 @@ export async function listarFilaDoProjeto(
         disponibilizar: autorizar(sujeito, 'homologacao.disponibilizar', { clienteId }),
         aprovar: autorizar(sujeito, 'homologacao.aprovar', { clienteId }),
         solicitarCorrecao: autorizar(sujeito, 'homologacao.solicitar_correcao', { clienteId }),
+        triar: autorizar(sujeito, 'homologacao.triar', { clienteId }),
       }
       capacidades.set(clienteId, c)
     }
@@ -470,7 +476,12 @@ export async function listarFilaDoProjeto(
     .filter((r) => !filtros.milestoneId || r.homologacao.milestone.id === filtros.milestoneId)
     .map((r) => ({
       r,
-      classe: classificarNaFila(r.estado, capacidadesDe(r.homologacao.cliente.id)),
+      // Solicitação ABERTA sem tarefa pendente = correção a triar (base §3.8, item 7).
+      classe: classificarNaFila(
+        r.estado,
+        capacidadesDe(r.homologacao.cliente.id),
+        r.solicitacoes.some((s) => s.tarefasGitHub.length === 0),
+      ),
     }))
   const contagens: Record<FiltroDaFila, number> = {
     'requer-minha-acao': 0,
@@ -915,4 +926,137 @@ export async function pendenciasDoProjeto(
           milestoneId: i.milestoneId,
         }),
   )
+}
+
+export interface CorrecaoNaTela {
+  id: string
+  eventoId: string
+  criadaEm: Date
+  situacao: { texto: string; tom: TomDeEstado }
+  foraDoEscopo: boolean
+  justificativa: string | null
+  issueAlvo: { numero: number; titulo: string; urlHtml: string; href: string } | null
+  tarefa: {
+    tipo: 'REABRIR_ISSUE' | 'CRIAR_ISSUE'
+    estado: 'PENDENTE' | 'CONCLUIDA' | 'FALHOU'
+    falhaMotivo: string | null
+    concluidaEm: Date | null
+  } | null
+  triavel: boolean
+  reabrivel: boolean
+  reclassificavel: boolean
+  repositorioPublico: boolean
+  issueOriginal: { numero: number; titulo: string }
+}
+
+// Blocos "Correção" da timeline da issue no contexto do cliente (5b.3). A triagem só é
+// oferecida a quem tem `homologacao.triar`; os demais veem a situação.
+export async function obterCorrecoesDaIssue(
+  sujeito: Sujeito,
+  clienteId: string,
+  projetoId: string,
+  issueId: string,
+  milestoneId: string | null = null,
+): Promise<{
+  itemId: string | null
+  correcoes: CorrecaoNaTela[]
+  podeTriar: boolean
+  integracaoConfigurada: boolean
+}> {
+  exigirPermissao(sujeito, 'projetos.ler', { clienteId })
+  const podeTriar = autorizar(sujeito, 'homologacao.triar')
+
+  const itens = await db.homologacaoItem.findMany({
+    where: {
+      issueId,
+      homologacao: {
+        clienteId,
+        ...(milestoneId ? { milestoneId } : {}),
+        milestone: { projetoId, arquivadaEm: null },
+      },
+    },
+    select: {
+      id: true,
+      estado: true,
+      homologacao: { select: { milestoneId: true } },
+      issue: {
+        select: {
+          id: true,
+          numero: true,
+          titulo: true,
+          estado: true,
+          urlHtml: true,
+          repositorio: { select: { privado: true } },
+        },
+      },
+      solicitacoes: {
+        orderBy: { criadoEm: 'asc' },
+        select: {
+          id: true,
+          eventoId: true,
+          estado: true,
+          foraDoEscopo: true,
+          justificativa: true,
+          criadoEm: true,
+          issueCorrecao: { select: { id: true, numero: true, titulo: true, urlHtml: true } },
+          tarefasGitHub: {
+            orderBy: { criadaEm: 'desc' },
+            take: 1,
+            select: { tipo: true, estado: true, falhaMotivo: true, concluidaEm: true },
+          },
+        },
+      },
+    },
+  })
+
+  const integracao = await db.integracaoGitHub.findUnique({
+    where: { id: 'github' },
+    select: { configurada: true },
+  })
+  const integracaoConfigurada = integracao?.configurada === true
+
+  const correcoes: CorrecaoNaTela[] = []
+  for (const item of itens) {
+    const hrefDa = (id: string) =>
+      hrefDaIssueNoCliente(clienteId, projetoId, id, item.homologacao.milestoneId)
+    for (const s of item.solicitacoes) {
+      const tarefa = s.tarefasGitHub[0] ?? null
+      const alvo = s.issueCorrecao ?? (s.estado === 'RESPONDIDA_SEM_TAREFA' ? null : item.issue)
+      const issueAlvo =
+        alvo && s.estado !== 'ABERTA'
+          ? {
+              numero: alvo.numero,
+              titulo: alvo.titulo,
+              urlHtml: alvo.urlHtml,
+              href: hrefDa(alvo.id),
+            }
+          : null
+      correcoes.push({
+        id: s.id,
+        eventoId: s.eventoId,
+        criadaEm: s.criadoEm,
+        situacao: situacaoDaCorrecao({
+          estado: s.estado,
+          tarefa,
+          numeroAlvo: issueAlvo?.numero ?? null,
+        }),
+        foraDoEscopo: s.foraDoEscopo,
+        justificativa: s.justificativa,
+        issueAlvo,
+        tarefa,
+        triavel: podeTriar && s.estado === 'ABERTA' && tarefa?.estado !== 'PENDENTE',
+        reabrivel: item.issue.estado === 'FECHADA',
+        reclassificavel: podeTriar && s.estado !== 'RESOLVIDA' && !s.foraDoEscopo,
+        repositorioPublico: !item.issue.repositorio.privado,
+        issueOriginal: { numero: item.issue.numero, titulo: item.issue.titulo },
+      })
+    }
+  }
+
+  return {
+    itemId: itens.length === 1 ? itens[0]!.id : null,
+    correcoes,
+    podeTriar,
+    integracaoConfigurada,
+  }
 }

@@ -13,6 +13,8 @@ export interface EventoDaTimeline {
   visibilidade: 'interna' | 'compartilhavel'
   texto: string | null
   estado?: { texto: string; tom: TomDeEstado }
+  // Bloco extra sob o texto do evento (por exemplo, a triagem da correção).
+  anexo?: ReactNode
 }
 
 export interface TimelineProps {
@@ -71,6 +73,7 @@ function EventoDaLinha({ evento }: { evento: EventoDaTimeline }) {
       {evento.texto && (
         <p className="whitespace-pre-wrap break-words text-sm text-text-primary">{evento.texto}</p>
       )}
+      {evento.anexo}
     </li>
   )
 }

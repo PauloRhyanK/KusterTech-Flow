@@ -3,6 +3,10 @@ import { describe, expect, test, vi } from 'vitest'
 import type { HomologacaoDaIssue, HomologacaoDaIssueDoCliente } from '@/modules/homologacao/queries'
 
 vi.mock('../acoes-de-homologacao', () => ({ registrarAcaoDeHomologacaoAction: vi.fn() }))
+vi.mock('../acoes-de-triagem', () => ({
+  triarSolicitacaoAction: vi.fn(),
+  reclassificarSolicitacaoAction: vi.fn(),
+}))
 
 import { HomologacaoDaIssueNoCliente, HomologacaoDaIssuePorCliente } from './homologacao-da-issue'
 
@@ -110,6 +114,57 @@ describe('HomologacaoDaIssueNoCliente', () => {
     expect(screen.getByText('Pendente de teste')).toBeInTheDocument()
     expect(screen.getByText('Nenhum evento registrado.')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Ações de homologação' })).toBeInTheDocument()
+  })
+})
+
+describe('bloco de correção na timeline', () => {
+  const evento = {
+    id: '66666666-6666-4666-8666-666666666666',
+    titulo: 'Correção solicitada',
+    origem: 'humano' as const,
+    autor: 'Maria',
+    quando: new Date('2026-10-26T12:00:00Z'),
+    versao: null,
+    visibilidade: 'compartilhavel' as const,
+    texto: 'O botão não salva.',
+  }
+  const correcao = {
+    id: '33333333-3333-4333-8333-333333333333',
+    eventoId: evento.id,
+    criadaEm: evento.quando,
+    situacao: { texto: 'Aguardando triagem', tom: 'atencao' as const },
+    foraDoEscopo: false,
+    justificativa: null,
+    issueAlvo: null,
+    tarefa: null,
+    triavel: true,
+    reabrivel: true,
+    reclassificavel: true,
+    repositorioPublico: true,
+    issueOriginal: { numero: 1, titulo: 'Item 1' },
+  }
+
+  function comCorrecao(podeTriar: boolean) {
+    return render(
+      <HomologacaoDaIssueNoCliente
+        dados={dados({ eventos: [evento] })}
+        hrefDeRetorno={null}
+        projetoId={projetoId}
+        issue={issue}
+        hrefDaMilestone={(id) => `/issue?milestone=${id}`}
+        correcoes={{ lista: [correcao], podeTriar, integracaoConfigurada: true }}
+      />,
+    )
+  }
+
+  test('a solicitação ganha o bloco "Correção"; só quem pode triar vê a decisão', () => {
+    const { unmount } = comCorrecao(true)
+    expect(screen.getByRole('heading', { name: 'Correção' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Decisão da triagem' })).toBeInTheDocument()
+    unmount()
+    comCorrecao(false)
+    expect(screen.getByText('Aguardando triagem')).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Decisão da triagem' })).toBeNull()
   })
 })
 
