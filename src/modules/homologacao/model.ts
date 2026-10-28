@@ -218,7 +218,7 @@ const APRESENTACAO: Record<EstadoItemHomologacao, { texto: string; tom: TomDeEst
   AGUARDANDO_DISPONIBILIZACAO: { texto: 'Aguardando disponibilização', tom: 'neutro' },
   PENDENTE_DE_TESTE: { texto: 'Pendente de teste', tom: 'informacao' },
   CORRECAO_SOLICITADA: { texto: 'Correção solicitada', tom: 'atencao' },
-  AGUARDANDO_RETESTE: { texto: 'Aguardando reteste', tom: 'informacao' },
+  AGUARDANDO_RETESTE: { texto: 'Aguardando reteste', tom: 'atencao' },
   APROVADA: { texto: 'Aprovada', tom: 'sucesso' },
 }
 
@@ -539,3 +539,37 @@ export const MENSAGEM_TITULO = 'Informe um título de até 200 caracteres.'
 export const MENSAGEM_CORPO = 'A descrição pode ter até 5.000 caracteres.'
 export const MENSAGEM_JUSTIFICATIVA = 'Explique o motivo em pelo menos 10 caracteres.'
 export const MENSAGEM_RESPOSTA = 'Escreva a resposta (até 2.000 caracteres).'
+
+export interface RodadaDeEventos<E> {
+  versaoId: string | null
+  atual: boolean
+  eventos: E[]
+}
+
+// Rodadas da timeline (D44): uma só lista de eventos, agrupada na apresentação pela versão avaliada.
+// Evento sem versão fica com o evento anterior; a rodada atual é a da versão avaliada do item.
+export function agruparRodadas<E extends { id: string; versaoId: string | null; criadoEm: Date }>(
+  eventos: readonly E[],
+  versaoAtualId: string | null,
+): RodadaDeEventos<E>[] {
+  const ordenados = [...eventos].sort(
+    (a, b) => a.criadoEm.getTime() - b.criadoEm.getTime() || (a.id < b.id ? -1 : 1),
+  )
+  const rodadas: Omit<RodadaDeEventos<E>, 'atual'>[] = []
+  let corrente: Omit<RodadaDeEventos<E>, 'atual'> | undefined
+  for (const evento of ordenados) {
+    if (evento.versaoId === null && corrente) {
+      corrente.eventos.push(evento)
+      continue
+    }
+    corrente = rodadas.find((r) => r.versaoId === evento.versaoId)
+    if (!corrente) {
+      corrente = { versaoId: evento.versaoId, eventos: [] }
+      rodadas.push(corrente)
+    }
+    corrente.eventos.push(evento)
+  }
+  const indiceAtual = rodadas.findIndex((r) => r.versaoId !== null && r.versaoId === versaoAtualId)
+  const atual = indiceAtual >= 0 ? indiceAtual : rodadas.length - 1
+  return rodadas.map((r, i) => ({ ...r, atual: i === atual }))
+}

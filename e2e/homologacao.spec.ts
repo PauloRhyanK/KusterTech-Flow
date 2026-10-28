@@ -52,7 +52,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
-test('admin disponibiliza repoUm #2 para Acme; timeline mostra "Disponibilizada ao cliente" no grupo "Versão atual em QA · E2E qa-1"; item de Beta segue AGUARDANDO_DISPONIBILIZACAO no banco', async ({
+test('admin disponibiliza repoUm #2 para Acme; timeline mostra "Disponibilizada ao cliente" no grupo "Versão atual em QA: E2E qa-1"; item de Beta segue AGUARDANDO_DISPONIBILIZACAO no banco', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -74,7 +74,7 @@ test('admin disponibiliza repoUm #2 para Acme; timeline mostra "Disponibilizada 
   await expect(
     page.getByRole('status').filter({ hasText: `Issue disponibilizada para ${c.acme.nome}.` }),
   ).toBeVisible()
-  const grupo = page.locator('details[open]').filter({ hasText: 'Versão atual em QA · E2E qa-1' })
+  const grupo = page.locator('details[open]').filter({ hasText: 'Versão atual em QA: E2E qa-1' })
   await expect(grupo).toContainText('Disponibilizada ao cliente')
   await expect(grupo).toContainText('Entrou na fila de homologação')
 

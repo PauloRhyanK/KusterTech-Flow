@@ -3,14 +3,16 @@ import { buttonVariants } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
-import { Timeline } from '@/lib/ui/timeline'
 import { apresentarEstadoDoItem } from '@/modules/homologacao/model'
 import type {
   CorrecaoNaTela,
   HomologacaoDaIssue,
   HomologacaoDaIssueDoCliente,
+  SituacaoDoReteste,
 } from '@/modules/homologacao/queries'
 import { AcoesDeHomologacao } from './acoes-de-homologacao'
+import { ConfirmacaoDeReteste } from './confirmacao-de-reteste'
+import { RodadasDaTimeline } from './rodadas-da-timeline'
 import { BlocoDaCorrecao } from './situacao-da-correcao'
 
 export interface HomologacaoDaIssueNoClienteProps {
@@ -24,6 +26,8 @@ export interface HomologacaoDaIssueNoClienteProps {
     podeTriar: boolean
     integracaoConfigurada: boolean
   }
+  // Só o admin recebe; o motivo e as versões da confirmação manual do reteste (5b.4).
+  reteste?: SituacaoDoReteste
 }
 
 function VoltarParaAFila({ href }: { href: string }) {
@@ -59,6 +63,7 @@ function Conteudo({
   hrefDaMilestone,
   hrefDeRetorno,
   correcoes,
+  reteste,
 }: HomologacaoDaIssueNoClienteProps) {
   switch (dados.situacao) {
     case 'sem-ambiente-qa':
@@ -138,12 +143,22 @@ function Conteudo({
       return (
         <div className="space-y-4">
           <BadgeDeEstado tom={estado.tom}>{estado.texto}</BadgeDeEstado>
-          <Timeline
+          <RodadasDaTimeline
             rotulo="Histórico de homologação"
             eventos={eventos}
-            versaoCorrenteId={dados.versaoCorrente?.id ?? null}
+            versaoAtualId={item.versaoAvaliada?.id ?? null}
             vazio="Nenhum evento registrado."
           />
+          {reteste?.disponivel && (
+            <ConfirmacaoDeReteste
+              projetoId={projetoId}
+              clienteId={dados.cliente.id}
+              itemId={item.id}
+              ofertar={item.estado === 'CORRECAO_SOLICITADA'}
+              motivo={reteste.motivo}
+              versoesEmQa={reteste.versoesEmQa}
+            />
+          )}
           {dados.acoes.length > 0 && (
             <AcoesDeHomologacao
               projetoId={projetoId}

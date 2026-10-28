@@ -130,6 +130,20 @@ describe('FilaDeHomologacao', () => {
     expect(screen.queryByRole('link', { name: 'Configurar ambientes' })).toBeNull()
   })
 
+  test('item aguardando reteste diz a versão: "Aguardando reteste na versão v2"', () => {
+    renderizar(
+      fila({
+        grupos: [
+          {
+            milestone: { id: 'm-1', titulo: 'Release 1' },
+            itens: [item({ estado: 'AGUARDANDO_RETESTE', versaoRotulo: 'v2' })],
+          },
+        ],
+      }),
+    )
+    expect(screen.getByText('Aguardando reteste na versão v2')).toBeVisible()
+  })
+
   test('filtro vazio mostra o texto do filtro', () => {
     renderizar(fila({ grupos: [] }))
     expect(screen.getByText('Nada requer sua ação agora.')).toBeVisible()

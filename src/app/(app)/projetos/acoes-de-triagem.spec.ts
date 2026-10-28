@@ -4,17 +4,25 @@ import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import type { SessaoAtual } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 
-const { redirectMock, revalidatePathMock, logErrorMock, obterSessaoMock, triarMock, reclassMock } =
-  vi.hoisted(() => ({
-    redirectMock: vi.fn((url: string) => {
-      throw new Error(`NEXT_REDIRECT:${url}`)
-    }),
-    revalidatePathMock: vi.fn(),
-    logErrorMock: vi.fn(),
-    obterSessaoMock: vi.fn<() => Promise<SessaoAtual | null>>(),
-    triarMock: vi.fn(),
-    reclassMock: vi.fn(),
-  }))
+const {
+  redirectMock,
+  revalidatePathMock,
+  logErrorMock,
+  obterSessaoMock,
+  triarMock,
+  reclassMock,
+  confirmarMock,
+} = vi.hoisted(() => ({
+  redirectMock: vi.fn((url: string) => {
+    throw new Error(`NEXT_REDIRECT:${url}`)
+  }),
+  revalidatePathMock: vi.fn(),
+  logErrorMock: vi.fn(),
+  obterSessaoMock: vi.fn<() => Promise<SessaoAtual | null>>(),
+  triarMock: vi.fn(),
+  reclassMock: vi.fn(),
+  confirmarMock: vi.fn(),
+}))
 
 vi.mock('next/navigation', () => ({ redirect: redirectMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
@@ -23,9 +31,14 @@ vi.mock('@/lib/auth/sessao', () => ({ obterSessao: obterSessaoMock }))
 vi.mock('@/modules/homologacao/service', () => ({
   triarSolicitacao: triarMock,
   reclassificarSolicitacao: reclassMock,
+  confirmarReteste: confirmarMock,
 }))
 
-import { reclassificarSolicitacaoAction, triarSolicitacaoAction } from './acoes-de-triagem'
+import {
+  confirmarRetesteAction,
+  reclassificarSolicitacaoAction,
+  triarSolicitacaoAction,
+} from './acoes-de-triagem'
 
 const sujeito: Sujeito = { usuarioId: randomUUID(), papeis: [{ papel: 'ADMIN', clienteId: null }] }
 const sessao: SessaoAtual = {
@@ -186,5 +199,71 @@ describe('reclassificarSolicitacaoAction', () => {
     expect(
       await reclassificarSolicitacaoAction({}, formulario({ justificativa: 'Motivo suficiente' })),
     ).toEqual({ erro: 'Sem permissão para fazer a triagem de correções.' })
+  })
+})
+
+describe('confirmarRetesteAction', () => {
+  const entrada = {
+    itemId: randomUUID(),
+    versaoId: randomUUID(),
+    justificativa: 'Conferi a correção em QA.',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    obterSessaoMock.mockResolvedValue(sessao)
+    confirmarMock.mockResolvedValue(undefined)
+  })
+
+  test('sessão nula redireciona para /entrar sem chamar o service', async () => {
+    obterSessaoMock.mockResolvedValue(null)
+    await expect(confirmarRetesteAction({}, formulario(entrada))).rejects.toThrow(
+      'NEXT_REDIRECT:/entrar',
+    )
+    expect(confirmarMock).not.toHaveBeenCalled()
+  })
+
+  test('sucesso chama o service com os ids e a justificativa aparada, e revalida', async () => {
+    const form = formulario({ ...entrada, justificativa: `  ${entrada.justificativa}  ` })
+    const estado = await confirmarRetesteAction({}, form)
+
+    expect(estado).toEqual({ sucesso: 'Reteste confirmado manualmente.' })
+    expect(confirmarMock).toHaveBeenCalledWith(sujeito, {
+      clienteId: form.get('clienteId'),
+      itemId: entrada.itemId,
+      versaoId: entrada.versaoId,
+      justificativa: entrada.justificativa,
+    })
+    expect(revalidatePathMock).toHaveBeenCalled()
+  })
+
+  test('justificativa curta e ids inválidos → mensagem do plano sem chamar o service', async () => {
+    expect(
+      await confirmarRetesteAction({}, formulario({ ...entrada, justificativa: 'curta' })),
+    ).toEqual({
+      erro: 'Explique o motivo em pelo menos 10 caracteres.',
+    })
+    expect(await confirmarRetesteAction({}, formulario({ ...entrada, itemId: 'x' }))).toEqual({
+      erro: 'Dados inválidos.',
+    })
+    expect(confirmarMock).not.toHaveBeenCalled()
+  })
+
+  test('ErroDeAutorizacao → mensagem fixa; ErroDeDominio → a própria mensagem; inesperado → genérica e sem detalhe no log', async () => {
+    confirmarMock.mockRejectedValueOnce(new ErroDeAutorizacao('homologacao.triar'))
+    expect(await confirmarRetesteAction({}, formulario(entrada))).toEqual({
+      erro: 'Sem permissão para fazer a triagem de correções.',
+    })
+    confirmarMock.mockRejectedValueOnce(
+      new ErroDeDominio('Faça a triagem da correção antes de confirmar o reteste.'),
+    )
+    expect(await confirmarRetesteAction({}, formulario(entrada))).toEqual({
+      erro: 'Faça a triagem da correção antes de confirmar o reteste.',
+    })
+    confirmarMock.mockRejectedValueOnce(new Error('senha=segredo-do-banco'))
+    expect(await confirmarRetesteAction({}, formulario(entrada))).toEqual({
+      erro: 'Não foi possível completar a operação agora. Tente novamente em instantes.',
+    })
+    expect(JSON.stringify(logErrorMock.mock.calls)).not.toContain('segredo-do-banco')
   })
 })

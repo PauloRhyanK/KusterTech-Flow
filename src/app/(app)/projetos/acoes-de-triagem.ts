@@ -14,7 +14,11 @@ import {
   MENSAGEM_RESPOSTA,
   MENSAGEM_TITULO,
 } from '@/modules/homologacao/model'
-import { reclassificarSolicitacao, triarSolicitacao } from '@/modules/homologacao/service'
+import {
+  confirmarReteste,
+  reclassificarSolicitacao,
+  triarSolicitacao,
+} from '@/modules/homologacao/service'
 
 export interface EstadoDaTriagem {
   erro?: string
@@ -188,5 +192,43 @@ export async function reclassificarSolicitacaoAction(
     return { sucesso: 'Correção classificada como fora do escopo.' }
   } catch (erro) {
     return { erro: mensagemDoErro(erro, 'Erro inesperado ao reclassificar a correção.') }
+  }
+}
+
+const schemaDoReteste = z.object({
+  clienteId: ids.clienteId,
+  projetoId: ids.projetoId,
+  itemId: z.uuid({ error: DADOS_INVALIDOS }),
+  versaoId: z.uuid({ error: DADOS_INVALIDOS }),
+  justificativa,
+})
+
+export async function confirmarRetesteAction(
+  _anterior: EstadoDaTriagem,
+  formData: FormData,
+): Promise<EstadoDaTriagem> {
+  const sessao = await obterSessao()
+  if (!sessao) {
+    redirect('/entrar')
+  }
+
+  const parse = schemaDoReteste.safeParse({
+    clienteId: campo(formData, 'clienteId'),
+    projetoId: campo(formData, 'projetoId'),
+    itemId: campo(formData, 'itemId'),
+    versaoId: campo(formData, 'versaoId'),
+    justificativa: campo(formData, 'justificativa'),
+  })
+  if (!parse.success) {
+    return { erro: parse.error.issues[0]?.message ?? DADOS_INVALIDOS }
+  }
+  const { projetoId, ...dados } = parse.data
+
+  try {
+    await confirmarReteste(sessao.sujeito, dados)
+    revalidar(dados.clienteId, projetoId)
+    return { sucesso: 'Reteste confirmado manualmente.' }
+  } catch (erro) {
+    return { erro: mensagemDoErro(erro, 'Erro inesperado ao confirmar o reteste.') }
   }
 }
