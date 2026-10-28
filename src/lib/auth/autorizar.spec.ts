@@ -140,4 +140,26 @@ describe('autorizar', () => {
     expect(TODAS_AS_ACOES).toContain('homologacao.triar')
     expect(ACOES_COM_CLIENTE_OBRIGATORIO).not.toContain('homologacao.triar')
   })
+
+  test('infraestrutura.ler e infraestrutura.gerenciar: só ADMIN; APROVADOR e TESTADOR, escopados ou com clienteId null, recusados com e sem cliente', () => {
+    const aprovadorGlobal: Sujeito = {
+      usuarioId: 'u-aprovador-global',
+      papeis: [{ papel: 'APROVADOR', clienteId: null }],
+    }
+    expect(autorizar(admin, 'infraestrutura.ler')).toBe(true)
+    expect(autorizar(admin, 'infraestrutura.gerenciar')).toBe(true)
+    expect(autorizar(aprovadorAcme, 'infraestrutura.ler')).toBe(false)
+    expect(autorizar(testadorGlobal, 'infraestrutura.gerenciar')).toBe(false)
+    expect(autorizar(testadorGlobal, 'infraestrutura.ler', { clienteId: 'acme' })).toBe(false)
+    for (const s of [aprovadorAcme, aprovadorGlobal, testadorGlobal]) {
+      for (const acao of ['infraestrutura.ler', 'infraestrutura.gerenciar'] as const) {
+        expect(autorizar(s, acao)).toBe(false)
+        expect(autorizar(s, acao, { clienteId: 'acme' })).toBe(false)
+      }
+    }
+    for (const acao of ['infraestrutura.ler', 'infraestrutura.gerenciar'] as const) {
+      expect(TODAS_AS_ACOES).toContain(acao)
+      expect(ACOES_COM_CLIENTE_OBRIGATORIO).not.toContain(acao)
+    }
+  })
 })
