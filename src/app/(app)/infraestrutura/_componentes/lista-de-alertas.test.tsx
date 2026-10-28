@@ -44,6 +44,20 @@ describe('ListaDeAlertas', () => {
     expect(screen.getAllByText(/^Última: /)).toHaveLength(2)
   })
 
+  test('cada linha tem a âncora alerta-<id> que a Visão Geral usa para chegar ao mesmo registro da fila', () => {
+    render(
+      <ListaDeAlertas
+        rotulo="Fila de alertas"
+        alertas={[alerta, { ...alerta, id: 'a-2', titulo: 'CPU' }]}
+        vazio={<p>vazio</p>}
+      />,
+    )
+
+    const lista = screen.getByRole('list', { name: 'Fila de alertas' })
+    expect(lista.querySelector('#alerta-a-1')).toHaveTextContent('Disco quase cheio')
+    expect(lista.querySelector('#alerta-a-2')).toHaveTextContent('CPU')
+  })
+
   test('sem alertas mostra o estado vazio recebido', () => {
     render(<ListaDeAlertas rotulo="Alertas" alertas={[]} vazio={<p>Nada por aqui.</p>} />)
     expect(screen.getByText('Nada por aqui.')).toBeInTheDocument()

@@ -1040,3 +1040,211 @@ export async function obterAlertasPorChaveNoBanco(
     select: { id: true, ocorrencias: true },
   })
 }
+
+// Visão Geral (Incremento 7)
+
+const PREFIXO_DA_VISAO_GERAL = 'E2E Visão Geral'
+const PREFIXO_DE_EMAIL_DA_VISAO_GERAL = 'e2e+vg-'
+// Todo registro do cenário "espera desde" esta data, para ficar entre os 5 primeiros de cada grupo
+// apesar do que outros arquivos deixam no banco.
+const DESDE_DA_VISAO_GERAL = new Date('2000-01-01T00:00:00Z')
+
+export interface CenarioE2E {
+  projetoId: string
+  projetoNome: string
+  projetoQId: string
+  projetoQNome: string
+  clienteA: { id: string; nome: string }
+  clienteB: { id: string; nome: string }
+  milestoneId: string
+  issue1: { id: string; titulo: string }
+  repoUm: string
+  repoDois: string
+  versaoAlvo: { id: string; rotulo: string }
+  divergenciaId: string
+  alerta: { id: string; titulo: string }
+  testador: { email: string; senha: string }
+}
+
+// Cenário com uma pendência de cada tipo para o administrador e uma só (homologação do cliente A)
+// para o testador escopado. Pressupõe `limparCenarioDaVisaoGeral` no `beforeEach`.
+export async function criarCenarioDaVisaoGeral(projectName: string): Promise<CenarioE2E> {
+  const [repoUm, repoDois] = repositoriosDoProjetoE2E(projectName)
+  const tituloDaIssue = repoUm.endsWith('/site') ? 'Item 1 de site' : 'Item 1 de portal'
+
+  const clienteA = await criarClienteNoBanco(nomeDeTeste('Visão Geral Cliente A'))
+  const clienteB = await criarClienteNoBanco(nomeDeTeste('Visão Geral Cliente B'))
+  const projeto = await criarProjetoNoBanco(nomeDeTeste('Visão Geral Projeto P'), [
+    clienteA.id,
+    clienteB.id,
+  ])
+  const projetoQ = await criarProjetoNoBanco(nomeDeTeste('Visão Geral Projeto Q'))
+  for (const ambiente of ['DEV', 'QA', 'PROD'] as const) {
+    await db.ambiente.create({ data: { projetoId: projeto.id, tipo: ambiente } })
+  }
+  await vincularNoBanco(projeto.id, repoUm)
+  await vincularNoBanco(projeto.id, repoDois)
+  rodarWorkerUmaVez()
+
+  const issue1 = await obterIssueNoBanco(repoUm, 1)
+  const repositorioUm = await obterRepositorioNoBanco(repoUm)
+  const milestone = await criarMilestoneNoBanco(projeto.id, nomeDeTeste('Visão Geral Milestone'), [
+    clienteA.id,
+    clienteB.id,
+  ])
+  await vincularIssuesNoBanco(milestone.id, [issue1.id])
+
+  const homologacao = async (
+    clienteId: string,
+    estado: 'PENDENTE_DE_TESTE' | 'AGUARDANDO_RETESTE',
+  ) => {
+    const h = await db.homologacao.create({ data: { clienteId, milestoneId: milestone.id } })
+    await db.homologacaoItem.create({
+      data: { homologacaoId: h.id, issueId: issue1.id, estado, atualizadoEm: DESDE_DA_VISAO_GERAL },
+    })
+  }
+  await homologacao(clienteA.id, 'PENDENTE_DE_TESTE')
+  await homologacao(clienteB.id, 'AGUARDANDO_RETESTE')
+
+  const criarVersao = (rotulo: string) => {
+    const commitSha = randomBytes(20).toString('hex')
+    return db.versao.create({
+      data: { projetoId: projeto.id, repositorioId: repositorioUm.id, commitSha, rotulo },
+      select: { id: true, rotulo: true, commitSha: true },
+    })
+  }
+  const versaoAlvo = await criarVersao('E2E v1.4.0')
+  const versaoEmProd = await criarVersao('E2E v1.3.9')
+  await db.composicaoDePublicacao.create({
+    data: {
+      projetoId: projeto.id,
+      repositorioId: repositorioUm.id,
+      versaoAlvoId: versaoAlvo.id,
+      commitBase: randomBytes(20).toString('hex'),
+      commitAlvo: versaoAlvo.commitSha,
+      origemDaBase: 'SEM_BASE',
+      hashComposicao: `hash-e2e-${versaoAlvo.id}`,
+      estado: 'IDENTIFICADA',
+      itens: [],
+      calculadaEm: DESDE_DA_VISAO_GERAL,
+    },
+  })
+  const prod = await db.ambiente.findUniqueOrThrow({
+    where: { projetoId_tipo: { projetoId: projeto.id, tipo: 'PROD' } },
+    select: { id: true },
+  })
+  const agora = new Date()
+  const evidencia = await db.evidenciaDeploy.create({
+    data: {
+      ambienteId: prod.id,
+      versaoId: versaoEmProd.id,
+      origem: 'MANUAL',
+      situacao: 'SUCESSO',
+      ocorridaEm: agora,
+      registradaEm: agora,
+      autorId: process.env.E2E_ADMIN_ID ?? null,
+    },
+    select: { id: true },
+  })
+  const divergencia = await db.divergenciaDeDeploy.create({
+    data: {
+      evidenciaId: evidencia.id,
+      versaoId: versaoEmProd.id,
+      detectadaEm: DESDE_DA_VISAO_GERAL,
+    },
+    select: { id: true },
+  })
+
+  const tituloDoAlerta = nomeDeTeste('Visão Geral alerta')
+  const alertaId = crypto.randomUUID()
+  await db.alerta.create({
+    data: {
+      id: alertaId,
+      chaveDedupe: chaveDedupeManual(alertaId),
+      origem: 'MANUAL',
+      titulo: tituloDoAlerta,
+      severidade: 'CRITICA',
+      estado: 'ATIVO',
+      projetoId: projeto.id,
+      primeiraOcorrenciaEm: DESDE_DA_VISAO_GERAL,
+      ultimaOcorrenciaEm: agora,
+      ocorrencias: 3,
+    },
+  })
+  await db.eventoDeAlerta.create({ data: { alertaId, tipo: 'CRIADO' } })
+
+  await definirSituacaoDoRepositorio(repoDois, {
+    sincronizadoEm: DESDE_DA_VISAO_GERAL,
+    ultimaFalhaEm: agora,
+    ultimaFalhaMotivo: 'Não foi possível falar com o GitHub.',
+  })
+
+  const testador = {
+    email: `${PREFIXO_DE_EMAIL_DA_VISAO_GERAL}${projectName}-${Date.now()}@local.test`,
+    senha: randomBytes(24).toString('base64url'),
+  }
+  await criarUsuarioNoBanco({
+    email: testador.email,
+    nome: 'Testador Visão Geral',
+    senha: testador.senha,
+    papel: 'TESTADOR',
+    clienteId: clienteA.id,
+  })
+
+  return {
+    projetoId: projeto.id,
+    projetoNome: projeto.nome,
+    projetoQId: projetoQ.id,
+    projetoQNome: projetoQ.nome,
+    clienteA,
+    clienteB,
+    milestoneId: milestone.id,
+    issue1: { id: issue1.id, titulo: tituloDaIssue },
+    repoUm,
+    repoDois,
+    versaoAlvo: { id: versaoAlvo.id, rotulo: versaoAlvo.rotulo },
+    divergenciaId: divergencia.id,
+    alerta: { id: alertaId, titulo: tituloDoAlerta },
+    testador,
+  }
+}
+
+// Apaga o cenário na ordem das FKs. Composições, autorizações, divergências, evidências e versões
+// dos repositórios são estado compartilhado: a composição do cenário precisa ser a mais recente
+// do repositório, então saem todas.
+export async function limparCenarioDaVisaoGeral(projectName: string): Promise<void> {
+  const doCenario = { nome: { startsWith: PREFIXO_DA_VISAO_GERAL } }
+  const projetos = await db.projeto.findMany({
+    where: doCenario,
+    select: { id: true, repositorios: { select: { nomeCompleto: true } } },
+  })
+  const projetosIds = projetos.map((p) => p.id)
+  const repositorios = [
+    ...new Set([
+      ...repositoriosDoProjetoE2E(projectName),
+      ...projetos.flatMap((p) => p.repositorios.map((r) => r.nomeCompleto)),
+    ]),
+  ]
+
+  // Autorizações, composições, divergências, evidências, homologação, presenças e versões.
+  await limparImplantacaoDosRepositoriosNoBanco(repositorios)
+  const dosProjetos = { projetoId: { in: projetosIds } }
+  await db.milestoneIssue.deleteMany({ where: { milestone: dosProjetos } })
+  await db.milestoneCliente.deleteMany({ where: { milestone: dosProjetos } })
+  await db.milestone.deleteMany({ where: dosProjetos })
+  await db.evidenciaDeploy.deleteMany({ where: { ambiente: dosProjetos } })
+  await db.ambiente.deleteMany({ where: dosProjetos })
+  await db.alerta.deleteMany({
+    where: { OR: [{ titulo: { startsWith: PREFIXO_DA_VISAO_GERAL } }, dosProjetos] },
+  })
+  await liberarRepositoriosNoBanco(repositorios)
+
+  await db.projetoCliente.deleteMany({
+    where: { OR: [{ projetoId: { in: projetosIds } }, { cliente: doCenario }] },
+  })
+  await db.projeto.deleteMany({ where: { id: { in: projetosIds } } })
+  await db.usuario.deleteMany({
+    where: { email: { startsWith: PREFIXO_DE_EMAIL_DA_VISAO_GERAL, endsWith: '@local.test' } },
+  })
+  await db.cliente.deleteMany({ where: doCenario })
+}

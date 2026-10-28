@@ -241,3 +241,36 @@ Falha inesperada responde `500` com mensagem fixa. Nenhuma resposta ou log inclu
 - **Deduplicação:** a identidade do alerta é `<fonte>:<chave>`; duas fontes com a mesma `chave` não se misturam. Repetir a chave soma `ocorrencias` ("Recebido 2 vezes") e atualiza título, severidade e detalhe; não cria outro alerta. Uma resolução anterior à última ocorrência não fecha o alerta, e uma ocorrência anterior à resolução não o reabre.
 - **Reconhecer ≠ resolver:** reconhecer é uma decisão humana ("estou vendo"); o alerta continua entre os não resolvidos, no projeto e no resumo, e a tela diz "O alerta foi reconhecido, mas continua ativo na origem.". Alerta de webhook só é resolvido pela fonte (`"situacao":"resolvido"`); alerta registrado à mão é resolvido por "Registrar resolução", que grava quem resolveu.
 - **Verificação:** `e2e/webhook-alertas.spec.ts` cobre o contrato do webhook; `e2e/jornada-d.spec.ts` percorre a Jornada D (alerta no projeto, mesmo registro na Infraestrutura, no recurso e na VPS, reconhecer e resolver), no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
+
+## Visão Geral
+
+A página `/` mostra, em ordem de prioridade, o que exige intervenção de quem está logado, com um link ao registro único no contexto certo, e dois resumos (Projetos e Infraestrutura). É só leitura: não há tabela, migration nem formulário; a fila de homologação continua no projeto.
+
+### Tipos de pendência, regra e destino
+
+Os grupos aparecem sempre nesta ordem; um tipo sem pendências não gera grupo.
+
+| Ordem | Tipo               | O que é pendente                                                                                                        | Quem lê                | Destino                                                                                 |
+| ----- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| 1     | `homologacao`      | Item a testar, retestar, disponibilizar ou triar, agregado por homologação e natureza; só clientes e milestones ativos  | ver "Escopo"           | 1 item: a issue em `/clientes/<c>/projetos/<p>/…`; vários: a milestone, aba Homologação |
+| 2     | `autorizacao-prod` | Composição mais recente de cada repositório sem autorização vigente e cuja versão alvo não tem deploy `SUCESSO` em PROD | `publicacao.autorizar` | `/projetos/<p>/publicacoes?versao=<id>`                                                 |
+| 3     | `divergencia`      | Deploy em PROD sem autorização registrada e ainda não reconhecida                                                       | `publicacao.autorizar` | `/projetos/<p>/publicacoes#divergencia-<id>`                                            |
+| 4     | `alerta`           | Alerta `ATIVO` (o reconhecido sai das pendências e conta só no resumo de Infraestrutura)                                | `infraestrutura.ler`   | `/infraestrutura/alertas#alerta-<id>`, a mesma linha da fila única                      |
+| 5     | `integracao`       | Projeto com repositório `indisponível` ou com dados desatualizados; só quando a GitHub App está configurada             | `projetos.gerenciar`   | `/projetos/<p>/configuracao#repositorios`                                               |
+| 6     | `configuracao`     | Projeto ativo com item pendente no checklist (a falha de GitHub já é da integração; "ainda não disponível" não conta)   | `projetos.gerenciar`   | `/projetos/<p>` (Resumo com o checklist)                                                |
+
+**Ordem dentro do grupo:** peso (só alertas: crítica, alta, média, baixa), depois a pendência que espera há mais tempo, depois o id.
+
+### Limites
+
+Cada grupo mostra até 5 pendências. Com mais, "Ver todas (N)" abre `/?grupo=<tipo>` com até 50 ("Mostrando 50 de N." quando passar) e "Mostrar menos" recolhe; só um grupo fica expandido por vez e um `?grupo` inválido ou de tipo não visível é ignorado. Alertas nunca expandem na Visão Geral: "Ver os N alertas ativos" leva à fila. Cada tipo faz um número fixo de consultas (no máximo duas), qualquer que seja o volume, e uma consulta que falhe marca só o seu grupo.
+
+### Escopo
+
+- **Administrador:** os seis grupos e os dois resumos.
+- **Perfil escopado por cliente** (testador, aprovador): só o grupo de homologação dos seus clientes (testar e retestar) e o resumo "Seus projetos". A seção Infraestrutura não é renderizada e nenhuma consulta de outro tipo roda para ele.
+- **Sem falso verde:** nenhuma pendência nem indicador usa o tom de sucesso. Sem pendências, a página diz "Nenhuma pendência nas fontes disponíveis."; fontes não configuradas aparecem em "Fontes sem dados"; indicador sem fonte mostra "Sem dados".
+
+### Verificação
+
+`e2e/visao-geral.spec.ts` monta uma pendência de cada tipo, confere a ordem dos grupos, o destino de cada link (e que voltar preserva `?grupo`), o que o testador do cliente A vê e o layout dos resumos, no desktop e no mobile, com capturas em `e2e/capturas/` (ignoradas pelo git).

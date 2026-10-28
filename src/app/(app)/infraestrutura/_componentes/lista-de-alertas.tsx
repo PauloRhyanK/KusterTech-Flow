@@ -24,6 +24,7 @@ export function ListaDeAlertas({ alertas, rotulo, vazio, filtros }: ListaDeAlert
     const vezes = vezesRecebido(a.ocorrencias)
     return {
       id: a.id,
+      ancora: `alerta-${a.id}`,
       nome: a.titulo,
       href: `/infraestrutura/alertas/${a.id}`,
       contexto: a.recurso ? `${a.recurso.nome} · ${vezes}` : vezes,
