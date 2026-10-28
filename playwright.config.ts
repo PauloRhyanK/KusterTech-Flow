@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { SEGREDO_DE_WEBHOOK_E2E } from './e2e/support/webhook'
 
 if (!process.env.DATABASE_URL_TEST && typeof process.loadEnvFile === 'function') {
   try {
@@ -52,6 +53,7 @@ export default defineConfig({
     env: {
       ...process.env,
       DATABASE_URL: urlBancoTeste,
+      GITHUB_WEBHOOK_SECRET: SEGREDO_DE_WEBHOOK_E2E,
     },
   },
 })
