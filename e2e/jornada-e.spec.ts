@@ -3,6 +3,7 @@ import path from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import {
   contarExecucoes,
+  arquivarProjetoNoBanco,
   criarClienteNoBanco,
   criarProjetoNoBanco,
   criarUsuarioNoBanco,
@@ -66,10 +67,13 @@ async function filtrar(
   await page.waitForLoadState('networkidle')
 }
 
+const projetosDoTeste: string[] = []
+
 async function prepararProjeto(projectName: string): Promise<{ id: string; nome: string }> {
   const repositorio = repositorioDeAgentesE2E(projectName)
   const nome = nomeDeTeste('Jornada E')
   const projeto = await criarProjetoNoBanco(nome)
+  projetosDoTeste.push(projeto.id)
   await vincularNoBanco(projeto.id, repositorio)
   rodarWorkerUmaVez()
   return { id: projeto.id, nome }
@@ -79,6 +83,13 @@ test.beforeEach(async ({}, testInfo) => {
   const repositorio = repositorioDeAgentesE2E(testInfo.project.name)
   await liberarRepositoriosNoBanco([repositorio])
   await limparExecucoesDosRepositoriosNoBanco([repositorio])
+})
+
+// Estado compartilhado: o projeto de teste não pode continuar ativo (a Visão Geral o contaria
+// como configuração pendente) nem prender o repositório de fixture.
+test.afterEach(async ({}, testInfo) => {
+  for (const id of projetosDoTeste.splice(0)) await arquivarProjetoNoBanco(id)
+  await liberarRepositoriosNoBanco([repositorioDeAgentesE2E(testInfo.project.name)])
 })
 
 test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a seed e abre a execução concluída com a issue aberta', async ({

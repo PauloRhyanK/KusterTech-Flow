@@ -167,6 +167,11 @@ export async function limparExecucoesDosRepositoriosNoBanco(
   await db.seedDoRepositorio.deleteMany({ where: dosRepositorios })
 }
 
+// Tira o projeto de teste das consultas de projetos ativos (Visão Geral, checklist de configuração).
+export async function arquivarProjetoNoBanco(projetoId: string): Promise<void> {
+  await db.projeto.updateMany({ where: { id: projetoId }, data: { arquivadoEm: new Date() } })
+}
+
 export function repositorioDeAgentesE2E(projectName: string): string {
   return projectName === 'mobile'
     ? 'kustertech-exemplo/automacao-mobile'
