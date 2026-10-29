@@ -73,9 +73,10 @@ O Incremento 1 entrega o domínio operacional de clientes e projetos com preserv
 O Incremento 2 espelha issues, pull requests e resultado de checks dos repositórios vinculados a cada projeto (visão global: Resumo, Entregas e Detalhe da Issue). Só o worker fala com o GitHub; a web lê do banco.
 
 - **Fonte:** `GITHUB_FONTE=fixtures` usa dados fictícios (desenvolvimento, CI e E2E). Em operação use `GITHUB_FONTE=app` com `GITHUB_APP_ID` e `GITHUB_APP_PRIVATE_KEY` no `.env` do servidor; sem credenciais a integração fica "Não configurada". Variáveis opcionais: `GITHUB_INTERVALO_MS` (padrão 10 min) e `GITHUB_API_URL`.
-- **Reconciliação periódica, sem webhooks:** `pnpm worker` sincroniza em laço; `pnpm worker:uma-vez` roda um ciclo e sai (usado pelo E2E).
+- **Reconciliação periódica:** `pnpm worker` sincroniza em laço; `pnpm worker:uma-vez` roda um ciclo e sai (usado pelo E2E). É o caminho base e a rede de segurança.
+- **Webhooks (opcionais):** com `GITHUB_WEBHOOK_SECRET` no `.env` da **web** (o worker não a lê), `POST /api/github/webhook` verifica a assinatura, deduplica por `deliveryId` e pede ao worker uma sincronização imediata; sem o segredo a rota responde 404 e tudo segue pela reconciliação. Ativação: [`docs/github-app.md`](docs/github-app.md) §9. Verificação: `e2e/webhook.spec.ts` (rota) e `e2e/jornada-b-webhook.spec.ts` (issue fechada chega antes do próximo ciclo).
 - **Falhas não apagam dados:** issues e PRs já espelhados continuam visíveis, marcados como possivelmente desatualizados (invariante 9).
-- **Roteiro para criar e ligar a GitHub App** (permissões, webhook desativado, chave, `.env`): [`docs/github-app.md`](docs/github-app.md).
+- **Roteiro para criar e ligar a GitHub App** (permissões, chave, `.env`, webhooks opcionais): [`docs/github-app.md`](docs/github-app.md).
 
 ## Entregas e milestones
 
