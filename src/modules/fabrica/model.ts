@@ -4,6 +4,15 @@ export const LIMITE_DO_CORPO_DO_RETRATO = 262_144
 export const PREFIXO_DO_TOKEN_DA_FABRICA = 'ff_'
 export const LIMITE_NOME_FONTE_DA_FABRICA = 80
 const TOLERANCIA_DE_FUTURO_MS = 5 * 60_000
+const LIMITE_DE_ATRASO_MS = 5 * 60_000
+
+export function retratoDesatualizado(recebidoEm: Date, agora: Date): boolean {
+  return agora.getTime() - recebidoEm.getTime() > LIMITE_DE_ATRASO_MS
+}
+
+export function minutosDeAtraso(recebidoEm: Date, agora: Date): number {
+  return Math.max(0, Math.floor((agora.getTime() - recebidoEm.getTime()) / 60_000))
+}
 
 export function hashDoTokenDaFabrica(token: string): string {
   return createHash('sha256').update(token).digest('hex')

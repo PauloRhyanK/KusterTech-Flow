@@ -17,6 +17,7 @@ export default async function PaginaConfiguracoes() {
   }
 
   const podeGerenciarUsuarios = autorizar(sessao.sujeito, 'usuarios.gerenciar')
+  const podeGerenciarConfiguracoes = autorizar(sessao.sujeito, 'configuracoes.gerenciar')
 
   return (
     <div className="space-y-8">
@@ -45,6 +46,20 @@ export default async function PaginaConfiguracoes() {
             <span className="text-[15px] font-[600] leading-[1.4] text-text-primary">Usuários</span>
             <span className="text-sm text-text-secondary">
               Gerenciamento de contas, papéis e permissões de acesso.
+            </span>
+          </Link>
+        )}
+
+        {podeGerenciarConfiguracoes && (
+          <Link
+            href="/configuracoes/fabrica"
+            className="flex flex-col gap-1 rounded-padrao border border-border bg-surface p-5 transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          >
+            <span className="text-[15px] font-[600] leading-[1.4] text-text-primary">
+              Fábrica de agentes
+            </span>
+            <span className="text-sm text-text-secondary">
+              Tokens que a máquina de agentes usa para enviar o estado à Central.
             </span>
           </Link>
         )}
