@@ -66,6 +66,7 @@ CAMINHO_PLANO_PROIBIDO = ".fabrica/planos/plano.json"
 CAMINHO_CONFIG = ".fabrica/config.json"
 # `FABRICA_PLANO_ID`: `<dono>--<repo>--<feature>`, só `[a-z0-9-]` (fullmatch: nada de `\n` no fim)
 PADRAO_PLANO_ID = re.compile(r"[a-z0-9-]+")
+LIMITE_OOM_FILHOS = 200  # chaves de filhos OOM já repassadas à capacidade (as mais novas)
 AVISO_CAPACIDADE = (
     "arquivo de capacidade ilegível ou inacessível: nenhuma raia nova é despachada e o orquestrador não é "
     "acordado até ele voltar (veja o log)"
@@ -570,6 +571,7 @@ class Despachante:
         self.plano_id = plano_id
         self._mem_disponivel = mem_disponivel
         self._capacidade_sincronizada = False
+        self._acordar_recusado = False
         self.motor = motor
         self.forja = forja
         self.raiz = pathlib.Path(raiz)
@@ -854,6 +856,7 @@ class Despachante:
         self._rede_do_ciclo = set()
         self._ja_cancelados = set()
         self._capacidade_sincronizada = False
+        self._acordar_recusado = False
         self._recuperar_acao_interrompida()
         self._recuperar_decisoes_pendentes()
         self._recarregar_plano()
@@ -876,6 +879,7 @@ class Despachante:
         executadas = self._agir()
         self._sincronizar_capacidade()
         self._cuidar_da_trava()
+        self._desistir_sem_demanda()
         self._garantir_decisao_de_bloqueio()
         self._garantir_decisao_de_pausa()
         return executadas
@@ -1574,6 +1578,11 @@ class Despachante:
             self._esquecer("observar_plano:%s" % raia_id)
             self._zerar_falha_de_leitura(plan_run_id)
             filhos = observado.get("filhos")
+            for filho in _lista(filhos):
+                filho = _dict(filho)
+                if filho.get("falha") == est.OOM:
+                    # com ou sem runId, e qualquer que seja o limite local: a chave do filho evita repetir
+                    self._notar_oom("%s:%s:%s:%s" % (raia_id, plan_run_id, filho.get("seedId"), filho.get("runId") or ""))
             seeds = _dict(self.estado.get("seeds"))
             for filho in _lista(filhos):
                 filho = _dict(filho)
@@ -1602,8 +1611,6 @@ class Despachante:
                 if cota == "cota":
                     # P2: a raia não falha; ao retomar ela volta a planejada e ganha um Plan Run novo
                     estado_plano, falha = "running", None
-            oom_antes = set(_lista(self.estado.get("runsOom")))
-            limite_antes = self.estado.get("limiteParalelo")
             self._mudar(
                 est.registrar_plano(
                     self.estado,
@@ -1613,9 +1620,6 @@ class Despachante:
                     filhos=filhos,
                 )
             )
-            # um filho OOM com runId entra em runsOom; sem runId, só o limite local cai
-            if not set(_lista(self.estado.get("runsOom"))) <= oom_antes or self.estado.get("limiteParalelo") != limite_antes:
-                self._notar_oom()
             depois = _dict(self.estado.get("seeds"))
             self._guardar_tentativas_reiniciadas(antes, depois)
             for seed_id, anterior in antes.items():
@@ -2841,6 +2845,7 @@ class Despachante:
             return False
         self._capacidade_ok()
         if not tomada:
+            self._acordar_recusado = True
             self._log_repetivel("orquestrador_ocupado", {"evento": "orquestrador_ocupado", "repo": self.repo})
             return False
         self._esquecer("orquestrador_ocupado")
@@ -2870,24 +2875,48 @@ class Despachante:
         self._capacidade_sincronizada = True
         self._capacidade_ok()
 
-    def _notar_oom(self) -> None:
-        """O OOM fica anotado no estado até chegar ao arquivo de capacidade (que pode estar ilegível agora)."""
+    def _registro_de_oom(self) -> dict:
+        registro = self.estado.get("oomCapacidade")
+        if isinstance(registro, str):  # formato antigo: só o instante pendente
+            registro = {"pendente": registro}
+        if not isinstance(registro, dict):
+            registro = {}
+        registro = {
+            "pendente": registro.get("pendente") if _texto(registro.get("pendente")) else None,
+            "filhos": [c for c in _lista(registro.get("filhos")) if _texto(c)],
+        }
+        self.estado["oomCapacidade"] = registro
+        return registro
+
+    def _notar_oom(self, chave: str | None = None) -> None:
+        """O OOM fica anotado no estado até chegar ao arquivo de capacidade (que pode estar ilegível agora).
+
+        `chave` identifica o filho do Plan Run: o mesmo filho visto de novo não registra outro OOM.
+        """
         if self.capacidade is None:
             return
-        self.estado["oomCapacidade"] = self._agora_utc()
+        registro = self._registro_de_oom()
+        if chave is not None:
+            if chave in registro["filhos"]:
+                return
+            registro["filhos"] = (registro["filhos"] + [chave])[-LIMITE_OOM_FILHOS:]
+        registro["pendente"] = self._agora_utc()
         self._salvar()
         self._enviar_oom()
 
     def _enviar_oom(self) -> None:
-        pendente = self.estado.get("oomCapacidade")
-        if not _texto(pendente):
+        if self.estado.get("oomCapacidade") is None:
+            return
+        registro = self._registro_de_oom()
+        pendente = registro["pendente"]
+        if pendente is None:
             return
         try:
             capacidade.registrar_oom(self.capacidade, pendente)
         except (capacidade.CapacidadeInvalida, OSError) as exc:
             self._erro_de_capacidade("registrar_oom", self.plano_id, exc)
             return
-        self.estado.pop("oomCapacidade", None)
+        registro["pendente"] = None
         self._salvar()
         self._log({"evento": "oom_registrado_na_capacidade", "oomEm": pendente})
 
@@ -2912,15 +2941,29 @@ class Despachante:
             if not self._orquestrador_em_curso():
                 capacidade.soltar_orquestrador(self.capacidade, self.repo, self.plano_id)
                 return
-            if capacidade.tomar_orquestrador(self.capacidade, self.repo, self.plano_id):
-                self._esquecer("trava_em_conflito")
-                return
-            dono = capacidade.ler(self.capacidade)["orquestrador"].get(self.repo.lower())
+            # quem tem run ou PR em curso é o dono de fato: toma a trava livre fora da ordem da espera
+            dono = None
+            for _ in range(2):  # a trava pode ter sido solta entre a recusa e a leitura do dono
+                if capacidade.tomar_orquestrador(self.capacidade, self.repo, self.plano_id, em_curso=True):
+                    self._esquecer("trava_em_conflito")
+                    return
+                dono = capacidade.ler(self.capacidade)["orquestrador"].get(self.repo.lower())
+                if dono is not None:
+                    break
         except (capacidade.CapacidadeInvalida, OSError) as exc:
             self._erro_de_capacidade("trava_do_orquestrador", self.repo, exc)
             return
         # não há como desfazer o run em curso: registra o conflito; nada novo acorda sem a trava
         self._log_repetivel("trava_em_conflito", {"evento": "trava_em_conflito", "dono": dono})
+
+    def _desistir_sem_demanda(self) -> None:
+        """A espera reflete a demanda atual: sem um `acordar` pronto e recusado pela trava neste ciclo, sai dela."""
+        if self.capacidade is None or self._acordar_recusado:
+            return
+        try:
+            capacidade.desistir_orquestrador(self.capacidade, self.repo, self.plano_id)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("desistir_orquestrador", self.repo, exc)
 
     def _executar(self, acao: dict) -> None:
         tipo = acao.get("tipo")

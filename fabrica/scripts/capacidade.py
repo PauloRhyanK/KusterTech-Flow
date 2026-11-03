@@ -207,17 +207,19 @@ def registrar_oom(caminho, agora: str) -> None:
         dados["oomEm"] = agora
 
 
-def tomar_orquestrador(caminho, repo: str, plano: str) -> bool:
+def tomar_orquestrador(caminho, repo: str, plano: str, *, em_curso: bool = False) -> bool:
     """Toma a trava de orquestrador do repositório; True se já era do plano ou se ele pôde tomá-la.
 
     A espera é FIFO por repositório: com a trava livre, só toma o primeiro da espera (ou qualquer um,
     com a espera vazia), e quem toma sai dela. Recusado, o plano entra no fim da espera, uma vez só.
+    Com `em_curso` (o plano já tem run ou PR do orquestrador: é o dono de fato), a trava livre é tomada
+    fora da ordem da espera, e a recusa não entra na espera.
     """
     chave = repo.lower()
     with _transacao(caminho) as dados:
         dono = dados["orquestrador"].get(chave)
         fila = dados["esperando"].get(chave, [])
-        if dono == plano or (dono is None and (not fila or fila[0] == plano)):
+        if dono == plano or (dono is None and (em_curso or not fila or fila[0] == plano)):
             dados["orquestrador"][chave] = plano
             restante = [p for p in fila if p != plano]
             if restante:
@@ -225,9 +227,23 @@ def tomar_orquestrador(caminho, repo: str, plano: str) -> bool:
             else:
                 dados["esperando"].pop(chave, None)
             return True
-        if plano not in fila:
+        if not em_curso and plano not in fila:
             dados["esperando"][chave] = [*fila, plano]
         return False
+
+
+def desistir_orquestrador(caminho, repo: str, plano: str) -> None:
+    """Tira o plano da espera do repositório (ele não quer mais acordar agora); a trava não muda."""
+    chave = repo.lower()
+    with _transacao(caminho) as dados:
+        fila = dados["esperando"].get(chave)
+        if fila is None or plano not in fila:
+            return
+        restante = [p for p in fila if p != plano]
+        if restante:
+            dados["esperando"][chave] = restante
+        else:
+            del dados["esperando"][chave]
 
 
 def soltar_orquestrador(caminho, repo: str, plano: str) -> None:

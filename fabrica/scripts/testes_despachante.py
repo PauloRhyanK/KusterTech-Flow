@@ -5735,7 +5735,7 @@ class TestesCapacidadeGlobal(Base):
         )
         a.ciclo()
         self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
-        self.assertNotIn("oomCapacidade", self.estado_de(a))
+        self.assertIsNone(self.estado_de(a)["oomCapacidade"]["pendente"])
         b = self.de("b", [raia("b1"), raia("b2"), raia("b3")])
         b.ciclo()
         self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1"], self.plano_id("b"): ["b1"]})
@@ -5763,11 +5763,11 @@ class TestesCapacidadeGlobal(Base):
         )
         self.cap.write_text("{", encoding="utf-8")
         a.ciclo()
-        self.assertTrue(self.estado_de(a).get("oomCapacidade"))
+        self.assertTrue(self.estado_de(a)["oomCapacidade"]["pendente"])
         despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
         a.ciclo()
         self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
-        self.assertNotIn("oomCapacidade", self.estado_de(a))
+        self.assertIsNone(self.estado_de(a)["oomCapacidade"]["pendente"])
 
     # ------------------------------------------------ trava de orquestrador
 
@@ -6060,6 +6060,99 @@ class TestesCapacidadeGlobal(Base):
         self.assertEqual(self.reservas(), {})
         a.ciclo()
         self.assertEqual(len(self.planos_despachados()), 1)
+
+    # ------------------------------------------------ rodada 2
+
+    def test_primeiro_da_espera_que_fica_pausado_desiste_e_o_seguinte_toma(self):
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, "outro")
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        self.falhar_raia(b, "b1")
+        a.ciclo()
+        b.ciclo()
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a"), self.plano_id("b")]})
+        despachante.capacidade.soltar_orquestrador(self.cap, REPO, "outro")
+        b.ciclo()  # A ainda é o primeiro da espera
+        self.assertEqual(self.runs(FABLE), [])
+        a.estado["pausado"] = "pausa de teste"
+        a._salvar()
+        a.ciclo()
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})
+        self.assertEqual(self.trava(), {})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+        self.assertEqual(self.espera(), {})
+
+    def test_plano_sem_acordada_nao_fica_na_espera(self):
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, "outro")
+        self.forja.definir_arquivo(REPO, "main", "docs/s.md", "# spec")
+        a = self.de("a", [raia("a1")])
+        a.iniciar(spec="docs/s.md")  # recusada: entra na espera
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})
+        a.ciclo()  # a acordada continua pronta e recusada: A fica
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})
+        a.estado["acordarPendentes"] = []
+        a._salvar()
+        a.ciclo()
+        self.assertEqual(self.espera(), {})
+        self.assertEqual(self.trava(), {REPO: "outro"})
+
+    def test_reafirmacao_com_run_em_curso_passa_na_frente_da_espera(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.assertTrue(self.estado_de(a)["orquestrador"]["runId"])
+        # o arquivo foi recriado, e B entrou na espera com a trava livre
+        self.cap.unlink()
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, "outro")
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, self.plano_id("b"))
+        despachante.capacidade.soltar_orquestrador(self.cap, REPO, "outro")
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})
+        a.ciclo()
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        self.assertEqual(self.log_de(a, "trava_em_conflito"), [])
+        self.falhar_raia(b, "b1")
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+
+    def test_conflito_registra_o_dono_atual(self):
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.cap.unlink()
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO.upper(), "dono-x")
+        a.ciclo()
+        self.assertEqual([x["dono"] for x in self.log_de(a, "trava_em_conflito")], ["dono-x"])
+        self.assertNotIn(self.plano_id("a"), self.espera().get(REPO, []))
+
+    def test_oom_de_filho_com_limite_local_ja_em_2_e_sem_repetir(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        a.estado["limiteParalelo"] = 2
+        a._salvar()
+        filho = {"seedId": "s-1", "estado": "failed", "falha": "oom_killed"}
+        self.motor.definir_plano(self.plan_run(a, "a1"), "running", [filho])
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+        # o Paulo sobe as vagas de volta: o mesmo filho, visto de novo, não registra outro OOM
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a.ciclo()
+        a.ciclo()
+        self.assertIsNone(despachante.capacidade.ler(self.cap)["oomEm"])
+        # um filho OOM novo registra
+        outro = {"seedId": "s-2", "estado": "failed", "runId": "run-y", "falha": "oom_killed"}
+        self.motor.definir_plano(self.plan_run(a, "a1"), "running", [filho, outro])
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
 
     def test_oom_de_filho_sem_run_id_tambem_chega_a_capacidade(self):
         despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)

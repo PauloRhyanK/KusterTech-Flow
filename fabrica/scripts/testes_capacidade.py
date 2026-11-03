@@ -360,6 +360,48 @@ class TestesEsperaDoOrquestrador(Base):
         self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
         self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
 
+    def test_desistir_tira_da_espera_sem_mexer_na_trava(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "B")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "C")
+        cap.desistir_orquestrador(self.caminho, "Dono/Repo", "B")
+        self.assertEqual(self.espera(), ["C"])
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+        cap.desistir_orquestrador(self.caminho, "dono/repo", "A")  # o dono não está na espera: nada muda
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+        cap.desistir_orquestrador(self.caminho, "dono/repo", "C")
+        self.assertIsNone(self.espera())
+        self.assertEqual(cap.ler(self.caminho)["esperando"], {})
+        cap.desistir_orquestrador(self.caminho, "dono/repo", "C")  # idempotente
+        cap.desistir_orquestrador(self.caminho, "dono/outro", "C")
+        self.assertEqual(cap.ler(self.caminho)["esperando"], {})
+
+    def test_primeiro_que_desiste_deixa_o_seguinte_tomar(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "B")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "C")
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
+        cap.desistir_orquestrador(self.caminho, "dono/repo", "B")
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
+
+    def test_em_curso_toma_a_trava_livre_fora_da_ordem(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "X")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "B")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "X")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A", em_curso=True))
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+        self.assertEqual(self.espera(), ["B"])
+
+    def test_em_curso_nao_toma_trava_de_outro_nem_entra_na_espera(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "B")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "A", em_curso=True))
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "B"})
+        self.assertIsNone(self.espera())
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B", em_curso=True))
+
     def test_orfao_sai_da_espera(self):
         cap.tomar_orquestrador(self.caminho, "dono/repo", "vivo")
         cap.tomar_orquestrador(self.caminho, "dono/repo", "morto")
