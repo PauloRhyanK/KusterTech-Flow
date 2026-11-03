@@ -3,7 +3,8 @@
 É a única camada operacional do kit e roda sem operação manual: tudo o que precisa do Paulo vira
 uma issue de decisão, e fechar a issue é a resposta. A cada ciclo:
 
-1. recarrega `.fabrica/plano.json` do branch padrão (só adota um plano válido);
+1. recarrega o plano (`caminho_plano`, por padrão `.fabrica/plano.json`) do branch padrão (só adota um
+   plano válido);
 2. aplica os pedidos da caixa `<raiz>/entrada/` e observa a issue de pausa;
 3. observa os runs de revisão, do fixer e do orquestrador;
 4. trata e conclui o PR do orquestrador que terminou (ou reenfileira a acordada, se o run falhou);
@@ -57,6 +58,8 @@ ARQ_LOG = "log.jsonl"
 ARQ_TRAVA = "despachante.lock"
 DIR_ENTRADA = "entrada"
 CAMINHO_PLANO = ".fabrica/plano.json"
+# `FABRICA_PLANO`: o plano legado ou um `.fabrica/planos/<feature>.json` (fullmatch: nada de `\n` no fim)
+PADRAO_CAMINHO_PLANO = re.compile(r"\.fabrica/(plano|planos/[a-z0-9][a-z0-9-]*)\.json")
 CAMINHO_CONFIG = ".fabrica/config.json"
 
 WARREN_API_PADRAO = "http://127.0.0.1:8080"
@@ -74,13 +77,20 @@ TERMINAIS_DE_RUN = ("succeeded", "failed", "cancelled")
 ACOES_PAGAS = ("despachar_raia", "revisar", "corrigir", "acordar")
 ACOES_COM_INTENCAO = ACOES_PAGAS
 ACOES_DE_GATE = ("revisar", "verificar", "corrigir", "mergear")
-# O que o orquestrador pode mudar; qualquer outro arquivo leva o PR dele para o Paulo.
-PERMITIDOS_AO_ORQUESTRADOR = (
-    ".fabrica/plano.json",
-    est.PERGUNTA_DO_ORQUESTRADOR,
-    ".fabrica/planejamento/**",
-    ".seeds/**",
-)
+
+
+def permitidos_ao_orquestrador(caminho_plano) -> tuple:
+    """O que o orquestrador do plano pode mudar; qualquer outro arquivo (inclusive outro plano) leva o PR ao Paulo."""
+    return (
+        caminho_plano,
+        est.PERGUNTA_DO_ORQUESTRADOR,
+        ".fabrica/planejamento/**",
+        ".seeds/**",
+    )
+
+
+# o do plano legado (`caminho_plano` padrão)
+PERMITIDOS_AO_ORQUESTRADOR = permitidos_ao_orquestrador(CAMINHO_PLANO)
 # Valem em todo PR de seed, somados aos `protegidos` da config do cliente.
 PROTEGIDOS_FIXOS = (".github/**", ".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
@@ -402,12 +412,16 @@ def compactar(estado: dict, plano: dict) -> dict:
     }
 
 
-def _permitido_ao_orquestrador(caminho) -> bool:
+def _permitido_ao_orquestrador(caminho, caminho_plano=CAMINHO_PLANO) -> bool:
     if not _texto(caminho) or caminho.startswith("/"):
         return False
     if any(parte in ("", ".", "..") for parte in caminho.split("/")):
         return False
-    return any(globs.casa_glob(caminho, g) for g in PERMITIDOS_AO_ORQUESTRADOR)
+    return any(globs.casa_glob(caminho, g) for g in permitidos_ao_orquestrador(caminho_plano))
+
+
+def _caminho_plano_valido(caminho) -> bool:
+    return isinstance(caminho, str) and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
 
 
 def _raias_por_id(plano) -> dict:
@@ -522,11 +536,15 @@ class Despachante:
         limpar_residuos=verificacao.limpar_residuos,
         segredos=(),
         preparar_warren=None,
+        caminho_plano: str = CAMINHO_PLANO,
     ):
         if not _texto(projeto):
             raise ConfigInvalida("projeto")
         if not _texto(repo):
             raise ConfigInvalida("repo")
+        if not _caminho_plano_valido(caminho_plano):
+            raise ConfigInvalida("caminho_plano")
+        self.caminho_plano = caminho_plano
         self.motor = motor
         self.forja = forja
         self.raiz = pathlib.Path(raiz)
@@ -690,14 +708,14 @@ class Despachante:
         return isinstance(repo, str) and repo.lower() == self.repo.lower()
 
     def _ler_plano(self, ref: str):
-        """`(plano | None, erros, existe)` do `.fabrica/plano.json` em `ref` (JSON estrito)."""
-        texto = self.forja.arquivo(self.repo, ref, CAMINHO_PLANO)
+        """`(plano | None, erros, existe)` do plano (`caminho_plano`) em `ref` (JSON estrito)."""
+        texto = self.forja.arquivo(self.repo, ref, self.caminho_plano)
         if texto is None:
-            return None, ["%s ausente em %s" % (CAMINHO_PLANO, ref)], False
+            return None, ["%s ausente em %s" % (self.caminho_plano, ref)], False
         try:
             plano = _json_estrito(texto)
         except (ValueError, RecursionError):
-            return None, ["%s em %s não é JSON válido" % (CAMINHO_PLANO, ref)], True
+            return None, ["%s em %s não é JSON válido" % (self.caminho_plano, ref)], True
         return plano, raias.validar_plano(plano), True
 
     def _adotar_plano(self, plano: dict) -> None:
@@ -2124,7 +2142,7 @@ class Despachante:
             return {"r": "neutro"}
 
         motivos = []
-        fora = [a for a in arquivos if not _permitido_ao_orquestrador(a)]
+        fora = [a for a in arquivos if not _permitido_ao_orquestrador(a, self.caminho_plano)]
         if fora:
             motivos.append("PR fora de .fabrica: " + ", ".join(_cortar(a, 200) for a in fora[:20]))
         # lido no sha do head, que é o que o merge leva (nunca no branch, que pode andar)
@@ -3187,7 +3205,10 @@ class Despachante:
         if tipo == "acordar":
             modelo = self._modelo("orquestrador")
             prompt = prompts.prompt_orquestrador(
-                motivo=acao.get("motivo"), estado_compacto=compactar(self.estado, self.plano), contexto=_dict(acao.get("contexto"))
+                motivo=acao.get("motivo"),
+                estado_compacto=compactar(self.estado, self.plano),
+                contexto=_dict(acao.get("contexto")),
+                caminho_plano=self.caminho_plano,
             )
             run_id = self.motor.despachar_run(
                 projeto=self.projeto,
@@ -3234,11 +3255,13 @@ def status(raiz) -> str:
     estado = _ler_estado(raiz)
     if not isinstance(estado, dict):
         raise ErroDeEntrada(["sem estado.json em %s: rode iniciar" % raiz])
-    c = compactar(estado, _dict(_ler_json(raiz / ARQ_PLANO)))
+    plano = _dict(_ler_json(raiz / ARQ_PLANO))
+    c = compactar(estado, plano)
     orquestrador = _dict(estado.get("orquestrador"))
     linhas = [
         "pausado: %s" % (c["pausado"] or "não"),
         "fase atual: %s" % c["faseAtual"],
+        "concluído: %s" % ("sim" if est.plano_concluido(estado, plano) else "não"),
         "orquestrador: %s%s"
         % (orquestrador.get("runId") or "livre", " (bloqueado até a resposta do Paulo)" if orquestrador.get("bloqueio") else ""),
         "raias:",
@@ -3286,6 +3309,18 @@ def construir(ambiente) -> Despachante:
     repo_dir = _exigir(ambiente, "FABRICA_REPO_DIR")
     projeto = _exigir(ambiente, "FABRICA_PROJETO")
     repo = _exigir(ambiente, "FABRICA_REPO")
+    caminho_plano = ambiente.get("FABRICA_PLANO")
+    if caminho_plano is None:
+        caminho_plano = CAMINHO_PLANO
+    elif not _caminho_plano_valido(caminho_plano):
+        raise ErroDeEntrada(
+            [
+                "FABRICA_PLANO inválido: %r; use .fabrica/plano.json ou .fabrica/planos/<feature>.json "
+                "(feature só com a-z, 0-9 e -)" % _cortar(caminho_plano, 200)
+            ]
+        )
+    # o coordenador da fila prepara o Warren; os despachantes de plano rodam com FABRICA_PREPARAR_WARREN=0
+    sem_preparo = ambiente.get("FABRICA_PREPARAR_WARREN") == "0"
     token_warren = _ler_token(ambiente.get("WARREN_TOKEN_FILE") or WARREN_TOKEN_PADRAO)
     token_gh = _ler_token(ambiente.get("GH_TOKEN_FILE") or GH_TOKEN_PADRAO)
     caminho_config = pathlib.Path(repo_dir) / CAMINHO_CONFIG
@@ -3304,7 +3339,10 @@ def construir(ambiente) -> Despachante:
         projeto=projeto,
         repo=repo,
         segredos=(token_warren, token_gh),
-        preparar_warren=functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
+        preparar_warren=None
+        if sem_preparo
+        else functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
+        caminho_plano=caminho_plano,
     )
 
 

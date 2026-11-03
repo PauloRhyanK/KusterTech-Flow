@@ -243,6 +243,17 @@ class PromptOrquestradorTest(unittest.TestCase):
         texto = prompt_orquestrador(motivo="m", estado_compacto={}, contexto={})
         self.assertLessEqual(len(texto.splitlines()), 25)
 
+    def test_diz_qual_e_o_plano_dele(self):
+        texto = prompt_orquestrador(motivo="m", estado_compacto={}, contexto={}, caminho_plano=".fabrica/planos/login.json")
+        self.assertIn("Seu plano: `.fabrica/planos/login.json`", texto)
+        self.assertIn(
+            "Seu plano: `.fabrica/planos/login.json`. Só ele, `.fabrica/planejamento/**` e `.seeds/**` podem mudar.", texto
+        )
+        self.assertNotIn("`.fabrica/plano.json`", texto)
+
+    def test_sem_caminho_o_plano_e_o_legado(self):
+        self.assertIn("Seu plano: `.fabrica/plano.json`. Só ele,", self.texto)
+
 
 class ExtrairVereditoTest(unittest.TestCase):
     def test_bloco_valido(self):

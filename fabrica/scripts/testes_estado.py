@@ -962,6 +962,73 @@ class TestPrOrquestrador(unittest.TestCase):
         self.assertEqual(self.decidir(erros="nada"), "humano")
 
 
+class TestPlanoConcluido(unittest.TestCase):
+    """Task 1: o plano só termina depois da homologação da última fase e sem nada em curso."""
+
+    def completo(self):
+        p = plano(fase="nucleo")
+        e = est.novo_estado(p, projeto="prj", repo="dono/nome")
+        for raia in e["raias"].values():
+            raia["estado"] = "concluida"
+        e["chavesAcordadas"] = ["fase_concluida:fundacao", "fase_concluida:nucleo"]
+        e["acordarPendentes"] = []
+        return e, p
+
+    def test_verdadeiro_no_caso_completo(self):
+        e, p = self.completo()
+        self.assertIs(est.plano_concluido(e, p), True)
+
+    def test_falso_com_raia_executando_na_ultima_fase(self):
+        e, p = self.completo()
+        e["raias"]["c"]["estado"] = "executando"
+        self.assertIs(est.plano_concluido(e, p), False)
+
+    def test_falso_sem_a_chave_da_fase_concluida(self):
+        e, p = self.completo()
+        e["chavesAcordadas"] = ["fase_concluida:fundacao"]
+        self.assertIs(est.plano_concluido(e, p), False)
+
+    def test_falso_com_o_orquestrador_rodando(self):
+        e, p = self.completo()
+        e["orquestrador"]["runId"] = "orq-1"
+        self.assertIs(est.plano_concluido(e, p), False)
+
+    def test_falso_com_decisao_aberta(self):
+        e, p = self.completo()
+        e["decisoes"] = [{"url": PR_URL, "motivo": "m", "alvo": "x"}]
+        self.assertIs(est.plano_concluido(e, p), False)
+
+    def test_falso_com_acordada_na_fila(self):
+        e, p = self.completo()
+        e["acordarPendentes"] = [{"motivo": "resposta_paulo", "alvo": "x"}]
+        self.assertIs(est.plano_concluido(e, p), False)
+
+    def test_falso_quando_a_fase_atual_nao_e_a_ultima(self):
+        e, p = self.completo()
+        p["faseAtual"] = "fundacao"
+        self.assertIs(est.plano_concluido(e, p), False)
+
+    def test_entrada_malformada_e_falso_sem_excecao(self):
+        e, p = self.completo()
+        for estado_, plano_ in [
+            ({}, {}),
+            (None, p),
+            (e, None),
+            (e, dict(p, fases=[])),
+            (e, dict(p, fases="x")),
+            (dict(e, raias="x"), p),
+            (dict(e, orquestrador=None), p),
+            (dict(e, chavesAcordadas=None), p),
+        ]:
+            self.assertIs(est.plano_concluido(estado_, plano_), False)
+
+    def test_nao_muta_a_entrada(self):
+        e, p = self.completo()
+        antes = (copy.deepcopy(e), copy.deepcopy(p))
+        est.plano_concluido(e, p)
+        self.assertEqual((e, p), antes)
+
+
 class TestNaoMutacao(unittest.TestCase):
     def test_funcoes_nao_mutam_a_entrada(self):
         e = tudo_verde()

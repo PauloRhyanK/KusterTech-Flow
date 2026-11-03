@@ -5410,5 +5410,153 @@ class TestesCorrecaoFinalPreparo(Base):
                 self.assertIs(self.estado()["warrenPreparado"]["dropinCarregado"], esperado)
 
 
+
+# ---------------------------------------------------------------- fila por plano (Task 1)
+
+
+class TestCaminhoDoPlano(Base):
+    """O despachante fala de um plano (`caminho_plano`), não do repositório."""
+
+    CAMINHO = ".fabrica/planos/login.json"
+
+    def publicar(self, plano_, ref="main"):
+        texto = plano_ if isinstance(plano_, str) else json.dumps(plano_)
+        self.forja.definir_arquivo(REPO, ref, self.CAMINHO, texto)
+
+    def novo(self, **extra):
+        extra.setdefault("caminho_plano", self.CAMINHO)
+        return super().novo(**extra)
+
+    def ambiente_real(self, **extra):
+        (self.repo_dir / ".fabrica").mkdir(exist_ok=True)
+        (self.repo_dir / ".fabrica" / "config.json").write_text(json.dumps(CONFIG), encoding="utf-8")
+        (self.tmp / "w").write_text(TOKEN + "\n", encoding="utf-8")
+        (self.tmp / "g").write_text(TOKEN_GH + "\n", encoding="utf-8")
+        ambiente = {
+            "FABRICA_RAIZ": str(self.raiz),
+            "FABRICA_REPO_DIR": str(self.repo_dir),
+            "FABRICA_PROJETO": PROJETO,
+            "FABRICA_REPO": REPO,
+            "WARREN_TOKEN_FILE": str(self.tmp / "w"),
+            "GH_TOKEN_FILE": str(self.tmp / "g"),
+        }
+        ambiente.update(extra)
+        return ambiente
+
+    def test_padrao_e_o_plano_legado(self):
+        d = super().novo()
+        self.assertEqual(d.caminho_plano, ".fabrica/plano.json")
+        self.assertEqual(despachante.permitidos_ao_orquestrador(".fabrica/plano.json"), despachante.PERMITIDOS_AO_ORQUESTRADOR)
+
+    def test_le_o_plano_do_caminho_dado(self):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/plano.json", json.dumps(plano(raia("x"))))
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        self.assertEqual(d.caminho_plano, self.CAMINHO)
+        d.iniciar()
+        self.assertEqual(sorted(self.estado()["raias"]), ["a"])
+        self.assertEqual(json.loads((self.raiz / "plano.json").read_text(encoding="utf-8"))["raias"][0]["id"], "a")
+
+    def test_plano_ausente_cita_o_caminho_dado(self):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/plano.json", json.dumps(plano(raia("x"))))
+        with self.assertRaises(despachante.ErroDeEntrada) as ctx:
+            self.novo().iniciar()
+        self.assertIn(self.CAMINHO, ctx.exception.erros[0])
+
+    def test_permitidos_trocam_so_o_plano(self):
+        self.assertEqual(
+            despachante.permitidos_ao_orquestrador(self.CAMINHO),
+            (self.CAMINHO, est.PERGUNTA_DO_ORQUESTRADOR, ".fabrica/planejamento/**", ".seeds/**"),
+        )
+
+    def test_pr_do_orquestrador_que_muda_so_o_seu_plano_e_mergeavel(self):
+        d, rid = self.acordar_por_falha()
+        self.assertIn("Seu plano: `%s`" % self.CAMINHO, self.runs(FABLE)[-1]["prompt"])
+        self.pr_do_orquestrador(rid, [self.CAMINHO, ".seeds/issues.jsonl"], plano(raia("a", plano_seeds="pl-00aa")))
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.assertEqual(self.forja.decisoes, [])
+
+    def test_pr_que_muda_outro_plano_vai_para_o_paulo(self):
+        for intruso in (".fabrica/planos/outro.json", ".fabrica/plano.json"):
+            for arquivos in ([intruso], [self.CAMINHO, intruso]):
+                with self.subTest(arquivos=arquivos):
+                    self.setUp()
+                    d, rid = self.acordar_por_falha()
+                    self.pr_do_orquestrador(rid, arquivos, plano(raia("a", plano_seeds="pl-00aa")))
+                    d.ciclo()
+                    self.assertEqual(self.forja.merges, [])
+                    ((titulo, corpo),) = self.forja.decisoes
+                    self.assertEqual(titulo, "[fábrica] orquestrador: PR do orquestrador precisa de aprovação")
+                    self.assertIn(intruso, corpo)
+
+    def test_construir_le_fabrica_plano(self):
+        self.assertEqual(despachante.construir(self.ambiente_real()).caminho_plano, ".fabrica/plano.json")
+        for caminho in (".fabrica/plano.json", self.CAMINHO, ".fabrica/planos/a1-b2.json", ".fabrica/planos/0.json"):
+            with self.subTest(caminho=caminho):
+                self.assertEqual(despachante.construir(self.ambiente_real(FABRICA_PLANO=caminho)).caminho_plano, caminho)
+
+    def test_fabrica_plano_invalido_e_erro_de_entrada(self):
+        for caminho in (
+            "../x.json",
+            "",
+            "/.fabrica/plano.json",
+            "./.fabrica/plano.json",
+            ".fabrica/planos/../plano.json",
+            ".fabrica/planos/Login.json",
+            ".fabrica/planos/-login.json",
+            ".fabrica/planos/a/b.json",
+            ".fabrica/planos/.json",
+            ".fabrica/planos/login.json\n",
+            ".fabrica/planos/login.jsonx",
+            ".fabrica/plano.json.bak",
+            ".fabrica/config.json",
+            ".fabrica/planos/l_x.json",
+        ):
+            with self.subTest(caminho=caminho):
+                with self.assertRaises(despachante.ErroDeEntrada) as ctx:
+                    despachante.construir(self.ambiente_real(FABRICA_PLANO=caminho))
+                self.assertIn("FABRICA_PLANO", ctx.exception.erros[0])
+
+    def test_fabrica_plano_invalido_sai_com_2_no_main(self):
+        for comando in (["rodar"], ["iniciar"]):
+            with self.subTest(comando=comando):
+                erro = io.StringIO()
+                codigo = despachante.main(
+                    comando,
+                    ambiente=self.ambiente_real(FABRICA_PLANO="../x.json"),
+                    construir=despachante.construir,
+                    saida=io.StringIO(),
+                    erro=erro,
+                    abrir_forja=lambda amb: self.forja,
+                )
+                self.assertEqual(codigo, 2)
+                self.assertIn("FABRICA_PLANO", erro.getvalue())
+                self.assertEqual(self.forja.decisoes, [])
+
+    def test_fabrica_preparar_warren_0_desliga_o_preparo(self):
+        import functools
+
+        self.assertIsNone(despachante.construir(self.ambiente_real(FABRICA_PREPARAR_WARREN="0"))._preparar_warren)
+        for valor in ("1", ""):
+            with self.subTest(valor=valor):
+                d = despachante.construir(self.ambiente_real(FABRICA_PREPARAR_WARREN=valor))
+                self.assertIsInstance(d._preparar_warren, functools.partial)
+
+    def test_status_diz_se_o_plano_concluiu(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        self.assertIn("concluído: não", despachante.status(self.raiz).splitlines())
+        disco = self.estado()
+        disco["raias"]["a"]["estado"] = "concluida"
+        disco["chavesAcordadas"] = ["fase_concluida:f1"]
+        (self.raiz / "estado.json").write_text(json.dumps(disco), encoding="utf-8")
+        self.assertIn("concluído: sim", despachante.status(self.raiz).splitlines())
+        disco["decisoes"] = [{"url": PR_ORQ, "motivo": "m", "alvo": PR_ORQ}]
+        (self.raiz / "estado.json").write_text(json.dumps(disco), encoding="utf-8")
+        self.assertIn("concluído: não", despachante.status(self.raiz).splitlines())
+
+
 if __name__ == "__main__":
     unittest.main()
