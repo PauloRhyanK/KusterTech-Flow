@@ -94,11 +94,27 @@ Com vários planos e repositórios, um coordenador (`scripts/coordenador.py`, se
 ### Instalar a máquina
 
 ```bash
-git clone <url deste repositório> ~/fabrica/kit   # só na primeira vez
+git clone -b <branch> <url deste repositório> ~/fabrica/kit   # só na primeira vez
 python3 -I ~/fabrica/kit/fabrica/scripts/instalar_maquina.py --branch <branch>
 ```
 
-O instalador é idempotente: atualiza o kit no branch pedido, cria `~/fabrica/planos`, `fila.json` e `capacidade.json` (só se faltarem), instala as units de usuário, liga o linger, confere os requisitos (grupo `docker`, `sudo -n`, Warren 0.19.3 respondendo, tokens legíveis) e liga o `fabrica-fila`. Faltando requisito, sai com 2 e lista o que falta.
+Até o merge no `main`, o branch é `feat/fabrica-fila-por-plano`: o `main` ainda não tem o instalador nem as units. Use o mesmo branch no clone e no `--branch`.
+
+O instalador é idempotente: atualiza o kit no branch pedido, cria `~/fabrica/planos`, `fila.json` e `capacidade.json` (só se faltarem), liga o linger, instala as units de usuário, confere os requisitos e liga o `fabrica-fila`. Depois confere que ele ficou `active` (3 tentativas, de 2 em 2 s); se não ficar, sai com 1 e manda ver o `journalctl --user -u fabrica-fila`. Os requisitos são:
+
+- grupo `docker`, também nas units (veja abaixo);
+- `sudo -n`;
+- Warren 0.19.3 respondendo;
+- tokens legíveis;
+- o `fabrica-despachante.service` legado desligado. Com ele habilitado ou ativo, o mesmo plano poderia rodar em dois despachantes. Desligue-o com `systemctl --user disable --now fabrica-despachante`.
+
+Faltando requisito, sai com 2 e lista o que falta.
+
+Os caminhos dos tokens e a URL do Warren vêm de `~/fabrica/coordenador.env` (opcional, `WARREN_API`, `WARREN_TOKEN_FILE` e `GH_TOKEN_FILE`, uma `CHAVE=VALOR` por linha, sem expansão), o mesmo arquivo da unit `fabrica-fila`. O instalador e os comandos `registrar`, `status` e `vagas` também o leem; uma variável do ambiente vale mais que o arquivo.
+
+**Grupo `docker` nas units.** Com o linger, o `user@` sobe no boot com os grupos daquele momento. Se você entrar no grupo `docker` depois, rode `sudo systemctl restart user@$(id -u)` (ou reinicie a máquina) para as units herdarem o grupo. O instalador confere com `systemd-run --user --wait --pipe id -nG`; sem o `systemd-run`, só avisa.
+
+**Fora de uma sessão de login** (por exemplo, `sudo -iu devops`), o instalador liga o linger primeiro e usa `XDG_RUNTIME_DIR=/run/user/<uid>` quando a variável falta, para o `systemctl --user` achar o barramento.
 
 ### Operar
 
@@ -121,7 +137,9 @@ Em `~/fabrica/planos/<id>/`:
 - `repo/`: o clone do repositório do cliente, só desse plano;
 - `plano.env`: as variáveis do serviço, **só caminhos e nomes**, nunca um token.
 
-Repositórios privados autenticam por um helper de credencial local que lê `GH_TOKEN_FILE`: o clone guarda só o caminho do arquivo.
+Repositórios privados autenticam por um helper de credencial local que lê `GH_TOKEN_FILE`, registrado só para `https://github.com`: o clone guarda só o caminho do arquivo.
+
+**Unit parada ou `failed`.** O plano vira `pausado`, mas os Plan Runs e o PR do orquestrador dele continuam vivos no Warren e no GitHub. Por isso o coordenador não solta nada: refaz as vagas pelo `estado.json` do plano (raias `executando`, despacho em curso e incertos) e mantém a trava do repositório enquanto houver orquestrador em curso. Com o `estado.json` ilegível, as vagas e a trava ficam como estão, com um aviso. As vagas e a trava só saem quando o plano conclui ou some da fila.
 
 ### Capacidade
 
@@ -139,6 +157,7 @@ Enquanto o coordenador prepara o Warren, ele marca uma **drenagem**: todos os pl
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
 - Conflitos em `.seeds/` entre planos do mesmo repositório caem no caminho de "merge recusado" (a seed vai para o Paulo depois de 3 recusas).
+- Quando o preparo vê o Warren sem runs ativos, ele o reinicia sem marcar drenagem. Um despachante de plano pode criar um run entre a consulta e o restart, e esse run morre logo no começo. É raro: só acontece quando o drop-in ou o patch mudam, isto é, na 1ª instalação ou numa atualização do Warren. O caminho de infra perdida redespacha a raia.
 
 ## O que ainda é do Paulo
 

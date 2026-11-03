@@ -24,13 +24,27 @@ TOKEN_GH = "segredo-do-github-456"
 class Executor:
     """`executar` falso: grava cada argv e responde por prefixo; o clone cria o kit com as units reais."""
 
-    def __init__(self, home, *, grupos="devops docker", sudo=0, linger=0, falhas=None):
+    def __init__(
+        self,
+        home,
+        *,
+        grupos="devops docker",
+        grupos_das_units=None,
+        sudo=0,
+        linger=0,
+        falhas=None,
+        fila=("active",),
+        legado=("disabled", "inactive"),
+    ):
         self.home = pathlib.Path(home)
         self.chamadas = []
         self.grupos = grupos
+        self.grupos_das_units = grupos if grupos_das_units is None else grupos_das_units
         self.sudo = sudo
         self.linger = linger
         self.falhas = falhas or {}
+        self.fila = list(fila)  # respostas sucessivas do is-active fabrica-fila (a última se repete)
+        self.legado = legado
 
     def __call__(self, argv):
         argv = list(argv)
@@ -50,6 +64,15 @@ class Executor:
             return self.sudo, ""
         if argv[:4] == ["sudo", "-n", "loginctl", "enable-linger"]:
             return self.linger, ""
+        if argv[:1] == ["systemd-run"]:
+            return 0, self.grupos_das_units + "\n"
+        if argv == ["systemctl", "--user", "is-active", "fabrica-fila"]:
+            estado = self.fila.pop(0) if len(self.fila) > 1 else self.fila[0]
+            return (0 if estado == "active" else 3), estado + "\n"
+        if argv == ["systemctl", "--user", "is-enabled", "fabrica-despachante.service"]:
+            return (0 if self.legado[0] == "enabled" else 1), self.legado[0] + "\n"
+        if argv == ["systemctl", "--user", "is-active", "fabrica-despachante.service"]:
+            return (0 if self.legado[1] == "active" else 3), self.legado[1] + "\n"
         return 0, ""
 
     def comandos(self):
@@ -97,12 +120,22 @@ class Base(unittest.TestCase):
         (self.kit / ".git").mkdir(parents=True)
         copiar_units(self.kit)
 
-    def rodar(self, argv=(), executor=None, http=None):
+    def rodar(self, argv=(), executor=None, http=None, ambiente=None):
         executor = executor or Executor(self.home)
         http = http or Http()
         saida, erro = io.StringIO(), io.StringIO()
+        self.ambiente = {"XDG_RUNTIME_DIR": "/run/user/1000"} if ambiente is None else ambiente
+        self.esperas = []
         codigo = instalar_maquina.main(
-            list(argv), executar=executor, home=self.home, http=http, saida=saida, erro=erro
+            list(argv),
+            executar=executor,
+            home=self.home,
+            http=http,
+            saida=saida,
+            erro=erro,
+            ambiente=self.ambiente,
+            uid=1000,
+            dormir=self.esperas.append,
         )
         self.executor, self.http, self.saida, self.erro = executor, http, saida.getvalue(), erro.getvalue()
         return codigo
@@ -125,14 +158,19 @@ class TestesInstalacao(Base):
     def test_ordem_dos_comandos(self):
         self.assertEqual(self.rodar(), 0, self.erro)
         comandos = self.executor.comandos()
+        # final M9: o linger vem antes do daemon-reload; no fim, confere que a fila ficou active
         esperado = [
             "git clone --branch main %s %s" % (URL_PADRAO, self.kit),
-            "systemctl --user daemon-reload",
             "id -un",
             "sudo -n loginctl enable-linger devops",
+            "systemctl --user daemon-reload",
             "id -nG",
+            "systemd-run --user --wait --pipe --quiet id -nG",
             "sudo -n true",
+            "systemctl --user is-enabled fabrica-despachante.service",
+            "systemctl --user is-active fabrica-despachante.service",
             "systemctl --user enable --now fabrica-fila",
+            "systemctl --user is-active fabrica-fila",
         ]
         self.assertEqual(comandos, esperado)
 
@@ -253,6 +291,84 @@ class TestesRequisitos(Base):
     def test_mensagens_nao_vazam_token(self):
         self.assertEqual(self.rodar(http=Http(erro=OSError("falhou com " + TOKEN_WARREN))), 2)
         self.assertNotIn(TOKEN_WARREN, self.erro + self.saida)
+
+
+class TestesFinal(Base):
+    """Rodada final: M3 (coordenador.env), M4 (despachante legado), M8 (grupo docker nas units), M9 (sessão)."""
+
+    def test_tokens_e_api_do_coordenador_env(self):
+        outros = self.home / "segredos"
+        outros.mkdir()
+        (outros / "w").write_text("token-w-fora-do-padrao\n", encoding="utf-8")
+        (outros / "g").write_text("token-g-fora-do-padrao\n", encoding="utf-8")
+        (self.home / ".warren-token").unlink()
+        (self.home / ".warren-gh-token").unlink()
+        self.fabrica.mkdir()
+        (self.fabrica / "coordenador.env").write_text(
+            "# caminhos\nWARREN_API=http://127.0.0.1:9090\nWARREN_TOKEN_FILE=%s\n\nGH_TOKEN_FILE=~/segredos/g\nOUTRA=x\n"
+            % (outros / "w"),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertEqual(
+            self.http.chamadas,
+            [("http://127.0.0.1:9090/health", "token-w-fora-do-padrao"), ("http://127.0.0.1:9090/version", "token-w-fora-do-padrao")],
+        )
+
+    def test_ambiente_do_processo_tem_precedencia_sobre_o_coordenador_env(self):
+        self.fabrica.mkdir()
+        (self.fabrica / "coordenador.env").write_text("WARREN_TOKEN_FILE=/nao/existe\nGH_TOKEN_FILE=/nao/existe\n", encoding="utf-8")
+        ambiente = {
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "WARREN_TOKEN_FILE": str(self.home / ".warren-token"),
+            "GH_TOKEN_FILE": str(self.home / ".warren-gh-token"),
+        }
+        self.assertEqual(self.rodar(ambiente=ambiente), 0, self.erro)
+
+    def test_token_ausente_no_caminho_do_coordenador_env_aparece_na_lista(self):
+        self.fabrica.mkdir()
+        (self.fabrica / "coordenador.env").write_text("GH_TOKEN_FILE=/nao/existe/gh\n", encoding="utf-8")
+        self.assertEqual(self.rodar(), 2)
+        self.assertIn("/nao/existe/gh", self.erro)
+
+    def test_despachante_legado_habilitado_ou_ativo_sai_com_2(self):
+        for legado in (("enabled", "inactive"), ("disabled", "active")):
+            with self.subTest(legado=legado):
+                self.assertEqual(self.rodar(executor=Executor(self.home, legado=legado)), 2)
+                self.assertIn("fabrica-despachante", self.erro)
+                self.assertIn("systemctl --user disable --now fabrica-despachante", self.erro)
+                self.assertNotIn("systemctl --user enable --now fabrica-fila", self.executor.comandos())
+
+    def test_units_sem_o_grupo_docker_sai_com_2_e_manda_reiniciar_o_user(self):
+        self.assertEqual(self.rodar(executor=Executor(self.home, grupos_das_units="devops")), 2)
+        self.assertIn("sudo systemctl restart user@", self.erro)
+        self.assertNotIn("systemctl --user enable --now fabrica-fila", self.executor.comandos())
+
+    def test_sem_systemd_run_so_avisa(self):
+        executor = Executor(self.home, falhas={("systemd-run",): (127, "systemd-run: não encontrado")})
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertIn("sudo systemctl restart user@", self.saida)
+
+    def test_exporta_xdg_runtime_dir_quando_falta(self):
+        ambiente = {}
+        self.assertEqual(self.rodar(ambiente=ambiente), 0, self.erro)
+        self.assertEqual(ambiente["XDG_RUNTIME_DIR"], "/run/user/1000")
+        ambiente = {"XDG_RUNTIME_DIR": "/outro"}
+        self.assertEqual(self.rodar(ambiente=ambiente), 0, self.erro)
+        self.assertEqual(ambiente["XDG_RUNTIME_DIR"], "/outro")
+
+    def test_fila_que_demora_a_ficar_active_e_conferida_de_novo(self):
+        executor = Executor(self.home, fila=("activating", "active"))
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertEqual(executor.comandos().count("systemctl --user is-active fabrica-fila"), 2)
+        self.assertTrue(self.esperas and all(s == 2 for s in self.esperas))
+
+    def test_fila_que_nao_fica_active_sai_com_1(self):
+        executor = Executor(self.home, fila=("failed",))
+        self.assertEqual(self.rodar(executor=executor), 1)
+        self.assertEqual(executor.comandos().count("systemctl --user is-active fabrica-fila"), 3)
+        self.assertIn("fabrica-fila", self.erro)
+        self.assertIn("journalctl --user -u fabrica-fila", self.erro)
 
 
 class TestesErros(Base):
