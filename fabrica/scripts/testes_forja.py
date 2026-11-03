@@ -604,6 +604,96 @@ class TestesArquivo(unittest.TestCase):
         self.assertTrue(ctx.exception.__suppress_context__)
 
 
+class TestesListar(unittest.TestCase):
+    def item(self, caminho, tipo="file"):
+        return {"type": tipo, "path": caminho, "name": caminho.rsplit("/", 1)[-1]}
+
+    def test_devolve_so_os_arquivos_do_diretorio(self):
+        itens = [
+            self.item(".fabrica/planos/a.md"),
+            self.item(".fabrica/planos/antigos", "dir"),
+            self.item(".fabrica/planos/b.md"),
+        ]
+        f, t = novo(ok(itens))
+        self.assertEqual(f.listar("acme/app", "main", ".fabrica/planos"), [".fabrica/planos/a.md", ".fabrica/planos/b.md"])
+        t.exigir(self, 1)
+        metodo, url, headers, corpo = t.requisicoes[0]
+        self.assertEqual(metodo, "GET")
+        self.assertEqual(url, API + "/repos/acme/app/contents/.fabrica/planos?ref=main")
+        self.assertEqual(headers["Accept"], "application/vnd.github+json")
+        self.assertEqual(headers["Authorization"], "Bearer " + TOKEN)
+
+    def test_404_devolve_none(self):
+        f, t = novo(vazio(404))
+        self.assertIsNone(f.listar("acme/app", "main", ".fabrica/planos"))
+        t.exigir(self, 1)
+
+    def test_diretorio_sem_arquivos_devolve_lista_vazia(self):
+        f, t = novo(ok([self.item(".fabrica/planos/antigos", "dir")]))
+        self.assertEqual(f.listar("acme/app", "main", ".fabrica/planos"), [])
+
+    def test_caminho_que_e_arquivo_devolve_none(self):
+        f, t = novo(ok(self.item(".fabrica/plano.json")))
+        self.assertIsNone(f.listar("acme/app", "main", ".fabrica/plano.json"))
+
+    def test_outros_erros_levantam_sem_vazar(self):
+        for codigo in (301, 403, 500):
+            f, t = novo((codigo, {}, SEGREDO.encode()))
+            with self.assertRaises(RuntimeError) as ctx:
+                f.listar("acme/app", "main", ".fabrica/planos")
+            t.exigir(self, 1)
+            self.assertIn("HTTP %d" % codigo, str(ctx.exception))
+            self.assertNotIn(SEGREDO, str(ctx.exception))
+
+    def test_item_malformado_levanta(self):
+        for itens in ([5], [{"type": "file"}], [{"type": "file", "path": ""}]):
+            f, t = novo(ok(itens))
+            with self.assertRaises(RuntimeError, msg=repr(itens)):
+                f.listar("acme/app", "main", "a")
+
+    def test_ref_e_diretorio_sao_codificados(self):
+        f, t = novo(ok([]))
+        f.listar("acme/app", "feat/x y&z", "docs/a b#c")
+        self.assertEqual(t.urls()[0], API + "/repos/acme/app/contents/docs/a%20b%23c?ref=feat%2Fx%20y%26z")
+
+    def test_entradas_invalidas_sem_requisicao(self):
+        for diretorio in ("../x", "/abs", "", "a//b", "a/", ".", None, 5):
+            f, t = novo()
+            with self.assertRaises(ValueError, msg=repr(diretorio)):
+                f.listar("acme/app", "main", diretorio)
+            t.exigir(self, 0)
+        for ref in ("", None, 3):
+            f, t = novo()
+            with self.assertRaises(ValueError, msg=repr(ref)):
+                f.listar("acme/app", ref, "a")
+            t.exigir(self, 0)
+        f, t = novo()
+        with self.assertRaises(ValueError):
+            f.listar("sem-barra", "main", "a")
+        t.exigir(self, 0)
+
+
+class TestesBranchPadrao(unittest.TestCase):
+    def test_le_o_default_branch(self):
+        f, t = novo(ok({"default_branch": "trunk", "name": "app"}))
+        self.assertEqual(f.branch_padrao("acme/app"), "trunk")
+        t.exigir(self, 1)
+        metodo, url, headers, corpo = t.requisicoes[0]
+        self.assertEqual((metodo, url), ("GET", API + "/repos/acme/app"))
+
+    def test_sem_default_branch_ou_erro_levanta(self):
+        for resposta in (ok({}), ok({"default_branch": ""}), ok({"default_branch": 3}), ok([]), vazio(404), vazio(500)):
+            f, t = novo(resposta)
+            with self.assertRaises(RuntimeError):
+                f.branch_padrao("acme/app")
+
+    def test_repo_invalido_sem_requisicao(self):
+        f, t = novo()
+        with self.assertRaises(ValueError):
+            f.branch_padrao("acme")
+        t.exigir(self, 0)
+
+
 class TestesDecisao(unittest.TestCase):
     def test_abrir_decisao_corpo_label_e_retorno(self):
         f, t = novo(ok({"html_url": ISSUE_URL, "number": 7}, 201))
@@ -1249,6 +1339,41 @@ class TestesForjaFalsa(unittest.TestCase):
         with self.assertRaises(ValueError):
             f.mergear("https://github.com/acme/app/issues/12", SHA)
         self.assertEqual(f.merges, [])
+
+    def test_listar_deriva_dos_arquivos_definidos(self):
+        f = self.falsa()
+        for caminho in (".fabrica/planos/b.md", ".fabrica/planos/a.md", ".fabrica/planos/antigos/x.md", ".fabrica/plano.json"):
+            f.definir_arquivo("acme/app", "main", caminho, "x")
+        f.definir_arquivo("acme/app", "outra", ".fabrica/planos/z.md", "x")
+        self.assertEqual(f.listar("acme/app", "main", ".fabrica/planos"), [".fabrica/planos/a.md", ".fabrica/planos/b.md"])
+        self.assertEqual(f.listar("acme/app", "main", ".fabrica/planos/antigos"), [".fabrica/planos/antigos/x.md"])
+        self.assertEqual(f.listar("acme/app", "main", ".fabrica"), [".fabrica/plano.json"])
+        self.assertIsNone(f.listar("acme/app", "main", ".fabrica/outro"))
+        self.assertIsNone(f.listar("acme/app", "main", ".fabrica/plano.json"))
+        self.assertIsNone(f.listar("acme/outro", "main", ".fabrica/planos"))
+        self.assertIsNone(f.listar("acme/app", "nada", ".fabrica/planos"))
+        self.assertIsNone(f.listar("acme/app", "main", ".fabrica/plan"))
+        self.assertEqual(f.chamadas[-1], ("listar", {"repo": "acme/app", "ref": "main", "diretorio": ".fabrica/plan"}))
+
+    def test_listar_valida_como_a_real(self):
+        f = self.falsa()
+        for diretorio in ("../x", "/abs", "", "a/", None):
+            with self.assertRaises(ValueError, msg=repr(diretorio)):
+                f.listar("acme/app", "main", diretorio)
+        with self.assertRaises(ValueError):
+            f.listar("acme/app", "", "a")
+        with self.assertRaises(ValueError):
+            f.listar("acme", "main", "a")
+
+    def test_branch_padrao_e_main_e_pode_ser_definido(self):
+        f = self.falsa()
+        self.assertEqual(f.branch_padrao("acme/app"), "main")
+        f.definir_branch_padrao("acme/app", "trunk")
+        self.assertEqual(f.branch_padrao("acme/app"), "trunk")
+        self.assertEqual(f.branch_padrao("acme/outro"), "main")
+        self.assertEqual(f.chamadas[-1], ("branch_padrao", {"repo": "acme/outro"}))
+        with self.assertRaises(ValueError):
+            f.branch_padrao("acme")
 
     def test_arquivo_por_repo_ref_e_caminho(self):
         f = self.falsa()

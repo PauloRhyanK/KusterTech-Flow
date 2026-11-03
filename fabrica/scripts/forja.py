@@ -298,6 +298,38 @@ class ForjaGitHub:
         except UnicodeDecodeError:
             raise RuntimeError("GET %s: conteúdo não é UTF-8" % alvo) from None
 
+    def listar(self, repo: str, ref: str, diretorio: str) -> list[str] | None:
+        """Caminhos dos ARQUIVOS do diretório (subdiretórios ficam de fora); `None` se ele não existe."""
+        dono, nome = _analisar_repo(repo)
+        _texto_nao_vazio(ref, "ref")
+        trecho = _caminho_de_arquivo(diretorio)
+        alvo = "/repos/%s/%s/contents/%s?ref=%s" % (dono, nome, trecho, urllib.parse.quote(ref, safe=""))
+        status, bruto = self._enviar("GET", alvo)
+        if status == 404:
+            return None
+        if status != 200:
+            raise RuntimeError("GET %s: HTTP %s" % (alvo, status))
+        try:
+            itens = json.loads(bruto.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            raise RuntimeError("GET %s: resposta não é JSON" % alvo) from None
+        if isinstance(itens, dict):
+            return None  # o caminho é um arquivo, não um diretório
+        if not isinstance(itens, list):
+            raise RuntimeError("GET %s: resposta sem a lista de arquivos" % alvo)
+        caminhos = []
+        for item in itens:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not item["path"]:
+                raise RuntimeError("GET %s: item sem o campo 'path'" % alvo)
+            if item.get("type") == "file":
+                caminhos.append(item["path"])
+        return caminhos
+
+    def branch_padrao(self, repo: str) -> str:
+        dono, nome = _analisar_repo(repo)
+        caminho = "/repos/%s/%s" % (dono, nome)
+        return self._texto(self._objeto("GET", caminho), "", "default_branch", "GET", caminho)
+
     def fechar_pr(self, url: str, comentario: str) -> None:
         """Comenta e fecha um PR (ou uma issue de decisão) pela API de issues, que vale para os dois."""
         dono, nome, numero = _analisar_url(url, _TIPOS_DE_URL)
@@ -435,6 +467,7 @@ class ForjaFalsa:
         self._prs: dict[str, dict] = {}
         self._ci: dict[tuple[str, str], str] = {}
         self._arquivos: dict[tuple[str, str, str], str] = {}
+        self._branches: dict[str, str] = {}
         self._decisoes: dict[str, dict] = {}
         self._corpos: dict[str, str] = {}
         self.labels: dict[tuple[str, str], dict] = {}
@@ -473,6 +506,10 @@ class ForjaFalsa:
         _analisar_repo(repo)
         _caminho_de_arquivo(caminho)
         self._arquivos[(repo, ref, caminho)] = conteudo
+
+    def definir_branch_padrao(self, repo: str, branch: str) -> None:
+        _analisar_repo(repo)
+        self._branches[repo] = _texto_nao_vazio(branch, "branch")
 
     def _carimbo(self) -> str:
         # microssegundos: dois fechamentos seguidos nunca empatam (o GitHub tem segundos; o falso é mais fino)
@@ -537,6 +574,27 @@ class ForjaFalsa:
         _texto_nao_vazio(ref, "ref")
         _caminho_de_arquivo(caminho)
         return self._arquivos.get((repo, ref, caminho))
+
+    def listar(self, repo: str, ref: str, diretorio: str) -> list[str] | None:
+        self._registrar("listar", repo=repo, ref=ref, diretorio=diretorio)
+        _analisar_repo(repo)
+        _texto_nao_vazio(ref, "ref")
+        _caminho_de_arquivo(diretorio)
+        prefixo = diretorio + "/"
+        existe = False
+        diretos = []
+        for (r, rf, caminho) in self._arquivos:
+            if r != repo or rf != ref or not caminho.startswith(prefixo):
+                continue
+            existe = True
+            if "/" not in caminho[len(prefixo) :]:
+                diretos.append(caminho)
+        return sorted(diretos) if existe else None
+
+    def branch_padrao(self, repo: str) -> str:
+        self._registrar("branch_padrao", repo=repo)
+        _analisar_repo(repo)
+        return self._branches.get(repo, "main")
 
     def garantir_label(self, repo: str, nome: str, cor: str, descricao: str) -> bool:
         self._registrar("garantir_label", repo=repo, label=nome, cor=cor, descricao=descricao)
