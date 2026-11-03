@@ -930,6 +930,17 @@ class TestesModeloEfetivo(unittest.TestCase):
         self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs/r-1/events?follow=0"))
         self.assertEqual(t.ultima[2]["Authorization"], "Bearer " + TOKEN)
 
+    def test_warren_le_o_formato_confirmado_do_evento_init(self):
+        # formato real confirmado pelo controlador (Warren 0.19.3)
+        eventos = (
+            b'{"kind":"state_change","stream":"system","origin":"warren","payload":{"state":"running"}}\n'
+            b'{"kind":"state_change","stream":"system","origin":"warren",'
+            b'"payload":{"type":"system","subtype":"init","model":"claude-sonnet-5-5"}}\n'
+            b'{"kind":"text","payload":{"text":"ok"}}\n'
+        )
+        m, _ = novo((200, {}, eventos))
+        self.assertEqual(m.modelo_efetivo("r-1"), "claude-sonnet-5-5")
+
     def test_warren_aceita_o_evento_init_no_formato_do_claude_code(self):
         m, _ = novo((200, {}, b'{"type": "system", "subtype": "init", "model": "claude-opus-5-5"}\n'))
         self.assertEqual(m.modelo_efetivo("r-1"), "claude-opus-5-5")
@@ -1005,6 +1016,43 @@ class TestesModeloEfetivo(unittest.TestCase):
 
         self.assertNotIsInstance(SemModelo(), motor.Motor)
         self.assertTrue(hasattr(motor.Motor, "modelo_efetivo"))
+
+
+class TestesCancelarPlano(unittest.TestCase):
+    def test_warren_cancela_com_post_e_corpo_vazio(self):
+        m, t = novo(ok({"planRun": {"id": "p/1", "state": "cancelled"}}))
+        self.assertIsNone(m.cancelar_plano("p/1"))
+        metodo, url, headers, corpo = t.ultima
+        self.assertEqual((metodo, url), ("POST", BASE + "/plan-runs/p%2F1/cancel"))
+        self.assertEqual(json.loads(corpo), {})
+        self.assertEqual(headers["Authorization"], "Bearer " + TOKEN)
+
+    def test_warren_erros_e_429(self):
+        m, _ = novo((500, {}, b"segredo do corpo"))
+        with self.assertRaises(RuntimeError) as ctx:
+            m.cancelar_plano("p-1")
+        self.assertNotIn("segredo do corpo", str(ctx.exception))
+        m, _ = novo((429, {"Retry-After": "7"}, b""))
+        with self.assertRaises(motor.MotorOcupado):
+            m.cancelar_plano("p-1")
+        m, t = novo()
+        with self.assertRaises(ValueError):
+            m.cancelar_plano("..")
+        self.assertEqual(t.requisicoes, [])
+
+    def test_falso_registra_e_marca_o_plano_cancelado(self):
+        m = motor.MotorFalso()
+        pid = m.despachar_plano(**ARGS_PLANO)
+        m.cancelar_plano(pid)
+        self.assertEqual(m.plano(pid)["estado"], "cancelled")
+        self.assertIn(("cancelar_plano", {"plan_run_id": pid}), m.chamadas)
+        with self.assertRaises(KeyError):
+            m.cancelar_plano("nao-existe")
+
+    def test_protocolo_exige_cancelar_plano(self):
+        self.assertTrue(hasattr(motor.Motor, "cancelar_plano"))
+        self.assertIsInstance(motor.MotorFalso(), motor.Motor)
+        self.assertIsInstance(motor_warren.MotorWarren(BASE, TOKEN, TransporteFalso()), motor.Motor)
 
 
 class TestesExecucaoDireta(unittest.TestCase):

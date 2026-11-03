@@ -291,5 +291,8 @@ class MotorWarren:
                 return modelo
         return None
 
+    def cancelar_plano(self, plan_run_id: str) -> None:
+        self._requisitar("POST", "/plan-runs/%s/cancel" % _id(plan_run_id), {})
+
     def retomar_plano(self, plan_run_id: str) -> None:
         self._requisitar("POST", "/plan-runs/%s/resume" % _id(plan_run_id), {})

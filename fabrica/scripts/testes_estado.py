@@ -1711,5 +1711,51 @@ class TestReplanejamentoNoMeioDaExecucao(unittest.TestCase):
         self.assertIn({"tipo": "despachar_raia", "raia": "a"}, acoes(e, p))
 
 
+class TestSubstituirRaia(unittest.TestCase):
+    """Rodada 1 da Task 7, H: replanejamento de uma raia `executando` (planoSeeds novo no plano)."""
+
+    def com_seeds(self):
+        e = com_pr(sha="bbb")
+        e["seeds"]["s0"] = dict(est._seed_nova("a"), estado="mergeada", pr="https://github.com/dono/nome/pull/9")
+        e["seeds"]["s2"] = dict(est._seed_nova("a"), estado="executando")
+        e["seeds"]["sb"] = dict(est._seed_nova("b"), estado="em_revisao", pr=PR2)
+        return e
+
+    def test_volta_a_planejada_com_o_plano_novo_e_torna_as_seeds_obsoletas(self):
+        e = self.com_seeds()
+        e["raias"]["a"].update(retomadas=2, retomar=True, falha="x")
+        antes = copy.deepcopy(e)
+        novo = est.substituir_raia(e, "a", "pl-00aa")
+        self.assertEqual(e, antes)
+        self.assertEqual(novo["raias"]["a"], est._raia_nova("pl-00aa"))
+        self.assertEqual(novo["seeds"]["s1"]["estado"], "obsoleta")
+        self.assertEqual(novo["seeds"]["s2"]["estado"], "obsoleta")
+        self.assertEqual(novo["seeds"]["s0"]["estado"], "mergeada")
+        self.assertEqual(novo["seeds"]["sb"], e["seeds"]["sb"])
+        self.assertEqual(novo["raias"]["b"], e["raias"]["b"])
+        # nenhuma ação para as seeds obsoletas; a raia volta a ser despachável
+        self.assertEqual(da_seed(acoes(novo)), [])
+        self.assertIn({"tipo": "despachar_raia", "raia": "a"}, acoes(novo))
+        self.assertNotIn({"tipo": "despachar_raia", "raia": "a"}, acoes(e))
+
+    def test_entrada_invalida_so_avisa(self):
+        e = self.com_seeds()
+        for raia_id, plano_seeds in (("zz", "pl-00aa"), ("a", None), ("a", "")):
+            with self.subTest(raia=raia_id, plano_seeds=plano_seeds):
+                novo = est.substituir_raia(e, raia_id, plano_seeds)
+                self.assertEqual(novo["raias"], e["raias"])
+                self.assertEqual(novo["seeds"], e["seeds"])
+                self.assertTrue(novo["avisos"])
+
+    def test_so_raia_executando_e_substituida(self):
+        for estado in ("planejada", "concluida", "falhou"):
+            with self.subTest(estado=estado):
+                e = self.com_seeds()
+                e["raias"]["a"]["estado"] = estado
+                novo = est.substituir_raia(e, "a", "pl-00aa")
+                self.assertEqual(novo["raias"]["a"], e["raias"]["a"])
+                self.assertEqual(novo["seeds"], e["seeds"])
+
+
 if __name__ == "__main__":
     unittest.main()

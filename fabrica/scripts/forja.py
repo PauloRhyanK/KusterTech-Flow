@@ -22,6 +22,7 @@ RESULTADOS_CI = ("ausente", "pendente", "vermelho", "verde")
 
 _NOME = r"[A-Za-z0-9_.-]+"
 _URL = re.compile(r"https://github\.com/(%s)/(%s)/(pull|issues)/([0-9]+)" % (_NOME, _NOME))
+_TIPOS_DE_URL = ("pull", "issues")
 _REPO = re.compile(r"(%s)/(%s)" % (_NOME, _NOME))
 _SHA_COMPLETO = re.compile(r"[0-9a-f]{40}")
 # Só estas conclusões contam como sucesso; qualquer outra (inclusive vazia ou nova) é vermelho.
@@ -53,10 +54,11 @@ def _analisar_repo(repo) -> tuple[str, str]:
     return _componente(dono), _componente(nome)
 
 
-def _analisar_url(url, tipo: str) -> tuple[str, str, int]:
-    """`(dono, nome, número)` de uma URL estrita de PR (`pull`) ou issue (`issues`)."""
+def _analisar_url(url, tipo) -> tuple[str, str, int]:
+    """`(dono, nome, número)` de uma URL estrita de PR (`pull`) ou issue (`issues`); `tipo` pode ser uma tupla."""
+    tipos = tipo if isinstance(tipo, tuple) else (tipo,)
     achado = _URL.fullmatch(url) if isinstance(url, str) else None
-    if achado is None or achado.group(3) != tipo:
+    if achado is None or achado.group(3) not in tipos:
         raise ValueError("url inválida")
     dono, nome = _componente(achado.group(1)), _componente(achado.group(2))
     return dono, nome, int(achado.group(4))
@@ -191,6 +193,7 @@ class ForjaGitHub:
             "repo": "%s/%s" % (urllib.parse.unquote(dono), urllib.parse.unquote(nome)),
             "numero": numero,
             "arquivos": arquivos,
+            "mergeado": dados.get("merged") is True,
         }
 
     # CI
@@ -267,6 +270,14 @@ class ForjaGitHub:
         except UnicodeDecodeError:
             raise RuntimeError("GET %s: conteúdo não é UTF-8" % alvo) from None
 
+    def fechar_pr(self, url: str, comentario: str) -> None:
+        """Comenta e fecha um PR (ou uma issue de decisão) pela API de issues, que vale para os dois."""
+        dono, nome, numero = _analisar_url(url, _TIPOS_DE_URL)
+        _texto_nao_vazio(comentario, "comentário")
+        raiz = "/repos/%s/%s/issues/%d" % (dono, nome, numero)
+        self._objeto("POST", raiz + "/comments", {"body": comentario}, (201,))
+        self._objeto("PATCH", raiz, {"state": "closed"})
+
     def abrir_decisao(self, repo: str, titulo: str, corpo: str) -> str:
         dono, nome = _analisar_repo(repo)
         _texto_nao_vazio(titulo, "título")
@@ -317,6 +328,7 @@ class ForjaFalsa:
         self.chamadas: list[tuple[str, dict]] = []
         self.merges: list[tuple[str, str]] = []
         self.decisoes: list[tuple[str, str]] = []
+        self.fechados: list[tuple[str, str]] = []
         self._prs: dict[str, dict] = {}
         self._ci: dict[tuple[str, str], str] = {}
         self._arquivos: dict[tuple[str, str, str], str] = {}
@@ -329,7 +341,7 @@ class ForjaFalsa:
     # Auxiliares de teste
 
     def definir_pr(
-        self, url: str, *, head_sha: str, branch: str, arquivos=(), aberto: bool = True
+        self, url: str, *, head_sha: str, branch: str, arquivos=(), aberto: bool = True, mergeado: bool = False
     ) -> None:
         dono, nome, numero = _analisar_url(url, "pull")
         _validar_sha_completo(head_sha)
@@ -340,6 +352,7 @@ class ForjaFalsa:
             "repo": "%s/%s" % (urllib.parse.unquote(dono), urllib.parse.unquote(nome)),
             "numero": numero,
             "arquivos": list(arquivos),
+            "mergeado": bool(mergeado),
         }
 
     def definir_ci(self, repo: str, sha: str, resultado: str) -> None:
@@ -385,8 +398,21 @@ class ForjaFalsa:
         if not pr["aberto"] or pr["headSha"] != sha:
             return False
         pr["aberto"] = False
+        pr["mergeado"] = True
         self.merges.append((url, sha))
         return True
+
+    def fechar_pr(self, url: str, comentario: str) -> None:
+        self._registrar("fechar_pr", url=url, comentario=comentario)
+        _analisar_url(url, _TIPOS_DE_URL)
+        _texto_nao_vazio(comentario, "comentário")
+        if url in self._prs:
+            self._prs[url]["aberto"] = False
+        elif url in self._decisoes:
+            self._decisoes[url] = {"fechada": True, "ultimoComentario": comentario}
+        else:
+            raise KeyError("PR ou decisão desconhecida: %r" % (url,))
+        self.fechados.append((url, comentario))
 
     def arquivo(self, repo: str, ref: str, caminho: str) -> str | None:
         self._registrar("arquivo", repo=repo, ref=ref, caminho=caminho)

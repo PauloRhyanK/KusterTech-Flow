@@ -222,6 +222,7 @@ class TestesPr(unittest.TestCase):
                 "repo": "acme/app",
                 "numero": 12,
                 "arquivos": ["src/f0.ts", "src/f1.ts"],
+                "mergeado": False,
             },
         )
         self.assertEqual(t.urls()[0], API + "/repos/acme/app/pulls/12")
@@ -813,6 +814,84 @@ class TestesTransportePadrao(unittest.TestCase):
         self.assertIn(motor_warren._SemRedirecionamento, tipos)
 
 
+class TestesMergeadoEFechar(unittest.TestCase):
+    def test_mergeado_vem_do_campo_merged(self):
+        for extra, esperado in (({"merged": True, "state": "closed"}, True), ({"merged": False}, False), ({}, False), ({"merged": "true"}, False)):
+            with self.subTest(extra=extra):
+                corpo = pr_json(**extra)
+                if "merged" not in extra:
+                    corpo.pop("merged")
+                f, t = novo(ok(corpo), ok(arquivos(1)))
+                self.assertIs(f.pr(PR_URL)["mergeado"], esperado)
+                t.exigir(self, 2)
+
+    def test_fechar_pr_comenta_e_fecha_pela_api_de_issues(self):
+        f, t = novo(ok({"id": 1}, 201), ok({"state": "closed"}))
+        self.assertIsNone(f.fechar_pr(PR_URL, "substituído pelo PR 13"))
+        t.exigir(self, 2)
+        self.assertEqual(t.requisicoes[0][0:2], ("POST", API + "/repos/acme/app/issues/12/comments"))
+        self.assertEqual(t.corpo_json(0), {"body": "substituído pelo PR 13"})
+        self.assertEqual(t.requisicoes[1][0:2], ("PATCH", API + "/repos/acme/app/issues/12"))
+        self.assertEqual(t.corpo_json(1), {"state": "closed"})
+        self.assertEqual(t.requisicoes[1][2]["Authorization"], "Bearer " + TOKEN)
+
+    def test_fechar_aceita_url_de_issue(self):
+        f, t = novo(ok({"id": 1}, 201), ok({"state": "closed"}))
+        f.fechar_pr(ISSUE_URL, "o Warren voltou")
+        self.assertEqual(t.requisicoes[1][0:2], ("PATCH", API + "/repos/acme/app/issues/7"))
+
+    def test_fechar_pr_entradas_invalidas_sem_requisicao(self):
+        for url, comentario in (
+            ("https://github.com/acme/app/pull/x", "c"),
+            ("http://github.com/acme/app/pull/1", "c"),
+            ("https://github.com/acme/app/commit/1", "c"),
+            (PR_URL, ""),
+            (PR_URL, None),
+            (None, "c"),
+        ):
+            with self.subTest(url=url, comentario=comentario):
+                f, t = novo()
+                with self.assertRaises(ValueError):
+                    f.fechar_pr(url, comentario)
+                t.exigir(self, 0)
+
+    def test_fechar_pr_erros_http_nao_vazam(self):
+        for respostas, trecho, n in (
+            ([ok({"message": SEGREDO}, 404)], "HTTP 404", 1),
+            ([ok({"id": 1}, 201), ok({"message": SEGREDO}, 422)], "HTTP 422", 2),
+            ([ok({"id": 1}, 200)], "HTTP 200", 1),
+        ):
+            with self.subTest(trecho=trecho):
+                f, t = novo(*respostas)
+                with self.assertRaises(RuntimeError) as ctx:
+                    f.fechar_pr(PR_URL, "c")
+                t.exigir(self, n)
+                self.assertIn(trecho, str(ctx.exception))
+                self.assertNotIn(SEGREDO, str(ctx.exception))
+                self.assertNotIn(TOKEN, str(ctx.exception))
+
+    def test_falsa_fecha_pr_e_decisao_e_mergear_marca_mergeado(self):
+        f = forja.ForjaFalsa()
+        f.definir_pr(PR_URL, head_sha=SHA, branch="a")
+        f.fechar_pr(PR_URL, "x")
+        self.assertEqual((f.pr(PR_URL)["aberto"], f.pr(PR_URL)["mergeado"]), (False, False))
+        self.assertEqual(f.fechados, [(PR_URL, "x")])
+        url = f.abrir_decisao("acme/app", "t", "c")
+        f.fechar_pr(url, "y")
+        self.assertEqual(f.decisao(url), {"fechada": True, "ultimoComentario": "y"})
+        outro = "https://github.com/acme/app/pull/99"
+        f.definir_pr(outro, head_sha=SHA, branch="b")
+        self.assertTrue(f.mergear(outro, SHA))
+        self.assertEqual((f.pr(outro)["aberto"], f.pr(outro)["mergeado"]), (False, True))
+        f.definir_pr(outro, head_sha=SHA, branch="b", mergeado=True, aberto=False)
+        self.assertTrue(f.pr(outro)["mergeado"])
+        with self.assertRaises(KeyError):
+            f.fechar_pr("https://github.com/acme/app/pull/55", "z")
+        with self.assertRaises(ValueError):
+            f.fechar_pr(PR_URL, "")
+        self.assertEqual([n for n, _ in f.chamadas].count("fechar_pr"), 4)
+
+
 class TestesForjaFalsa(unittest.TestCase):
     def falsa(self):
         return forja.ForjaFalsa()
@@ -850,7 +929,15 @@ class TestesForjaFalsa(unittest.TestCase):
         r = f.pr(PR_URL)
         self.assertEqual(
             r,
-            {"aberto": True, "headSha": SHA, "branch": "feat/x", "repo": "acme/app", "numero": 12, "arquivos": ["a.ts", "b.ts"]},
+            {
+                "aberto": True,
+                "headSha": SHA,
+                "branch": "feat/x",
+                "repo": "acme/app",
+                "numero": 12,
+                "arquivos": ["a.ts", "b.ts"],
+                "mergeado": False,
+            },
         )
         r["arquivos"].append("c.ts")
         self.assertEqual(f.pr(PR_URL)["arquivos"], ["a.ts", "b.ts"])

@@ -58,6 +58,10 @@ class Motor(typing.Protocol):
         """O modelo que o run usou de fato (evento `system`/`init`), ou None se não houver."""
         ...
 
+    def cancelar_plano(self, plan_run_id: str) -> None:
+        """Cancela o Plan Run (replanejamento de uma raia em execução)."""
+        ...
+
 
 class MotorFalso:
     """Motor em memória para testar o despachante sem rede."""
@@ -192,3 +196,9 @@ class MotorFalso:
     def modelo_efetivo(self, run_id: str) -> str | None:
         self._registrar("modelo_efetivo", run_id=run_id)
         return self._modelos.get(run_id)
+
+    def cancelar_plano(self, plan_run_id: str) -> None:
+        self._registrar("cancelar_plano", plan_run_id=plan_run_id)
+        if plan_run_id not in self._planos:
+            raise KeyError("plano desconhecido: %r" % plan_run_id)
+        self._planos[plan_run_id]["estado"] = "cancelled"

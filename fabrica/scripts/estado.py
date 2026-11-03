@@ -202,6 +202,29 @@ def _tornar_obsoletas(estado: dict, raia_id: str) -> None:
             )
 
 
+def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
+    """Replanejamento de uma raia `executando`: ela volta a `planejada` com o `planoSeeds` novo.
+
+    As seeds não terminais da tentativa anterior viram `obsoleta` (nunca mais recebem ação). Quem
+    chama cancela o Plan Run antigo e fecha os PRs dessas seeds antes.
+    """
+    estado = copy.deepcopy(estado)
+    raia = _raia(estado, raia_id, "substituir_raia")
+    if raia is None:
+        return estado
+    if not _texto(plano_seeds):
+        _avisar(estado, f"substituir_raia: planoSeeds inválido {plano_seeds!r} para a raia {raia_id!r}")
+        return estado
+    if raia.get("estado") != "executando":
+        _avisar(estado, f"substituir_raia: raia {raia_id!r} não está executando")
+        return estado
+    _raias(estado)[raia_id] = _raia_nova(plano_seeds)
+    for seed in _seeds(estado).values():
+        if isinstance(seed, dict) and seed.get("raia") == raia_id and seed.get("estado") not in TERMINAIS:
+            seed["estado"] = "obsoleta"
+    return estado
+
+
 # ---------------------------------------------------------------- observações
 
 
