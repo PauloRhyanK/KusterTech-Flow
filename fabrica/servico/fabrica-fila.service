@@ -22,7 +22,11 @@
 #   WARREN_API=http://127.0.0.1:8080
 #   WARREN_TOKEN_FILE=/home/<usuário>/.warren-token
 #   GH_TOKEN_FILE=/home/<usuário>/.warren-gh-token
-# Os valores acima são os padrões. O coordenador repassa os três ao plano.env de cada plano.
+# Envio do retrato à Central (opcional, desligado sem a URL; veja "Painel da Fábrica na Central" em fabrica/README.md):
+#   FABRICA_CENTRAL_URL=https://central.exemplo.com/api/fabrica/estado
+#   FABRICA_CENTRAL_TOKEN_FILE=/home/<usuário>/.fabrica-central-token
+# Estas duas NÃO são repassadas ao plano.env. A URL é https:// (ou http://localhost, http://127.0.0.1 para teste).
+# Os valores acima (os três primeiros) são os padrões. O coordenador repassa os três ao plano.env de cada plano.
 # O clone de cada plano autentica por um credential helper local (só para https://github.com) que lê
 # GH_TOKEN_FILE na hora: só o caminho fica no .git/config do clone (sem aspa simples no caminho, ou a
 # saída é 2). Os comandos registrar, status e vagas e o instalar_maquina.py também leem este arquivo; uma

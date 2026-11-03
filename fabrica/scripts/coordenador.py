@@ -12,7 +12,9 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
    concluído (`estado.plano_concluido`) tem a unit desligada, as reservas soltas e vira `concluido`;
 5. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
    rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
-6. grava `fila-estado.json` de forma atômica.
+6. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
+   mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo;
+7. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
 meio não admite duas vezes nem roda `iniciar` de novo. Os tokens só vêm de arquivos e nunca são gravados.
@@ -41,6 +43,7 @@ import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
 import raias  # noqa: E402
+import retrato  # noqa: E402
 from despachante import ErroDeEntrada  # noqa: E402
 
 ARQ_FILA = "fila.json"
@@ -62,6 +65,9 @@ CODIGO_TRAVA = 3
 MENSAGEM_TRAVA = "outro coordenador está rodando nesta raiz"
 
 VARIAVEIS_REPASSADAS = ("WARREN_API", "WARREN_TOKEN_FILE", "GH_TOKEN_FILE")
+# envio do retrato à Central: leitura própria, fora de VARIAVEIS_REPASSADAS (não vai para o plano.env)
+VARIAVEL_CENTRAL_URL = "FABRICA_CENTRAL_URL"
+VARIAVEL_CENTRAL_TOKEN = "FABRICA_CENTRAL_TOKEN_FILE"
 LIMITE_AVISOS = 50
 AVISOS_NO_STATUS = 10
 LIMITE_MENSAGEM = 500
@@ -71,7 +77,7 @@ FORMATO_INSTANTE = "%Y-%m-%dT%H:%M:%SZ"
 UNITS_RODANDO = ("active", "activating", "reloading", "deactivating")
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 # o formato de `fila.id_do_plano`: 4 partes `[a-z0-9]+(-[a-z0-9]+)*` separadas por `--`
-_ID = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*(--[a-z0-9]+(-[a-z0-9]+)*){3}")
+_ID = retrato.ID_DO_PLANO
 
 
 class OutroCoordenador(Exception):
@@ -125,11 +131,10 @@ def ler_config(raiz) -> dict:
     return dados
 
 
-def ler_coordenador_env(raiz) -> dict:
-    """`<raiz>/coordenador.env` (o `EnvironmentFile` do `fabrica-fila`): só WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE.
+def _ler_variaveis_do_env(raiz) -> dict:
+    """Todas as `CHAVE=VALOR` não vazias de `<raiz>/coordenador.env`; ausente vale `{}`, ilegível levanta `ErroDeEntrada`.
 
-    Uma `CHAVE=VALOR` por linha, sem expansão; linha vazia ou começando por `#` é ignorada, e aspas em volta do
-    valor saem. Ausente vale `{}`; ilegível levanta `ErroDeEntrada`.
+    Uma por linha, sem expansão; linha vazia ou começando por `#` é ignorada, e aspas em volta do valor saem.
     """
     caminho = pathlib.Path(raiz) / ARQ_COORDENADOR_ENV
     try:
@@ -146,9 +151,33 @@ def ler_coordenador_env(raiz) -> dict:
         chave, valor = (parte.strip() for parte in linha.split("=", 1))
         if len(valor) >= 2 and valor[0] == valor[-1] and valor[0] in "'\"":
             valor = valor[1:-1]
-        if chave in VARIAVEIS_REPASSADAS and valor:
+        if valor:
             valores[chave] = valor
     return valores
+
+
+def ler_coordenador_env(raiz) -> dict:
+    """`<raiz>/coordenador.env` (o `EnvironmentFile` do `fabrica-fila`): só WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE.
+
+    Ausente vale `{}`; ilegível levanta `ErroDeEntrada`. As variáveis da Central têm `configuracao_central`.
+    """
+    return {chave: valor for chave, valor in _ler_variaveis_do_env(raiz).items() if chave in VARIAVEIS_REPASSADAS}
+
+
+def configuracao_central(ambiente, raiz):
+    """`{"url", "token_file"}` do envio à Central, ou `None` (envio desligado) sem `FABRICA_CENTRAL_URL`.
+
+    O ambiente vale mais que o `coordenador.env`; arquivo ilegível conta como sem as variáveis. Nunca levanta:
+    o `token_file` pode vir `None`, e o envio avisa. Só o caminho do token é lido aqui, nunca o token.
+    """
+    try:
+        arquivo = _ler_variaveis_do_env(raiz)
+    except ErroDeEntrada:
+        arquivo = {}
+    valores = {chave: (ambiente.get(chave) or arquivo.get(chave) or None) for chave in (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN)}
+    if not valores[VARIAVEL_CENTRAL_URL]:
+        return None
+    return {"url": valores[VARIAVEL_CENTRAL_URL], "token_file": valores[VARIAVEL_CENTRAL_TOKEN]}
 
 
 def _com_coordenador_env(ambiente, raiz) -> dict:
@@ -180,6 +209,8 @@ def ler_estado(raiz) -> dict:
     for chave, tipo in (("avisos", list), ("chaves", dict), ("warren", dict)):
         if not isinstance(resultado[chave], tipo):
             resultado[chave] = _padrao_do_estado()[chave]
+    if not isinstance(resultado.get("central", {}), dict):
+        del resultado["central"]
     return resultado
 
 
@@ -221,11 +252,7 @@ def _id_valido(id_) -> bool:
 
 def _atuais(fila_: list) -> dict:
     """A entrada vigente de cada id (a última válida da lista); id fora do formato fica de fora."""
-    atuais = {}
-    for entrada in fila_:
-        if isinstance(entrada, dict) and _id_valido(entrada.get("id")) and entrada.get("estado") in fila.ESTADOS:
-            atuais[entrada["id"]] = entrada
-    return atuais
+    return retrato.vigentes(fila_)
 
 
 # ---------------------------------------------------------------- coordenador
@@ -246,6 +273,8 @@ class Coordenador:
         clonar=None,
         ambiente=None,
         segredos=(),
+        central=None,
+        enviar=None,
     ):
         self.raiz = pathlib.Path(raiz)
         self.forja = forja
@@ -264,6 +293,8 @@ class Coordenador:
         conhecidos = {s.strip() for s in segredos if isinstance(s, str)} | {s for s in segredos if isinstance(s, str)}
         self._segredos = tuple(sorted((s for s in conhecidos if len(s) >= TAMANHO_MINIMO_SEGREDO), key=len, reverse=True))
         self.capacidade = self.raiz / ARQ_CAPACIDADE
+        self.central = central  # {"url", "token_file"} ou None (envio desligado)
+        self._enviar = enviar or retrato.enviar
         self._ciclos = 0
         self._ultimo_preparo = None
         self._sha_revertido = None
@@ -327,7 +358,7 @@ class Coordenador:
         despachante.gravar_json_atomico(self.raiz / ARQ_FILA_ESTADO, dict(self.dados, fila=self.dados["fila"] + self._postas_de_lado))
 
     def status(self) -> str:
-        return status(self.raiz)
+        return status(self.raiz, self.central)
 
     # ------------------------------------------------------------ registrar
 
@@ -411,8 +442,52 @@ class Coordenador:
             self._passo_orfaos(rodando, confiavel, eventos)
         finally:
             self._ciclos += 1
+            self._passo_central()
             self._salvar()
         return eventos
+
+    # ------------------------------------------------------------ 7. Central
+
+    def _retrato(self) -> bytes:
+        """O retrato do ciclo, já cortado, em JSON. `FalhaDeEnvio` se não dá para montar ou se não cabe."""
+        try:
+            cap = capacidade.ler(self.capacidade)
+        except capacidade.CapacidadeInvalida:
+            raise retrato.FalhaDeEnvio("capacidade.json inválido: nada enviado") from None
+        planos = retrato.ler_planos(self.raiz / DIR_PLANOS, _atuais(self.dados["fila"]))
+        completo = retrato.montar(
+            agora=self._agora_texto(),
+            fila_estado=self.dados,
+            capacidade=cap,
+            planos=planos,
+            mem_disponivel_mb=capacidade.mem_disponivel_mb(),
+        )
+        cortado = retrato.ajustar(completo)
+        if cortado is None:
+            raise retrato.FalhaDeEnvio("retrato não cabe nos limites: nada enviado")
+        return retrato.serializar(cortado)
+
+    def _passo_central(self) -> None:
+        """Envia o retrato (sem URL, nada). Nada daqui muda a fila, para o ciclo ou deixa uma exceção escapar.
+
+        Roda no `finally` do ciclo, então envia mesmo quando um passo falhou. A falha vira um aviso só quando a
+        categoria muda (um envio bom zera isso); a categoria nunca traz o token nem o texto da exceção.
+        """
+        if not self.central:
+            return
+        with contextlib.suppress(Exception):
+            try:
+                self._enviar(self._retrato(), url=self.central.get("url"), token_file=self.central.get("token_file"))
+                falha = None
+            except retrato.FalhaDeEnvio as exc:
+                falha = str(exc)
+            except Exception as exc:  # noqa: BLE001 - inclusive ErroDeEntrada, que encerraria o serviço
+                falha = "falha inesperada (%s)" % type(exc).__name__
+            self.dados["central"] = {"em": self._agora_texto(), "resultado": "enviado" if falha is None else "falhou: %s" % falha}
+            if falha is None:
+                self._esquecer("central:envio")
+            else:
+                self._aviso("central:envio", "Central: envio do retrato falhou (%s)" % falha)
 
     def _separar_ids_invalidos(self) -> None:
         validas, self._postas_de_lado = [], []
@@ -866,7 +941,7 @@ class Coordenador:
 # ---------------------------------------------------------------- status
 
 
-def status(raiz) -> str:
+def status(raiz, central=None) -> str:
     raiz = pathlib.Path(raiz)
     linhas = []
     try:
@@ -897,6 +972,13 @@ def status(raiz) -> str:
     preparado = despachante._dict(dados["warren"].get("preparado"))
     if preparado:
         linhas.append("preparo do Warren: %s em %s" % (preparado.get("estado"), preparado.get("em")))
+    if central:
+        linhas.append("envio à Central: ligado")
+        ultimo = despachante._dict(dados.get("central"))
+        if ultimo:
+            linhas.append("último envio à Central: %s %s" % (ultimo.get("em"), ultimo.get("resultado")))
+    else:
+        linhas.append("envio à Central: desligado (defina %s e %s em coordenador.env)" % (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN))
     avisos = [a for a in dados["avisos"] if isinstance(a, dict)][-AVISOS_NO_STATUS:]
     linhas.append("avisos:" if avisos else "avisos: nenhum")
     linhas.extend("  - [%s] %s" % (a.get("em"), a.get("mensagem")) for a in avisos)
@@ -987,6 +1069,7 @@ def construir(ambiente, raiz) -> Coordenador:
         clonar=functools.partial(_clonar, token_file=caminho_gh),
         ambiente=ambiente,
         segredos=(token_warren, token_gh),
+        central=configuracao_central(ambiente, raiz),
     )
 
 
@@ -1042,7 +1125,7 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, dor
             # a CLI roda na shell, sem o EnvironmentFile da unit: lê o mesmo coordenador.env
             ambiente = _com_coordenador_env(ambiente, raiz)
         if args.comando == "status":
-            print(status(raiz), file=saida)
+            print(status(raiz, configuracao_central(ambiente, raiz)), file=saida)
             return 0
         if args.comando == "vagas":
             print(_vagas(raiz, args.n, args.ram_minima_mb), file=saida)
