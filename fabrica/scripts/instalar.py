@@ -166,10 +166,10 @@ def _tem_ci(destino: pathlib.Path) -> bool:
     return any(p.is_file() for padrao in ("*.yml", "*.yaml") for p in pasta.glob(padrao))
 
 
-def _validar_destino(destino: pathlib.Path) -> None:
+def _validar_destino(destino: pathlib.Path, *, sem_ci: bool = False) -> None:
     if not destino.is_dir():
         raise ValueError("destino não é uma pasta: %s" % destino)
-    if not _tem_ci(destino):
+    if not sem_ci and not _tem_ci(destino):
         raise ValueError("sem CI: crie .github/workflows antes")
     if not (destino / ".seeds").is_dir():
         raise ValueError("sem Seeds: rode sd init")
@@ -309,11 +309,18 @@ def _instalar_settings(relatorio: _Relatorio, esforcos: dict) -> None:
     relatorio.atualizados.append(ARQ_SETTINGS)
 
 
-def instalar(destino, *, kit) -> dict:
-    """Instala o kit em `destino`. `{"criados", "atualizados", "avisos"}`; `ValueError` se algo falta."""
+def instalar(destino, *, kit, sem_ci: bool = False) -> dict:
+    """Instala o kit em `destino`. `{"criados", "atualizados", "avisos"}`; `ValueError` se algo falta.
+
+    Com `sem_ci`, aceita repositório sem workflows e grava `ciObrigatorioNasSeeds: false` numa config nova.
+    """
     destino, kit = pathlib.Path(destino), pathlib.Path(kit)
-    _validar_destino(destino)
+    _validar_destino(destino, sem_ci=sem_ci)
     conteudo = _carregar_kit(kit)
+    if sem_ci:
+        config = json.loads(conteudo["config"].decode("utf-8"))
+        config["ciObrigatorioNasSeeds"] = False
+        conteudo["config"] = (json.dumps(config, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     _validar_caminhos(destino, [*conteudo["copias"], ARQ_CONFIG, ARQ_WARREN, ARQ_AGENTS, ARQ_SETTINGS])
     relatorio = _Relatorio(destino)
     for relativo, origem in conteudo["copias"].items():
@@ -349,9 +356,12 @@ def main(argv=None, *, saida=None, erro=None) -> int:
     parser = argparse.ArgumentParser(prog="instalar.py", description="Instala a Fábrica de agentes em um repositório.")
     parser.add_argument("destino", help="raiz do repositório do projeto")
     parser.add_argument("--kit", default=str(KIT_PADRAO), help="raiz do kit (padrão: o repositório deste script)")
+    parser.add_argument(
+        "--sem-ci", action="store_true", help="aceita repositório sem CI: as seeds mergeiam só com revisão e verificação"
+    )
     args = parser.parse_args(argv)
     try:
-        resultado = instalar(pathlib.Path(args.destino), kit=pathlib.Path(args.kit))
+        resultado = instalar(pathlib.Path(args.destino), kit=pathlib.Path(args.kit), sem_ci=args.sem_ci)
     except ValueError as falha:
         print(str(falha), file=erro)
         return 2

@@ -344,6 +344,40 @@ class TestesInstalacaoLimpa(Base):
             self.assertNotIn("~", p)
 
 
+class TestesSemCi(Base):
+    def setUp(self):
+        super().setUp()
+        for arquivo in (self.destino / ".github" / "workflows").glob("*"):
+            arquivo.unlink()
+
+    def test_sem_a_opcao_continua_recusando(self):
+        with self.assertRaises(ValueError):
+            self.instalar()
+
+    def test_com_a_opcao_instala_e_desliga_o_ci_nas_seeds(self):
+        instalar.instalar(self.destino, kit=self.kit, sem_ci=True)
+        config = json.loads(self.ler(".fabrica/config.json"))
+        self.assertIs(config["ciObrigatorioNasSeeds"], False)
+
+    def test_a_config_continua_valida_e_igual_no_resto(self):
+        instalar.instalar(self.destino, kit=self.kit, sem_ci=True)
+        config = json.loads(self.ler(".fabrica/config.json"))
+        padrao = json.loads((self.kit / "fabrica" / "modelos" / "config.json").read_text(encoding="utf-8"))
+        config.pop("ciObrigatorioNasSeeds")
+        self.assertEqual(config, padrao)
+
+    def test_ainda_exige_seeds(self):
+        shutil.rmtree(self.destino / ".seeds")
+        with self.assertRaises(ValueError):
+            instalar.instalar(self.destino, kit=self.kit, sem_ci=True)
+
+    def test_opcao_na_cli(self):
+        saida, erro = io.StringIO(), io.StringIO()
+        codigo = instalar.main([str(self.destino), "--kit", str(self.kit), "--sem-ci"], saida=saida, erro=erro)
+        self.assertEqual(codigo, 0, erro.getvalue())
+        self.assertIs(json.loads(self.ler(".fabrica/config.json"))["ciObrigatorioNasSeeds"], False)
+
+
 class TestesGitignore(Base):
     def gitignore(self):
         return (self.destino / ".gitignore").read_text(encoding="utf-8")
