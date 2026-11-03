@@ -43,6 +43,7 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import capacidade  # noqa: E402
 import estado as est  # noqa: E402
 import globs  # noqa: E402
 import prompts  # noqa: E402
@@ -63,6 +64,12 @@ CAMINHO_PLANO = ".fabrica/plano.json"
 PADRAO_CAMINHO_PLANO = re.compile(r"^\.fabrica/(plano|planos/[a-z0-9]+(-[a-z0-9]+)*)\.json$")
 CAMINHO_PLANO_PROIBIDO = ".fabrica/planos/plano.json"
 CAMINHO_CONFIG = ".fabrica/config.json"
+# `FABRICA_PLANO_ID`: `<dono>--<repo>--<feature>`, só `[a-z0-9-]` (fullmatch: nada de `\n` no fim)
+PADRAO_PLANO_ID = re.compile(r"[a-z0-9-]+")
+AVISO_CAPACIDADE = (
+    "arquivo de capacidade ilegível ou inacessível: nenhuma raia nova é despachada e o orquestrador não é "
+    "acordado até ele voltar (veja o log)"
+)
 
 WARREN_API_PADRAO = "http://127.0.0.1:8080"
 WARREN_TOKEN_PADRAO = "~/.warren-token"
@@ -422,6 +429,10 @@ def _permitido_ao_orquestrador(caminho, caminho_plano=CAMINHO_PLANO) -> bool:
     return any(globs.casa_glob(caminho, g) for g in permitidos_ao_orquestrador(caminho_plano))
 
 
+def _plano_id_valido(plano_id) -> bool:
+    return isinstance(plano_id, str) and PADRAO_PLANO_ID.fullmatch(plano_id) is not None
+
+
 def _caminho_plano_valido(caminho) -> bool:
     return isinstance(caminho, str) and caminho != CAMINHO_PLANO_PROIBIDO and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
 
@@ -539,6 +550,9 @@ class Despachante:
         segredos=(),
         preparar_warren=None,
         caminho_plano: str = CAMINHO_PLANO,
+        capacidade: str | None = None,
+        plano_id: str | None = None,
+        mem_disponivel=capacidade.mem_disponivel_mb,
     ):
         if not _texto(projeto):
             raise ConfigInvalida("projeto")
@@ -547,6 +561,14 @@ class Despachante:
         if not _caminho_plano_valido(caminho_plano):
             raise ConfigInvalida("caminho_plano")
         self.caminho_plano = caminho_plano
+        # vagas globais e trava de orquestrador por repositório; sem os dois, nada do módulo é chamado
+        if (capacidade is None) != (plano_id is None):
+            raise ConfigInvalida("capacidade e plano_id vêm juntos")
+        if capacidade is not None and (not _texto(capacidade) or not _plano_id_valido(plano_id)):
+            raise ConfigInvalida("capacidade")
+        self.capacidade = capacidade
+        self.plano_id = plano_id
+        self._mem_disponivel = mem_disponivel
         self.motor = motor
         self.forja = forja
         self.raiz = pathlib.Path(raiz)
@@ -796,7 +818,12 @@ class Despachante:
         self._enfileirar_acordar("nova_spec", spec, {"spec": spec})
         if executar and not self._drenando():
             acao = self._proposta_de_pendente()
-            if acao is not None and acao["motivo"] == "nova_spec" and acao["alvo"] == spec:
+            if (
+                acao is not None
+                and acao["motivo"] == "nova_spec"
+                and acao["alvo"] == spec
+                and self._liberada_pela_capacidade(acao)
+            ):
                 self._executar(acao)
                 if chave in _lista(self.estado.get("chavesAcordadas")):
                     return "orquestrador acordado com a spec %s" % spec
@@ -834,6 +861,7 @@ class Despachante:
         self._observar_orquestrador()
         self._sincronizar()
         self._observar_planos()
+        self._sincronizar_capacidade()
         self._observar_prs()
         self._observar_decisoes()
         # Q2: as falhas da busca pelo nonce entram na contabilidade do ciclo, por isso antes de _contabilizar_warren
@@ -842,6 +870,8 @@ class Despachante:
         self._contabilizar_warren()
         self._fechar_prs()
         executadas = self._agir()
+        self._sincronizar_capacidade()
+        self._soltar_orquestrador_se_livre()
         self._garantir_decisao_de_bloqueio()
         self._garantir_decisao_de_pausa()
         return executadas
@@ -1293,6 +1323,8 @@ class Despachante:
                         cota=cota,
                     )
                 )
+                if run.get("motivoFalha") == est.OOM:
+                    self._notar_oom()
                 self._log(
                     {
                         "evento": "fim_de_run",
@@ -1426,6 +1458,8 @@ class Despachante:
                 cota=prompts.eh_falha_de_cota(run.get("motivoFalha"), texto),
             )
         )
+        if run.get("motivoFalha") == est.OOM:
+            self._notar_oom()
         self._esquecer_nonces(run_id)
         if not run.get("_sintetico"):
             self._conferir_modelo(run_id, "orquestrador")
@@ -1564,6 +1598,7 @@ class Despachante:
                 if cota == "cota":
                     # P2: a raia não falha; ao retomar ela volta a planejada e ganha um Plan Run novo
                     estado_plano, falha = "running", None
+            oom_antes = set(_lista(self.estado.get("runsOom")))
             self._mudar(
                 est.registrar_plano(
                     self.estado,
@@ -1573,6 +1608,8 @@ class Despachante:
                     filhos=filhos,
                 )
             )
+            if not set(_lista(self.estado.get("runsOom"))) <= oom_antes:
+                self._notar_oom()
             depois = _dict(self.estado.get("seeds"))
             self._guardar_tentativas_reiniciadas(antes, depois)
             for seed_id, anterior in antes.items():
@@ -2745,9 +2782,122 @@ class Despachante:
         for acao in acoes:
             if self.estado.get("pausado"):
                 break
+            if not self._liberada_pela_capacidade(acao):
+                continue  # sem vaga ou sem a trava: fica para o próximo ciclo, antes de gravar a intenção
             self._executar(acao)
             executadas.append(acao)
         return executadas
+
+    # ------------------------------------------------------------ capacidade global
+
+    def _erro_de_capacidade(self, etapa: str, alvo, exc: BaseException) -> None:
+        self._erro_de_etapa("capacidade_" + etapa, alvo, exc)
+        self._aviso(AVISO_CAPACIDADE)
+
+    def _capacidade_ok(self) -> None:
+        self._retirar_aviso(AVISO_CAPACIDADE)
+
+    def _liberada_pela_capacidade(self, acao: dict) -> bool:
+        """Raia nova precisa de vaga; `acordar` precisa da trava do repositório. Sem `capacidade`, tudo passa."""
+        if self.capacidade is None:
+            return True
+        tipo = acao.get("tipo")
+        if tipo == "despachar_raia":
+            return self._reservar_vaga(acao.get("raia"))
+        if tipo == "acordar":
+            return self._tomar_orquestrador()
+        return True
+
+    def _reservar_vaga(self, raia_id) -> bool:
+        try:
+            reservada = capacidade.reservar(
+                self.capacidade, self.plano_id, raia_id, mem_disponivel_mb=self._mem_disponivel()
+            )
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("reservar", raia_id, exc)
+            return False
+        self._capacidade_ok()
+        if not reservada:
+            # uma linha por raia enquanto ela espera
+            self._log_repetivel("sem_vaga:%s" % raia_id, {"evento": "sem_vaga", "raia": raia_id})
+            return False
+        self._esquecer("sem_vaga:%s" % raia_id)
+        return True
+
+    def _tomar_orquestrador(self) -> bool:
+        try:
+            tomada = capacidade.tomar_orquestrador(self.capacidade, self.repo, self.plano_id)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("tomar_orquestrador", self.repo, exc)
+            return False
+        self._capacidade_ok()
+        if not tomada:
+            self._log_repetivel("orquestrador_ocupado", {"evento": "orquestrador_ocupado", "repo": self.repo})
+            return False
+        self._esquecer("orquestrador_ocupado")
+        return True
+
+    def _raias_ocupadas(self) -> set:
+        """As raias que seguram vaga: `executando`, a de um `despachar_raia` em curso e as de um incerto."""
+        ocupadas = {
+            raia_id for raia_id, raia in _dict(self.estado.get("raias")).items() if _dict(raia).get("estado") == "executando"
+        }
+        acoes = [_dict(self.estado.get("acaoEmCurso"))]
+        acoes += [_dict(_dict(item).get("acao")) for item in _lista(self.estado.get("despachosIncertos"))]
+        for acao in acoes:
+            if acao.get("tipo") == "despachar_raia" and _texto(acao.get("raia")):
+                ocupadas.add(acao["raia"])
+        return ocupadas
+
+    def _sincronizar_capacidade(self) -> None:
+        if self.capacidade is None:
+            return
+        self._enviar_oom()
+        try:
+            capacidade.sincronizar(self.capacidade, self.plano_id, self._raias_ocupadas())
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("sincronizar", self.plano_id, exc)
+            return
+        self._capacidade_ok()
+
+    def _notar_oom(self) -> None:
+        """O OOM fica anotado no estado até chegar ao arquivo de capacidade (que pode estar ilegível agora)."""
+        if self.capacidade is None:
+            return
+        self.estado["oomCapacidade"] = self._agora_utc()
+        self._salvar()
+        self._enviar_oom()
+
+    def _enviar_oom(self) -> None:
+        pendente = self.estado.get("oomCapacidade")
+        if not _texto(pendente):
+            return
+        try:
+            capacidade.registrar_oom(self.capacidade, pendente)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("registrar_oom", self.plano_id, exc)
+            return
+        self.estado.pop("oomCapacidade", None)
+        self._salvar()
+        self._log({"evento": "oom_registrado_na_capacidade", "oomEm": pendente})
+
+    def _orquestrador_livre(self) -> bool:
+        """Sem run, sem acordar incerto, sem PR esperando gates ou o Paulo e sem acordada na fila."""
+        return (
+            self._orq().get("runId") is None
+            and not self._orquestrador_incerto()
+            and _dict(self.estado.get("acaoEmCurso")).get("tipo") != "acordar"
+            and not _lista(self.estado.get("prsOrquestrador"))
+            and not _lista(self.estado.get("acordarPendentes"))
+        )
+
+    def _soltar_orquestrador_se_livre(self) -> None:
+        if self.capacidade is None or not self._orquestrador_livre():
+            return
+        try:
+            capacidade.soltar_orquestrador(self.capacidade, self.repo, self.plano_id)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("soltar_orquestrador", self.repo, exc)
 
     def _executar(self, acao: dict) -> None:
         tipo = acao.get("tipo")
@@ -3322,6 +3472,17 @@ def construir(ambiente) -> Despachante:
                 "(feature de a-z e 0-9 em partes separadas por um só -, e nunca `plano`)" % _cortar(caminho_plano, 200)
             ]
         )
+    caminho_capacidade = ambiente.get("FABRICA_CAPACIDADE")
+    plano_id = ambiente.get("FABRICA_PLANO_ID")
+    if (caminho_capacidade is None) != (plano_id is None):
+        raise ErroDeEntrada(["defina FABRICA_CAPACIDADE e FABRICA_PLANO_ID juntos (ou nenhum dos dois)"])
+    if caminho_capacidade is not None:
+        if not _texto(caminho_capacidade):
+            raise ErroDeEntrada(["FABRICA_CAPACIDADE vazio"])
+        if not _plano_id_valido(plano_id):
+            raise ErroDeEntrada(
+                ["FABRICA_PLANO_ID inválido: %r; use <dono>--<repo>--<feature>, só a-z, 0-9 e -" % _cortar(str(plano_id), 200)]
+            )
     # o coordenador da fila prepara o Warren; os despachantes de plano rodam com FABRICA_PREPARAR_WARREN=0
     sem_preparo = ambiente.get("FABRICA_PREPARAR_WARREN") == "0"
     token_warren = _ler_token(ambiente.get("WARREN_TOKEN_FILE") or WARREN_TOKEN_PADRAO)
@@ -3346,6 +3507,8 @@ def construir(ambiente) -> Despachante:
         if sem_preparo
         else functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
         caminho_plano=caminho_plano,
+        capacidade=caminho_capacidade,
+        plano_id=plano_id,
     )
 
 
