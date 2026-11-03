@@ -2,6 +2,7 @@
   "limiteParalelo": 3,
   "branchPadrao": "main",
   "ciObrigatorioNoPlano": false,
+  "ciObrigatorioNasSeeds": false,
   "warren": {
     "prepararAutomatico": true
   },

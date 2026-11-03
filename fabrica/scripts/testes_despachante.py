@@ -302,6 +302,78 @@ class TestesJornada(Base):
         self.assertEqual(len(self.runs(HAIKU)), 1)
         self.assertEqual(self.forja.merges, [])
 
+    def test_revisor_sem_commit_vale_pelo_veredito(self):
+        # O Warren reapa como falha o run sem commit num branch existente; o revisor não commita por desenho.
+        for motivo in ("dropped_commit", "no_changes"):
+            with self.subTest(motivo=motivo):
+                self.setUp()
+                d = self.preparar_raia()
+                self.abrir_pr(H1)
+                d.ciclo()
+                rid = self.terminar_revisao(H1)
+                self.motor.definir_run(rid, estado="failed", motivoFalha=motivo)
+                self.assertEqual([a["tipo"] for a in d.ciclo()], ["mergear"])
+                self.assertEqual(self.forja.merges, [(PR, H1)])
+
+    def test_revisor_sem_commit_e_sem_veredito_conta_como_falha(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.definir_run(rid, estado="failed", motivoFalha="dropped_commit")
+        self.motor.definir_texto(rid, "sem veredito")
+        d.ciclo()
+        self.assertIsNone(self.estado()["seeds"]["s-1"]["veredito"])
+        self.assertEqual(self.forja.merges, [])
+
+    def test_revisor_com_outra_falha_nao_vale_mesmo_com_veredito(self):
+        for motivo in ("provider_error", "finalize_failed", "cost_cap"):
+            with self.subTest(motivo=motivo):
+                self.setUp()
+                d = self.preparar_raia()
+                self.abrir_pr(H1)
+                d.ciclo()
+                rid = self.terminar_revisao(H1)
+                self.motor.definir_run(rid, estado="failed", motivoFalha=motivo)
+                d.ciclo()
+                self.assertIsNone(self.estado()["seeds"]["s-1"]["veredito"])
+                self.assertEqual(self.forja.merges, [])
+
+    def test_fixer_sem_commit_continua_falha(self):
+        self.codigos[H1] = 1
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="failed", motivoFalha="dropped_commit")
+        d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "falhou")
+
+    def test_ci_ausente_vai_para_humano_por_padrao(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, ci="ausente")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
+    def test_ci_nao_obrigatorio_nas_seeds_mergeia_com_os_outros_gates(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo(config=dict(CONFIG, ciObrigatorioNasSeeds=False))
+        d.iniciar()
+        d.ciclo()
+        self.abrir_pr(H1, ci="ausente")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H1)])
+
+    def test_ci_obrigatorio_nas_seeds_invalido_sai_com_config_invalida(self):
+        with self.assertRaises(despachante.ConfigInvalida):
+            despachante._validar_config(dict(CONFIG, ciObrigatorioNasSeeds="nao"))
+
     def test_fixer_muda_head_e_exige_nova_revisao(self):
         self.codigos[H1] = 1
         d = self.preparar_raia()

@@ -24,7 +24,7 @@
         "src/modules/fabrica/retrato-exemplo.json",
         ".prettierignore"
       ],
-      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm exec prettier --check . '!.pnpm-store/**' && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
       "criteriosAceite": [
         "`contrato.ts` exporta um esquema Zod estrito do retrato v1 (campos desconhecidos são recusados) e o tipo inferido",
         "O retrato tem: versao, geradoEm, vagas (efetivas, configuradas, ocupadas, ramMinimaMb, memDisponivelMb ou nulo, oomEm ou nulo), drenagem (instante ou nulo), warren (preparo e em, ambos anuláveis), planos (id, repo, feature, estado da fila, entrouEm, faseAtual ou nulo, fases com raias e estado, pausado como texto ou nulo, decisoes com titulo e url, orquestradorAtivo) e avisos (em e mensagem)",
@@ -56,7 +56,7 @@
         "src/app/api/fabrica/**",
         "tests/integration/fabrica.spec.ts"
       ],
-      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm exec prettier --check . '!.pnpm-store/**' && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
       "criteriosAceite": [
         "`POST /api/fabrica/estado` com token válido e retrato válido grava o retrato e responde 200; token ausente, inválido ou revogado responde 401; corpo inválido responde 400 sem ecoar o conteúdo; corpo acima de 256 KB responde 413; tipo de conteúdo errado responde 415",
         "Só o último retrato de cada fonte fica guardado, com `geradoEm` e `recebidoEm`; um retrato com `geradoEm` mais antigo que o guardado é descartado e responde 200, sem mudar `recebidoEm`; um `geradoEm` mais de 5 min no futuro responde 400 e não grava",
@@ -82,7 +82,7 @@
         "e2e/support/fabrica.ts",
         "e2e/support/global-setup.ts"
       ],
-      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm exec prettier --check . '!.pnpm-store/**' && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
       "criteriosAceite": [
         "`/desenvolvimento/fabrica` mostra vagas ocupadas e efetivas, RAM, os planos com estado, fase atual e raias, as decisões abertas com link para a issue, os avisos e a idade dos dados, calculada de `recebidoEm`",
         "Sem retrato, a página mostra um estado vazio dizendo como ligar o envio; com `recebidoEm` há mais de 5 min, mostra um aviso visível de que a máquina parou de enviar",
@@ -110,7 +110,7 @@
         "fabrica/servico/fabrica-fila.service",
         "fabrica/README.md"
       ],
-      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm format:check && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
       "criteriosAceite": [
         "`retrato.py` separa a leitura de `fila-estado.json`, `capacidade.json` e dos `estado.json` e `plano.json` de cada plano de uma função pura que recebe esses dados e monta o retrato, sem caminho da máquina, corpo de PR ou segredo",
         "O retrato tem uma entrada por id (a vigente, como `coordenador._atuais`); plano sem `estado.json` ou `plano.json`, ou com um deles ilegível, vai com `faseAtual` nulo e `fases` vazia, sem exceção; `vagas.ocupadas` é o total de `reservas`; com `capacidade.json` inválido, o ciclo não envia e gera um aviso",

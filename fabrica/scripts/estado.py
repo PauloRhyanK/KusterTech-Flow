@@ -477,7 +477,7 @@ def _ci_ausente_recente(seed: dict, agora) -> bool:
     return datetime.timedelta(0) <= decorrido < ESPERA_CI_AUSENTE
 
 
-def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None) -> list[dict]:
+def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional=False) -> list[dict]:
     head = seed.get("headSha")
     r = gates.avaliar_merge(
         head_sha=head,
@@ -487,6 +487,7 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None) -> list[dic
         arquivos=seed.get("arquivos"),
         protegidos=protegidos,
         ci_ausente_recente=_ci_ausente_recente(seed, agora),
+        ci_opcional=ci_opcional,
     )
     decisao = r["decisao"]
     if decisao == "mergear":
@@ -527,7 +528,7 @@ def _fase_atual(plano: dict):
     return None, []
 
 
-def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None) -> list[dict]:
+def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None, ci_opcional=False) -> list[dict]:
     """Ações na ordem: 1 seeds, 2 retomar, 3 despachar, 4 raia falhou, 5 fase concluída.
 
     `agora` (datetime) liga a janela de 10 min do CI "ausente" (F1); sem ele, "ausente" vai para o humano.
@@ -558,7 +559,7 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None)
             raia_falhou = _dict(raias_do_estado.get(seed.get("raia"))).get("estado") == "falhou"
             acoes.extend(
                 a
-                for a in _acoes_da_seed(seed_id, seed, protegidos, agora)
+                for a in _acoes_da_seed(seed_id, seed, protegidos, agora, ci_opcional)
                 # raia falha: quem decide o destino do PR é o orquestrador
                 if not (raia_falhou and a["tipo"] == "mergear")
             )

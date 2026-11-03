@@ -21,6 +21,8 @@ NIVEIS_DE_ESFORCO = ("low", "medium", "high", "xhigh", "max")
 ARQ_CONFIG = ".fabrica/config.json"
 ARQ_WARREN = ".warren/config.yaml"
 ARQ_AGENTS = "AGENTS.md"
+ARQ_GITIGNORE = ".gitignore"
+IGNORADOS_NOS_RUNS = (".claude/.credentials.json", ".pnpm-store/")
 ARQ_SETTINGS = ".claude/settings.json"
 
 
@@ -213,6 +215,27 @@ def _posicoes_do_bloco(texto: str, origem: str) -> tuple[int, int] | None:
     return inicio, fim + len(MARCADOR_FIM)
 
 
+def _instalar_gitignore(relatorio: _Relatorio) -> None:
+    """Acrescenta o que os runs deixam no workspace: credenciais do agente e o store do pnpm nunca entram em commit."""
+    if relatorio.recusa_link(ARQ_GITIGNORE):
+        return
+    caminho = relatorio.destino / ARQ_GITIGNORE
+    if not caminho.exists():
+        relatorio.gravar(ARQ_GITIGNORE, ("\n".join(IGNORADOS_NOS_RUNS) + "\n").encode("utf-8"))
+        return
+    try:
+        atual = caminho.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        relatorio.avisos.append(".gitignore não é UTF-8; não foi alterado: acrescente %s" % ", ".join(IGNORADOS_NOS_RUNS))
+        return
+    linhas = {linha.strip() for linha in atual.splitlines()}
+    faltando = [item for item in IGNORADOS_NOS_RUNS if item not in linhas]
+    if faltando:
+        separador = "" if not atual or atual.endswith("\n") else "\n"
+        _gravar(caminho, (atual + separador + "\n".join(faltando) + "\n").encode("utf-8"))
+        relatorio.atualizados.append(ARQ_GITIGNORE)
+
+
 def _instalar_agents(relatorio: _Relatorio, bloco: str) -> None:
     caminho = relatorio.destino / ARQ_AGENTS
     if relatorio.recusa_link(ARQ_AGENTS):
@@ -303,6 +326,7 @@ def instalar(destino, *, kit) -> dict:
         else:
             relatorio.gravar(ARQ_WARREN, conteudo["warren"])
     _instalar_agents(relatorio, conteudo["bloco"])
+    _instalar_gitignore(relatorio)
     relatorio.avisos.extend(conteudo["avisos_de_esforco"])
     _instalar_settings(relatorio, conteudo["esforcos"])
     return relatorio.resultado()
