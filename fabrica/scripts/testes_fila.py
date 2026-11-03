@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import pathlib
 import sys
 import unittest
@@ -52,6 +54,7 @@ def entrada(feature, globs, estado="aguardando", entrou="2026-11-03T10:00:00Z", 
         "entrouEm": entrou,
         "estado": estado,
         "arquivos": sorted(globs),
+        "hash": fila.hash_do_plano(plano_com(globs)),
     }
 
 
@@ -59,27 +62,58 @@ def estados(lista):
     return {e["feature"]: e["estado"] for e in lista}
 
 
+def h6(repo, feature):
+    return hashlib.sha256(f"{repo.lower()}/{feature}".encode("utf-8")).hexdigest()[:6]
+
+
+ID_SEGURO = r"^[a-z0-9]+(-[a-z0-9]+)*(--[a-z0-9]+(-[a-z0-9]+)*){3}$"
+
+
 class TestesIdDoPlano(unittest.TestCase):
     def test_minusculas_e_troca_de_caracteres(self):
         self.assertEqual(
             fila.id_do_plano("PauloRhyanK/KusterTech-Flow", "Login_v2"),
-            "paulorhyank--kustertech-flow--login-v2",
+            f"paulorhyank--kustertech-flow--login-v2--{h6('PauloRhyanK/KusterTech-Flow', 'Login_v2')}",
         )
 
     def test_nunca_tem_traco_duplo_dentro_de_uma_parte(self):
         id_ = fila.id_do_plano("Dono/Meu__Repo..x", "a--b__c")
-        dono, repo, feature = id_.split("--")
+        dono, repo, feature, hash_ = id_.split("--")
         self.assertEqual((dono, repo, feature), ("dono", "meu-repo-x", "a-b-c"))
+        self.assertEqual(hash_, h6("Dono/Meu__Repo..x", "a--b__c"))
 
     def test_apara_tracos_nas_pontas_de_cada_parte(self):
-        self.assertEqual(
-            fila.id_do_plano("-Dono-/_repo_", "-feature-"),
-            "dono--repo--feature",
-        )
+        id_ = fila.id_do_plano("-Dono-/_repo_", "-feature-")
+        self.assertEqual(id_.rsplit("--", 1)[0], "dono--repo--feature")
 
-    def test_so_caracteres_permitidos(self):
-        id_ = fila.id_do_plano("Dóno/Repó Ç", "Fé Nova!")
-        self.assertRegex(id_, r"^[a-z0-9]+(-[a-z0-9]+)*(--[a-z0-9]+(-[a-z0-9]+)*){2}$")
+    def test_parte_vazia_depois_de_limpar_vira_x(self):
+        id_ = fila.id_do_plano("o/..", "___")
+        self.assertEqual(id_.rsplit("--", 1)[0], "o--x--x")
+
+    def test_o_hash_ignora_a_caixa_do_repo_mas_nao_da_feature(self):
+        self.assertEqual(fila.id_do_plano("O/R", "f"), fila.id_do_plano("o/r", "f"))
+        self.assertNotEqual(fila.id_do_plano("o/r", "F"), fila.id_do_plano("o/r", "f"))
+
+    def test_repos_que_a_limpeza_confundiria_tem_ids_distintos(self):
+        ids = {fila.id_do_plano(r, "f") for r in ("o/my.app", "o/my_app", "o/my-app")}
+        self.assertEqual(len(ids), 3)
+        self.assertNotEqual(fila.id_do_plano("o/.github", "f"), fila.id_do_plano("o/github", "f"))
+
+    def test_o_id_sempre_casa_com_o_formato_seguro_para_unit_systemd(self):
+        for repo in ("PauloRhyanK/KusterTech-Flow", "o/..", "-/_", "o/.github", "a-b/c.d_e"):
+            for feature in ("login", "Login_v2", "___", "a--b"):
+                with self.subTest(repo=repo, feature=feature):
+                    self.assertRegex(fila.id_do_plano(repo, feature), ID_SEGURO)
+
+    def test_repo_malformado_levanta_value_error(self):
+        for repo in ("semslash", "a/b/c", "", "/r", "o/", "o/r\n", "d ono/r", "dóno/r", "o/café", "o/日本"):
+            with self.subTest(repo=repo):
+                with self.assertRaises(ValueError):
+                    fila.id_do_plano(repo, "f")
+
+    def test_repo_que_nao_e_texto_levanta_value_error(self):
+        with self.assertRaises(ValueError):
+            fila.id_do_plano(None, "f")
 
 
 class TestesFeatureDoCaminho(unittest.TestCase):
@@ -150,6 +184,14 @@ class TestesColide(unittest.TestCase):
             )
         )
 
+    def test_a_caixa_do_repo_nao_importa(self):
+        self.assertTrue(
+            fila.colide(
+                entrada("a", ["src/x/"], repo="Dono/Repo"),
+                entrada("b", ["src/x/"], repo="dono/repo"),
+            )
+        )
+
     def test_alguma_combinacao_basta(self):
         self.assertTrue(
             fila.colide(entrada("a", ["docs/", "src/x/"]), entrada("b", ["lib/", "src/x/z"]))
@@ -168,13 +210,14 @@ class TestesEnfileirar(unittest.TestCase):
             nova,
             [
                 {
-                    "id": "paulorhyank--kustertech-flow--login",
+                    "id": fila.id_do_plano(REPO, "login"),
                     "repo": REPO,
                     "feature": "login",
                     "caminho": ".fabrica/planos/login.json",
                     "entrouEm": self.AGORA,
                     "estado": "aguardando",
                     "arquivos": ["src/login/"],
+                    "hash": fila.hash_do_plano(plano_com(["src/login/"])),
                 }
             ],
         )
@@ -183,7 +226,7 @@ class TestesEnfileirar(unittest.TestCase):
         item = {"repo": REPO, "caminho": ".fabrica/plano.json", "plano": plano_com(["a/"])}
         nova = fila.enfileirar([], [item], self.AGORA)
         self.assertEqual(nova[0]["feature"], "plano")
-        self.assertEqual(nova[0]["id"], "paulorhyank--kustertech-flow--plano")
+        self.assertEqual(nova[0]["id"], fila.id_do_plano(REPO, "plano"))
 
     def test_caminho_recusado_e_plano_invalido_nao_entram(self):
         invalido = {"repo": REPO, "caminho": ".fabrica/planos/ruim.json", "plano": {"fases": []}}
@@ -220,12 +263,15 @@ class TestesEnfileirar(unittest.TestCase):
                 nova = fila.enfileirar(antes, [], self.AGORA)
                 self.assertEqual(nova, antes)
 
-    def test_nao_toca_ativo_pausado_e_concluido_mesmo_com_conteudo_novo(self):
+    def test_ativo_e_pausado_so_atualizam_o_hash(self):
         for estado in ("ativo", "pausado"):
             with self.subTest(estado=estado):
                 antes = [entrada("login", ["a/"], estado=estado)]
-                nova = fila.enfileirar(antes, [achado("login", ["z/"])], self.AGORA)
-                self.assertEqual(nova, antes)
+                novo = achado("login", ["z/"])
+                nova = fila.enfileirar(antes, [novo], self.AGORA)
+                esperado = {**antes[0], "hash": fila.hash_do_plano(novo["plano"])}
+                self.assertEqual(nova, [esperado])
+                self.assertEqual(nova[0]["arquivos"], ["a/"])
 
     def test_concluido_igual_continua_concluido(self):
         antes = [entrada("login", ["a/"], estado="concluido")]
@@ -234,13 +280,36 @@ class TestesEnfileirar(unittest.TestCase):
 
     def test_concluido_com_conteudo_novo_volta_como_entrada_nova(self):
         antes = [entrada("login", ["a/"], estado="concluido")]
-        nova = fila.enfileirar(antes, [achado("login", ["a/", "b/"])], self.AGORA)
+        novo = achado("login", ["a/", "b/"])
+        nova = fila.enfileirar(antes, [novo], self.AGORA)
         self.assertEqual(len(nova), 2)
         self.assertEqual(nova[0], antes[0])
         self.assertEqual(nova[1]["estado"], "aguardando")
         self.assertEqual(nova[1]["entrouEm"], self.AGORA)
         self.assertEqual(nova[1]["arquivos"], ["a/", "b/"])
+        self.assertEqual(nova[1]["hash"], fila.hash_do_plano(novo["plano"]))
         self.assertEqual(nova[1]["id"], antes[0]["id"])
+
+    def test_concluido_volta_quando_so_o_resto_do_plano_muda(self):
+        antes = [entrada("login", ["a/"], estado="concluido")]
+        novo = achado("login", ["a/"])
+        novo["plano"]["raias"][0]["verificacao"] = "pnpm lint"
+        nova = fila.enfileirar(antes, [novo], self.AGORA)
+        self.assertEqual([e["estado"] for e in nova], ["concluido", "aguardando"])
+
+    def test_concluido_antigo_sem_hash_nao_volta_e_ganha_o_hash(self):
+        antes = [entrada("login", ["a/"], estado="concluido")]
+        del antes[0]["hash"]
+        nova = fila.enfileirar(antes, [achado("login", ["a/"])], self.AGORA)
+        self.assertEqual(len(nova), 1)
+        self.assertEqual(nova[0]["hash"], fila.hash_do_plano(plano_com(["a/"])))
+
+    def test_aguardando_guarda_o_hash_novo(self):
+        antes = [entrada("login", ["a/"])]
+        novo = achado("login", ["a/"])
+        novo["plano"]["raias"][0]["verificacao"] = "pnpm lint"
+        nova = fila.enfileirar(antes, [novo], self.AGORA)
+        self.assertEqual(nova[0]["hash"], fila.hash_do_plano(novo["plano"]))
 
     def test_removido_que_reaparece_volta_como_entrada_nova(self):
         antes = [entrada("login", ["a/"], estado="removido")]
@@ -396,6 +465,164 @@ class TestesMarcar(unittest.TestCase):
         self.assertEqual(
             fila.ESTADOS, ("aguardando", "ativo", "pausado", "concluido", "removido")
         )
+
+
+class TestesHashDoPlano(unittest.TestCase):
+    def test_e_o_sha256_do_json_canonico(self):
+        plano = {"b": 1, "a": ["é"]}
+        texto = json.dumps(plano, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        self.assertEqual(
+            fila.hash_do_plano(plano), hashlib.sha256(texto.encode("utf-8")).hexdigest()
+        )
+
+    def test_ignora_a_ordem_das_chaves(self):
+        self.assertEqual(fila.hash_do_plano({"a": 1, "b": 2}), fila.hash_do_plano({"b": 2, "a": 1}))
+
+    def test_muda_com_o_conteudo(self):
+        self.assertNotEqual(fila.hash_do_plano({"a": 1}), fila.hash_do_plano({"a": 2}))
+
+
+class TestesEntradasMalformadas(unittest.TestCase):
+    AGORA = "2026-11-03T12:00:00Z"
+
+    def malformadas(self):
+        base = entrada("m", ["src/"], estado="ativo")
+        sem = lambda campo: {k: v for k, v in base.items() if k != campo}  # noqa: E731
+        return [
+            None,
+            "texto",
+            42,
+            {},
+            sem("id"),
+            sem("estado"),
+            sem("entrouEm"),
+            sem("arquivos"),
+            sem("repo"),
+            {**base, "id": 7},
+            {**base, "estado": "dormindo"},
+            {**base, "estado": None},
+            {**base, "entrouEm": 123},
+            {**base, "entrouEm": "ontem"},
+            {**base, "entrouEm": "2026-11-03T10:00:00+00:00"},
+            {**base, "arquivos": None},
+            {**base, "arquivos": "src/"},
+            {**base, "arquivos": ["src/", 3]},
+            {**base, "repo": 5},
+        ]
+
+    def test_admitir_nao_levanta_e_ignora_a_entrada_torta(self):
+        boa = entrada("boa", ["src/"])
+        for torta in self.malformadas():
+            with self.subTest(torta=torta):
+                self.assertEqual(fila.admitir([torta, boa]), [boa["id"]])
+
+    def test_entrada_torta_aguardando_nao_e_admitida_nem_bloqueia(self):
+        boa = entrada("boa", ["src/"], entrou="2026-11-03T05:00:00Z")
+        torta = {**entrada("t", ["src/"], entrou="2026-11-03T01:00:00Z"), "arquivos": None}
+        self.assertEqual(fila.admitir([torta, boa]), [boa["id"]])
+
+    def test_entrada_torta_ativa_nao_bloqueia(self):
+        boa = entrada("boa", ["src/"])
+        torta = {**entrada("t", ["src/"], estado="ativo"), "arquivos": "src/"}
+        self.assertEqual(fila.admitir([torta, boa]), [boa["id"]])
+
+    def test_fila_que_nao_e_lista_vale_vazia(self):
+        self.assertEqual(fila.admitir(None), [])
+        self.assertEqual(fila.marcar(None, "x", "ativo"), [])
+        self.assertEqual(fila.enfileirar(None, [], self.AGORA), [])
+
+    def test_enfileirar_preserva_a_entrada_torta_como_esta(self):
+        for torta in self.malformadas():
+            with self.subTest(torta=torta):
+                antes = [copy.deepcopy(torta)]
+                nova = fila.enfileirar(antes, [achado("login", ["a/"])], self.AGORA)
+                self.assertEqual(nova[0], torta)
+                self.assertEqual(antes, [torta])
+                self.assertEqual(nova[-1]["estado"], "aguardando")
+
+    def test_enfileirar_nao_marca_removido_a_entrada_torta(self):
+        torta = {**entrada("t", ["src/"]), "arquivos": None}
+        self.assertEqual(fila.enfileirar([torta], [], self.AGORA), [torta])
+
+    def test_marcar_nao_levanta_e_deixa_a_torta_como_esta(self):
+        boa = entrada("boa", ["src/"])
+        for torta in self.malformadas():
+            with self.subTest(torta=torta):
+                nova = fila.marcar([torta, boa], boa["id"], "ativo")
+                self.assertEqual(nova[0], torta)
+                self.assertEqual(nova[1]["estado"], "ativo")
+
+    def test_marcar_ignora_a_torta_com_o_mesmo_id(self):
+        boa = entrada("boa", ["src/"], estado="concluido")
+        torta = {**boa, "arquivos": None}
+        nova = fila.marcar([boa, torta], boa["id"], "ativo")
+        self.assertEqual([nova[0]["estado"], nova[1]["estado"]], ["ativo", "concluido"])
+
+    def test_descobertos_tortos_sao_ignorados(self):
+        bom = achado("login", ["a/"])
+        tortos = [
+            None,
+            "x",
+            {},
+            {**bom, "plano": None},
+            {**bom, "plano": "texto"},
+            {**bom, "plano": []},
+            {**bom, "plano": plano_com([])},
+            {**bom, "plano": plano_com(["a/", 3])},
+            {**bom, "repo": None},
+            {**bom, "repo": "semslash"},
+            {**bom, "repo": "a/b/c"},
+            {**bom, "caminho": None},
+        ]
+        nova = fila.enfileirar([], [*tortos, bom], self.AGORA)
+        self.assertEqual([e["feature"] for e in nova], ["login"])
+
+    def test_descobertos_none_vale_vazio(self):
+        antes = [entrada("login", ["a/"], estado="ativo")]
+        self.assertEqual(fila.enfileirar(antes, None, self.AGORA), antes)
+        self.assertEqual(fila.enfileirar([], None, self.AGORA), [])
+
+
+class TestesFormatoDoInstante(unittest.TestCase):
+    def test_agora_so_aceita_iso_8601_utc_com_z(self):
+        for agora in (
+            "2026-11-03T12:00:00+00:00",
+            "2026-11-03T09:00:00-03:00",
+            "2026-11-03T12:00:00.123Z",
+            "2026-11-03 12:00:00Z",
+            "2026-11-03T12:00:00",
+            "2026-13-03T12:00:00Z",
+            "2026-1-3T12:00:00Z",
+            "2026-11-03T12:00:00Z\n",
+            "",
+            None,
+            1762171200,
+        ):
+            with self.subTest(agora=agora):
+                with self.assertRaises(ValueError):
+                    fila.enfileirar([], [achado("login", ["a/"])], agora)
+
+    def test_agora_valido_e_gravado_como_esta(self):
+        nova = fila.enfileirar([], [achado("login", ["a/"])], "2026-11-03T12:00:00Z")
+        self.assertEqual(nova[0]["entrouEm"], "2026-11-03T12:00:00Z")
+
+    def test_agora_invalido_levanta_mesmo_sem_descobertos(self):
+        with self.assertRaises(ValueError):
+            fila.enfileirar([], [], "ontem")
+
+    def test_a_ordem_de_admissao_segue_o_instante(self):
+        lista = [
+            entrada("novo", ["src/"], entrou="2026-11-03T12:00:01Z"),
+            entrada("velho", ["src/"], entrou="2026-11-03T12:00:00Z"),
+        ]
+        self.assertEqual(fila.admitir(lista), [lista[1]["id"]])
+
+
+class TestesAguardandoRepetido(unittest.TestCase):
+    def test_todas_as_entradas_aguardando_do_id_seguem_o_descoberto(self):
+        antes = [entrada("login", ["a/"]), entrada("login", ["b/"], entrou="2026-11-03T11:00:00Z")]
+        nova = fila.enfileirar(antes, [achado("login", ["c/"])], "2026-11-03T12:00:00Z")
+        self.assertEqual([e["arquivos"] for e in nova], [["c/"], ["c/"]])
 
 
 class TestesConsistenciaComTask1(unittest.TestCase):
