@@ -1598,6 +1598,58 @@ class TestesVisaoGeralEVersao(unittest.TestCase):
         self.assertIsInstance(motor_warren.MotorWarren(BASE, TOKEN, TransporteFalso()), motor.Motor)
 
 
+class TestesProjetos(unittest.TestCase):
+    """Task 6: o coordenador acha o projeto do Warren de um repositório pelo gitUrl de GET /projects."""
+
+    def test_le_a_lista_de_projetos_com_token(self):
+        corpo = [
+            {"id": "kustertech-flow", "gitUrl": "https://github.com/Dono/Flow.git", "nome": "x"},
+            {"id": "outro", "gitUrl": "git@github.com:dono/outro.git"},
+        ]
+        m, t = novo(ok(corpo))
+        self.assertEqual(
+            m.projetos(),
+            [{"id": "kustertech-flow", "gitUrl": "https://github.com/Dono/Flow.git"}, {"id": "outro", "gitUrl": "git@github.com:dono/outro.git"}],
+        )
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/projects"))
+        self.assertIsNone(t.ultima[3])
+        self.assertEqual(t.ultima[2]["Authorization"], "Bearer " + TOKEN)
+
+    def test_aceita_a_lista_dentro_de_projects(self):
+        m, _ = novo(ok({"projects": [{"id": "p", "gitUrl": "https://github.com/d/r"}]}))
+        self.assertEqual(m.projetos(), [{"id": "p", "gitUrl": "https://github.com/d/r"}])
+
+    def test_id_numerico_vira_texto_e_itens_tortos_ficam_de_fora(self):
+        corpo = [{"id": 7, "gitUrl": "https://github.com/d/r"}, {"id": True, "gitUrl": "u"}, {"id": "", "gitUrl": "u"}, {"id": "a"}, {"id": "b", "gitUrl": ""}, "x", None]
+        m, _ = novo(ok(corpo))
+        self.assertEqual(m.projetos(), [{"id": "7", "gitUrl": "https://github.com/d/r"}])
+
+    def test_resposta_malformada(self):
+        for bruto in (json_bytes({}), json_bytes({"projects": None}), json_bytes("x"), b"nao json"):
+            with self.subTest(bruto=bruto):
+                m, _ = novo((200, {}, bruto))
+                with self.assertRaises(RuntimeError) as ctx:
+                    m.projetos()
+                self.assertIn("GET /projects", str(ctx.exception))
+                self.assertNotIn(TOKEN, str(ctx.exception))
+
+    def test_http_de_erro(self):
+        m, _ = novo((500, {}, b"segredo"))
+        with self.assertRaises(RuntimeError) as ctx:
+            m.projetos()
+        self.assertEqual(str(ctx.exception), "GET /projects: HTTP 500")
+
+    def test_motor_falso(self):
+        m = motor.MotorFalso()
+        self.assertEqual(m.projetos(), [])
+        m.definir_projeto("flow", "https://github.com/dono/flow.git")
+        self.assertEqual(m.projetos(), [{"id": "flow", "gitUrl": "https://github.com/dono/flow.git"}])
+        self.assertIn("projetos", [nome for nome, _ in m.chamadas])
+        self.assertTrue(hasattr(motor.Motor, "projetos"))
+        self.assertIsInstance(m, motor.Motor)
+        self.assertIsInstance(motor_warren.MotorWarren(BASE, TOKEN, TransporteFalso()), motor.Motor)
+
+
 class TestesExecucaoDireta(unittest.TestCase):
     def test_modulos_importam_so_com_biblioteca_padrao_em_modo_isolado(self):
         resultado = subprocess.run(

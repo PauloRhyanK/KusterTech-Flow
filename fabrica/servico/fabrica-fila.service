@@ -1,0 +1,44 @@
+# Coordenador da fila por plano da Fábrica de agentes: unit systemd DE USUÁRIO. Instalar a unit não
+# exige sudo; o coordenador, ao preparar o Warren, exige `sudo -n` sem senha (veja "Requisitos da
+# máquina de agentes" em fabrica/README.md).
+#
+# Instalação (na máquina de agentes, como o usuário que roda o Warren e o Docker; o
+# instalar_maquina.py faz tudo isto):
+#   mkdir -p ~/.config/systemd/user ~/fabrica/planos
+#   cp fabrica/servico/fabrica-fila.service fabrica/servico/fabrica-plano@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now fabrica-fila
+#   loginctl enable-linger "$USER"   # continua rodando sem sessão aberta
+#
+# A cada 60 s o coordenador prepara o Warren (e desliga o warren-automerge e o warren-auto), lê os
+# planos (.fabrica/planos/<feature>.json) do branch padrão de cada repositório de ~/fabrica/fila.json,
+# admite os que não colidem e liga um fabrica-plano@<id> por plano admitido.
+#   python3 ~/fabrica/kit/fabrica/scripts/coordenador.py registrar <dono>/<repo>   # entra na fila
+#   python3 ~/fabrica/kit/fabrica/scripts/coordenador.py status                    # fila, vagas e avisos
+#   python3 ~/fabrica/kit/fabrica/scripts/coordenador.py vagas 3                   # vagas (limpa o OOM)
+#
+# ~/fabrica/coordenador.env (opcional): uma variável por linha, sem comentário no fim da linha. Só
+# caminhos, NUNCA um token: os tokens ficam em arquivos próprios, e o .env aponta para eles.
+#   WARREN_API=http://127.0.0.1:8080
+#   WARREN_TOKEN_FILE=/home/<usuário>/.warren-token
+#   GH_TOKEN_FILE=/home/<usuário>/.warren-gh-token
+# Os valores acima são os padrões. O coordenador repassa os três ao plano.env de cada plano.
+#
+# Saída 2 é entrada inválida, e o serviço NÃO reinicia (RestartPreventExitStatus=2): ~/fabrica/fila.json
+# ausente ou ilegível, ~/fabrica/fila-estado.json ilegível ou arquivo de token ilegível. A causa aparece
+# em `journalctl --user -u fabrica-fila`. Corrija e rode `systemctl --user restart fabrica-fila`.
+# Saída 3: outro coordenador já roda (trava em ~/fabrica/coordenador.lock).
+
+[Unit]
+Description=Coordenador da fila por plano da Fábrica de agentes
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/fabrica/coordenador.env
+ExecStart=/usr/bin/python3 -I %h/fabrica/kit/fabrica/scripts/coordenador.py rodar
+Restart=always
+RestartSec=30
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target

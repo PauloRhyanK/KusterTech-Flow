@@ -397,6 +397,29 @@ class MotorWarren:
             raise RuntimeError("GET /version: resposta sem o campo 'version'")
         return versao
 
+    def projetos(self) -> list[dict]:
+        """GET /projects: a lista pura ou `{"projects": [...]}`; só ficam itens com `id` (texto ou inteiro) e `gitUrl`."""
+        caminho = "/projects"
+        bruto = self._requisitar("GET", caminho)
+        try:
+            dados = json.loads(bruto.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise RuntimeError("GET %s: resposta não é JSON" % caminho) from None
+        if isinstance(dados, dict):
+            dados = dados.get("projects")
+        if not isinstance(dados, list):
+            raise RuntimeError("GET %s: resposta sem a lista de projetos" % caminho)
+        achados = []
+        for item in dados:
+            if not isinstance(item, dict):
+                continue
+            id_, url = item.get("id"), item.get("gitUrl")
+            if isinstance(id_, int) and not isinstance(id_, bool):
+                id_ = str(id_)
+            if isinstance(id_, str) and id_ and isinstance(url, str) and url:
+                achados.append({"id": id_, "gitUrl": url})
+        return achados
+
     def cancelar_plano(self, plan_run_id: str) -> None:
         self._requisitar("POST", "/plan-runs/%s/cancel" % _id(plan_run_id), {})
 
