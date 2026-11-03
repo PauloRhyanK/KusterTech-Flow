@@ -185,7 +185,7 @@ class TestesVerificarComFalso(unittest.TestCase):
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--pids-limit", "512", "--memory", "3g", "--cpus", "2",
                 "--tmpfs", "/tmp:rw,exec",
-                "-e", "CI=1", "-e", "HOME=/tmp/home", "-e", "LANG=C.UTF-8",
+                "-e", "CI=1", "-e", "HOME=/tmp/home", "-e", "LANG=C.UTF-8", "-e", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0",
                 "-v", "%s:/w" % src, "-w", "/w", IMAGEM, "bash", "-lc",
                 'mkdir -p "$HOME" && pnpm test',
             ],
@@ -244,7 +244,7 @@ class TestesVerificarComFalso(unittest.TestCase):
             _, fake = self.verificar(conteiner={"imagem": IMAGEM, "env": {"MODO": "teste"}})
         argv = fake.argv("principal")
         pares = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
-        self.assertEqual(pares, ["CI=1", "HOME=/tmp/home", "LANG=C.UTF-8", "MODO=teste"])
+        self.assertEqual(pares, ["CI=1", "HOME=/tmp/home", "LANG=C.UTF-8", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0", "MODO=teste"])
         todos = " ".join(" ".join(a) for a, _ in fake.chamadas if a[0] == "docker")
         for nome, valor in sujo.items():
             if nome in ("PATH", "HOME"):

@@ -109,7 +109,7 @@ O campo `verificacao` de cada raia roda num contêiner novo, a cada head do PR:
 - o usuário é não root (o uid do despachante), com `HOME=/tmp/home`; só `/w` e `/tmp` são graváveis;
 - a rede é a da config (`internet` ou `isolada`), e os `servicos` da config respondem pelo `nome`.
 
-Por isso o comando instala as dependências antes de testar, por exemplo `corepack enable && pnpm install --frozen-lockfile && pnpm test`, ou `corepack pnpm install --frozen-lockfile && corepack pnpm test`. Um `pnpm test` puro sai com 127 (comando não encontrado na imagem): o despachante não chama o fixer, abre uma decisão para o Paulo e a raia espera. Os códigos 125 e 126 (o Docker não executou) pausam a fábrica.
+Por isso o comando instala as dependências antes de testar, por exemplo `corepack pnpm install --frozen-lockfile && corepack pnpm test` (`corepack enable` falha como usuário não root). Um `pnpm test` puro sai com 127 (comando não encontrado na imagem): o despachante não chama o fixer, abre uma decisão para o Paulo e a raia espera. Os códigos 125 e 126 (o Docker não executou) pausam a fábrica.
 
 ## Partição
 

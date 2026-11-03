@@ -338,7 +338,7 @@ def verificar(
                 + [opcao for host in HOSTS_NEUTRALIZADOS for opcao in ("--add-host", host)]
                 + ["--cap-drop", "ALL", "--security-opt", "no-new-privileges"]
                 + ["--pids-limit", str(config["pids"]), "--memory", config["memoria"], "--cpus", config["cpus"]]
-                + ["--tmpfs", "/tmp:rw,exec", "-e", "CI=1", "-e", "HOME=/tmp/home", "-e", "LANG=C.UTF-8"]
+                + ["--tmpfs", "/tmp:rw,exec", "-e", "CI=1", "-e", "HOME=/tmp/home", "-e", "LANG=C.UTF-8", "-e", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"]
                 + _env_flags(config["env"])
                 + ["-v", "%s:/w" % src, "-w", "/w", config["imagem"], config["shell"], "-lc"]
                 + ['mkdir -p "$HOME" && ' + comando]

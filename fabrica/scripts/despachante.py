@@ -3052,7 +3052,7 @@ class Despachante:
         corpo = (
             "%s\n\nSaída (fim):\n%s\n\nA verificação roda num contêiner novo, sem `node_modules`, com usuário não root e "
             "`HOME=/tmp/home` (veja \"Comando de verificação\" em `.fabrica/orquestrador.md`): o comando precisa instalar as "
-            "dependências, por exemplo `corepack enable && pnpm install --frozen-lockfile && pnpm test`. As seeds da raia "
+            "dependências, por exemplo `corepack pnpm install --frozen-lockfile && corepack pnpm test`. As seeds da raia "
             "esperam esta decisão; nada foi ao fixer nem ao orquestrador. Corrija a imagem em `.fabrica/config.json` ou peça "
             "ao orquestrador outro comando, e %s"
             % (motivo, _cortar(str(resultado.get("saida") or ""), 1500), RODAPE_DECISAO[0].lower() + RODAPE_DECISAO[1:])
