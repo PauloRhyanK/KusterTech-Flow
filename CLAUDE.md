@@ -21,6 +21,7 @@ Em caso de conflito entre documentos, pare e registre o ponto; não escolha sile
 - Componentes não acessam o banco. Nenhum segredo entra no repositório (ele é público).
 - Nunca `git add -A`; adicione caminho por caminho. Nunca faça push em `main` fora de PR.
 - Seeds executadas por um executor Gemini (Antigravity CLI) sob orquestração do Claude seguem [`.agents/README.md`](.agents/README.md): worktree por seed, política de permissões com auditoria, revisão independente antes do PR.
+- Projetos de clientes com a Fábrica de agentes (Warren, equipes por papel, despachante) seguem [`fabrica/README.md`](fabrica/README.md); `.agents/` é só para seeds do próprio Flow.
 
 ## Comandos
 

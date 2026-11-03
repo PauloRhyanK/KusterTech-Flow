@@ -46,3 +46,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+
+# fábrica de agentes (Python) e workspace local do Superpowers
+__pycache__/
+.superpowers/

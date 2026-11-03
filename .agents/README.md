@@ -1,5 +1,7 @@
 # Orquestração de seeds com executor Gemini (Antigravity CLI)
 
+> Para projetos de clientes, use a Fábrica de agentes: [`fabrica/README.md`](../fabrica/README.md). Esta pasta é só para seeds do próprio Flow.
+
 Ferramentas usadas pelo orquestrador (Claude) para delegar uma seed ao executor (`agy`) com autonomia delimitada. O produto não depende de nada aqui; o `agy` descobre `hooks.json` automaticamente a partir do diretório atual.
 
 ## Arquivos
