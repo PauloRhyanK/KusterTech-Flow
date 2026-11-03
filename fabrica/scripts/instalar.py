@@ -54,6 +54,8 @@ class _Relatorio:
     def gravar(self, relativo: str, dados: bytes) -> None:
         """Cria ou atualiza `relativo`; não regrava quando o conteúdo já é esse."""
         caminho = self.destino / relativo
+        if self.recusa_link(relativo):
+            return
         if caminho.is_file():
             if caminho.read_bytes() == dados:
                 return
@@ -62,6 +64,15 @@ class _Relatorio:
         else:
             _gravar(caminho, dados)
             self.criados.append(relativo)
+
+    def recusa_link(self, relativo: str) -> bool:
+        """Arquivo que é link simbólico não é lido nem gravado: avisa e devolve `True`."""
+        if not (self.destino / relativo).is_symlink():
+            return False
+        aviso = "%s é link simbólico; não alterado" % relativo
+        if aviso not in self.avisos:
+            self.avisos.append(aviso)
+        return True
 
     def resultado(self) -> dict:
         return {"criados": sorted(self.criados), "atualizados": sorted(self.atualizados), "avisos": list(self.avisos)}
@@ -162,6 +173,33 @@ def _validar_destino(destino: pathlib.Path) -> None:
         raise ValueError("sem Seeds: rode sd init")
 
 
+def _validar_caminhos(destino: pathlib.Path, arquivos: list[str]) -> None:
+    """Tudo ou nada, antes de gravar: nenhum diretório do caminho é link, tudo fica dentro do destino e os tipos batem.
+
+    Um arquivo que é link simbólico não é erro aqui: `_Relatorio.recusa_link` o recusa com aviso.
+    """
+    base = destino.resolve()
+    pastas = set()
+    for relativo in arquivos:
+        partes = pathlib.PurePosixPath(relativo).parts
+        for n in range(1, len(partes)):
+            pastas.add("/".join(partes[:n]))
+    for relativo in sorted(pastas):
+        caminho = destino / relativo
+        if caminho.is_symlink():
+            raise ValueError("pasta do destino é link simbólico: %s" % caminho)
+        if caminho.exists() and not caminho.is_dir():
+            raise ValueError("esperava uma pasta, mas é um arquivo: %s" % caminho)
+        if not caminho.resolve(strict=False).is_relative_to(base):
+            raise ValueError("pasta do destino fica fora do destino: %s" % caminho)
+    for relativo in arquivos:
+        caminho = destino / relativo
+        if caminho.is_symlink():
+            continue
+        if caminho.exists() and not caminho.is_file():
+            raise ValueError("esperava um arquivo, mas é uma pasta: %s" % caminho)
+
+
 def _posicoes_do_bloco(texto: str, origem: str) -> tuple[int, int] | None:
     """(início, fim) do bloco da fábrica em `texto`, `None` se não há, ValueError se os marcadores estão quebrados."""
     abre, fecha = texto.count(MARCADOR_INICIO), texto.count(MARCADOR_FIM)
@@ -177,6 +215,8 @@ def _posicoes_do_bloco(texto: str, origem: str) -> tuple[int, int] | None:
 
 def _instalar_agents(relatorio: _Relatorio, bloco: str) -> None:
     caminho = relatorio.destino / ARQ_AGENTS
+    if relatorio.recusa_link(ARQ_AGENTS):
+        return
     if not caminho.exists():
         relatorio.gravar(ARQ_AGENTS, (bloco + "\n").encode("utf-8"))
         return
@@ -208,6 +248,8 @@ def _instalar_settings(relatorio: _Relatorio, esforcos: dict) -> None:
     if not esforcos:
         return
     caminho = relatorio.destino / ARQ_SETTINGS
+    if relatorio.recusa_link(ARQ_SETTINGS):
+        return
     desejado = {modelo: {"effortLevel": nivel} for modelo, nivel in esforcos.items()}
     if not caminho.exists():
         dados = {"modelSettings": desejado}
@@ -249,15 +291,17 @@ def instalar(destino, *, kit) -> dict:
     destino, kit = pathlib.Path(destino), pathlib.Path(kit)
     _validar_destino(destino)
     conteudo = _carregar_kit(kit)
+    _validar_caminhos(destino, [*conteudo["copias"], ARQ_CONFIG, ARQ_WARREN, ARQ_AGENTS, ARQ_SETTINGS])
     relatorio = _Relatorio(destino)
     for relativo, origem in conteudo["copias"].items():
         relatorio.gravar(relativo, origem.read_bytes())
-    if not (destino / ARQ_CONFIG).exists():
+    if not relatorio.recusa_link(ARQ_CONFIG) and not (destino / ARQ_CONFIG).exists():
         relatorio.gravar(ARQ_CONFIG, conteudo["config"])
-    if (destino / ARQ_WARREN).exists():
-        relatorio.avisos.append(AVISO_WARREN)
-    else:
-        relatorio.gravar(ARQ_WARREN, conteudo["warren"])
+    if not relatorio.recusa_link(ARQ_WARREN):
+        if (destino / ARQ_WARREN).exists():
+            relatorio.avisos.append(AVISO_WARREN)
+        else:
+            relatorio.gravar(ARQ_WARREN, conteudo["warren"])
     _instalar_agents(relatorio, conteudo["bloco"])
     relatorio.avisos.extend(conteudo["avisos_de_esforco"])
     _instalar_settings(relatorio, conteudo["esforcos"])
@@ -286,6 +330,9 @@ def main(argv=None, *, saida=None, erro=None) -> int:
         resultado = instalar(pathlib.Path(args.destino), kit=pathlib.Path(args.kit))
     except ValueError as falha:
         print(str(falha), file=erro)
+        return 2
+    except OSError as falha:
+        print("%s: %s" % (type(falha).__name__, falha), file=erro)
         return 2
     _imprimir(resultado, saida)
     return 0

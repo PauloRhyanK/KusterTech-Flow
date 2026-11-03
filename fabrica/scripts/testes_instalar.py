@@ -1,12 +1,14 @@
 import copy
 import io
 import json
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 RAIZ = pathlib.Path(__file__).resolve().parent
 RAIZ_DO_REPO = RAIZ.parents[1]
@@ -808,6 +810,221 @@ class TestesModelos(unittest.TestCase):
         ativas = [linha for linha in linhas if linha.strip() and not linha.lstrip().startswith("#")]
         self.assertEqual(ativas, ["defaultBranch: main", "maxCostUsd: 20", "admission:", "  maxConcurrentRuns: 3"])
         self.assertFalse([linha for linha in ativas if linha.startswith("pr") or "autoMerge" in linha])
+
+
+def fotografia(raiz: pathlib.Path) -> list:
+    """Tudo sob `raiz` sem seguir links: caminho, tipo e, para arquivos, o conteúdo; para links, o alvo."""
+    itens = []
+    for pasta, nomes, arquivos in os.walk(raiz, followlinks=False):
+        for nome in nomes + arquivos:
+            caminho = pathlib.Path(pasta) / nome
+            if caminho.is_symlink():
+                itens.append((str(caminho), "link", os.readlink(caminho)))
+            elif caminho.is_dir():
+                itens.append((str(caminho), "pasta", None))
+            else:
+                itens.append((str(caminho), "arquivo", caminho.read_bytes()))
+    return sorted(itens)
+
+
+class TestesPastaComLink(Base):
+    """A: um diretório que é link simbólico dentro do destino nunca leva a gravação para fora (ou para dentro de outro lugar)."""
+
+    def setUp(self):
+        super().setUp()
+        self.fora = self.tmp / "fora"
+        self.fora.mkdir()
+
+    def preparar(self, relativo: str, alvo=None):
+        link = self.destino / relativo
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(self.fora if alvo is None else alvo, target_is_directory=True)
+
+    def exigir_recusa(self, relativo: str):
+        antes_destino, antes_fora = fotografia(self.destino), fotografia(self.fora)
+        with self.assertRaises(ValueError) as ctx:
+            self.instalar()
+        self.assertIn(str(self.destino / relativo), str(ctx.exception))
+        self.assertEqual(fotografia(self.fora), antes_fora)
+        self.assertEqual(list(self.fora.iterdir()), [])
+        self.assertEqual(fotografia(self.destino), antes_destino)
+
+    def test_cada_pasta_de_destino_como_link_e_recusada_sem_gravar_nada(self):
+        for relativo in (".fabrica", ".warren", ".claude"):
+            with self.subTest(relativo=relativo):
+                self.preparar(relativo)
+                self.exigir_recusa(relativo)
+                (self.destino / relativo).unlink()
+
+    def test_equipes_como_link_dentro_de_uma_pasta_real_e_recusada(self):
+        self.preparar(".fabrica/equipes")
+        self.exigir_recusa(".fabrica/equipes")
+
+    def test_link_para_dentro_do_proprio_destino_tambem_e_recusado(self):
+        (self.destino / "outra").mkdir()
+        self.preparar(".claude", self.destino / "outra")
+        self.exigir_recusa(".claude")
+        self.assertEqual(list((self.destino / "outra").iterdir()), [])
+
+    def test_link_quebrado_e_recusado(self):
+        self.preparar(".warren", self.tmp / "nao-existe")
+        self.exigir_recusa(".warren")
+        self.assertFalse((self.tmp / "nao-existe").exists())
+
+    def test_link_de_pasta_com_destino_dado_por_link_continua_valido(self):
+        # o próprio destino pode ser um link: só os componentes abaixo dele contam
+        atalho = self.tmp / "atalho"
+        atalho.symlink_to(self.destino, target_is_directory=True)
+        self.assertIn("AGENTS.md", instalar.instalar(atalho, kit=self.kit)["criados"])
+        self.assertTrue((self.destino / ".fabrica" / "orquestrador.md").is_file())
+
+
+class TestesArquivoComLink(Base):
+    """B: um arquivo que é link simbólico é recusado com aviso; os demais seguem."""
+
+    def aviso(self, relativo):
+        return "%s é link simbólico; não alterado" % relativo
+
+    def test_agents_md_link_para_outro_arquivo_nao_e_alterado(self):
+        escrever(self.destino / "CLAUDE.md", "# regras do claude\n")
+        (self.destino / "AGENTS.md").symlink_to("CLAUDE.md")
+        resultado = self.instalar()
+        self.assertEqual(self.ler("CLAUDE.md"), "# regras do claude\n")
+        self.assertTrue((self.destino / "AGENTS.md").is_symlink())
+        self.assertEqual(os.readlink(self.destino / "AGENTS.md"), "CLAUDE.md")
+        self.assertIn(self.aviso("AGENTS.md"), resultado["avisos"])
+        self.assertNotIn("AGENTS.md", resultado["criados"] + resultado["atualizados"])
+        self.assertIn(".fabrica/orquestrador.md", resultado["criados"])
+        self.assertIn(".claude/settings.json", resultado["criados"])
+
+    def test_cada_arquivo_gerenciado_como_link_e_recusado_e_o_alvo_fica_igual(self):
+        alvo = escrever(self.tmp / "alvo.txt", "conteudo do alvo\n")
+        for relativo in (
+            "AGENTS.md",
+            ".claude/settings.json",
+            ".fabrica/config.json",
+            ".warren/config.yaml",
+            ".fabrica/orquestrador.md",
+            ".fabrica/equipes/qa.md",
+            ".fabrica/raias.py",
+        ):
+            with self.subTest(relativo=relativo):
+                shutil.rmtree(self.destino / ".fabrica", ignore_errors=True)
+                shutil.rmtree(self.destino / ".warren", ignore_errors=True)
+                shutil.rmtree(self.destino / ".claude", ignore_errors=True)
+                (self.destino / "AGENTS.md").unlink(missing_ok=True)
+                link = self.destino / relativo
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(alvo)
+                resultado = self.instalar()
+                self.assertEqual(alvo.read_text(encoding="utf-8"), "conteudo do alvo\n")
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), str(alvo))
+                self.assertEqual(resultado["avisos"].count(self.aviso(relativo)), 1, resultado["avisos"])
+                self.assertNotIn(relativo, resultado["criados"] + resultado["atualizados"])
+                outros = [r for r in self.esperados_da_instalacao_limpa() if r != relativo]
+                for outro in outros:
+                    self.assertTrue((self.destino / outro).exists(), outro)
+
+    def test_link_quebrado_nao_cria_o_alvo(self):
+        (self.destino / "AGENTS.md").symlink_to(self.tmp / "nao-existe.md")
+        resultado = self.instalar()
+        self.assertFalse((self.tmp / "nao-existe.md").exists())
+        self.assertTrue((self.destino / "AGENTS.md").is_symlink())
+        self.assertIn(self.aviso("AGENTS.md"), resultado["avisos"])
+
+    def test_link_de_arquivo_para_uma_pasta_tambem_e_so_aviso(self):
+        (self.destino / "AGENTS.md").symlink_to(self.tmp, target_is_directory=True)
+        resultado = self.instalar()
+        self.assertIn(self.aviso("AGENTS.md"), resultado["avisos"])
+        self.assertTrue((self.destino / ".fabrica" / "orquestrador.md").is_file())
+
+    def test_warren_config_link_nao_e_tocado_e_o_aviso_e_o_do_link(self):
+        alvo = escrever(self.tmp / "w.yaml", "x: 1\n")
+        (self.destino / ".warren").mkdir()
+        (self.destino / ".warren" / "config.yaml").symlink_to(alvo)
+        resultado = self.instalar()
+        self.assertEqual(alvo.read_text(encoding="utf-8"), "x: 1\n")
+        self.assertIn(self.aviso(".warren/config.yaml"), resultado["avisos"])
+
+    def test_segunda_execucao_continua_sem_criar_nem_atualizar(self):
+        escrever(self.destino / "CLAUDE.md", "# c\n")
+        (self.destino / "AGENTS.md").symlink_to("CLAUDE.md")
+        self.instalar()
+        segunda = self.instalar()
+        self.assertEqual((segunda["criados"], segunda["atualizados"]), ([], []))
+
+
+class TestesTiposDeDestino(Base):
+    """C: tipos errados nos caminhos de destino são ValueError antes de gravar qualquer coisa."""
+
+    def exigir_recusa(self, relativo: str):
+        antes = fotografia(self.destino)
+        with self.assertRaises(ValueError) as ctx:
+            self.instalar()
+        self.assertIn(str(self.destino / relativo), str(ctx.exception))
+        self.assertEqual(fotografia(self.destino), antes)
+
+    def test_pasta_esperada_que_e_arquivo(self):
+        for relativo in (".fabrica", ".warren", ".claude"):
+            with self.subTest(relativo=relativo):
+                escrever(self.destino / relativo, "sou um arquivo\n")
+                self.exigir_recusa(relativo)
+                (self.destino / relativo).unlink()
+
+    def test_equipes_que_e_arquivo(self):
+        escrever(self.destino / ".fabrica" / "equipes", "sou um arquivo\n")
+        self.exigir_recusa(".fabrica/equipes")
+
+    def test_arquivo_esperado_que_e_pasta(self):
+        for relativo in (
+            "AGENTS.md",
+            ".fabrica/config.json",
+            ".warren/config.yaml",
+            ".claude/settings.json",
+            ".fabrica/raias.py",
+            ".fabrica/equipes/qa.md",
+        ):
+            with self.subTest(relativo=relativo):
+                shutil.rmtree(self.destino / ".fabrica", ignore_errors=True)
+                shutil.rmtree(self.destino / ".warren", ignore_errors=True)
+                shutil.rmtree(self.destino / ".claude", ignore_errors=True)
+                shutil.rmtree(self.destino / "AGENTS.md", ignore_errors=True)
+                (self.destino / relativo).mkdir(parents=True)
+                self.exigir_recusa(relativo)
+
+    def test_pastas_e_arquivos_corretos_continuam_aceitos(self):
+        (self.destino / ".fabrica" / "equipes").mkdir(parents=True)
+        (self.destino / ".claude").mkdir()
+        escrever(self.destino / "AGENTS.md", "# meu\n")
+        self.assertIn(".fabrica/orquestrador.md", self.instalar()["criados"])
+
+
+class TestesCliComOserror(Base):
+    def test_oserror_sai_com_2_e_mensagem_curta_sem_traceback(self):
+        saida, erro = io.StringIO(), io.StringIO()
+        falha = PermissionError(13, "Permission denied", "/projeto/.fabrica")
+        with mock.patch.object(instalar, "instalar", side_effect=falha):
+            codigo = instalar.main([str(self.destino), "--kit", str(self.kit)], saida=saida, erro=erro)
+        self.assertEqual(codigo, 2)
+        self.assertEqual(saida.getvalue(), "")
+        self.assertIn("Permission denied", erro.getvalue())
+        self.assertIn("/projeto/.fabrica", erro.getvalue())
+        self.assertNotIn("Traceback", erro.getvalue())
+        self.assertEqual(len(erro.getvalue().splitlines()), 1)
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignora permissões")
+    def test_destino_sem_permissao_de_escrita_sai_com_2(self):
+        self.destino.chmod(0o555)
+        self.addCleanup(self.destino.chmod, 0o755)
+        proc = subprocess.run(
+            [sys.executable, "-I", "-B", str(RAIZ / "instalar.py"), str(self.destino), "--kit", str(self.kit)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertIn("Permission denied", proc.stderr)
 
 
 class TestesCli(Base):
