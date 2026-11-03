@@ -922,6 +922,31 @@ class TestesDecisoesRastreadas(unittest.TestCase):
             ],
         )
 
+    def test_procurar_decisao_desde_ordena_por_criacao_e_para_cedo(self):
+        """Rodada 3, P5: com 4.000 issues de decisão, poucas requisições."""
+        desde = "2026-11-03T12:00:00Z"
+        novas = [self.issue(5000 - i, "outra", created_at="2026-11-03T12:%02d:00Z" % (59 - i)) for i in range(60)]
+        velhas = [self.issue(4000 - i, "outra", created_at="2026-11-02T10:00:00Z") for i in range(40)]
+        f, t = novo(ok(novas + velhas))
+        self.assertIsNone(f.procurar_decisao("acme/app", self.NONCE, desde))
+        t.exigir(self, 1)
+        self.assertEqual(
+            t.urls()[0],
+            API + "/repos/acme/app/issues?labels=fabrica%3Adecisao&state=all&per_page=100"
+            "&since=2026-11-03T12%3A00%3A00Z&sort=created&direction=desc&page=1",
+        )
+        marcador = "<!-- fabrica:nonce=%s -->" % self.NONCE
+        f, t = novo(ok([self.issue(7, "x " + marcador, created_at="2026-11-03T12:01:00Z")]))
+        self.assertEqual(f.procurar_decisao("acme/app", self.NONCE, desde), "https://github.com/acme/app/issues/7")
+        for ruim in ("ontem", 5, ""):
+            f, t = novo()
+            with self.assertRaises(ValueError):
+                f.procurar_decisao("acme/app", self.NONCE, ruim)
+            t.exigir(self, 0)
+        falsa = forja.ForjaFalsa()
+        url = falsa.abrir_decisao("acme/app", "t", marcador)
+        self.assertEqual(falsa.procurar_decisao("acme/app", self.NONCE, desde), url)
+
     def test_procurar_decisao_sem_achado_devolve_none(self):
         f, t = novo(ok([self.issue(1, "nada")]))
         self.assertIsNone(f.procurar_decisao("acme/app", self.NONCE))

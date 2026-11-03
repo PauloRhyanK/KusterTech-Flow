@@ -1,7 +1,9 @@
 """Cliente HTTP do Warren 0.19.3 (token bearer, JSON, eventos em NDJSON)."""
 
+import errno
 import http.client
 import json
+import socket
 import pathlib
 import sys
 import urllib.error
@@ -10,7 +12,28 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from motor import FalhaDeRede, MotorOcupado  # noqa: E402
+from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, validar_nonce  # noqa: E402
+
+# Falhas em que a requisição nunca foi escrita: o servidor não pode ter aceitado nada.
+_ERRNOS_ANTES = {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EADDRNOTAVAIL}
+
+
+def _classe_da_falha(erro):
+    """`FalhaAntesDoEnvio` só quando é certo que nada foi enviado; qualquer dúvida é `FalhaIncerta`.
+
+    O urllib embrulha em URLError as falhas da fase de conexão e envio (`h.request`); as da leitura
+    da resposta (`getresponse`, `read`) chegam cruas.
+    """
+    if isinstance(erro, urllib.error.URLError) and not isinstance(erro, urllib.error.HTTPError):
+        razao = erro.reason
+        if isinstance(razao, (ConnectionRefusedError, socket.gaierror, TimeoutError)):
+            return FalhaAntesDoEnvio
+        if isinstance(razao, OSError) and razao.errno in _ERRNOS_ANTES:
+            return FalhaAntesDoEnvio
+        return FalhaIncerta
+    if isinstance(erro, (ConnectionRefusedError, socket.gaierror)):
+        return FalhaAntesDoEnvio
+    return FalhaIncerta
 
 TIMEOUT_REQUISICAO_S = 30
 TIMEOUT_EVENTOS_S = 180
@@ -51,7 +74,8 @@ def _transporte_urllib(metodo, url, headers, corpo):
             finally:
                 erro.close()
     except (http.client.HTTPException, OSError) as erro:
-        raise FalhaDeRede("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from erro
+        classe = _classe_da_falha(erro)
+        raise classe("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from erro
 
 
 def _id(valor) -> str:
@@ -130,8 +154,9 @@ class MotorWarren:
             dados = json.dumps(corpo).encode("utf-8")
         try:
             status, resp_headers, resp_corpo = self._transporte(metodo, self._base + caminho, headers, dados)
-        except (urllib.error.URLError, OSError) as erro:
-            raise FalhaDeRede("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as erro:
+            classe = erro.__class__ if isinstance(erro, (FalhaAntesDoEnvio, FalhaIncerta)) else _classe_da_falha(erro)
+            raise classe("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
         if status == 429:
             raise MotorOcupado(_retry_after(resp_headers))
         if not 200 <= status < 300:
@@ -290,6 +315,30 @@ class MotorWarren:
             if modelo is not None:
                 return modelo
         return None
+
+    def _procurar(self, caminho: str, chave: str, campo: str, nonce: str) -> str | None:
+        marca = MARCADOR_NONCE % validar_nonce(nonce)
+        dados = self._json("GET", caminho)
+        itens = dados.get(chave)
+        if not isinstance(itens, list):
+            raise RuntimeError("GET %s: resposta sem a lista %r" % (caminho, chave))
+        for item in itens:
+            if not isinstance(item, dict):
+                raise RuntimeError("GET %s: %r tem item que não é objeto" % (caminho, chave))
+            texto = item.get(campo)
+            if isinstance(texto, str) and marca in texto:
+                return self._texto(item, chave + "[]", "id", "GET", caminho)
+        return None
+
+    def procurar_run(self, projeto: str, nonce: str) -> str | None:
+        validar_nonce(nonce)
+        caminho = "/runs?project=%s&limit=50" % urllib.parse.quote(projeto, safe="")
+        return self._procurar(caminho, "runs", "prompt", nonce)
+
+    def procurar_plano(self, projeto: str, nonce: str) -> str | None:
+        validar_nonce(nonce)
+        caminho = "/plan-runs?project=%s" % urllib.parse.quote(projeto, safe="")
+        return self._procurar(caminho, "planRuns", "promptTemplate", nonce)
 
     def cancelar_plano(self, plan_run_id: str) -> None:
         self._requisitar("POST", "/plan-runs/%s/cancel" % _id(plan_run_id), {})

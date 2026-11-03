@@ -47,8 +47,7 @@ import globs  # noqa: E402
 import prompts  # noqa: E402
 import raias  # noqa: E402
 import verificacao  # noqa: E402
-from forja import MARCADOR_NONCE  # noqa: E402
-from motor import FalhaDeRede, MotorOcupado  # noqa: E402
+from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado  # noqa: E402
 
 ARQ_ESTADO = "estado.json"
 ARQ_PLANO = "plano.json"
@@ -112,6 +111,15 @@ PEDIR_COMENTARIO = "Feche com um comentário dizendo a decisão: a issue foi rea
 ALVO_DO_ORQUESTRADOR = "orquestrador"
 LIMITE_ENTRADA_APLICADA = 200
 LIMITE_COTA_FILHOS = 200
+CICLOS_PARA_DESCARTAR_INCERTO = 3
+MAX_ADIAMENTOS_DE_REDE = 10
+CICLOS_REDE_PARCIAL = 10
+CICLOS_LIMPOS_PARA_FECHAR = 3
+MAX_BUSCAS_FALHAS = 5
+MAX_REABERTURAS_FALHAS = 5
+MARGEM_DESDE = datetime.timedelta(minutes=10)
+TITULO_WARREN_PARCIAL = "[fábrica] Warren parcialmente inacessível"
+PAUSA_DESPACHOS_REJEITADOS = "Warren rejeitando despachos"
 
 class OutroDespachante(Exception):
     """A trava da raiz já está com outro processo."""
@@ -167,8 +175,42 @@ def _eh_404(exc: BaseException) -> bool:
 
 
 def _eh_falha_de_rede(exc: BaseException) -> bool:
-    """O pedido não chegou ao serviço (rede, timeout, DNS); um HTTP >= 400 não é falha de rede."""
+    """Falha na camada de rede (conexão, timeout, DNS); um HTTP >= 400 não é falha de rede."""
     return isinstance(exc, FalhaDeRede) or (isinstance(exc, RuntimeError) and "falha de rede" in str(exc))
+
+
+def _antes_do_envio(exc: BaseException) -> bool:
+    """Só a falha certamente anterior ao envio permite repetir um POST pago; na dúvida, é incerta."""
+    if isinstance(exc, FalhaAntesDoEnvio):
+        return True
+    if isinstance(exc, FalhaIncerta):
+        return False
+    return _eh_falha_de_rede(exc) and re.search(r"\((ConnectionRefusedError|gaierror)\)", str(exc)) is not None
+
+
+def _chave_acao(acao: dict) -> str:
+    tipo = acao.get("tipo")
+    if tipo == "acordar":
+        return "acordar:%s:%s" % (acao.get("motivo"), acao.get("alvo"))
+    return "%s:%s" % (tipo, acao.get("raia") or acao.get("seed"))
+
+
+def _com_nonce(texto: str, nonce: str) -> str:
+    """O marcador do nonce vai na última linha do texto enviado ao Warren."""
+    return texto + "\n" + MARCADOR_NONCE % nonce
+
+
+def liberar_raias_em_cota(estado: dict) -> list[str]:
+    """P2: ao retomar, a raia parada por cota num filho volta a `planejada` para um Plan Run novo."""
+    liberadas = []
+    for raia_id, raia in _dict(estado.get("raias")).items():
+        if isinstance(raia, dict) and raia.get("aguardandoCota"):
+            raia.update(estado="planejada", planRunId=None, retomar=False, falha=None)
+            raia.pop("aguardandoCota", None)
+            liberadas.append(raia_id)
+    if liberadas:
+        estado["cotaFilhos"] = []
+    return liberadas
 
 
 def papel_normalizado(papel):
@@ -435,6 +477,7 @@ class Despachante:
         self._retry_after = 0
         self._leituras = {"ok": 0, "falhas": 0}
         self._falhas_do_ciclo: list = []
+        self._rede_do_ciclo: set = set()
         self._ja_cancelados: set = set()
         self._repetidos: dict = {}
         self.trava_externa = False
@@ -666,6 +709,10 @@ class Despachante:
         antes = {"pausado": self.estado.get("pausado"), "falhasAcordar": self.estado.get("falhasAcordar")}
         self.estado["pausado"] = None
         self.estado["falhasAcordar"] = 0
+        self.estado["adiamentosRede"] = {}
+        liberadas = liberar_raias_em_cota(self.estado)
+        if liberadas:
+            antes["raiasLiberadas"] = liberadas
         self._salvar()  # a issue de pausa, se houver, é fechada pelo ciclo (_observar_pausa)
         self._log({"evento": "retomar", "antes": antes})
 
@@ -678,6 +725,7 @@ class Despachante:
         self._retry_after = 0
         self._leituras = {"ok": 0, "falhas": 0}
         self._falhas_do_ciclo = []
+        self._rede_do_ciclo = set()
         self._ja_cancelados = set()
         self._recuperar_acao_interrompida()
         self._recuperar_decisoes_pendentes()
@@ -692,6 +740,7 @@ class Despachante:
         self._observar_decisoes()
         self._contabilizar_falhas_de_leitura()
         self._contabilizar_warren()
+        self._resolver_incertos()
         self._fechar_prs()
         executadas = self._agir()
         self._garantir_decisao_de_bloqueio()
@@ -852,6 +901,13 @@ class Despachante:
         if acao is None:
             return
         tipo = _dict(acao).get("tipo")
+        if tipo in ACOES_PAGAS and _texto(_dict(acao).get("nonce")):
+            # P1: o despacho pode ter sido aceito antes da queda: procura pelo nonce em vez de adivinhar
+            nonce = acao.get("nonce")
+            sem_nonce = {k: v for k, v in acao.items() if k != "nonce"}
+            self.estado.pop("acaoEmCurso", None)
+            self._registrar_incerto(sem_nonce, nonce)
+            return
         if tipo == "acordar":
             self.estado["pausado"] = "acordar interrompido"
             mensagem = (
@@ -911,15 +967,12 @@ class Despachante:
             run = _dict(self.motor.run(run_id))
         except Exception as exc:  # noqa: BLE001
             self._erro_de_etapa("observar_run", run_id, exc)
-            if _eh_falha_de_rede(exc):
-                self._leituras["falhas"] += 1
-                return None
-            if _eh_404(exc):  # o Warren respondeu: o run não existe
-                self._zerar_falha_de_leitura(run_id)
-                self._aviso("run %s ilegível no Warren (404): tratado como failed" % run_id)
-                return self._run_sintetico()
             self._leituras["falhas"] += 1
-            self._falhas_do_ciclo.append(("run", run_id, None))
+            if _eh_falha_de_rede(exc):
+                self._rede_do_ciclo.add(run_id)
+                return None
+            # P4: um 404 só vale num ciclo com alguma leitura boa (um proxy errado também responde 404)
+            self._falhas_do_ciclo.append(("run404" if _eh_404(exc) else "run", run_id, None))
             return None
         self._leituras["ok"] += 1
         self._esquecer("observar_run:%s" % run_id)
@@ -1114,27 +1167,44 @@ class Despachante:
                 observado = _dict(self.motor.plano(plan_run_id))
             except Exception as exc:  # noqa: BLE001
                 self._erro_de_etapa("observar_plano", raia_id, exc)
+                self._leituras["falhas"] += 1
                 if _eh_falha_de_rede(exc):
-                    self._leituras["falhas"] += 1
-                elif _eh_404(exc):
-                    self._aviso_de_plano_ilegivel(plan_run_id, raia_id)
+                    self._rede_do_ciclo.add(plan_run_id)
                 else:
-                    self._leituras["falhas"] += 1
-                    self._falhas_do_ciclo.append(("plano", plan_run_id, raia_id))
+                    self._falhas_do_ciclo.append(("plano404" if _eh_404(exc) else "plano", plan_run_id, raia_id))
                 continue
             self._leituras["ok"] += 1
             self._esquecer("observar_plano:%s" % raia_id)
             self._zerar_falha_de_leitura(plan_run_id)
-            antes = copy.deepcopy(_dict(self.estado.get("seeds")))
             filhos = observado.get("filhos")
+            seeds = _dict(self.estado.get("seeds"))
+            for filho in _lista(filhos):
+                filho = _dict(filho)
+                seed_id = filho.get("seedId")
+                seed = _dict(seeds.get(seed_id))
+                if (
+                    seed.get("estado") == "mergeada"
+                    and _texto(filho.get("prUrl"))
+                    and filho.get("prUrl") != seed.get("pr")
+                    and _texto(seed.get("planRunId"))
+                    and seed.get("planRunId") != plan_run_id
+                ):
+                    del seeds[seed_id]
+                    self._esquecer_tentativa(seed_id, "Nova tentativa da seed %s" % seed_id)
+                    self._log({"evento": "seed_reiniciada", "seed": seed_id, "pr": filho.get("prUrl")})
+            antes = copy.deepcopy(_dict(self.estado.get("seeds")))
             estado_plano, falha = observado.get("estado"), observado.get("falha")
             if estado_plano in ("failed", "cancelled") and self._substituicao_pendente(raia_id):
                 # L1: o cancelamento é a substituição em curso, não uma falha da raia
                 self._ja_cancelados.add(raia_id)
                 estado_plano, falha = "running", None
-            elif estado_plano in ("failed", "cancelled") and self._cota_em_filho(raia_id, filhos):
-                # J: cota num filho pausa tudo; a raia continua para o retomar depois
-                estado_plano, falha = "running", None
+            else:
+                cota = self._cota_em_filho(raia_id, filhos) if estado_plano in ("failed", "cancelled") else None
+                if cota == "ilegivel":
+                    continue  # P2: sem ler o texto do filho não dá para decidir; tenta no próximo ciclo
+                if cota == "cota":
+                    # P2: a raia não falha; ao retomar ela volta a planejada e ganha um Plan Run novo
+                    estado_plano, falha = "running", None
             self._mudar(
                 est.registrar_plano(
                     self.estado,
@@ -1146,6 +1216,19 @@ class Despachante:
             )
             depois = _dict(self.estado.get("seeds"))
             self._guardar_tentativas_reiniciadas(antes, depois)
+            for seed_id, anterior in antes.items():
+                anterior, atual = _dict(anterior), _dict(depois.get(seed_id))
+                if not atual:
+                    continue
+                if (atual.get("runId") != anterior.get("runId") and atual.get("estado") == "executando") or (
+                    _texto(atual.get("pr")) and atual.get("pr") != anterior.get("pr")
+                ):
+                    self._esquecer_tentativa(seed_id, "Nova tentativa da seed %s" % seed_id)
+            for filho in _lista(filhos):
+                seed = _dict(depois.get(_dict(filho).get("seedId")))
+                if seed and seed.get("planRunId") != plan_run_id:
+                    seed["planRunId"] = plan_run_id
+                    self._salvar()
             papel = self._papel_da_raia(raia_id)
             for filho in _lista(filhos):
                 filho = _dict(filho)
@@ -1165,37 +1248,45 @@ class Despachante:
             % (plan_run_id, raia_id, MAX_FALHAS_DE_LEITURA)
         )
 
-    def _cota_em_filho(self, raia_id: str, filhos) -> bool:
-        """Um filho que falhou por cota do provedor: pausa (uma vez por run) e a raia não falha."""
+    def _cota_em_filho(self, raia_id: str, filhos):
+        """`"cota"`, `"ilegivel"` (o texto de um filho com provider_error não se leu) ou None.
+
+        O resume do Warren só aceita merge timeouts (resume.ts responde 409 aos outros): a cota não
+        usa retomar_plano. A raia fica `aguardandoCota` e volta a `planejada` quando o despachante retoma.
+        """
         vistos = self.estado.get("cotaFilhos")
         if not isinstance(vistos, list):
             vistos = self.estado["cotaFilhos"] = []
-        achou = False
+        ilegiveis = _lista(self.estado.get("textosIlegiveis"))
+        resultado = None
         for filho in _lista(filhos):
             filho = _dict(filho)
             run_id = filho.get("runId")
-            if filho.get("falha") != "provider_error" or not _texto(run_id):
+            if filho.get("falha") != "provider_error" or not _texto(run_id) or run_id in ilegiveis:
                 continue
             if run_id in vistos:
-                achou = True
+                resultado = "cota"
                 continue
             try:
                 texto = self.motor.ultimo_texto(run_id)
             except Exception as exc:  # noqa: BLE001 - sem o texto não dá para afirmar cota
                 self._erro_de_etapa("ultimo_texto", run_id, exc)
-                continue
+                if not _eh_falha_de_rede(exc):
+                    self._leituras["falhas"] += 1
+                    self._falhas_do_ciclo.append(("texto", run_id, raia_id))
+                return "ilegivel"
+            self._zerar_falha_de_leitura(run_id)
             if not prompts.eh_falha_de_cota("provider_error", texto if isinstance(texto, str) else ""):
                 continue
-            achou = True
+            resultado = "cota"
             vistos.append(run_id)
             self.estado["cotaFilhos"] = vistos[-LIMITE_COTA_FILHOS:]
             raia = _dict(_dict(self.estado.get("raias")).get(raia_id))
-            raia["retomar"] = True
-            raia["retomarPorCota"] = True
+            raia["aguardandoCota"] = True
             self.estado["pausado"] = "cota"
             self._salvar()
-            self._aviso("filho %s da raia %s bateu cota do provedor: despachante pausado; a raia continua depois do retomar" % (run_id, raia_id))
-        return achou
+            self._aviso("filho %s da raia %s bateu cota do provedor: despachante pausado; a raia recomeça depois do retomar" % (run_id, raia_id))
+        return resultado
 
     def _sincronizar(self) -> None:
         """`sincronizar_plano` a cada ciclo; PRs das seeds tiradas do estado (I5) são fechados."""
@@ -1204,10 +1295,13 @@ class Despachante:
         depois = _dict(novo.get("seeds"))
         self.estado = novo
         for seed_id, seed in antes.items():
-            if seed_id not in depois and _texto(_dict(seed).get("pr")):
+            if seed_id in depois:
+                continue
+            if _texto(_dict(seed).get("pr")):
                 self._fechar_depois(
                     seed["pr"], "PR fechado pelo despachante: a raia %s foi replanejada." % _dict(seed).get("raia")
                 )
+            self._esquecer_tentativa(seed_id, "A raia %s foi replanejada" % _dict(seed).get("raia"))
         self._salvar()
 
     def _contabilizar_falhas_de_leitura(self) -> None:
@@ -1217,11 +1311,25 @@ class Despachante:
             return
         perdidos = []
         for tipo, ident, raia_id in falhas:
+            if tipo == "run404":
+                _dict(self.estado.get("falhasLeitura")).pop(ident, None)
+                perdidos.append(ident)
+                self._aviso("run %s ilegível no Warren (404): tratado como failed" % ident)
+                continue
+            if tipo == "plano404":
+                self._aviso_de_plano_ilegivel(ident, raia_id)
+                continue
             n = self._contar_falha_de_leitura(ident)
             if n < MAX_FALHAS_DE_LEITURA:
                 continue
             if tipo == "plano":
                 self._aviso_de_plano_ilegivel(ident, raia_id)
+                continue
+            if tipo == "texto":
+                # P2: o texto do filho não se lê: a raia segue o caminho normal (sem afirmar cota)
+                _dict(self.estado.get("falhasLeitura")).pop(ident, None)
+                self.estado["textosIlegiveis"] = (_lista(self.estado.get("textosIlegiveis")) + [ident])[-LIMITE_COTA_FILHOS:]
+                self._aviso("texto do run %s ilegível no Warren (%d falhas seguidas): sem verificar cota" % (ident, MAX_FALHAS_DE_LEITURA))
                 continue
             _dict(self.estado.get("falhasLeitura")).pop(ident, None)
             perdidos.append(ident)
@@ -1233,6 +1341,22 @@ class Despachante:
             self._salvar()
             self._observar_runs_de_seeds(somente=set(perdidos))
             self._observar_orquestrador(somente=set(perdidos))
+
+    def _esquecer_tentativa(self, seed_id: str, motivo: str) -> None:
+        """P3: a chave de acordar e as decisões da tentativa anterior da seed não valem para a nova."""
+        chave = "gate_falhou_apos_fixer:%s" % seed_id
+        chaves = _lista(self.estado.get("chavesAcordadas"))
+        if chave in chaves:
+            self.estado["chavesAcordadas"] = [c for c in chaves if c != chave]
+        restantes = []
+        for decisao in _lista(self.estado.get("decisoes")):
+            if isinstance(decisao, dict) and decisao.get("tipo", "seed") == "seed" and decisao.get("alvo") == seed_id:
+                if _texto(decisao.get("url")):
+                    self._fechar_depois(decisao["url"], "%s; decisão encerrada pelo despachante." % motivo, decisao=True)
+            else:
+                restantes.append(decisao)
+        self.estado["decisoes"] = restantes
+        self._salvar()
 
     def _guardar_tentativas_reiniciadas(self, antes: dict, depois: dict) -> None:
         """Um redespacho zera a seed; guarda a revisão e a verificação para o caso de o PR e o head voltarem iguais."""
@@ -1317,18 +1441,30 @@ class Despachante:
 
     def _observar_decisoes(self) -> None:
         decisoes = _lista(self.estado.get("decisoes"))
-        restantes, mudou = [], False
+        restantes, recriar, mudou = [], [], False
         for decisao in decisoes:
             if not isinstance(decisao, dict) or not _texto(decisao.get("url")):
                 mudou = True
+                continue
+            if decisao.get("tipo") == "config":
+                # P10: se o despachante está rodando, a config voltou a valer
+                mudou = True
+                self._fechar_depois(decisao["url"], "A config voltou a ser válida; issue fechada pelo despachante.", decisao=True)
                 continue
             try:
                 info = _dict(self.forja.decisao(decisao["url"]))
             except Exception as exc:  # noqa: BLE001 - a decisão fica na lista
                 self._erro_de_etapa("observar_decisao", decisao["url"], exc)
+                if not _eh_falha_de_rede(exc) and _eh_404(exc):
+                    # P6: a issue sumiu: uma nova, rastreada, com o mesmo motivo e alvo
+                    mudou = True
+                    recriar.append((decisao, "A issue anterior (%s) sumiu." % decisao["url"]))
+                    continue
                 restantes.append(decisao)
                 continue
             if info.get("fechada") is not True:
+                if decisao.pop("falhasReabrir", None) is not None:
+                    mudou = True
                 restantes.append(decisao)
                 continue
             orquestrador = self._orq()
@@ -1336,12 +1472,22 @@ class Despachante:
             respondida = _texto(comentario) and comentario.strip() and MARCADOR_DESPACHANTE not in comentario
             de_bloqueio = decisao.get("tipo") == "bloqueio" or _dict(orquestrador.get("bloqueio")).get("url") == decisao["url"]
             if not respondida and not de_bloqueio:
+                if _texto(comentario) and MARCADOR_DESPACHANTE in comentario:
+                    # P8: já reabrimos e o GET ainda não mostra; reabrir de novo só repetiria o comentário
+                    restantes.append(decisao)
+                    continue
                 # I4: sem comentário não há decisão; a issue é reaberta e continua acompanhada
                 try:
                     self.forja.reabrir_decisao(decisao["url"], PEDIR_COMENTARIO + "\n\n" + MARCADOR_DESPACHANTE)
                     self._log({"evento": "decisao_reaberta", "url": decisao["url"]})
                 except Exception as exc:  # noqa: BLE001 - tenta reabrir de novo no próximo ciclo
                     self._erro_de_etapa("reabrir_decisao", decisao["url"], exc)
+                    falhas = (decisao.get("falhasReabrir") if _inteiro(decisao.get("falhasReabrir")) else 0) + 1
+                    decisao["falhasReabrir"] = falhas
+                    mudou = True
+                    if falhas >= MAX_REABERTURAS_FALHAS:
+                        recriar.append((decisao, "A issue anterior (%s) não pôde ser reaberta." % decisao["url"]))
+                        continue
                 restantes.append(decisao)
                 continue
             mudou = True
@@ -1364,6 +1510,18 @@ class Despachante:
         if mudou:
             self.estado["decisoes"] = restantes
             self._salvar()
+        for decisao, nota in recriar:
+            self._recriar_decisao(decisao, nota)
+
+    def _recriar_decisao(self, decisao: dict, nota: str) -> None:
+        tipo, alvo = decisao.get("tipo", "seed"), decisao.get("alvo")
+        titulo = decisao.get("titulo") or "[fábrica] decisão necessária: %s" % alvo
+        corpo = "%s\n\n%s\n\n%s" % (decisao.get("motivo") or "", nota, RODAPE_DECISAO)
+        try:
+            url = self._abrir_decisao_rastreada(decisao.get("motivo") or "", alvo, titulo, corpo, tipo=tipo, pr=decisao.get("pr"))
+            self._log({"evento": "decisao_recriada", "anterior": decisao.get("url"), "url": url})
+        except Exception as exc:  # noqa: BLE001 - a intenção gravada fica para a recuperação
+            self._erro_de_etapa("recriar_decisao", decisao.get("url"), exc)
 
     def _fechar_depois(self, url: str, comentario: str, *, decisao: bool = False) -> None:
         fila = self.estado.get("prsParaFechar")
@@ -1412,19 +1570,22 @@ class Despachante:
             fora = self.estado["warrenFora"] = {"ciclos": 0, "url": None}
         ciclos = fora.get("ciclos") if _inteiro(fora.get("ciclos")) else 0
         if self._leituras["ok"] > 0:
-            if ciclos or fora.get("url"):
-                if _texto(fora.get("url")):
-                    self._fechar_depois(
-                        fora["url"], "O Warren voltou a responder; issue fechada pelo despachante.", decisao=True
-                    )
-                self.estado["warrenFora"] = {"ciclos": 0, "url": None}
-                self._salvar()
-                if ciclos >= CICLOS_WARREN_FORA:
-                    self._aviso("o Warren voltou depois de %d ciclos inacessível" % ciclos)
+            fora["ciclos"] = 0
+            if _texto(fora.get("url")):
+                # P4: histerese: a issue só fecha depois de 3 ciclos seguidos sem nenhuma falha
+                limpos = fora.get("limpos") if _inteiro(fora.get("limpos")) else 0
+                fora["limpos"] = limpos + 1 if self._leituras["falhas"] == 0 else 0
+                if fora["limpos"] >= CICLOS_LIMPOS_PARA_FECHAR:
+                    self._fechar_depois(fora["url"], "O Warren voltou a responder; issue fechada pelo despachante.", decisao=True)
+                    self.estado["warrenFora"] = {"ciclos": 0, "url": None}
+                    self._aviso("o Warren voltou depois de ficar inacessível")
+            self._contabilizar_rede_parcial()
+            self._salvar()
             return
         if self._leituras["falhas"] == 0:
             return
         fora["ciclos"] = ciclos + 1
+        fora["limpos"] = 0
         self._salvar()
         if fora["ciclos"] >= CICLOS_WARREN_FORA and not _texto(fora.get("url")):
             corpo = (
@@ -1437,6 +1598,39 @@ class Despachante:
                 self._aviso("Warren inacessível há %d ciclos: issue %s aberta" % (fora["ciclos"], url))
             except Exception as exc:  # noqa: BLE001
                 self._erro_de_etapa("warren_inacessivel", self.repo, exc)
+
+    def _contabilizar_rede_parcial(self) -> None:
+        """P4: Warren respondendo, mas ids ou ações com falha de rede seguida: uma decisão em 10 ciclos."""
+        contadores = self.estado.get("falhasDeRede")
+        if not isinstance(contadores, dict):
+            contadores = self.estado["falhasDeRede"] = {}
+        for ident in [i for i in contadores if i not in self._rede_do_ciclo]:
+            del contadores[ident]
+        for ident in self._rede_do_ciclo:
+            contadores[ident] = (contadores.get(ident) if _inteiro(contadores.get(ident)) else 0) + 1
+        graves = sorted(i for i, n in contadores.items() if _inteiro(n) and n >= CICLOS_REDE_PARCIAL)
+        graves += sorted(c for c, n in _dict(self.estado.get("adiamentosRede")).items() if _inteiro(n) and n >= MAX_ADIAMENTOS_DE_REDE)
+        parcial = self.estado.get("warrenParcial")
+        if not isinstance(parcial, dict):
+            parcial = self.estado["warrenParcial"] = {"url": None, "limpos": 0}
+        if graves and not _texto(parcial.get("url")):
+            lista = ", ".join(graves[:20])
+            corpo = (
+                "O Warren responde, mas estes runs, Plan Runs ou despachos falham na rede há %d ciclos seguidos: %s. "
+                "Nada foi tratado como falho; esta issue é fechada sozinha quando eles voltarem." % (CICLOS_REDE_PARCIAL, lista)
+            )
+            try:
+                self._abrir_decisao_rastreada(
+                    "Warren parcialmente inacessível: %s" % lista, "warren", "%s: %s" % (TITULO_WARREN_PARCIAL, _cortar(lista, 120)), corpo, tipo="warren_parcial"
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._erro_de_etapa("warren_parcial", self.repo, exc)
+        if _texto(parcial.get("url")):
+            limpos = parcial.get("limpos") if _inteiro(parcial.get("limpos")) else 0
+            parcial["limpos"] = limpos + 1 if not self._rede_do_ciclo and self._leituras["falhas"] == 0 and not graves else 0
+            if parcial["limpos"] >= CICLOS_LIMPOS_PARA_FECHAR:
+                self._fechar_depois(parcial["url"], "Os runs voltaram a responder; issue fechada pelo despachante.", decisao=True)
+                self.estado["warrenParcial"] = {"url": None, "limpos": 0}
 
     def _conferir_modelo(self, run_id: str, papel) -> None:
         try:
@@ -1593,35 +1787,67 @@ class Despachante:
             acompanhados.append(url)
             self._salvar()
 
-    def _decisao_aberta(self, tipo: str, alvo):
+    def _decisao_aberta(self, tipo: str, alvo, pr=None):
         if tipo == "pausa":
             return _dict(self.estado.get("decisaoPausa")).get("url") or None
         if tipo == "warren":
             return _dict(self.estado.get("warrenFora")).get("url") or None
+        if tipo == "warren_parcial":
+            return _dict(self.estado.get("warrenParcial")).get("url") or None
         for decisao in _lista(self.estado.get("decisoes")):
             if (
                 isinstance(decisao, dict)
                 and decisao.get("tipo", "seed") == tipo
                 and decisao.get("alvo") == alvo
+                and (tipo != "seed" or decisao.get("pr") == pr)
                 and _texto(decisao.get("url"))
             ):
                 return decisao["url"]
         return None
 
-    def _abrir_decisao_rastreada(self, motivo, alvo, titulo: str, corpo: str, *, tipo: str = "seed") -> str:
+    def _procurar_intencao(self, intencao: dict):
+        """URL achada, None (não existe) ou "" (5 buscas falharam: abrir mesmo assim)."""
+        try:
+            return self.forja.procurar_decisao(self.repo, intencao["nonce"], intencao.get("desde"))
+        except Exception:
+            n = (intencao.get("falhasBusca") if _inteiro(intencao.get("falhasBusca")) else 0) + 1
+            intencao["falhasBusca"] = n
+            self._salvar()
+            if n >= MAX_BUSCAS_FALHAS:
+                return ""
+            raise
+
+    def _abrir_intencao(self, intencao: dict, duplicata_possivel: bool) -> str:
+        corpo = intencao.get("corpo") or ""
+        if duplicata_possivel:
+            corpo += "\n\nPossível duplicata após reinício: a busca pela issue anterior desta decisão falhou."
+        return self.forja.abrir_decisao(
+            self.repo, intencao.get("titulo") or "[fábrica] decisão", corpo + "\n\n" + MARCADOR_NONCE % intencao["nonce"]
+        )
+
+    def _abrir_decisao_rastreada(self, motivo, alvo, titulo: str, corpo: str, *, tipo: str = "seed", pr=None) -> str:
         """Toda issue de decisão nasce aqui: intenção com nonce gravada antes, issue com o marcador, registro.
 
         Uma queda em qualquer passo é resolvida por `_recuperar_decisoes_pendentes` (procura pelo nonce):
         nem perda nem duplicata. Uma decisão do mesmo tipo e alvo já aberta é reaproveitada.
         """
-        existente = self._decisao_aberta(tipo, alvo)
+        existente = self._decisao_aberta(tipo, alvo, pr)
         if existente:
             return existente
         pendentes = self.estado.get("decisoesPendentes")
         if not isinstance(pendentes, list):
             pendentes = self.estado["decisoesPendentes"] = []
-        intencao = next((i for i in pendentes if isinstance(i, dict) and i.get("tipo") == tipo and i.get("alvo") == alvo), None)
+        intencao = next(
+            (
+                i
+                for i in pendentes
+                if isinstance(i, dict) and i.get("tipo") == tipo and i.get("alvo") == alvo and (tipo != "seed" or i.get("pr") == pr)
+            ),
+            None,
+        )
+        duplicata = False
         if intencao is None:
+            desde = datetime.datetime.now(datetime.timezone.utc) - MARGEM_DESDE
             intencao = {
                 "nonce": uuid.uuid4().hex,
                 "tipo": tipo,
@@ -1629,17 +1855,19 @@ class Despachante:
                 "motivo": self._seguro(motivo, LIMITE_CONTEXTO),
                 "titulo": self._seguro(titulo, 200),
                 "corpo": self._seguro(corpo, 60000),
+                "desde": desde.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
+            if tipo == "seed":
+                intencao["pr"] = pr
             pendentes.append(intencao)
             self._salvar()
         else:
-            achada = self.forja.procurar_decisao(self.repo, intencao["nonce"])
+            achada = self._procurar_intencao(intencao)
             if achada:
                 self._registrar_intencao(intencao, achada)
                 return achada
-        url = self.forja.abrir_decisao(
-            self.repo, intencao["titulo"], intencao["corpo"] + "\n\n" + MARCADOR_NONCE % intencao["nonce"]
-        )
+            duplicata = achada == ""
+        url = self._abrir_intencao(intencao, duplicata)
         self._registrar_intencao(intencao, url)
         return url
 
@@ -1652,13 +1880,30 @@ class Despachante:
             if not isinstance(fora, dict):
                 fora = self.estado["warrenFora"] = {"ciclos": CICLOS_WARREN_FORA, "url": None}
             fora["url"] = url
-        elif self._decisao_aberta(tipo, alvo) is None:
-            entrada = {"url": url, "motivo": intencao.get("motivo"), "alvo": alvo}
+        elif tipo == "warren_parcial":
+            parcial = self.estado.get("warrenParcial")
+            if not isinstance(parcial, dict):
+                parcial = self.estado["warrenParcial"] = {"url": None, "limpos": 0}
+            parcial["url"] = url
+        elif self._decisao_aberta(tipo, alvo, intencao.get("pr")) is None:
+            entrada = {"url": url, "motivo": intencao.get("motivo"), "alvo": alvo, "titulo": intencao.get("titulo")}
             if tipo != "seed":
                 entrada["tipo"] = tipo
+            else:
+                entrada["pr"] = intencao.get("pr")
             self.estado.setdefault("decisoes", []).append(entrada)
             if tipo == "bloqueio" and isinstance(self._orq().get("bloqueio"), dict):
                 self._orq()["bloqueio"]["url"] = url
+        # P7: o alvo já fica marcado; uma resposta que chega na janela de uma queda não reabre a necessidade
+        if tipo == "seed":
+            seed = _dict(self.estado.get("seeds")).get(alvo)
+            if isinstance(seed, dict) and seed.get("estado") not in est.TERMINAIS and seed.get("pr") == intencao.get("pr"):
+                seed.update(estado="bloqueada_humano", motivoHumano=intencao.get("motivo"), pendenteHumano=None)
+        elif tipo == "raia":
+            registro = self.estado.get("raiasBloqueadas")
+            if not isinstance(registro, dict):
+                registro = self.estado["raiasBloqueadas"] = {}
+            registro[alvo] = intencao.get("motivo")
         self.estado["decisoesPendentes"] = [
             i for i in _lista(self.estado.get("decisoesPendentes")) if _dict(i).get("nonce") != intencao.get("nonce")
         ]
@@ -1674,6 +1919,13 @@ class Despachante:
             return not (_inteiro(ciclos) and ciclos >= CICLOS_WARREN_FORA)
         if tipo == "bloqueio":
             return not self._bloqueado()
+        if tipo == "warren_parcial":
+            return not _dict(self.estado.get("warrenParcial")).get("url") and not any(
+                _inteiro(n) and n >= CICLOS_REDE_PARCIAL for n in _dict(self.estado.get("falhasDeRede")).values()
+            ) and not any(_inteiro(n) and n >= MAX_ADIAMENTOS_DE_REDE for n in _dict(self.estado.get("adiamentosRede")).values())
+        if tipo == "seed":
+            seed = _dict(self.estado.get("seeds")).get(intencao.get("alvo"))
+            return not isinstance(seed, dict) or seed.get("pr") != intencao.get("pr")
         return False
 
     def _recuperar_decisoes_pendentes(self) -> None:
@@ -1681,7 +1933,7 @@ class Despachante:
             if not isinstance(intencao, dict) or not _texto(intencao.get("nonce")):
                 continue
             try:
-                url = self.forja.procurar_decisao(self.repo, intencao["nonce"])
+                url = self._procurar_intencao(intencao)
                 if self._intencao_obsoleta(intencao):
                     if url:
                         self.forja.fechar_decisao(url, "Situação resolvida; issue fechada pelo despachante.\n\n" + MARCADOR_DESPACHANTE)
@@ -1690,10 +1942,8 @@ class Despachante:
                     ]
                     self._salvar()
                     continue
-                if url is None:
-                    url = self.forja.abrir_decisao(
-                        self.repo, intencao.get("titulo") or "[fábrica] decisão", (intencao.get("corpo") or "") + "\n\n" + MARCADOR_NONCE % intencao["nonce"]
-                    )
+                if not url:
+                    url = self._abrir_intencao(intencao, url == "")
                 self._registrar_intencao(intencao, url)
             except Exception as exc:  # noqa: BLE001 - fica para o próximo ciclo
                 self._erro_de_etapa("decisao_pendente", intencao.get("nonce"), exc)
@@ -1763,7 +2013,7 @@ class Despachante:
 
     def _proposta_de_pendente(self):
         """A primeira acordada da fila; com o orquestrador bloqueado (A), só as respostas do Paulo passam."""
-        if self.estado.get("pausado") or self._orq().get("runId") is not None:
+        if self.estado.get("pausado") or self._orq().get("runId") is not None or self._orquestrador_incerto():
             return None
         bloqueado = self._bloqueado()
         pendentes = self.estado.get("acordarPendentes")
@@ -1898,6 +2148,8 @@ class Despachante:
             self.estado["seeds"][seed_id]["estado"] = "mergeada"
         abertos = [s["pr"] for i, s in sementes.items() if i not in mergeadas]
         self.estado = est.substituir_raia(self.estado, raia_id, acao["planoSeeds"])
+        for seed_id in _lista(_dict(_dict(self.estado.get("raias")).get(raia_id)).get("seedsSubstituidas")):
+            self._esquecer_tentativa(seed_id, "A raia %s foi replanejada" % raia_id)
         for url in abertos:
             self._fechar_depois(
                 url, "PR fechado pelo despachante: a raia %s foi replanejada (planoSeeds %s)." % (raia_id, acao["planoSeeds"])
@@ -1951,12 +2203,16 @@ class Despachante:
         pendentes = {a["raia"] for a in self._acoes_de_substituicao()}
         seeds = _dict(self.estado.get("seeds"))
         acoes = est.proximas_acoes(self.estado, self._plano_despachavel(), self._protegidos())
+        incertas = self._chaves_incertas()
+        orquestrador_incerto = self._orquestrador_incerto()
         acoes = [
             a
             for a in acoes
             if self._acao_permitida(a)
             and not (a.get("tipo") in ACOES_DE_GATE and _dict(seeds.get(a.get("seed"))).get("raia") in pendentes)
             and not (a.get("tipo") == "retomar_raia" and a.get("raia") in pendentes)
+            and _chave_acao(a) not in incertas
+            and not (a.get("tipo") == "acordar" and orquestrador_incerto)
         ]
         if self._bloqueado():
             acoes = [a for a in acoes if a.get("tipo") != "acordar"]
@@ -1975,13 +2231,16 @@ class Despachante:
         tipo = acao.get("tipo")
         if tipo == "acordar" and not isinstance(acao.get("contexto"), dict):
             acao["contexto"] = self._contexto(acao)
+        nonce = None
         if tipo in ACOES_COM_INTENCAO:
-            self.estado["acaoEmCurso"] = {k: v for k, v in acao.items() if k != "contexto"}
+            # P1: o nonce vai para acaoEmCurso antes do envio e na última linha do texto enviado
+            nonce = uuid.uuid4().hex
+            self.estado["acaoEmCurso"] = dict(copy.deepcopy(acao), nonce=nonce)
             self._salvar()
         erro = None
         repetivel = False
         try:
-            resultado = self._efeito(acao)
+            resultado = self._efeito(acao, nonce)
         except MotorOcupado as exc:
             espera = _espera_do_retry_after(exc.retry_after)
             self._retry_after = max(self._retry_after, espera)
@@ -1994,11 +2253,19 @@ class Despachante:
             self._aviso("%s %s não executada: %s" % (tipo, acao.get("raia") or acao.get("seed") or "", erro))
         except Exception as exc:  # noqa: BLE001 - vira o resultado "sem id" (nunca repete às cegas)
             erro = self._erro(exc)
-            if _eh_falha_de_rede(exc) and tipo != "aguardar_humano":
-                # I1: o pedido não chegou ao serviço: tenta de novo, sem marcar falha nem gastar tentativa
+            if tipo in ACOES_PAGAS and _eh_falha_de_rede(exc) and not _antes_do_envio(exc):
+                # P1: o Warren pode ter aceitado: a ação fica incerta e é procurada pelo nonce
+                self._registrar_incerto(acao, nonce)
+                resultado = None
+            elif _eh_falha_de_rede(exc) and tipo != "aguardar_humano":
+                # o pedido não chegou ao serviço: tenta de novo, sem marcar falha nem gastar tentativa
                 resultado = {"adiado": True, "rede": True}
+                if tipo in ACOES_PAGAS:
+                    self._contar_adiamento(_chave_acao(acao))
             else:
                 resultado = {"ok": False} if tipo == "mergear" else ({} if tipo != "aguardar_humano" else None)
+        if resultado is not None and resultado.get("adiado") is not True and tipo in ACOES_PAGAS:
+            _dict(self.estado.get("adiamentosRede")).pop(_chave_acao(acao), None)
         if resultado is not None:
             self._aplicar(acao, resultado)
         self.estado.pop("acaoEmCurso", None)
@@ -2012,6 +2279,66 @@ class Despachante:
         else:
             self._esquecer(chave)
             self._log(registro)
+
+    def _registrar_incerto(self, acao: dict, nonce: str) -> None:
+        incertos = self.estado.get("despachosIncertos")
+        if not isinstance(incertos, list):
+            incertos = self.estado["despachosIncertos"] = []
+        incertos.append({"acao": copy.deepcopy(acao), "nonce": nonce, "chave": _chave_acao(acao), "ciclos": 0})
+        self._salvar()
+        self._aviso("despacho %s incerto (falha de rede depois do envio): procurando pelo nonce" % _chave_acao(acao))
+
+    def _contar_adiamento(self, chave: str) -> None:
+        contadores = self.estado.get("adiamentosRede")
+        if not isinstance(contadores, dict):
+            contadores = self.estado["adiamentosRede"] = {}
+        n = (contadores.get(chave) if _inteiro(contadores.get(chave)) else 0) + 1
+        contadores[chave] = n
+        if n >= MAX_ADIAMENTOS_DE_REDE and not self.estado.get("pausado"):
+            self.estado["pausado"] = PAUSA_DESPACHOS_REJEITADOS
+            self._aviso("%s: %d adiamentos de rede seguidos para %s; despachante pausado" % (PAUSA_DESPACHOS_REJEITADOS, n, chave))
+        self._salvar()
+
+    def _chaves_incertas(self) -> set:
+        return {_dict(i).get("chave") for i in _lista(self.estado.get("despachosIncertos"))}
+
+    def _orquestrador_incerto(self) -> bool:
+        return any(str(c).startswith("acordar:") for c in self._chaves_incertas())
+
+    def _resolver_incertos(self) -> None:
+        """P1: procura cada despacho incerto pelo nonce; achado vira o resultado, sumido vira adiado."""
+        incertos = _lista(self.estado.get("despachosIncertos"))
+        if not incertos:
+            return
+        restantes = []
+        for item in incertos:
+            item = _dict(item)
+            acao, nonce = _dict(item.get("acao")), item.get("nonce")
+            tipo = acao.get("tipo")
+            try:
+                if tipo == "despachar_raia":
+                    achado = self.motor.procurar_plano(self.projeto, nonce)
+                else:
+                    achado = self.motor.procurar_run(self.projeto, nonce)
+            except Exception as exc:  # noqa: BLE001 - sem leitura, nada conta
+                self._erro_de_etapa("procurar_despacho", item.get("chave"), exc)
+                restantes.append(item)
+                continue
+            if achado:
+                chave = "planRunId" if tipo == "despachar_raia" else "runId"
+                _dict(self.estado.get("adiamentosRede")).pop(item.get("chave"), None)
+                self._aplicar(acao, {chave: achado})
+                self._log({"evento": "despacho_incerto_achado", "acao": self._resumo_da_acao(acao), chave: achado})
+                continue
+            item["ciclos"] = (item.get("ciclos") if _inteiro(item.get("ciclos")) else 0) + 1
+            if item["ciclos"] < CICLOS_PARA_DESCARTAR_INCERTO:
+                restantes.append(item)
+                continue
+            # o Warren respondeu 3 vezes sem o nonce: não aceitou; vira adiado e sai com um nonce novo
+            self._log({"evento": "despacho_incerto_descartado", "acao": self._resumo_da_acao(acao)})
+            self._contar_adiamento(item.get("chave"))
+        self.estado["despachosIncertos"] = restantes
+        self._salvar()
 
     @staticmethod
     def _resumo_da_acao(acao: dict) -> dict:
@@ -2030,13 +2357,7 @@ class Despachante:
         tipo = acao.get("tipo")
         anterior = dict(self._orq())
         falhas_antes = self.estado.get("falhasAcordar")
-        raia_antes = copy.deepcopy(_dict(_dict(self.estado.get("raias")).get(acao.get("raia"))))
-        self.estado = est.aplicar(self.estado, {k: v for k, v in acao.items() if k != "contexto"}, resultado)
-        if tipo == "retomar_raia" and raia_antes.get("retomarPorCota") and resultado.get("adiado") is not True:
-            # retomar depois de cota não gasta uma das retomadas do timeout de merge
-            raia = _dict(_dict(self.estado.get("raias")).get(acao.get("raia")))
-            raia["retomadas"] = raia_antes.get("retomadas", 0)
-            raia.pop("retomarPorCota", None)
+        self.estado = est.aplicar(self.estado, {k: v for k, v in acao.items() if k not in ("contexto", "nonce")}, resultado)
         if tipo == "acordar" and _texto(resultado.get("runId")):
             orquestrador = self._orq()
             for chave in ("semResultadoSeguidos", "bloqueio"):
@@ -2072,7 +2393,7 @@ class Despachante:
             raise ValueError("seed desconhecida %r" % (acao.get("seed"),))
         return seed
 
-    def _efeito(self, acao: dict) -> dict:
+    def _efeito(self, acao: dict, nonce: str | None = None) -> dict:
         tipo = acao.get("tipo")
         if tipo == "despachar_raia":
             raia = self._raia_do_plano(acao.get("raia"))
@@ -2088,7 +2409,7 @@ class Despachante:
                 plano_seeds=raia.get("planoSeeds"),
                 agente=modelo["agente"],
                 modelo=modelo["modelo"],
-                prompt_template=template,
+                prompt_template=_com_nonce(template, nonce) if nonce else template,
                 max_custo_usd=modelo["maxCustoUsd"],
             )
             return {"planRunId": plan_run_id}
@@ -2115,7 +2436,7 @@ class Despachante:
                 projeto=self.projeto,
                 agente=modelo["agente"],
                 modelo=modelo["modelo"],
-                prompt=prompt,
+                prompt=_com_nonce(prompt, nonce) if nonce else prompt,
                 branch_existente=seed["branch"],
                 max_custo_usd=modelo["maxCustoUsd"],
             )
@@ -2156,7 +2477,7 @@ class Despachante:
                 RODAPE_DECISAO,
             )
             url = self._abrir_decisao_rastreada(
-                "; ".join(motivos), acao["seed"], "[fábrica] %s: decisão necessária" % acao["seed"], corpo, tipo="seed"
+                "; ".join(motivos), acao["seed"], "[fábrica] %s: decisão necessária" % acao["seed"], corpo, tipo="seed", pr=seed.get("pr")
             )
             return {"url": url}
 
@@ -2169,7 +2490,7 @@ class Despachante:
                 projeto=self.projeto,
                 agente=modelo["agente"],
                 modelo=modelo["modelo"],
-                prompt=prompt,
+                prompt=_com_nonce(prompt, nonce) if nonce else prompt,
                 branch_existente=None,
                 max_custo_usd=modelo["maxCustoUsd"],
             )
@@ -2193,6 +2514,10 @@ def retomar(raiz, *, agora=datetime.datetime.now) -> None:
     antes = {"pausado": estado.get("pausado"), "falhasAcordar": estado.get("falhasAcordar")}
     estado["pausado"] = None
     estado["falhasAcordar"] = 0
+    estado["adiamentosRede"] = {}
+    liberadas = liberar_raias_em_cota(estado)
+    if liberadas:
+        antes["raiasLiberadas"] = liberadas
     gravar_json_atomico(raiz / ARQ_ESTADO, estado)
     _anexar_linha(
         raiz / ARQ_LOG,
@@ -2273,6 +2598,59 @@ def construir(ambiente) -> Despachante:
     )
 
 
+def _forja_do_ambiente(ambiente):
+    import forja as forja_github
+
+    return forja_github.ForjaGitHub(_ler_token(ambiente.get("GH_TOKEN_FILE") or GH_TOKEN_PADRAO))
+
+
+def decidir_config_invalida(ambiente, raiz, exc, abrir_forja=_forja_do_ambiente) -> str | None:
+    """P10: antes de sair com 2, abre (uma vez) uma decisão rastreada sobre a config. Nunca lança."""
+    try:
+        repo = ambiente.get("FABRICA_REPO")
+        caminho = pathlib.Path(raiz) / ARQ_ESTADO
+        estado = _ler_json(caminho)
+        if not _texto(repo) or not isinstance(estado, dict) or estado.get("repo") != repo:
+            return None
+        campo = _cortar(str(exc), 200)
+        alvo = "config:%s" % campo
+        for decisao in _lista(estado.get("decisoes")):
+            if isinstance(decisao, dict) and decisao.get("tipo") == "config" and decisao.get("alvo") == alvo:
+                return decisao.get("url")
+        pendentes = estado.setdefault("decisoesPendentes", [])
+        intencao = next((i for i in pendentes if isinstance(i, dict) and i.get("tipo") == "config" and i.get("alvo") == alvo), None)
+        forja_ = abrir_forja(ambiente)
+        url = None
+        if intencao is None:
+            desde = datetime.datetime.now(datetime.timezone.utc) - MARGEM_DESDE
+            intencao = {
+                "nonce": uuid.uuid4().hex,
+                "tipo": "config",
+                "alvo": alvo,
+                "motivo": "config inválida: %s" % campo,
+                "titulo": "[fábrica] config inválida: %s" % _cortar(campo, 80),
+                "corpo": (
+                    "O despachante não sobe: `.fabrica/config.json` inválida (%s). Corrija a config e reinicie o "
+                    "serviço; esta issue é fechada pelo despachante quando ele voltar." % campo
+                ),
+                "desde": desde.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            pendentes.append(intencao)
+            gravar_json_atomico(caminho, estado)
+        else:
+            url = forja_.procurar_decisao(repo, intencao["nonce"], intencao.get("desde"))
+        if not url:
+            url = forja_.abrir_decisao(repo, intencao["titulo"], intencao["corpo"] + "\n\n" + MARCADOR_NONCE % intencao["nonce"])
+        estado.setdefault("decisoes", []).append(
+            {"url": url, "motivo": intencao["motivo"], "alvo": alvo, "titulo": intencao["titulo"], "tipo": "config"}
+        )
+        estado["decisoesPendentes"] = [i for i in pendentes if _dict(i).get("nonce") != intencao["nonce"]]
+        gravar_json_atomico(caminho, estado)
+        return url
+    except Exception:  # noqa: BLE001 - best-effort: a saída com 2 acontece de qualquer jeito
+        return None
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="despachante.py", description="Despachante da fábrica de agentes")
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -2285,7 +2663,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None) -> int:
+def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abrir_forja=None) -> int:
     ambiente = os.environ if ambiente is None else ambiente
     saida = saida or sys.stdout
     erro = erro or sys.stderr
@@ -2335,6 +2713,8 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None) -> 
         return CODIGO_ENTRADA
     except ConfigInvalida as exc:
         print("config inválida: %s" % exc, file=erro)
+        if args.comando == "rodar" and _texto(ambiente.get("FABRICA_RAIZ")):
+            decidir_config_invalida(ambiente, ambiente["FABRICA_RAIZ"], exc, abrir_forja or _forja_do_ambiente)
         return CODIGO_ENTRADA
     except Exception as exc:  # noqa: BLE001 - nunca imprime traceback
         mensagem = despachante._erro(exc) if despachante is not None else "%s: %s" % (type(exc).__name__, _cortar(exc, LIMITE_MENSAGEM))

@@ -221,17 +221,15 @@ class TestesJornada(Base):
         d = self.preparar_raia()
         despachos = self.planos_despachados()
         self.assertEqual(len(despachos), 1)
+        template = despachos[0].pop("prompt_template")
         self.assertEqual(
             despachos[0],
-            {
-                "projeto": PROJETO,
-                "plano_seeds": "pl-000a",
-                "agente": "claude-code",
-                "modelo": SONNET,
-                "prompt_template": prompts.prompt_template_raia("backend"),
-                "max_custo_usd": 10,
-            },
+            {"projeto": PROJETO, "plano_seeds": "pl-000a", "agente": "claude-code", "modelo": SONNET, "max_custo_usd": 10},
         )
+        base, marca = template.rsplit("\n", 1)
+        self.assertEqual(base, prompts.prompt_template_raia("backend"))
+        self.assertRegex(marca, r"^<!-- fabrica:nonce=[0-9a-f]{32} -->$")
+        self.assertIn("{seed_id}", template)
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
 
         self.abrir_pr(H1)
@@ -244,7 +242,9 @@ class TestesJornada(Base):
         self.assertEqual(revisao["max_custo_usd"], 5)
         self.assertEqual(revisao["branch_existente"], "warren/s-1")
         self.assertEqual(revisao["projeto"], PROJETO)
-        self.assertEqual(revisao["prompt"], prompts.prompt_revisor(seed_id="s-1", raia=raia("a"), sha=H1))
+        base, marca = revisao["prompt"].rsplit("\n", 1)
+        self.assertEqual(base, prompts.prompt_revisor(seed_id="s-1", raia=raia("a"), sha=H1))
+        self.assertRegex(marca, r"^<!-- fabrica:nonce=[0-9a-f]{32} -->$")
         self.assertEqual(self.verificacoes, [(self.repo_dir, H1, "pnpm test", CONFIG["verificacao"])])
         self.assertEqual(self.forja.merges, [])
 
@@ -392,6 +392,8 @@ class TestesJornada(Base):
                     "url": "https://github.com/dono/cliente/issues/1",
                     "motivo": "toca arquivos protegidos: prisma/migrations/001.sql",
                     "alvo": "s-1",
+                    "titulo": "[fábrica] s-1: decisão necessária",
+                    "pr": PR,
                 }
             ],
         )
@@ -465,11 +467,13 @@ class TestesJornada(Base):
         info = self.forja.decisao(decisao["url"])
         self.assertFalse(info["fechada"])
         self.assertIn("Feche com um comentário dizendo a decisão", info["ultimoComentario"])
-        # o comentário do próprio despachante nunca vale como resposta
+        # o comentário do próprio despachante nunca vale como resposta, e não reabre de novo (P8)
+        reaberturas = len([n for n, _ in self.forja.chamadas if n == "reabrir_decisao"])
         self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario=info["ultimoComentario"])
         d.ciclo()
         self.assertEqual(self.runs(FABLE), [])
-        self.assertFalse(self.forja.decisao(decisao["url"])["fechada"])
+        self.assertEqual(len([n for n, _ in self.forja.chamadas if n == "reabrir_decisao"]), reaberturas)
+        self.assertEqual(self.estado()["decisoes"], [decisao])
         self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="Pode mergear.")
         d.ciclo()
         self.assertEqual(self.estado()["decisoes"], [])
@@ -667,18 +671,19 @@ class TestesPersistencia(Base):
             d.ciclo()
         disco = self.estado()
         self.assertEqual(disco["raias"]["a"]["planRunId"], "plano-1")
-        self.assertEqual(disco["acaoEmCurso"], {"tipo": "despachar_raia", "raia": "b"})
+        self.assertEqual({k: v for k, v in disco["acaoEmCurso"].items() if k != "nonce"}, {"tipo": "despachar_raia", "raia": "b"})
+        self.assertRegex(disco["acaoEmCurso"]["nonce"], r"^[0-9a-f]{32}$")
         self.motor.cair = False
         outro = self.novo()
         outro.ciclo()
         disco = self.estado()
-        self.assertEqual(len(self.planos_despachados()), 2)
+        self.assertEqual(len(self.planos_despachados()), 2)  # nada é despachado de novo
         self.assertEqual(disco["raias"]["a"]["estado"], "executando")
-        self.assertEqual(disco["raias"]["b"]["estado"], "falhou")
+        self.assertEqual((disco["raias"]["b"]["estado"], disco["raias"]["b"]["planRunId"]), ("executando", "plano-2"))
         self.assertNotIn("acaoEmCurso", disco)
-        self.assertTrue(any("interrompida" in a for a in disco["avisos"]))
+        self.assertEqual(disco["despachosIncertos"], [])
 
-    def test_queda_no_meio_de_acordar_pausa_em_vez_de_acordar_de_novo(self):
+    def test_queda_no_meio_de_acordar_acha_o_run_pelo_nonce(self):
         class MotorQueCai(motor.MotorFalso):
             cair = True
 
@@ -695,10 +700,12 @@ class TestesPersistencia(Base):
             d.iniciar(spec="docs/spec.md")
         self.motor.cair = False
         outro = self.novo()
-        self.assertEqual(outro.ciclo(), [])
+        outro.ciclo()
         disco = self.estado()
-        self.assertTrue(disco["pausado"])
+        self.assertFalse(disco["pausado"])  # P1: achado pelo nonce, sem pausa e sem segundo orquestrador
         self.assertEqual(len(self.runs()), 1)
+        self.assertEqual(disco["orquestrador"]["runId"], "run-1")
+        self.assertEqual(disco["orquestrador"]["acordada"]["motivo"], "nova_spec")
         self.assertNotIn("acaoEmCurso", disco)
 
     def test_falha_de_despacho_marca_falhou_e_nao_tenta_de_novo(self):
@@ -1802,8 +1809,8 @@ class TestesD_WarrenInstavel(Base):
         self.assertNotEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], rid)
 
     def test_run_do_orquestrador_que_sumiu_conclui_e_reenfileira(self):
-        d, rid = self.acordar_por_falha()
-        del self.motor._runs[rid]
+        d, rid = self.acordar_por_falha(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        del self.motor._runs[rid]  # o Plan Run da raia b ainda se lê: há leitura boa no ciclo
         d.ciclo()
         self.assertTrue(any(rid in a and "404" in a for a in self.estado()["avisos"]))
         self.assertEqual(len(self.runs(FABLE)), 2)
@@ -1823,6 +1830,8 @@ class TestesD_WarrenInstavel(Base):
         url = self.estado()["warrenFora"]["url"]
         self.motor.todos = False
         d.ciclo()
+        d.ciclo()
+        self.assertFalse(self.forja.decisao(url)["fechada"])  # P4: histerese de 3 ciclos limpos
         d.ciclo()
         self.assertIsNone(self.estado()["warrenFora"].get("url"))
         self.assertTrue(self.forja.decisao(url)["fechada"])
@@ -2214,7 +2223,8 @@ class TestesRodada2(Base):
         for _ in range(5):
             d.ciclo()
         self.motor.fora = False
-        d.ciclo()
+        for _ in range(3):
+            d.ciclo()
         seed = self.estado()["seeds"]["s-1"]
         self.assertEqual((seed["estado"], seed["revisaoRunId"], seed["pendenteHumano"]), ("em_revisao", rid, None))
         abertas = [t for u, t in zip(self.forja._decisoes, [t for t, _ in self.forja.decisoes]) if not self.forja._decisoes[u]["fechada"]]
@@ -2248,8 +2258,8 @@ class TestesRodada2(Base):
         self.motor.fora = False
         self.motor.definir_run(orq, estado="succeeded")  # termina sem PR: segue o fluxo normal
         self.motor.definir_run(fixer, estado="succeeded")
-        d.ciclo()
-        d.ciclo()
+        for _ in range(3):
+            d.ciclo()
         self.assertNotEqual(self.estado()["orquestrador"]["runId"], orq)
         self.assertIsNone(self.estado()["seeds"]["s-b"]["fixerRunId"])
         self.assertIsNone(self.estado()["warrenFora"]["url"])
@@ -2262,7 +2272,7 @@ class TestesRodada2(Base):
                 if self.falhas:
                     self.falhas -= 1
                     self._registrar("despachar_plano", **argumentos)
-                    raise motor.FalhaDeRede("POST /plan-runs: falha de rede (TimeoutError)")
+                    raise motor.FalhaAntesDoEnvio("POST /plan-runs: falha de rede (ConnectionRefusedError)")
                 return super().despachar_plano(**argumentos)
 
         self.motor = MotorRedeInstavel()
@@ -2502,7 +2512,18 @@ class TestesRodada2(Base):
         self.assertEqual(self.estado()["seeds"]["s-1"]["pr"], pr7)
 
     # ------------------------------------------------ J
-    def test_j_cota_num_filho_pausa_e_a_raia_continua_depois_do_retomar(self):
+    def test_p2_cota_num_filho_pausa_e_o_retomar_despacha_um_plan_run_novo(self):
+        class MotorResume409(motor.MotorFalso):
+            """Como o Warren (resume.ts): só merge timeouts podem ser retomados."""
+
+            def retomar_plano(self, plan_run_id):
+                self._registrar("retomar_plano", plan_run_id=plan_run_id)
+                plano_ = self._planos[plan_run_id]
+                if plano_["estado"] != "failed" or plano_.get("falha") not in ("child_pr_merge_timeout", "parent_pr_merge_timeout"):
+                    raise RuntimeError("POST /plan-runs/%s/resume: HTTP 409" % plan_run_id)
+                plano_["estado"] = "running"
+
+        self.motor = MotorResume409()
         d = self.preparar_raia()
         self.motor.definir_plano(
             "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
@@ -2511,13 +2532,18 @@ class TestesRodada2(Base):
         d.ciclo()
         e = self.estado()
         self.assertEqual(e["pausado"], "cota")
-        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["retomar"]), ("executando", True))
+        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["aguardandoCota"]), ("executando", True))
         self.assertEqual(self.runs(FABLE), [])
         d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
         self.forja.definir_decisao(self.estado()["decisaoPausa"]["url"], fechada=True)
         d.ciclo()
-        self.assertIn(("retomar_plano", {"plan_run_id": "plano-1"}), self.motor.chamadas)
-        self.assertEqual(self.estado()["raias"]["a"]["retomadas"], 0)
+        self.assertNotIn("retomar_plano", [n for n, _ in self.motor.chamadas])
+        self.assertEqual([x["plano_seeds"] for x in self.planos_despachados()], ["pl-000a", "pl-000a"])
+        raia_a = self.estado()["raias"]["a"]
+        self.assertEqual((raia_a["estado"], raia_a["planRunId"]), ("executando", "plano-2"))
+        self.assertNotIn("aguardandoCota", raia_a)
+        self.assertEqual(self.estado()["cotaFilhos"], [])
         self.assertEqual(self.runs(FABLE), [])
 
     def test_j_falha_de_provedor_que_nao_e_cota_segue_o_caminho_normal(self):
@@ -2697,6 +2723,419 @@ class TestesRodada2(Base):
         self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="pode mergear o 90")
         d.ciclo()
         self.assertEqual(len(self.runs(FABLE)), n)
+
+
+# ---------------------------------------------------------------- rodada 3 (P1–P10)
+
+
+class MotorTimeoutDepoisDeAceitar(motor.MotorFalso):
+    """As próximas `vezes` chamadas de `nome` criam o run e depois levantam FalhaIncerta."""
+
+    def __init__(self, nome, vezes, criar=True):
+        super().__init__()
+        self.nome, self.vezes, self.criar = nome, vezes, criar
+
+    def _talvez(self, nome, original, **argumentos):
+        if nome == self.nome and self.vezes > 0:
+            self.vezes -= 1
+            if self.criar:
+                original(**argumentos)
+            else:
+                self._registrar(nome, **argumentos)
+            raise motor.FalhaIncerta("POST /x: falha de rede (TimeoutError)")
+        return original(**argumentos)
+
+    def despachar_run(self, **argumentos):
+        return self._talvez("despachar_run", super().despachar_run, **argumentos)
+
+    def despachar_plano(self, **argumentos):
+        return self._talvez("despachar_plano", super().despachar_plano, **argumentos)
+
+
+class TestesRodada3(Base):
+    # ------------------------------------------------ P1
+    def _revisoes_com_timeout(self, vezes, criar=True):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", vezes, criar)
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        for _ in range(min(vezes, 20) + 4):
+            d.ciclo()
+        return d
+
+    def test_p1_timeout_depois_de_aceitar_nao_duplica_a_revisao(self):
+        for vezes in (1, 20):
+            with self.subTest(vezes=vezes):
+                self.setUp()
+                self._revisoes_com_timeout(vezes)
+                criados = [r for r in self.motor._runs if r.startswith("run-")]
+                self.assertEqual(len(criados), 1)
+                self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], criados[0])
+                self.assertEqual(self.estado()["despachosIncertos"], [])
+
+    def test_p1_timeout_no_plan_run_e_no_orquestrador_nao_duplica(self):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_plano", 20)
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        for _ in range(4):
+            d.ciclo()
+        self.assertEqual(list(self.motor._planos), ["plano-1"])
+        self.assertEqual(self.estado()["raias"]["a"]["planRunId"], "plano-1")
+        self.setUp()
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 20)
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo()
+        d.iniciar(spec="docs/spec.md")
+        for _ in range(4):
+            d.ciclo()
+        self.assertEqual(len([r for r in self.motor._runs if r.startswith("run-")]), 1)
+        self.assertEqual(self.estado()["orquestrador"]["acordada"]["motivo"], "nova_spec")
+        self.assertEqual(len(self.acordadas()), 1)
+
+    def test_p1_incerto_nao_achado_em_3_ciclos_e_redespachado_com_nonce_novo(self):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1, criar=False)
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()  # o POST da revisão falha depois do envio
+        for _ in range(2):
+            d.ciclo()  # procurado e não achado: nada de novo despacho ainda
+            self.assertEqual(len(self.runs(OPUS)), 1)
+        d.ciclo()  # 3ª busca sem achar: descartado e redespachado com nonce novo
+        d.ciclo()
+        revisoes = self.runs(OPUS)
+        self.assertEqual(len(revisoes), 2)
+        nonces = [r["prompt"].rsplit("nonce=", 1)[1][:32] for r in revisoes]
+        self.assertNotEqual(nonces[0], nonces[1])
+        self.assertTrue(self.estado()["seeds"]["s-1"]["revisaoRunId"])
+
+    def test_p1_orquestrador_incerto_segura_qualquer_outra_acordada(self):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1, criar=False)
+        self.publicar(plano(raia("a")))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo()
+        d.iniciar()
+        d.ciclo()
+        d.iniciar(spec="docs/spec.md")  # o acordar nova_spec fica incerto
+        self.assertTrue(self.estado()["despachosIncertos"])
+        outra = self.forja.abrir_decisao(REPO, "t", "c")
+        d.estado["decisoes"].append({"url": outra, "motivo": "pergunta", "alvo": "x"})
+        d._salvar()
+        self.forja.definir_decisao(outra, fechada=True, ultimo_comentario="resposta")  # resposta_paulo na fila
+        self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")  # raia_falhou do proximas_acoes
+        for _ in range(2):
+            d.ciclo()
+            self.assertEqual(len(self.runs(FABLE)), 1)  # só o incerto, nenhum outro orquestrador
+        for _ in range(3):
+            d.ciclo()
+        self.assertGreaterEqual(len(self.runs(FABLE)), 2)
+
+    def test_p1_falha_antes_do_envio_repetida_pausa_com_issue(self):
+        class MotorRecusa(motor.MotorFalso):
+            def despachar_run(self, **argumentos):
+                self._registrar("despachar_run", **argumentos)
+                raise motor.FalhaAntesDoEnvio("POST /runs: falha de rede (ConnectionRefusedError)")
+
+        self.motor = MotorRecusa()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        for _ in range(12):
+            d.ciclo()
+        self.assertEqual(self.estado()["pausado"], "Warren rejeitando despachos")
+        self.assertEqual(len(self.runs(OPUS)), 10)
+        self.assertIn("[fábrica] despachante pausado: Warren rejeitando despachos", [t for t, _ in self.forja.decisoes])
+
+    # ------------------------------------------------ P2
+    def test_p2_texto_do_filho_ilegivel_nao_falha_a_raia(self):
+        class MotorTextoInstavel(motor.MotorFalso):
+            falhas = 1
+
+            def ultimo_texto(self, run_id):
+                if self.falhas:
+                    self.falhas -= 1
+                    raise motor.FalhaIncerta("GET /runs/x/events: falha de rede (TimeoutError)")
+                return super().ultimo_texto(run_id)
+
+        self.motor = MotorTextoInstavel()
+        d = self.preparar_raia()
+        self.motor.definir_plano(
+            "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
+        )
+        self.motor.definir_texto("rf", "usage limit reached")
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+        self.assertEqual(self.runs(FABLE), [])
+        d.ciclo()
+        self.assertEqual(self.estado()["pausado"], "cota")
+        self.assertTrue(self.estado()["raias"]["a"]["aguardandoCota"])
+
+    def test_p2_cota_de_novo_no_plan_run_novo_pausa_de_novo(self):
+        d = self.preparar_raia()
+        self.motor.definir_plano("plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed")
+        self.motor.definir_texto("rf", "usage limit reached")
+        d.ciclo()
+        self.forja.definir_decisao(self.estado()["decisaoPausa"]["url"], fechada=True)
+        d.ciclo()
+        novo = self.estado()["raias"]["a"]["planRunId"]
+        self.motor.definir_plano(novo, "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf2", "falha": "provider_error"}], falha="child_failed")
+        self.motor.definir_texto("rf2", "quota reached")
+        d.ciclo()
+        self.assertEqual(self.estado()["pausado"], "cota")
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+
+    # ------------------------------------------------ P3, P9
+    def test_p3_seed_reaproveitada_ganha_chave_e_decisao_novas(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("src/auth/x.ts",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        (antiga,) = self.estado()["decisoes"]
+        d.estado["chavesAcordadas"].append("gate_falhou_apos_fixer:s-1")
+        d._salvar()
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+        d.ciclo()
+        self.assertNotIn("gate_falhou_apos_fixer:s-1", self.estado()["chavesAcordadas"])
+        self.assertEqual(self.estado()["decisoes"], [])
+        d.ciclo()
+        self.assertTrue(self.forja.decisao(antiga["url"])["fechada"])
+        # a tentativa 2 reusa s-1 com outro PR e também precisa do Paulo: issue nova, com o PR novo
+        novo_plan_run = self.estado()["raias"]["a"]["planRunId"]
+        pr7 = "https://github.com/dono/cliente/pull/77"
+        self.motor.definir_plano(novo_plan_run, "running", [{"seedId": "s-1", "estado": "pr_open", "runId": "r7", "prUrl": pr7}])
+        self.forja.definir_pr(pr7, head_sha=H2, branch="warren/s-1b", arquivos=["db/migrations/7.sql"])
+        self.forja.definir_ci(REPO, H2, "verde")
+        d.ciclo()
+        self.terminar_revisao(H2)
+        d.ciclo()
+        (nova,) = self.estado()["decisoes"]
+        self.assertNotEqual(nova["url"], antiga["url"])
+        self.assertEqual(nova["pr"], pr7)
+        self.assertIn(pr7, self.forja.decisoes[-1][1])
+
+    def test_p3_decisao_de_seed_e_chaveada_pelo_pr(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("db/migrations/1.sql",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        # uma decisão da mesma seed, mas de outro PR, continua acompanhada (estado antigo)
+        velha = self.forja.abrir_decisao(REPO, "[fábrica] s-1: decisão necessária", "PR antigo")
+        d.estado["decisoes"].append({"url": velha, "motivo": "outro PR", "alvo": "s-1", "pr": "https://github.com/dono/cliente/pull/3"})
+        d._salvar()
+        d.ciclo()
+        nova = [x for x in self.estado()["decisoes"] if x.get("pr") == PR]
+        self.assertEqual(len(nova), 1)
+        self.assertNotEqual(nova[0]["url"], velha)
+        self.assertIn(PR, self.forja.decisoes[-1][1])
+
+    def test_p9_seed_mergeada_com_pr_novo_de_outro_plan_run_recomeca(self):
+        d = self.preparar_raia(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        self.motor.definir_plano("plano-1", "running", [{"seedId": "s-1", "estado": "merged", "runId": "r1", "prUrl": PR}])
+        d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "mergeada")
+        pr8 = "https://github.com/dono/cliente/pull/88"
+        self.motor.definir_plano("plano-2", "running", [{"seedId": "s-1", "estado": "pr_open", "runId": "r8", "prUrl": pr8}])
+        self.forja.definir_pr(pr8, head_sha=H2, branch="warren/s-1-b", arquivos=["src/b/x.ts"])
+        self.forja.definir_ci(REPO, H2, "verde")
+        d.ciclo()
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual((seed["estado"], seed["pr"]), ("em_revisao", pr8))
+        self.assertEqual(self.runs(OPUS)[-1]["branch_existente"], "warren/s-1-b")
+
+    # ------------------------------------------------ P4
+    def test_p4_404_sem_nenhuma_leitura_boa_nao_sintetiza(self):
+        """Sonda p_i1_404_total: um proxy errado responde 404 a tudo num ciclo."""
+
+        class Motor404(motor.MotorFalso):
+            fora = False
+
+            def run(self, run_id):
+                if self.fora:
+                    self._registrar("run", run_id=run_id)
+                    raise RuntimeError("GET /runs/%s: HTTP 404" % run_id)
+                return super().run(run_id)
+
+            def plano(self, plan_run_id):
+                if self.fora:
+                    self._registrar("plano", plan_run_id=plan_run_id)
+                    raise RuntimeError("GET /plan-runs/%s: HTTP 404" % plan_run_id)
+                return super().plano(plan_run_id)
+
+        self.motor = Motor404()
+        d, orq = self.acordar_por_falha(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        self.motor.definir_plano("plano-2", "running", [{"seedId": "s-b", "estado": "pr_open", "runId": "rb", "prUrl": PR}])
+        self.forja.definir_pr(PR, head_sha=H1, branch="warren/s-b", arquivos=["src/b/x.ts"])
+        self.forja.definir_ci(REPO, H1, "verde")
+        d.ciclo()
+        rev = self.estado()["seeds"]["s-b"]["revisaoRunId"]
+        n_fable, n_opus = len(self.runs(FABLE)), len(self.runs(OPUS))
+        self.motor.fora = True
+        d.ciclo()
+        self.motor.fora = False
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual((e["orquestrador"]["runId"], e["seeds"]["s-b"]["revisaoRunId"]), (orq, rev))
+        self.assertEqual((len(self.runs(FABLE)), len(self.runs(OPUS))), (n_fable, n_opus))
+
+    def test_p4_run_com_timeout_de_leitura_e_planos_ok_abre_uma_decisao_parcial(self):
+        """c22 e5: GET /runs/{id} com falha de rede por 30 ciclos, GET /plan-runs ok."""
+
+        class MotorRunFora(motor.MotorFalso):
+            alvo = None
+
+            def run(self, run_id):
+                if run_id == self.alvo:
+                    self._registrar("run", run_id=run_id)
+                    raise motor.FalhaIncerta("GET /runs/x: falha de rede (TimeoutError)")
+                return super().run(run_id)
+
+        self.motor = MotorRunFora()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.alvo = rid
+        for _ in range(9):
+            d.ciclo()
+        self.assertEqual(self.forja.decisoes, [])
+        for _ in range(21):
+            d.ciclo()
+        titulos = [t for t, _ in self.forja.decisoes]
+        self.assertEqual(len(titulos), 1)
+        self.assertTrue(titulos[0].startswith("[fábrica] Warren parcialmente inacessível"))
+        self.assertIn(rid, self.forja.decisoes[0][1])
+        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], rid)  # nada sintetizado
+        url = self.estado()["warrenParcial"]["url"]
+        self.motor.alvo = None
+        for _ in range(2):
+            d.ciclo()
+        self.assertFalse(self.forja.decisao(url)["fechada"])
+        d.ciclo()
+        self.assertTrue(self.forja.decisao(url)["fechada"])
+
+    def test_p4_warren_alternando_nao_abre_e_fecha_a_issue_a_cada_rodada(self):
+        """c22 e4: 5 ciclos fora + 1 com leitura, seis vezes: uma issue só."""
+        self.motor = MotorForaDoAr()
+        d = self.preparar_raia()
+        for _ in range(6):
+            self.motor.fora = True
+            for _ in range(5):
+                d.ciclo()
+            self.motor.fora = False
+            d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], ["[fábrica] Warren inacessível"])
+        self.assertFalse(self.forja.decisao(self.estado()["warrenFora"]["url"])["fechada"])
+
+    # ------------------------------------------------ P5, P6, P7
+    def test_p5_busca_que_falha_5_vezes_abre_mesmo_assim_com_nota(self):
+        class ForjaBuscaQuebrada(forja.ForjaFalsa):
+            def procurar_decisao(self, repo, nonce, desde=None):
+                self._registrar("procurar_decisao", repo=repo, nonce=nonce, desde=desde)
+                raise RuntimeError("GET /issues: HTTP 502")
+
+        self.forja = ForjaBuscaQuebrada()
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("db/migrations/1.sql",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        original = self.forja.abrir_decisao
+        self.forja.abrir_decisao = lambda *a: (_ for _ in ()).throw(RuntimeError("POST /issues: HTTP 504"))
+        d.ciclo()  # a intenção fica gravada; a abertura falhou
+        self.forja.abrir_decisao = original
+        (intencao,) = self.estado()["decisoesPendentes"]
+        self.assertRegex(intencao["desde"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        d.ciclo()
+        buscas = [a for n, a in self.forja.chamadas if n == "procurar_decisao"]
+        self.assertEqual(buscas[-1]["desde"], intencao["desde"])  # P5: a busca usa a hora da intenção
+        for _ in range(6):
+            d.ciclo()
+        self.assertEqual(self.estado()["decisoesPendentes"], [])
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertIn("Possível duplicata após reinício", corpo)
+        self.assertEqual([x["alvo"] for x in self.estado()["decisoes"]], ["s-1"])
+
+    def test_p6_decisao_apagada_ou_que_nao_reabre_vira_issue_nova(self):
+        for caso in ("404", "reabrir"):
+            with self.subTest(caso=caso):
+                self.setUp()
+                if caso == "reabrir":
+                    class ForjaTrancada(forja.ForjaFalsa):
+                        def reabrir_decisao(self, url, comentario):
+                            self._registrar("reabrir_decisao", url=url, comentario=comentario)
+                            raise RuntimeError("PATCH /issues/1: HTTP 403")
+
+                    self.forja = ForjaTrancada()
+                d = self.preparar_raia()
+                self.abrir_pr(H1, arquivos=("db/migrations/1.sql",))
+                d.ciclo()
+                self.terminar_revisao(H1)
+                d.ciclo()
+                (velha,) = self.estado()["decisoes"]
+                if caso == "404":
+                    del self.forja._decisoes[velha["url"]]
+                    d.ciclo()
+                else:
+                    self.forja.definir_decisao(velha["url"], fechada=True)
+                    for _ in range(5):
+                        d.ciclo()
+                (nova,) = self.estado()["decisoes"]
+                self.assertNotEqual(nova["url"], velha["url"])
+                self.assertEqual((nova["alvo"], nova["motivo"], nova["pr"]), ("s-1", velha["motivo"], PR))
+                self.assertFalse(self.forja.decisao(nova["url"])["fechada"])
+                self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+
+    def test_p7_registrar_a_issue_ja_bloqueia_a_seed(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("db/migrations/1.sql",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        original = d._aplicar
+
+        def cair(acao, resultado):
+            if acao.get("tipo") == "aguardar_humano":
+                raise KeyboardInterrupt
+            return original(acao, resultado)
+
+        d._aplicar = cair
+        with self.assertRaises(KeyboardInterrupt):
+            d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        (decisao,) = self.estado()["decisoes"]
+        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="pode mergear")
+        outro = self.novo()
+        outro.ciclo()
+        outro.ciclo()
+        self.assertEqual(len(self.forja.decisoes), 1)  # a resposta não reabriu a necessidade
+        self.assertIn("pode mergear", self.runs(FABLE)[-1]["prompt"])
+
+    # ------------------------------------------------ P10
+    def test_p10_config_invalida_no_rodar_abre_uma_decisao_e_sai_com_2(self):
+        self.preparar_raia()
+        ambiente = {"FABRICA_RAIZ": str(self.raiz), "FABRICA_REPO": REPO}
+        config = {k: v for k, v in CONFIG.items()}
+        config["modelos"] = {k: v for k, v in CONFIG["modelos"].items() if k != "revisor"}
+        for _ in range(2):
+            erro = io.StringIO()
+            codigo = despachante.main(
+                ["rodar"], ambiente=ambiente, construir=lambda amb: self.novo(config=config), saida=io.StringIO(), erro=erro, abrir_forja=lambda amb: self.forja
+            )
+            self.assertEqual(codigo, 2)
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertIn("config inválida: modelos.revisor", titulo)
+        (decisao,) = [x for x in self.estado()["decisoes"] if x.get("tipo") == "config"]
+        # com a config corrigida, o despachante fecha a issue no primeiro ciclo
+        d = self.novo()
+        d.ciclo()
+        d.ciclo()
+        self.assertTrue(self.forja.decisao(decisao["url"])["fechada"])
+        self.assertFalse([x for x in self.estado()["decisoes"] if x.get("tipo") == "config"])
+
+    def test_p10_sem_forja_ou_sem_estado_nao_lanca(self):
+        def quebrada(amb):
+            raise OSError("sem token")
+
+        self.assertIsNone(despachante.decidir_config_invalida({"FABRICA_REPO": REPO}, self.raiz, despachante.ConfigInvalida("x"), quebrada))
+        self.preparar_raia()
+        self.assertIsNone(despachante.decidir_config_invalida({"FABRICA_REPO": REPO}, self.raiz, despachante.ConfigInvalida("x"), quebrada))
 
 
 # ---------------------------------------------------------------- estado compacto

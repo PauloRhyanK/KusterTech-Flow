@@ -1,6 +1,7 @@
 """Cliente da API REST do GitHub (PRs, CI, merge com guarda de sha, arquivos e issues de decisão)."""
 
 import copy
+import datetime
 import http.client
 import json
 import pathlib
@@ -11,8 +12,8 @@ import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from motor import FalhaDeRede  # noqa: E402
-from motor_warren import _transporte_urllib  # noqa: E402
+from motor import MARCADOR_NONCE  # noqa: E402
+from motor_warren import _classe_da_falha, _transporte_urllib  # noqa: E402
 
 BASE = "https://api.github.com"
 VERSAO_API = "2022-11-28"
@@ -27,7 +28,6 @@ _TIPOS_DE_URL = ("pull", "issues")
 _REPO = re.compile(r"(%s)/(%s)" % (_NOME, _NOME))
 _SHA_COMPLETO = re.compile(r"[0-9a-f]{40}")
 _NONCE = re.compile(r"[0-9a-f]{32}")
-MARCADOR_NONCE = "<!-- fabrica:nonce=%s -->"
 # Só estas conclusões contam como sucesso; qualquer outra (inclusive vazia ou nova) é vermelho.
 _CONCLUSOES_VERDES = frozenset({"success", "neutral", "skipped"})
 
@@ -83,6 +83,19 @@ def _caminho_de_arquivo(caminho) -> str:
     return "/".join(urllib.parse.quote(parte, safe="") for parte in partes)
 
 
+def _instante(valor):
+    """`datetime` com fuso de um texto ISO 8601 (`Z` aceito); `ValueError` se não for um."""
+    if not isinstance(valor, str) or not valor:
+        raise ValueError("instante inválido")
+    try:
+        momento = datetime.datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("instante inválido") from None
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=datetime.timezone.utc)
+    return momento
+
+
 def _texto_nao_vazio(valor, nome: str) -> str:
     if not isinstance(valor, str) or not valor:
         raise ValueError("%s inválido" % nome)
@@ -113,7 +126,8 @@ class ForjaGitHub:
         try:
             resposta = self._transporte(metodo, BASE + caminho, headers, dados)
         except (http.client.HTTPException, OSError) as erro:
-            raise FalhaDeRede("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
+            classe = _classe_da_falha(erro)
+            raise classe("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
         if not isinstance(resposta, tuple) or len(resposta) != 3:
             raise RuntimeError("%s %s: resposta do transporte inválida" % (metodo, caminho))
         status, _, resp_corpo = resposta
@@ -294,11 +308,16 @@ class ForjaGitHub:
     def fechar_decisao(self, url: str, comentario: str) -> None:
         self._comentar_e_mudar(url, comentario, "closed")
 
-    def procurar_decisao(self, repo: str, nonce: str) -> str | None:
-        """URL da issue de decisão cujo corpo tem o marcador do `nonce`, ou None."""
+    def procurar_decisao(self, repo: str, nonce: str, desde: str | None = None) -> str | None:
+        """URL da issue de decisão cujo corpo tem o marcador do `nonce`, ou None.
+
+        Com `desde` (ISO 8601, a hora gravada na intenção), lista as mais novas primeiro e para ao
+        achar uma criada antes dele: o custo não cresce com o histórico do repositório.
+        """
         dono, nome = _analisar_repo(repo)
         if not isinstance(nonce, str) or _NONCE.fullmatch(nonce) is None:
             raise ValueError("nonce inválido")
+        corte = _instante(desde) if desde is not None else None
         marcador = MARCADOR_NONCE % nonce
         base = "/repos/%s/%s/issues?labels=%s&state=all&per_page=%d" % (
             dono,
@@ -306,11 +325,22 @@ class ForjaGitHub:
             urllib.parse.quote(LABEL_DECISAO, safe=""),
             POR_PAGINA,
         )
+        if corte is not None:
+            base += "&since=%s&sort=created&direction=desc" % urllib.parse.quote(desde, safe="")
         for pagina in range(1, MAX_PAGINAS + 1):
             caminho = "%s&page=%d" % (base, pagina)
             itens = self._lista(caminho, "issues")
             for item in itens:
-                if not isinstance(item, dict) or "pull_request" in item:
+                if not isinstance(item, dict):
+                    continue
+                if corte is not None:
+                    try:
+                        criada = _instante(item.get("created_at"))
+                    except ValueError:
+                        criada = None
+                    if criada is not None and criada < corte:
+                        return None  # daqui para trás tudo é anterior à intenção
+                if "pull_request" in item:
                     continue
                 corpo = item.get("body")
                 if isinstance(corpo, str) and marcador in corpo:
@@ -495,9 +525,11 @@ class ForjaFalsa:
     def fechar_decisao(self, url: str, comentario: str) -> None:
         self._mudar_decisao("fechar_decisao", url, comentario, True)
 
-    def procurar_decisao(self, repo: str, nonce: str) -> str | None:
-        self._registrar("procurar_decisao", repo=repo, nonce=nonce)
+    def procurar_decisao(self, repo: str, nonce: str, desde: str | None = None) -> str | None:
+        self._registrar("procurar_decisao", repo=repo, nonce=nonce, desde=desde)
         _analisar_repo(repo)
+        if desde is not None:
+            _instante(desde)
         if not isinstance(nonce, str) or _NONCE.fullmatch(nonce) is None:
             raise ValueError("nonce inválido")
         marcador = MARCADOR_NONCE % nonce

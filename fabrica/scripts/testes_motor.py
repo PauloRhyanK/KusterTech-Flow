@@ -1,3 +1,4 @@
+import errno
 import http.client
 import io
 import json
@@ -1041,6 +1042,96 @@ class TestesFalhaDeRede(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             m.despachar_run(**ARGS_RUN)
         self.assertNotIsInstance(ctx.exception, motor.FalhaDeRede)
+
+
+class TestesFalhaAntesOuDepoisDoEnvio(unittest.TestCase):
+    """Rodada 3, P1: só a falha antes do envio é segura para repetir o POST."""
+
+    def test_transporte_padrao_classifica(self):
+        import socket
+
+        antes = [
+            urllib.error.URLError(ConnectionRefusedError(111, "x")),
+            urllib.error.URLError(socket.gaierror(-2, "x")),
+            urllib.error.URLError(TimeoutError("x")),
+            urllib.error.URLError(OSError(errno.EHOSTUNREACH, "No route to host")),
+        ]
+        depois = [
+            TimeoutError("x"),
+            http.client.RemoteDisconnected("x"),
+            ConnectionResetError("x"),
+            http.client.IncompleteRead(b"x"),
+            urllib.error.URLError(ConnectionResetError("x")),
+            urllib.error.URLError("x"),
+        ]
+        for erro, classe in [(e, motor.FalhaAntesDoEnvio) for e in antes] + [(e, motor.FalhaIncerta) for e in depois]:
+            with self.subTest(erro=repr(erro)):
+                with mock.patch.object(motor_warren, "_abrir", side_effect=erro):
+                    with self.assertRaises(classe) as ctx:
+                        motor_warren._transporte_urllib("POST", BASE + "/runs", {}, b"{}")
+                self.assertIsInstance(ctx.exception, motor.FalhaDeRede)
+                self.assertIs(ctx.exception.__cause__, erro)
+
+    def test_transporte_injetado_classifica(self):
+        for erro, classe in ((ConnectionRefusedError("x"), motor.FalhaAntesDoEnvio), (TimeoutError("x"), motor.FalhaIncerta)):
+            def transporte(metodo, url, headers, corpo, _e=erro):
+                raise _e
+
+            m = motor_warren.MotorWarren(BASE, TOKEN, transporte)
+            with self.assertRaises(classe):
+                m.despachar_run(**ARGS_RUN)
+
+
+class TestesProcurarPorNonce(unittest.TestCase):
+    """Rodada 3, P1: achar o run ou o Plan Run despachado pelo marcador no texto enviado."""
+
+    NONCE = "0123456789abcdef0123456789abcdef"
+    MARCA = "<!-- fabrica:nonce=0123456789abcdef0123456789abcdef -->"
+
+    def test_procurar_run_varre_o_prompt(self):
+        runs = [{"id": "r-1", "prompt": "outro"}, {"id": "r-2", "prompt": "revise\n" + self.MARCA}]
+        m, t = novo(ok({"runs": runs, "total": 2, "limit": 50, "offset": 0}))
+        self.assertEqual(m.procurar_run("prj x", self.NONCE), "r-2")
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs?project=prj%20x&limit=50"))
+        m, _ = novo(ok({"runs": runs[:1]}))
+        self.assertIsNone(m.procurar_run("prj", self.NONCE))
+
+    def test_procurar_plano_varre_o_prompt_template(self):
+        planos = [{"id": "p-1", "promptTemplate": "x {seed_id}"}, {"id": "p-2", "promptTemplate": "y {seed_id}\n" + self.MARCA}]
+        m, t = novo(ok({"planRuns": planos}))
+        self.assertEqual(m.procurar_plano("prj", self.NONCE), "p-2")
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/plan-runs?project=prj"))
+
+    def test_entradas_e_respostas_invalidas(self):
+        for nonce in ("", "xyz", self.NONCE.upper(), None):
+            m, t = novo()
+            with self.assertRaises(ValueError):
+                m.procurar_run("prj", nonce)
+            self.assertEqual(t.requisicoes, [])
+        for metodo, corpo in (("procurar_run", {"x": 1}), ("procurar_plano", {"planRuns": "x"})):
+            m, _ = novo(ok(corpo))
+            with self.assertRaises(RuntimeError):
+                getattr(m, metodo)("prj", self.NONCE)
+        m, _ = novo(ok({"runs": [{"id": 5, "prompt": self.MARCA}]}))
+        with self.assertRaises(RuntimeError):
+            m.procurar_run("prj", self.NONCE)
+
+    def test_falso_procura_e_falha_incerta_ou_antes(self):
+        m = motor.MotorFalso()
+        rid = m.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+        self.assertEqual(m.procurar_run("kustertech-flow", self.NONCE), rid)
+        pid = m.despachar_plano(**dict(ARGS_PLANO, prompt_template="t {seed_id}\n" + self.MARCA))
+        self.assertEqual(m.procurar_plano("kustertech-flow", self.NONCE), pid)
+        self.assertIsNone(m.procurar_run("outro", self.NONCE))
+        m.falhar_despacho("incerta", 1)
+        with self.assertRaises(motor.FalhaIncerta):
+            m.despachar_run(**dict(ARGS_RUN, prompt="q\n<!-- fabrica:nonce=%s -->" % ("f" * 32)))
+        self.assertIsNotNone(m.procurar_run("kustertech-flow", "f" * 32))  # aceito, apesar do erro
+        m.falhar_despacho("antes", 1)
+        with self.assertRaises(motor.FalhaAntesDoEnvio):
+            m.despachar_plano(**dict(ARGS_PLANO, prompt_template="z {seed_id}\n<!-- fabrica:nonce=%s -->" % ("e" * 32)))
+        self.assertIsNone(m.procurar_plano("kustertech-flow", "e" * 32))  # nada criado
+        self.assertTrue(m.despachar_run(**ARGS_RUN))  # o modo vale só para as próximas `vezes`
 
 
 class TestesCancelarPlano(unittest.TestCase):
