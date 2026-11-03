@@ -1,9 +1,9 @@
 # Fábrica de Agentes — orquestrador e equipes especializadas sobre o Warren
 
 **Data:** 02/11/2026  
-**Estado:** desenho para revisão do Paulo. Nada foi implementado.  
+**Estado:** desenho aprovado pelo Paulo em 02/11/2026, com os resultados do Spike 0 (§10) incorporados. Nada foi implementado.  
 **Escopo:** ferramenta interna da KusterTech, versionada neste repositório em `fabrica/`, para levar projetos de clientes do início ao fim com agentes. Não é funcionalidade do produto Central de Operações e não altera as decisões D13–D69.  
-**Regra deste documento:** só decisões necessárias para construir o kit. Pontos que dependem da interface real do Warren ficam marcados como **[Spike 0]** e são confirmados antes do plano de implementação.
+**Regra deste documento:** só decisões necessárias para construir o kit. Os pontos que dependiam da interface real do Warren foram confirmados no Spike 0 (§10).
 
 ---
 
@@ -39,7 +39,7 @@ O MVP da Central foi entregue por um único fluxo serial: um plano Seeds, um Pla
 ## 3. Arquitetura
 
 ```
-Spec do cliente ──► ORQUESTRADOR (Claude Code + Fable, headless, raro)
+Spec do cliente ──► ORQUESTRADOR (run do Warren: claude-code + Fable, raro)
                         │  decompõe em fases e raias, replaneja, escala ao Paulo
                         ▼
                   DESPACHANTE (Python, sem LLM, sempre ligado na máquina de agentes)
@@ -56,11 +56,11 @@ Componentes e responsabilidades (cada um entendido e testado sozinho):
 
 | Unidade | Faz | Depende de |
 | --- | --- | --- |
-| `orquestrador/CLAUDE.md` | Contrato do orquestrador (§4) | Spec do cliente, estado compacto |
+| `orquestrador.md` | Contrato do orquestrador (§4), derivado do `architect-orchestrator` do Paulo | Spec do cliente, estado compacto |
 | `scripts/raias.py` | Funções puras: valida a partição (arquivos disjuntos por glob, dependências acíclicas, toda raia com critério de aceite) e calcula as raias prontas | Nada |
 | `scripts/estado.py` | Funções puras: transições do estado de raia, seed e PR (§5) a partir de eventos | Nada |
 | `scripts/motor.py` | Interface `Motor` (despachar plano, despachar run avulso, seguir eventos, cancelar) e `MotorFalso` para os testes | Nada |
-| `scripts/motor_warren.py` | `Motor` sobre a API do Warren (Bearer token só por env) | Warren **[Spike 0]** |
+| `scripts/motor_warren.py` | `Motor` sobre a API do Warren (Bearer token só por env) | API do Warren (§10) |
 | `scripts/gates.py` | Avalia os gates de um PR: CI, script de verificação, veredito do revisor, `judge` opcional, `protectedPaths` | `gh`, relatórios |
 | `scripts/despachante.py` | Laço: evento → estado → ação (despachar, revisar, corrigir, mergear, acordar, pausar) | Todos acima |
 | `scripts/instalar.py` | Instala o kit num repositório de cliente | Modelos |
@@ -80,7 +80,7 @@ Reaproveitado de `.agents/`: a política de negação com auditoria (`politica-e
 
 **Nunca faz:** ler diff, escrever código, revisar PR, fazer polling, mergear, trocar modelo ou executor, editar `.seeds/*.jsonl` à mão.
 
-**Como roda:** `claude -p --model claude-fable-5-1`, disparado pelo despachante, com limite de turnos por acordada. Cada acordada recebe só o `estado.json` compacto, o motivo dela e os relatórios estruturados envolvidos. A saída também é estruturada: novos planos e seeds, mudanças de estado ou uma pergunta ao Paulo. Toda acordada fica registrada em `.orquestracao/acordadas.jsonl`, com motivo, duração e uso de tokens.
+**Como roda (decidido pelo Paulo depois do Spike 0):** como **run do Warren**. Usa o agente `claude-code` com `modelOverride: claude-fable-5-1` e `maxCostUsd` por acordada, e é disparado pelo despachante via `POST /runs`. Roda no sandbox e não tem acesso à API do Warren, ao `gh` nem ao Docker do host. O prompt manda ler `.fabrica/orquestrador.md` (o contrato), o `estado.json` compacto, o motivo da acordada e os relatórios envolvidos. A saída é **um PR** com os artefatos: plano de fases e raias (`.fabrica/plano.yaml`), comandos `sd` para criar os planos Seeds e os BRIEFINGs, ou um arquivo `.fabrica/pergunta.md` para o Paulo. O despachante lê esse PR e age, e o orquestrador nunca age diretamente. Toda acordada fica registrada em `.orquestracao/acordadas.jsonl`, com motivo, run, duração e custo informado pelo Warren.
 
 **Quando acorda:** uma nova spec, o fim de uma fase, um gate que falhou depois do fixer, uma raia sem sinal além da janela configurada ou uma resposta do Paulo. Nada além disso.
 
@@ -119,7 +119,7 @@ Cada pacote de papel fica em `fabrica/equipes/<papel>.md`, com as mesmas seçõe
 | `revisor` | Revisão cega contra a spec da raia e os critérios de aceite | Veredito JSON |
 | `fixer` | Corrigir só os achados do revisor ou dos gates | Commits no mesmo branch |
 
-O papel chega ao executor pelo prompt do run (pacote de papel + BRIEFING) e pelo `repoContext` do projeto. **[Spike 0]** Confirmar se o Warren aceita prompt e modelo por run, ou se é preciso registrar um agente por papel.
+O papel chega ao executor pelo prompt do run: `promptTemplate` no Plan Run, `prompt` no run avulso, ambos sobre o agente `claude-code`, com `modelOverride` por papel. O instalador copia os pacotes para `.fabrica/equipes/` no repositório do cliente. Nenhum agente é registrado no banco do Warren (§10).
 
 O modelo padrão de cada papel fica numa tabela por projeto (`.fabrica/modelos.yaml` no repositório do cliente), aprovada pelo Paulo. A sugestão inicial é Sonnet para os implementadores, um modelo de outra família para o revisor (para a revisão ser de fato independente) e Fable só para o orquestrador.
 
@@ -154,7 +154,43 @@ O modelo padrão de cada papel fica numa tabela por projeto (`.fabrica/modelos.y
 3. **Piloto:** repositório de brinquedo com a fundação e duas raias paralelas, de ponta a ponta na máquina de agentes.
 4. **Relatório e homologação do Paulo**, e só então o primeiro projeto de cliente real.
 
-## 10. Verificação
+## 10. Resultados do Spike 0 (02/11/2026)
+
+Leitura do código do Warren v0.19.3 (tag `v0.19.3`) e sondagem só com GET na máquina de agentes, feita via ssh e usando o token de operador que já existe lá (`~/.warren-token`). O token não saiu da máquina.
+
+**Máquina de agentes**
+
+- Debian 13, **4 núcleos, 7 GB de RAM**, 33 GB livres, Docker 29. Ela divide espaço com os ambientes de dev do ChurchManager e do NumberTwo.
+- O Warren 0.19.3 roda como serviço `warren.service`, com o usuário `agentops` e o **provider `local`** (sandbox `bwrap` no host, sem k8s), ouvindo em `127.0.0.1:8080`.
+- **O sandbox dos runs não tem Docker** (tem node 22 e pnpm 9). Por isso `test:integration` e E2E não rodam dentro de um run. A verificação da raia que precisa de banco ou de navegador roda **no host**, pelo despachante, ou no CI.
+- **Não há CLI `claude` instalado** para o usuário `devops`, só o servidor remoto que o app Claude usa nas sessões por SSH. Também não há `sd` nem `agy`.
+- Já existem dois daemons do Paulo em `~/warren-auto/`:
+  - `warren-auto`: encadeia runs `#AUTO` no mesmo branch (`existingBranch`) até o agente escrever o sentinela `DONE`, com teto de ondas e de gasto;
+  - `warren-automerge`: mergeia os PRs dos filhos de Plan Runs ativos quando o GitHub diz `clean`, `unstable` ou `has_hooks`, usando um token fine-grained em `~/.warren-gh-token`. **`unstable` significa um check não obrigatório em falha**, e é por aí que PRs foram mergeados sem gate no Incremento 2.
+- Oito projetos estão cadastrados no Warren, entre eles o KusterTech-Flow. O `judge` **não está instalado** (a rota responde 501). Gasto acumulado: US$ 1.087 em 522 runs.
+
+**API e comportamento confirmados**
+
+- `POST /plan-runs`: `project`, `agent`, `planId` **ou** `issues` (lista ordenada), `promptTemplate` (precisa conter `{seed_id}`; o padrão é `work on sd {seed_id}`), `ref`, `modelOverride`, `providerOverride`, `maxCostUsd` (por filho) e `dispatcherHandle`.
+- **O Plan Run só despacha o próximo filho depois que o PR do anterior é mergeado.** Se o merge não acontece em `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS` (padrão de **30 min** a partir do fim do run), o plano inteiro falha. Depois do merge, o Warren fecha a seed do filho com um commit `chore(warren)` no branch padrão.
+- **Não há trava de um Plan Run ativo por projeto.** A admissão conta runs não terminais, e o limite por projeto (`admission.maxConcurrentRuns` no `.warren/config.yaml`) é ilimitado por padrão. Vários Plan Runs em paralelo no mesmo projeto são aceitos.
+- `POST /runs`: `project`, `agent`, `prompt`, `existingBranch` (roda sobre o branch de um PR), `seedId`, `modelOverride`, `providerOverride`, `maxCostUsd`, `metadata`, `targetBranch`, `baseCommit`.
+- `GET /events/stream`: NDJSON com uma linha `{runId, hook, state, ts}` por transição. Os eventos de um Plan Run ficam em `GET /plan-runs/:id/events`.
+- **Agentes:** o Warren 0.19.3 removeu a biblioteca externa de agentes, e não existe rota para criar um. Os agentes próprios dessa instalação, como o `architect-orchestrator` (Opus, runtime `claude-code`, prompt de sistema de 24 mil caracteres), foram inseridos direto no banco.
+
+**Consequências para este desenho**
+
+1. **Papéis pelo prompt.** O pacote de papel chega ao executor pelo `promptTemplate` ou pelo `prompt` ("leia `.fabrica/equipes/<papel>.md` e trabalhe na seed `{seed_id}`"), sobre o agente `claude-code`. Nada é inserido no banco do Warren, e o kit sobrevive às atualizações dele.
+2. **O merge do despachante é o que destrava a raia.** O despachante precisa cumprir o ciclo revisor → fixer → gates antes do merge timeout, então `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS` precisa subir no `warren.service`.
+3. **O despachante substitui o `warren-automerge`**, que segue a mesma ideia mas aceita `unstable`. Os dois não podem rodar juntos. O `warren-auto` pode continuar, para features avulsas fora da fábrica.
+4. **Paralelismo.** O Paulo escolheu **3 raias simultâneas** como padrão (`admission.maxConcurrentRuns: 3` mais o limite do despachante). Com 4 núcleos e 7 GB de RAM existe risco de OOM. Se um run terminar com `oom_killed`, o despachante baixa o limite daquele projeto para 2, avisa o Paulo e despacha de novo a seed afetada.
+6. **Decisões do Paulo depois do spike:**
+   - o orquestrador roda como run do Warren (§4);
+   - o despachante substitui o `warren-automerge`. No piloto, o Paulo desliga o `warren-automerge.service` e sobe `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS` para 3 h no `warren.service`; as duas ações exigem sudo e ficam com ele;
+   - o paralelismo padrão é 3.
+5. **O contrato do orquestrador parte do `architect-orchestrator` do Paulo**, adaptado para o Seeds no lugar de `docs/ai-plans/tasks.json` e para o despachante. Entram o filtro de valor, o gate de admissão de task, a paralelização por responsabilidade de negócio, o orçamento de escopo, o "NO-OP com evidência" e a proibição de inventar run, PR ou teste.
+
+## 11. Verificação
 
 - `python3 -I fabrica/scripts/testes_*.py` verdes. Mutações manuais: raias com arquivos sobrepostos, ciclo de dependência e raia sem critério de aceite precisam reprovar.
 - Despachante contra o `MotorFalso`:
