@@ -47,6 +47,7 @@ import globs  # noqa: E402
 import prompts  # noqa: E402
 import raias  # noqa: E402
 import verificacao  # noqa: E402
+from forja import LABEL_DECISAO  # noqa: E402
 from motor import MARCADOR_NONCE, MOTIVOS_INFRA_PERDIDA, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado, instante  # noqa: E402
 
 ARQ_ESTADO = "estado.json"
@@ -137,6 +138,9 @@ WARREN_PREPARADO = ("ja_aplicado", "aplicado")
 ESTADOS_SEM_MODELO = ("versao_desconhecida", "erro", "revertido")
 AVISO_WARREN_SEM_MODELO = "o Warren não aplica modelo por papel; a conferência de modelo efetivo vai acusar a divergência"
 AVISO_WARREN_FORA_APOS_ROLLBACK = "Warren fora do ar após rollback"
+COR_LABEL_DECISAO = "d93f0b"
+DESCRICAO_LABEL_DECISAO = "Decisão pedida pela fábrica de agentes"
+AVISO_LABEL_DECISAO = "Não foi possível garantir o label %s no repositório; as decisões abrem sem ele" % LABEL_DECISAO
 TITULO_WARREN_ROLLBACK = "[fábrica] Warren fora do ar após rollback"
 AVISO_AUTOMERGE = "não foi possível desligar o warren-automerge.service (ele mergeia PRs com check falhando); nova tentativa em 20 ciclos"
 AVISO_DROPIN = "não foi possível gravar o drop-in do systemd com WARREN_PLAN_RUN_MERGE_TIMEOUT_MS; nova tentativa em 20 ciclos"
@@ -792,6 +796,7 @@ class Despachante:
             except Exception as exc:  # noqa: BLE001
                 registro = {"erros": [self._erro(exc)]}
             self._log(dict({"evento": "limpar_residuos"}, **registro))
+            self._garantir_label_de_decisao()
             feitos = 0
             while ciclos is None or feitos < ciclos:
                 if feitos == 0 or self._preparar_agora(feitos):
@@ -804,6 +809,14 @@ class Despachante:
                 if ciclos is not None and feitos >= ciclos:
                     break
                 dormir(max(intervalo, self._retry_after))
+
+    def _garantir_label_de_decisao(self) -> None:
+        """Uma vez por partida: o label das issues de decisão existe. Falhar vira aviso e não impede a partida."""
+        try:
+            self.forja.garantir_label(self.repo, LABEL_DECISAO, COR_LABEL_DECISAO, DESCRICAO_LABEL_DECISAO)
+        except Exception as exc:  # noqa: BLE001 - o label é conveniência; as decisões abrem sem ele
+            self._erro_de_etapa("garantir_label", LABEL_DECISAO, exc)
+            self._aviso(AVISO_LABEL_DECISAO)
 
     # ------------------------------------------------------------ preparar_warren (Task 7b)
 

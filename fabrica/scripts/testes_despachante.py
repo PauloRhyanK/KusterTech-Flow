@@ -1818,6 +1818,83 @@ class TestesModeloEfetivo(Base):
 # ---------------------------------------------------------------- rodar, logs e segredos
 
 
+class ForjaSemLabel(forja.ForjaFalsa):
+    def garantir_label(self, repo, nome, cor, descricao):
+        super().garantir_label(repo, nome, cor, descricao)
+        raise RuntimeError("PUT /labels: HTTP 403 " + TOKEN_GH)
+
+
+class TestesLabelDeDecisao(Base):
+    def test_rodar_garante_o_label_uma_vez_na_partida_sob_a_trava(self):
+        d = self.preparar_raia()
+        estados_da_trava = []
+        original = self.forja.garantir_label
+
+        def garantir(*args):
+            try:
+                with despachante.travar(self.raiz):
+                    estados_da_trava.append("livre")
+            except despachante.OutroDespachante:
+                estados_da_trava.append("tomada")
+            return original(*args)
+
+        self.forja.garantir_label = garantir
+        d.rodar(intervalo=1, ciclos=3, dormir=lambda _: None)
+        self.assertEqual(estados_da_trava, ["tomada"])
+        chamadas = [a for nome, a in self.forja.chamadas if nome == "garantir_label"]
+        self.assertEqual(
+            chamadas,
+            [{"repo": REPO, "label": "fabrica:decisao", "cor": "d93f0b", "descricao": "Decisão pedida pela fábrica de agentes"}],
+        )
+        self.assertEqual(self.forja.labels, {(REPO, "fabrica:decisao"): {"cor": "d93f0b", "descricao": "Decisão pedida pela fábrica de agentes"}})
+        self.assertEqual(self.estado().get("avisos", []), [])
+
+    def test_o_label_e_garantido_antes_do_primeiro_ciclo(self):
+        d = self.preparar_raia()
+        ordem = []
+        original = self.forja.garantir_label
+        self.forja.garantir_label = lambda *a: (ordem.append("label"), original(*a))[1]
+        ciclo = d.ciclo
+        d.ciclo = lambda: (ordem.append("ciclo"), ciclo())[1]
+        d.rodar(intervalo=1, ciclos=2, dormir=lambda _: None)
+        self.assertEqual(ordem, ["label", "ciclo", "ciclo"])
+
+    def test_cada_partida_do_rodar_garante_de_novo(self):
+        d = self.preparar_raia()
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda _: None)
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda _: None)
+        self.assertEqual(len([n for n, _ in self.forja.chamadas if n == "garantir_label"]), 2)
+
+    def test_falha_vira_aviso_unico_sem_segredo_e_nao_impede_a_partida(self):
+        self.forja = ForjaSemLabel()
+        d = self.preparar_raia()
+        ciclos = []
+        original = d.ciclo
+        d.ciclo = lambda: (ciclos.append(1), original())[1]
+        d.rodar(intervalo=1, ciclos=2, dormir=lambda _: None)
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda _: None)
+        self.assertEqual(len(ciclos), 3)
+        avisos = [a for a in self.estado()["avisos"] if "fabrica:decisao" in a]
+        self.assertEqual(len(avisos), 1, self.estado()["avisos"])
+        self.assertIn("label", avisos[0])
+        texto = (self.raiz / "estado.json").read_text(encoding="utf-8") + (self.raiz / "log.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn(TOKEN_GH, texto)
+        erros = [linha for linha in self.log() if linha.get("evento") == "erro" and linha.get("etapa") == "garantir_label"]
+        self.assertTrue(erros)
+
+    def test_falha_do_label_nao_para_o_trabalho_da_partida(self):
+        self.forja = ForjaSemLabel()
+        d = self.preparar_raia()
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda _: None)
+        self.assertTrue(self.limpezas)
+        self.assertTrue(any(linha.get("evento") == "limpar_residuos" for linha in self.log()))
+
+    def test_ciclo_e_iniciar_nao_chamam_a_forja_para_o_label(self):
+        d = self.preparar_raia()
+        d.ciclo()
+        self.assertEqual([n for n, _ in self.forja.chamadas if n == "garantir_label"], [])
+
+
 class TestesRodarELogs(Base):
     def test_limpar_residuos_uma_vez_na_partida_com_contagens_no_log(self):
         d = self.preparar_raia()

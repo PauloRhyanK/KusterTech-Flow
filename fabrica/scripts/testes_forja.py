@@ -715,6 +715,91 @@ class TestesDecisao(unittest.TestCase):
         t.exigir(self, 2)
 
 
+class TestesGarantirLabel(unittest.TestCase):
+    ARGS = ("acme/app", "fabrica:decisao", "d93f0b", "Decisão pedida pela fábrica de agentes")
+
+    def test_label_ausente_e_criado_com_nome_cor_e_descricao(self):
+        f, t = novo(vazio(404), ok({"name": "fabrica:decisao"}, 201))
+        self.assertTrue(f.garantir_label(*self.ARGS))
+        t.exigir(self, 2)
+        self.assertEqual(t.requisicoes[0][:2], ("GET", API + "/repos/acme/app/labels/fabrica%3Adecisao"))
+        metodo, url, headers, corpo = t.requisicoes[1]
+        self.assertEqual((metodo, url), ("POST", API + "/repos/acme/app/labels"))
+        self.assertEqual(
+            json.loads(corpo),
+            {"name": "fabrica:decisao", "color": "d93f0b", "description": "Decisão pedida pela fábrica de agentes"},
+        )
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(headers["Authorization"], "Bearer " + TOKEN)
+
+    def test_label_existente_nao_cria_nada(self):
+        f, t = novo(ok({"name": "fabrica:decisao"}))
+        self.assertFalse(f.garantir_label(*self.ARGS))
+        t.exigir(self, 1)
+        self.assertEqual(t.requisicoes[0][0], "GET")
+
+    def test_o_nome_vai_codificado_na_url(self):
+        f, t = novo(ok({}))
+        f.garantir_label("acme/app", "a b/c?d", "d93f0b", "x")
+        self.assertEqual(t.urls(), [API + "/repos/acme/app/labels/a%20b%2Fc%3Fd"])
+
+    def test_falhas_viram_runtime_error_sem_vazar_corpo_nem_token(self):
+        casos = [
+            ([ok({"message": SEGREDO}, 500)], 1, "GET /repos/acme/app/labels/fabrica%3Adecisao: HTTP 500"),
+            ([ok({"message": SEGREDO}, 403)], 1, "HTTP 403"),
+            ([vazio(404), ok({"message": SEGREDO}, 403)], 2, "POST /repos/acme/app/labels: HTTP 403"),
+            ([vazio(404), ok({"message": SEGREDO}, 422)], 2, "HTTP 422"),
+            ([vazio(404), ok({"name": "x"}, 200)], 2, "HTTP 200"),
+            ([vazio(404), ok({"message": SEGREDO}, 500)], 2, "HTTP 500"),
+        ]
+        for respostas, quantidade, trecho in casos:
+            with self.subTest(trecho=trecho):
+                f, t = novo(*respostas)
+                with self.assertRaises(RuntimeError) as ctx:
+                    f.garantir_label(*self.ARGS)
+                t.exigir(self, quantidade)
+                self.assertIn(trecho, str(ctx.exception))
+                impresso = "".join(traceback.format_exception(ctx.exception))
+                self.assertNotIn(SEGREDO, impresso)
+                self.assertNotIn(TOKEN, impresso)
+
+    def test_falha_de_rede_nao_vaza_o_token(self):
+        def transporte(metodo, url, headers, corpo):
+            raise OSError("tok " + headers["Authorization"])
+
+        f = forja.ForjaGitHub(TOKEN, transporte)
+        with self.assertRaises(RuntimeError) as ctx:
+            f.garantir_label(*self.ARGS)
+        self.assertNotIn(TOKEN, "".join(traceback.format_exception(ctx.exception)))
+        self.assertIn("falha de rede", str(ctx.exception))
+
+    def test_argumentos_invalidos_sao_recusados_sem_requisicao(self):
+        invalidos = [
+            ("acme", "n", "d93f0b", "d"),
+            ("acme/app", "", "d93f0b", "d"),
+            ("acme/app", "  ", "d93f0b", "d"),
+            ("acme/app", 5, "d93f0b", "d"),
+            ("acme/app", "n", "#d93f0b", "d"),
+            ("acme/app", "n", "d93f0", "d"),
+            ("acme/app", "n", "d93f0bb", "d"),
+            ("acme/app", "n", "zzzzzz", "d"),
+            ("acme/app", "n", None, "d"),
+            ("acme/app", "n", "d93f0b", None),
+            ("acme/app", "n", "d93f0b", "d" * 101),
+        ]
+        for argumentos in invalidos:
+            with self.subTest(argumentos=argumentos):
+                f, t = novo()
+                with self.assertRaises(ValueError):
+                    f.garantir_label(*argumentos)
+                t.exigir(self, 0)
+
+    def test_descricao_vazia_e_cor_maiuscula_sao_aceitas(self):
+        f, t = novo(vazio(404), ok({}, 201))
+        self.assertTrue(f.garantir_label("acme/app", "n", "D93F0B", ""))
+        self.assertEqual(t.corpo_json()["description"], "")
+
+
 class TestesHigiene(unittest.TestCase):
     def test_erro_http_nao_vaza_corpo_nem_token(self):
         f, t = novo((500, {}, json_bytes({"message": SEGREDO, "token": TOKEN})))
@@ -1174,6 +1259,23 @@ class TestesForjaFalsa(unittest.TestCase):
         self.assertIsNone(f.arquivo("acme/outro", "main", ".fabrica/plano.json"))
         with self.assertRaises(ValueError):
             f.arquivo("acme/app", "main", "../x")
+
+    def test_garantir_label_cria_uma_vez_e_registra(self):
+        f = self.falsa()
+        self.assertTrue(f.garantir_label("acme/app", "fabrica:decisao", "d93f0b", "desc"))
+        self.assertFalse(f.garantir_label("acme/app", "fabrica:decisao", "d93f0b", "desc"))
+        self.assertEqual(f.labels, {("acme/app", "fabrica:decisao"): {"cor": "d93f0b", "descricao": "desc"}})
+        self.assertEqual([n for n, _ in f.chamadas if n == "garantir_label"], ["garantir_label", "garantir_label"])
+        self.assertEqual(f.chamadas[0][1], {"repo": "acme/app", "label": "fabrica:decisao", "cor": "d93f0b", "descricao": "desc"})
+        self.assertTrue(f.garantir_label("acme/outro", "fabrica:decisao", "d93f0b", "desc"))
+        self.assertTrue(f.garantir_label("acme/app", "outro", "d93f0b", "desc"))
+
+    def test_garantir_label_valida_como_a_real(self):
+        f = self.falsa()
+        for argumentos in (("acme", "n", "d93f0b", "d"), ("acme/app", "", "d93f0b", "d"), ("acme/app", "n", "xyz", "d"), ("acme/app", "n", "d93f0b", "d" * 101)):
+            with self.assertRaises(ValueError):
+                f.garantir_label(*argumentos)
+        self.assertEqual(f.labels, {})
 
     def test_abrir_decisao_registra_e_cria_decisao_consultavel(self):
         f = self.falsa()

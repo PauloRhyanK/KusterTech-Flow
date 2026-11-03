@@ -28,6 +28,8 @@ _TIPOS_DE_URL = ("pull", "issues")
 _REPO = re.compile(r"(%s)/(%s)" % (_NOME, _NOME))
 _SHA_COMPLETO = re.compile(r"[0-9a-f]{40}")
 _NONCE = re.compile(r"[0-9a-f]{32}")
+_COR_DE_LABEL = re.compile(r"[0-9a-fA-F]{6}")
+LIMITE_DESCRICAO_DE_LABEL = 100
 # Só estas conclusões contam como sucesso; qualquer outra (inclusive vazia ou nova) é vermelho.
 _CONCLUSOES_VERDES = frozenset({"success", "neutral", "skipped"})
 
@@ -100,6 +102,15 @@ def _texto_nao_vazio(valor, nome: str) -> str:
     if not isinstance(valor, str) or not valor:
         raise ValueError("%s inválido" % nome)
     return valor
+
+
+def _validar_label(nome, cor, descricao) -> None:
+    if not isinstance(nome, str) or not nome.strip():
+        raise ValueError("nome do label inválido")
+    if not isinstance(cor, str) or _COR_DE_LABEL.fullmatch(cor) is None:
+        raise ValueError("cor do label inválida")
+    if not isinstance(descricao, str) or len(descricao) > LIMITE_DESCRICAO_DE_LABEL:
+        raise ValueError("descrição do label inválida")
 
 
 def _inteiro(valor) -> bool:
@@ -354,6 +365,20 @@ class ForjaGitHub:
                 return None
         raise RuntimeError("GET %s: issues demais para paginar" % base)
 
+    def garantir_label(self, repo: str, nome: str, cor: str, descricao: str) -> bool:
+        """Cria o label se ele não existir (GET; 404 → POST). `True` quando criou. Idempotente."""
+        dono, repositorio = _analisar_repo(repo)
+        _validar_label(nome, cor, descricao)
+        base = "/repos/%s/%s/labels" % (dono, repositorio)
+        alvo = base + "/" + urllib.parse.quote(nome, safe="")
+        status, _ = self._enviar("GET", alvo)
+        if status == 200:
+            return False
+        if status != 404:
+            raise RuntimeError("GET %s: HTTP %s" % (alvo, status))
+        self._objeto("POST", base, {"name": nome, "color": cor, "description": descricao}, (201,))
+        return True
+
     def abrir_decisao(self, repo: str, titulo: str, corpo: str) -> str:
         dono, nome = _analisar_repo(repo)
         _texto_nao_vazio(titulo, "título")
@@ -412,6 +437,7 @@ class ForjaFalsa:
         self._arquivos: dict[tuple[str, str, str], str] = {}
         self._decisoes: dict[str, dict] = {}
         self._corpos: dict[str, str] = {}
+        self.labels: dict[tuple[str, str], dict] = {}
         self._contador = 0
         # Q3: relógio do "GitHub" falso, que carimba `fechadaEm` (closed_at) nos fechamentos
         self.agora = lambda: datetime.datetime.now(datetime.timezone.utc)
@@ -511,6 +537,15 @@ class ForjaFalsa:
         _texto_nao_vazio(ref, "ref")
         _caminho_de_arquivo(caminho)
         return self._arquivos.get((repo, ref, caminho))
+
+    def garantir_label(self, repo: str, nome: str, cor: str, descricao: str) -> bool:
+        self._registrar("garantir_label", repo=repo, label=nome, cor=cor, descricao=descricao)
+        _analisar_repo(repo)
+        _validar_label(nome, cor, descricao)
+        if (repo, nome) in self.labels:
+            return False
+        self.labels[(repo, nome)] = {"cor": cor, "descricao": descricao}
+        return True
 
     def abrir_decisao(self, repo: str, titulo: str, corpo: str) -> str:
         self._registrar("abrir_decisao", repo=repo, titulo=titulo, corpo=corpo)
