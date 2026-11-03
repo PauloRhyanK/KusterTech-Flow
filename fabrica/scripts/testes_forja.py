@@ -7,7 +7,9 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
 import traceback
 import types
 import unittest
@@ -363,15 +365,38 @@ class TestesCi(unittest.TestCase):
         self.assertEqual(self.resultado(checks(), status("pending", 1)), "pendente")
         self.assertEqual(self.resultado(checks(run()), status("pending", 2)), "pendente")
 
-    def test_conclusoes_vermelhas(self):
-        for conclusao in ("failure", "cancelled", "timed_out", "action_required"):
+    def test_so_success_neutral_e_skipped_contam_como_sucesso(self):
+        # Qualquer outra conclusão (inclusive vazia, nula ou desconhecida) é vermelho.
+        for conclusao in (
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+            "stale",
+            "",
+            None,
+            "mistério",
+            "SUCCESS",
+            "Success",
+            3,
+            ["success"],
+        ):
             r = self.resultado(checks(run(), run(conclusion=conclusao)), status())
-            self.assertEqual(r, "vermelho", conclusao)
+            self.assertEqual(r, "vermelho", repr(conclusao))
+            r = self.resultado(checks(run(conclusion=conclusao)), status("pending", 0))
+            self.assertEqual(r, "vermelho", repr(conclusao))
 
-    def test_status_failure_ou_error_e_vermelho(self):
-        for estado in ("failure", "error"):
-            self.assertEqual(self.resultado(checks(run()), status(estado, 1)), "vermelho", estado)
-            self.assertEqual(self.resultado(checks(), status(estado, 1)), "vermelho", estado)
+    def test_check_run_completo_sem_a_chave_conclusion_e_vermelho(self):
+        self.assertEqual(self.resultado(checks({"status": "completed"}), status()), "vermelho")
+
+    def test_status_failure_error_e_desconhecido_sao_vermelhos(self):
+        for estado in ("failure", "error", "mistério", "", None, 5, "SUCCESS", ["success"]):
+            corpo = {"state": estado, "total_count": 1, "statuses": [{}]}
+            self.assertEqual(self.resultado(checks(run()), corpo), "vermelho", repr(estado))
+            self.assertEqual(self.resultado(checks(), corpo), "vermelho", repr(estado))
+        sem_state = {"total_count": 1, "statuses": [{}]}
+        self.assertEqual(self.resultado(checks(run()), sem_state), "vermelho")
 
     def test_status_success_sozinho_e_verde(self):
         self.assertEqual(self.resultado(checks(), status("success", 2)), "verde")
@@ -415,14 +440,16 @@ class TestesCi(unittest.TestCase):
         self.assertIn("check-runs", str(ctx.exception))
 
     def test_sha_invalido_levanta_sem_requisicao(self):
-        for sha in ("", "abc12", "abcdef", "g" * 40, "a" * 41, "../x", SHA + "\n", " " + SHA, None, 5, "a/b/c1234", "é" * 7):
+        ruins = ["", "abc12", "abcdef", "abc1234", "a" * 7, "a" * 39, "g" * 40, "a" * 41, "A" * 40, "../x"]
+        ruins += [SHA + "\n", " " + SHA, None, 5, "a/b/c1234", "é" * 7, "main", "v1.0.0"]
+        for sha in ruins:
             f, t = novo()
             with self.assertRaises(ValueError, msg=repr(sha)):
                 f.ci("acme/app", sha)
             t.exigir(self, 0)
 
-    def test_sha_curto_e_maiusculo_sao_aceitos(self):
-        for sha in ("abc1234", "ABC1234", "aBc1234" + "0" * 33):
+    def test_so_sha_de_40_hex_minusculos_e_aceito(self):
+        for sha in (SHA, "0123456789abcdef" * 2 + "01234567"):
             f, t = novo(ok(checks()), ok(status()))
             f.ci("acme/app", sha)
             t.exigir(self, 2)
@@ -437,12 +464,11 @@ class TestesCi(unittest.TestCase):
             ([ok({"total_count": True, "check_runs": []})], "total_count"),
             ([ok({"total_count": 1, "check_runs": ["x"]})], "check_runs"),
             ([ok({"total_count": 1, "check_runs": [{"conclusion": "success"}]})], "status"),
-            ([ok({"total_count": 1, "check_runs": [{"status": "completed"}]})], "conclusion"),
-            ([ok({"total_count": 1, "check_runs": [{"status": "completed", "conclusion": 3}]})], "conclusion"),
             ([ok(checks()), ok([])], "resposta não é um objeto"),
             ([ok(checks()), ok({"state": "pending"})], "total_count"),
-            ([ok(checks()), ok({"total_count": 1})], "state"),
-            ([ok(checks()), ok({"total_count": 1, "state": "mistério"})], "state"),
+            ([ok(checks()), ok({"state": "pending", "total_count": "0"})], "total_count"),
+            ([ok(checks()), ok({"state": "pending", "total_count": True})], "total_count"),
+            ([ok(checks()), ok({"state": "pending", "total_count": -1})], "total_count"),
         ]
         for respostas, trecho in casos:
             f, t = novo(*respostas)
@@ -850,6 +876,14 @@ class TestesForjaFalsa(unittest.TestCase):
         with self.assertRaises(KeyError):
             f.ci("acme/outro", SHA)
 
+    def test_ci_e_definir_ci_exigem_sha_completo(self):
+        f = self.falsa()
+        for sha in ("abc1234", "A" * 40, "a" * 39):
+            with self.assertRaises(ValueError, msg=sha):
+                f.definir_ci("acme/app", sha, "verde")
+            with self.assertRaises(ValueError, msg=sha):
+                f.ci("acme/app", sha)
+
     def test_definir_ci_rejeita_resultado_desconhecido(self):
         with self.assertRaises(ValueError):
             self.falsa().definir_ci("acme/app", SHA, "azul")
@@ -959,6 +993,8 @@ def exec_falso(resultados):
         item = fila.pop(0)
         if isinstance(item, BaseException):
             raise item
+        if callable(item):
+            return item(argv, **kwargs)
         return item
 
     executar.fila = fila
@@ -969,43 +1005,143 @@ def proc(codigo=0, saida="", erro=""):
     return types.SimpleNamespace(returncode=codigo, stdout=saida, stderr=erro)
 
 
+def membro(nome, tipo="arq", conteudo=b"", alvo=None, modo=0o644):
+    info = tarfile.TarInfo(nome)
+    info.mode = modo
+    if tipo == "arq":
+        info.size = len(conteudo)
+    elif tipo == "dir":
+        info.type = tarfile.DIRTYPE
+        info.mode = 0o755
+    elif tipo == "link":
+        info.type = tarfile.SYMTYPE
+        info.linkname = alvo
+    elif tipo == "hard":
+        info.type = tarfile.LNKTYPE
+        info.linkname = alvo
+    elif tipo == "dev":
+        info.type = tarfile.CHRTYPE
+    return info, conteudo
+
+
+def tar_de(*membros):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for info, conteudo in membros:
+            tar.addfile(info, io.BytesIO(conteudo) if info.isreg() else None)
+    return buffer.getvalue()
+
+
+def archive(*membros):
+    return types.SimpleNamespace(returncode=0, stdout=tar_de(*membros), stderr=b"")
+
+
+def tar_padrao():
+    return archive(
+        membro("a.txt", conteudo=b"a"),
+        membro("sub", "dir"),
+        membro("sub/run.sh", conteudo=b"#!/bin/sh\n", modo=0o755),
+        membro("lnk", "link", alvo="a.txt"),
+    )
+
+
+def sequencia(final=None):
+    """fetch ok, archive ok, e o comando."""
+    return [proc(), tar_padrao(), final if final is not None else proc()]
+
+
 class TestesVerificarComFalso(unittest.TestCase):
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
 
-    def test_ordem_das_tres_chamadas_argumentos_e_cwd(self):
-        executar, chamadas = exec_falso([proc(), proc(), proc(0, "tudo ok\n")])
+    def test_ordem_das_chamadas_argumentos_cwd_e_diretorio_novo(self):
+        vistos = {}
+
+        def comando(argv, **kwargs):
+            cwd = pathlib.Path(kwargs["cwd"])
+            vistos["cwd"] = cwd
+            vistos["itens"] = sorted(p.name for p in cwd.iterdir())
+            vistos["conteudo"] = (cwd / "a.txt").read_text()
+            vistos["link"] = os.readlink(cwd / "lnk")
+            vistos["exec"] = os.access(cwd / "sub" / "run.sh", os.X_OK)
+            vistos["nao_exec"] = os.access(cwd / "a.txt", os.X_OK)
+            return proc(0, "tudo ok\n")
+
+        executar, chamadas = exec_falso(sequencia(comando))
         r = verificacao.verificar(self.dir, SHA, "pnpm test", executar=executar)
         self.assertEqual(r, {"sha": SHA, "codigo": 0, "saida": "tudo ok\n"})
         self.assertEqual(executar.fila, [])
         self.assertEqual(len(chamadas), 3)
-        self.assertEqual(chamadas[0][0], ["git", "fetch", "--quiet", "origin"])
-        self.assertEqual(chamadas[1][0], ["git", "checkout", "--quiet", "--detach", SHA, "--"])
+        git = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+        self.assertEqual(chamadas[0][0], git + ["fetch", "--quiet", "origin"])
+        self.assertEqual(chamadas[1][0], git + ["archive", "--format=tar", SHA])
         self.assertEqual(chamadas[2][0], ["bash", "-lc", "pnpm test"])
-        for _, kwargs in chamadas:
+        for _, kwargs in chamadas[:2]:
             self.assertEqual(kwargs["cwd"], self.dir)
-            self.assertNotIn("shell", kwargs)
+        # O comando nunca roda em repo_dir; o diretório é novo, sem .git, e some no fim.
+        cwd = vistos["cwd"]
+        self.assertNotEqual(cwd, self.dir)
+        self.assertNotIn(str(self.dir), str(cwd))
+        self.assertEqual(vistos["itens"], ["a.txt", "lnk", "sub"])
+        self.assertEqual((vistos["conteudo"], vistos["link"]), ("a", "a.txt"))
+        self.assertTrue(vistos["exec"])
+        self.assertFalse(vistos["nao_exec"])
+        self.assertFalse(cwd.exists())
+        self.assertFalse(cwd.parent.exists())
+        for _, kwargs in chamadas:
             self.assertFalse(kwargs.get("shell", False))
 
+    def test_archive_pede_binario_e_fetch_pede_texto(self):
+        executar, chamadas = exec_falso(sequencia())
+        verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertTrue(chamadas[0][1]["text"])
+        self.assertTrue(chamadas[0][1]["capture_output"])
+        self.assertFalse(chamadas[1][1].get("text", False))
+        self.assertTrue(chamadas[1][1]["capture_output"])
+        self.assertTrue(chamadas[2][1]["text"])
+
+    def test_diretorios_novos_a_cada_chamada(self):
+        cwds = []
+
+        def comando(argv, **kwargs):
+            cwds.append(kwargs["cwd"])
+            return proc()
+
+        for _ in range(2):
+            executar, _ = exec_falso(sequencia(comando))
+            verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(len(cwds), 2)
+        self.assertNotEqual(cwds[0], cwds[1])
+
     def test_timeout_padrao_1800_e_configuravel(self):
-        executar, chamadas = exec_falso([proc(), proc(), proc()])
+        executar, chamadas = exec_falso(sequencia())
         verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(chamadas[2][1]["timeout"], 1800)
-        executar, chamadas = exec_falso([proc(), proc(), proc()])
+        executar, chamadas = exec_falso(sequencia())
         verificacao.verificar(self.dir, SHA, "x", timeout_s=42, executar=executar)
         self.assertEqual(chamadas[2][1]["timeout"], 42)
 
-    def test_git_tem_timeout_proprio_e_nao_pergunta_credencial(self):
-        executar, chamadas = exec_falso([proc(), proc(), proc()])
-        verificacao.verificar(self.dir, SHA, "x", timeout_s=42, executar=executar)
+    def test_git_tem_timeout_proprio_sem_prompt_e_sem_config_do_sistema(self):
+        executar, chamadas = exec_falso(sequencia())
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_NOSYSTEM": "0"}):
+            verificacao.verificar(self.dir, SHA, "x", timeout_s=42, executar=executar)
         for argv, kwargs in chamadas[:2]:
             self.assertIsInstance(kwargs["timeout"], int)
             self.assertGreater(kwargs["timeout"], 0)
+            self.assertNotEqual(kwargs["timeout"], 42)
             self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
+            self.assertEqual(kwargs["env"]["GIT_CONFIG_NOSYSTEM"], "1")
+
+    def test_git_usa_o_ambiente_do_pai(self):
+        executar, chamadas = exec_falso(sequencia())
+        with mock.patch.dict(os.environ, {"GIT_ASKPASS": "/bin/askpass-teste"}):
+            verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        for _, kwargs in chamadas[:2]:
+            self.assertEqual(kwargs["env"]["GIT_ASKPASS"], "/bin/askpass-teste")
 
     def test_ambiente_do_comando_e_limpo(self):
-        executar, chamadas = exec_falso([proc(), proc(), proc()])
+        executar, chamadas = exec_falso(sequencia())
         sujo = {
             "PATH": "/usr/bin:/bin:/opt/x",
             "HOME": "/home/real",
@@ -1027,94 +1163,207 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(env["CI"], "1")
         self.assertNotEqual(env["HOME"], "/home/real")
 
-    def test_home_e_temporario_existe_durante_e_some_depois(self):
+    def test_home_e_temporario_fora_do_diretorio_do_comando_e_some_depois(self):
         vistos = []
 
-        def executar(argv, **kwargs):
-            if argv[0] == "bash":
-                home = pathlib.Path(kwargs["env"]["HOME"])
-                vistos.append((home, home.is_dir()))
-                (home / "lixo").write_text("x")
+        def comando(argv, **kwargs):
+            home = pathlib.Path(kwargs["env"]["HOME"])
+            vistos.append((home, home.is_dir(), pathlib.Path(kwargs["cwd"])))
+            (home / "lixo").write_text("x")
             return proc()
 
-        verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        self.assertEqual(len(vistos), 2)
+        for _ in range(2):
+            executar, _ = exec_falso(sequencia(comando))
+            verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertNotEqual(vistos[0][0], vistos[1][0])
-        for home, existia in vistos:
+        for home, existia, cwd in vistos:
             self.assertTrue(existia)
             self.assertFalse(home.exists())
             self.assertNotEqual(home, pathlib.Path.home())
+            self.assertNotIn(home, cwd.parents)
+            self.assertNotEqual(home, cwd)
 
-    def test_home_e_removido_mesmo_com_timeout(self):
-        homes = []
+    def test_diretorios_somem_com_timeout_erro_e_excecao_inesperada(self):
+        casos = [
+            subprocess.TimeoutExpired(["bash"], 1),
+            FileNotFoundError("bash"),
+            RuntimeError("boom"),
+        ]
+        for caso in casos:
+            cwds = []
 
-        def executar(argv, **kwargs):
-            if argv[0] == "bash":
-                homes.append(pathlib.Path(kwargs["env"]["HOME"]))
-                raise subprocess.TimeoutExpired(argv, 1)
+            def comando(argv, caso=caso, **kwargs):
+                cwds.append(pathlib.Path(kwargs["cwd"]))
+                raise caso
+
+            executar, _ = exec_falso(sequencia(comando))
+            try:
+                verificacao.verificar(self.dir, SHA, "x", executar=executar)
+            except RuntimeError:
+                pass
+            self.assertFalse(cwds[0].exists(), repr(caso))
+            self.assertFalse(cwds[0].parent.exists(), repr(caso))
+
+    def test_diretorio_com_permissao_negada_deixada_pelo_comando_tambem_e_apagado(self):
+        cwds = []
+
+        def comando(argv, **kwargs):
+            cwd = pathlib.Path(kwargs["cwd"])
+            cwds.append(cwd)
+            (cwd / "d" / "e").mkdir(parents=True)
+            (cwd / "d" / "e" / "f").write_text("x")
+            os.chmod(cwd / "d" / "e", 0o000)
+            os.chmod(cwd / "d", 0o500)
             return proc()
 
-        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        self.assertEqual(r["codigo"], 124)
-        self.assertFalse(homes[0].exists())
+        executar, _ = exec_falso(sequencia(comando))
+        verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertFalse(cwds[0].parent.exists())
 
-    def test_git_usa_o_ambiente_do_pai(self):
-        executar, chamadas = exec_falso([proc(), proc(), proc()])
-        with mock.patch.dict(os.environ, {"GIT_ASKPASS": "/bin/askpass-teste"}):
-            verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        for _, kwargs in chamadas[:2]:
-            self.assertEqual(kwargs["env"]["GIT_ASKPASS"], "/bin/askpass-teste")
+    # Permissões e executar_como
+
+    def test_sem_executar_como_o_comando_roda_direto_com_permissoes_privadas(self):
+        vistos = {}
+
+        def comando(argv, **kwargs):
+            cwd = pathlib.Path(kwargs["cwd"])
+            modo = lambda p: os.stat(p).st_mode & 0o777  # noqa: E731
+            vistos.update(
+                src=modo(cwd), arq=modo(cwd / "a.txt"), exe=modo(cwd / "sub" / "run.sh"), sub=modo(cwd / "sub")
+            )
+            return proc()
+
+        executar, chamadas = exec_falso(sequencia(comando))
+        verificacao.verificar(self.dir, SHA, "x", executar=executar, executar_como=None)
+        self.assertEqual(len(chamadas), 3)
+        self.assertEqual(chamadas[2][0], ["bash", "-lc", "x"])
+        self.assertEqual(vistos["arq"], 0o644)
+        self.assertEqual(vistos["exe"], 0o755)
+        self.assertEqual(vistos["sub"], 0o755)
+        self.assertEqual(vistos["src"] & 0o007, 0)
+
+    def test_executar_como_prefixa_o_comando_e_abre_permissoes(self):
+        prefixo = ["sudo", "-n", "-u", "fabrica-verif", "--"]
+        vistos = {}
+
+        def comando(argv, **kwargs):
+            cwd = pathlib.Path(kwargs["cwd"])
+            modo = lambda p: os.stat(p).st_mode & 0o777  # noqa: E731
+            vistos.update(
+                base=modo(cwd.parent),
+                src=modo(cwd),
+                home=modo(kwargs["env"]["HOME"]),
+                arq=modo(cwd / "a.txt"),
+                exe=modo(cwd / "sub" / "run.sh"),
+                sub=modo(cwd / "sub"),
+                base_path=cwd.parent,
+            )
+            return proc(5, "saída\n")
+
+        executar, chamadas = exec_falso(sequencia(comando) + [proc()])
+        r = verificacao.verificar(self.dir, SHA, "make test", executar=executar, executar_como=prefixo)
+        self.assertEqual(r, {"sha": SHA, "codigo": 5, "saida": "saída\n"})
+        self.assertEqual(chamadas[2][0], prefixo + ["bash", "-lc", "make test"])
+        self.assertEqual(vistos["src"], 0o777)
+        self.assertEqual(vistos["home"], 0o777)
+        self.assertEqual(vistos["sub"], 0o777)
+        self.assertEqual(vistos["arq"], 0o666)
+        self.assertEqual(vistos["exe"], 0o777)
+        self.assertEqual(vistos["base"] & 0o011, 0o011)
+        # Depois do comando, devolve a permissão ao despachante e só então apaga.
+        self.assertEqual(len(chamadas), 4)
+        self.assertEqual(chamadas[3][0], prefixo + ["chmod", "-R", "a+rwX", str(vistos["base_path"])])
+        self.assertFalse(vistos["base_path"].exists())
+        # O git nunca usa o prefixo.
+        self.assertEqual(chamadas[0][0][0], "git")
+        self.assertEqual(chamadas[1][0][0], "git")
+
+    def test_executar_como_limpa_mesmo_com_timeout_e_ignora_falha_da_limpeza(self):
+        prefixo = ["sudo", "-n", "-u", "fabrica-verif", "--"]
+        executar, chamadas = exec_falso(
+            sequencia(subprocess.TimeoutExpired(["bash"], 1)) + [subprocess.TimeoutExpired(["chmod"], 60)]
+        )
+        r = verificacao.verificar(self.dir, SHA, "x", timeout_s=1, executar=executar, executar_como=prefixo)
+        self.assertEqual(r["codigo"], 124)
+        self.assertEqual(len(chamadas), 4)
+        self.assertEqual(chamadas[3][0][: len(prefixo)], prefixo)
+
+    def test_executar_como_invalido_nao_executa_nada(self):
+        for ruim in ([], "sudo", ["sudo", ""], ["sudo", 5], ["su\0do"], 5, ()):
+            executar, chamadas = exec_falso([])
+            r = verificacao.verificar(self.dir, SHA, "x", executar=executar, executar_como=ruim)
+            self.assertEqual(r, {"sha": SHA, "codigo": 2, "saida": "executar_como inválido"}, repr(ruim))
+            self.assertEqual(chamadas, [])
+
+    # Resultado, git e cortes
 
     def test_codigo_do_comando_propaga(self):
-        executar, _ = exec_falso([proc(), proc(), proc(3, "falhou\n", "erro\n")])
+        executar, _ = exec_falso(sequencia(proc(3, "falhou\n", "erro\n")))
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(r["codigo"], 3)
         self.assertEqual(r["saida"], "falhou\nerro\n")
 
-    def test_timeout_do_comando_da_124_com_saida_parcial(self):
-        execucao = subprocess.TimeoutExpired(["bash"], 5, output=b"parcial ", stderr=b"e")
-        executar, chamadas = exec_falso([proc(), proc(), execucao])
+    def test_corte_da_saida_nos_ultimos_4000(self):
+        casos = [
+            (proc(0, "x" * 1000 + "y" * 4000), "y" * 4000),
+            (proc(0, "A" * 3000, "B" * 3000), ("A" * 3000 + "B" * 3000)[-4000:]),
+            (proc(0, "z" * 4000), "z" * 4000),
+            (proc(0, "w" + "z" * 4000), "z" * 4000),
+        ]
+        for final, esperado in casos:
+            executar, _ = exec_falso(sequencia(final))
+            self.assertEqual(verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"], esperado)
+
+    def test_saida_none_vira_vazia(self):
+        executar, _ = exec_falso(sequencia(types.SimpleNamespace(returncode=0, stdout=None, stderr=None)))
+        self.assertEqual(verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"], "")
+
+    def test_timeout_do_comando_da_124_com_stdout_e_stderr_parciais(self):
+        execucao = subprocess.TimeoutExpired(["bash"], 5, output=b"parcial-out ", stderr=b"parcial-err")
+        executar, chamadas = exec_falso(sequencia(execucao))
         r = verificacao.verificar(self.dir, SHA, "sleep 99", timeout_s=5, executar=executar)
         self.assertEqual(r["codigo"], 124)
         self.assertEqual(r["sha"], SHA)
-        self.assertIn("parcial", r["saida"])
-        self.assertIn("5", r["saida"])
+        self.assertIn("parcial-out parcial-err", r["saida"])
+        self.assertIn("[tempo esgotado após 5 s]", r["saida"])
         self.assertEqual(len(chamadas), 3)
 
-    def test_timeout_sem_saida_e_com_texto(self):
+    def test_timeout_sem_saida_ou_com_texto(self):
         for out in (None, "texto"):
             execucao = subprocess.TimeoutExpired(["bash"], 5, output=out)
-            executar, _ = exec_falso([proc(), proc(), execucao])
+            executar, _ = exec_falso(sequencia(execucao))
             r = verificacao.verificar(self.dir, SHA, "x", timeout_s=5, executar=executar)
             self.assertEqual(r["codigo"], 124)
             self.assertIsInstance(r["saida"], str)
+            self.assertIn("[tempo esgotado", r["saida"])
 
-    def test_timeout_no_fetch_ou_no_checkout_da_124_e_para(self):
-        for posicao in (0, 1):
-            fila = [proc(), proc()]
-            fila[posicao] = subprocess.TimeoutExpired(["git"], 9)
+    def test_timeout_do_comando_corta_a_saida_em_4000_e_mantem_o_aviso(self):
+        execucao = subprocess.TimeoutExpired(["bash"], 5, output="o" * 9000, stderr="e" * 9000)
+        executar, _ = exec_falso(sequencia(execucao))
+        r = verificacao.verificar(self.dir, SHA, "x", timeout_s=5, executar=executar)
+        self.assertEqual(r["codigo"], 124)
+        self.assertEqual(len(r["saida"]), 4000)
+        self.assertTrue(r["saida"].endswith("[tempo esgotado após 5 s]"))
+        self.assertIn("e" * 100, r["saida"])
+
+    def test_timeout_no_fetch_ou_no_archive_da_124_para_e_corta_em_4000(self):
+        for posicao, nome in ((0, "fetch"), (1, "archive")):
+            fila = [proc(), tar_padrao()]
+            fila[posicao] = subprocess.TimeoutExpired(["git"], 9, output=b"o" * 9000, stderr=b"e" * 9000)
             executar, chamadas = exec_falso(fila)
             r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
-            self.assertEqual(r["codigo"], 124, posicao)
+            self.assertEqual(r["codigo"], 124, nome)
             self.assertEqual(len(chamadas), posicao + 1)
-            self.assertIn("git", r["saida"])
+            self.assertEqual(len(r["saida"]), 4000)
+            self.assertTrue(r["saida"].endswith("e" * 100))
 
-    def test_corte_da_saida_nos_ultimos_4000(self):
-        executar, _ = exec_falso([proc(), proc(), proc(0, "x" * 1000 + "y" * 4000)])
-        self.assertEqual(verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"], "y" * 4000)
-        executar, _ = exec_falso([proc(), proc(), proc(0, "A" * 3000, "B" * 3000)])
-        self.assertEqual(
-            verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"], ("A" * 3000 + "B" * 3000)[-4000:]
-        )
-        executar, _ = exec_falso([proc(), proc(), proc(0, "z" * 4000)])
-        self.assertEqual(len(verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"]), 4000)
-        executar, _ = exec_falso([proc(), proc(), proc(0, "w" + "z" * 4000)])
-        self.assertEqual(verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"], "z" * 4000)
-
-    def test_saida_none_vira_vazia(self):
-        executar, _ = exec_falso([proc(), proc(), types.SimpleNamespace(returncode=0, stdout=None, stderr=None)])
-        self.assertEqual(verificacao.verificar(self.dir, SHA, "c", executar=executar)["saida"], "")
+    def test_timeout_curto_do_git_mostra_o_nome_do_passo(self):
+        for posicao, nome in ((0, "fetch"), (1, "archive")):
+            fila = [proc(), tar_padrao()]
+            fila[posicao] = subprocess.TimeoutExpired(["git"], 9)
+            executar, _ = exec_falso(fila)
+            r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+            self.assertIn("git " + nome, r["saida"])
 
     def test_falha_no_fetch_devolve_codigo_e_saida_do_git_sem_seguir(self):
         executar, chamadas = exec_falso([proc(128, "", "fatal: sem remoto\n")])
@@ -1122,8 +1371,9 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(r, {"sha": SHA, "codigo": 128, "saida": "fatal: sem remoto\n"})
         self.assertEqual(len(chamadas), 1)
 
-    def test_falha_no_checkout_devolve_codigo_e_saida_do_git_sem_rodar_o_comando(self):
-        executar, chamadas = exec_falso([proc(), proc(1, "", "fatal: sha inexistente\n")])
+    def test_falha_no_archive_devolve_codigo_e_saida_do_git_sem_rodar_o_comando(self):
+        falha = types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"fatal: sha inexistente\n")
+        executar, chamadas = exec_falso([proc(), falha])
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(r, {"sha": SHA, "codigo": 1, "saida": "fatal: sha inexistente\n"})
         self.assertEqual(len(chamadas), 2)
@@ -1132,25 +1382,28 @@ class TestesVerificarComFalso(unittest.TestCase):
         executar, _ = exec_falso([proc(2, "", "e" * 9000)])
         self.assertEqual(len(verificacao.verificar(self.dir, SHA, "x", executar=executar)["saida"]), 4000)
 
-    def test_sha_invalido_nao_executa_nada(self):
-        ruins = ["", "abc12", "abcdef", "g" * 40, "a" * 41, "A" * 40, "--upload-pack=x", "-f" + "a" * 8, SHA + "\n", "a b", None, 5]
+    def test_archive_com_saida_nao_binaria_e_recusado(self):
+        executar, chamadas = exec_falso([proc(), proc(0, "texto")])
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 2)
+        self.assertEqual(len(chamadas), 2)
+
+    # Entradas inválidas
+
+    def test_sha_precisa_ter_exatamente_40_hex_minusculos(self):
+        ruins = ["", "abc12", "abc1234", "a" * 7, "a" * 39, "g" * 40, "a" * 41, "A" * 40, "--upload-pack=x"]
+        ruins += ["-f" + "a" * 38, SHA + "\n", "a b", "main", None, 5]
         for sha in ruins:
             executar, chamadas = exec_falso([])
             r = verificacao.verificar(self.dir, sha, "x", executar=executar)
             self.assertEqual(r, {"sha": sha, "codigo": 2, "saida": "sha inválido"}, repr(sha))
             self.assertEqual(chamadas, [])
 
-    def test_sha_curto_valido_e_aceito(self):
-        executar, chamadas = exec_falso([proc(), proc(), proc()])
-        r = verificacao.verificar(self.dir, "abc1234", "x", executar=executar)
-        self.assertEqual(r["codigo"], 0)
-        self.assertEqual(chamadas[1][0][-2], "abc1234")
-
     def test_comando_invalido_nao_executa_nada(self):
-        for comando in ("", None, 5):
+        for comando in ("", "   \n", None, 5, "echo a\0b", "\0"):
             executar, chamadas = exec_falso([])
             r = verificacao.verificar(self.dir, SHA, comando, executar=executar)
-            self.assertEqual(r["codigo"], 2)
+            self.assertEqual(r, {"sha": SHA, "codigo": 2, "saida": "comando inválido"}, repr(comando))
             self.assertEqual(chamadas, [])
 
     def test_programa_inexistente_da_127_sem_excecao(self):
@@ -1158,6 +1411,134 @@ class TestesVerificarComFalso(unittest.TestCase):
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(r["codigo"], 127)
         self.assertIn("FileNotFoundError", r["saida"])
+        self.assertIn("git", r["saida"])
+
+    def test_bash_inexistente_da_127_e_limpa(self):
+        cwds = []
+
+        def comando(argv, **kwargs):
+            cwds.append(kwargs["cwd"])
+            raise FileNotFoundError("bash")
+
+        executar, _ = exec_falso(sequencia(comando))
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 127)
+        self.assertIn("bash", r["saida"])
+        self.assertFalse(pathlib.Path(cwds[0]).exists())
+
+    # Extração segura do tar
+
+    def rodar_com_tar(self, *membros):
+        chamado = []
+
+        def comando(argv, **kwargs):
+            chamado.append(kwargs["cwd"])
+            return proc()
+
+        executar, chamadas = exec_falso([proc(), archive(*membros), comando])
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        return r, chamado, chamadas
+
+    def test_tars_inseguros_sao_recusados_sem_rodar_o_comando_e_sem_escrever_fora(self):
+        casos = {
+            "absoluto": [membro("/tmp/forja-fora.txt", conteudo=b"x")],
+            "ponto-ponto": [membro("../fora.txt", conteudo=b"x")],
+            "ponto-ponto-no-meio": [membro("a/../../fora.txt", conteudo=b"x")],
+            "dir-ponto-ponto": [membro("a/..", "dir")],
+            "link-absoluto": [membro("l", "link", alvo="/etc/passwd")],
+            "link-para-fora": [membro("l", "link", alvo="../fora")],
+            "link-para-fora-fundo": [membro("a", "dir"), membro("a/l", "link", alvo="../../fora")],
+            "link-com-ponto-ponto-no-meio": [membro("l", "link", alvo="a/../../fora")],
+            "link-vazio": [membro("l", "link", alvo="")],
+            "hardlink": [membro("a.txt", conteudo=b"a"), membro("h", "hard", alvo="a.txt")],
+            "dispositivo": [membro("dev", "dev")],
+            "escrita-atraves-de-link": [membro("l", "link", alvo=".."), membro("l/fora.txt", conteudo=b"x")],
+            "arquivo-sobre-diretorio": [membro("d", "dir"), membro("d", conteudo=b"x")],
+            "diretorio-sobre-link": [membro("l", "link", alvo="."), membro("l", "dir")],
+        }
+        for nome, membros in casos.items():
+            r, chamado, chamadas = self.rodar_com_tar(*membros)
+            self.assertEqual(r["codigo"], 2, nome)
+            self.assertTrue(r["saida"].startswith("export inválido"), (nome, r["saida"]))
+            self.assertEqual(chamado, [], nome)
+            self.assertEqual(len(chamadas), 2, nome)
+            self.assertFalse(pathlib.Path("/tmp/forja-fora.txt").exists(), nome)
+        self.assertEqual(list(self.dir.iterdir()), [])
+
+    def test_escrita_atraves_de_link_interno_fica_dentro(self):
+        vistos = []
+
+        def comando(argv, **kwargs):
+            cwd = pathlib.Path(kwargs["cwd"])
+            vistos.append(sorted(str(p.relative_to(cwd)) for p in cwd.rglob("*")))
+            return proc()
+
+        executar, _ = exec_falso(
+            [
+                proc(),
+                archive(membro("d", "dir"), membro("l", "link", alvo="d"), membro("l/x.txt", conteudo=b"x")),
+                comando,
+            ]
+        )
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 0)
+        self.assertEqual(vistos[0], ["d", "d/x.txt", "l"])
+
+    def test_links_relativos_validos_dentro_da_raiz_sao_aceitos(self):
+        vistos = []
+
+        def comando(argv, **kwargs):
+            cwd = pathlib.Path(kwargs["cwd"])
+            vistos.append((os.readlink(cwd / "a" / "b" / "l"), (cwd / "a" / "b" / "l").read_text()))
+            return proc()
+
+        executar, _ = exec_falso(
+            [
+                proc(),
+                archive(
+                    membro("a", "dir"),
+                    membro("a/b", "dir"),
+                    membro("alvo.txt", conteudo=b"dentro"),
+                    membro("a/b/l", "link", alvo="../../alvo.txt"),
+                ),
+                comando,
+            ]
+        )
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 0)
+        self.assertEqual(vistos, [("../../alvo.txt", "dentro")])
+
+    def test_link_que_sobe_demais_mesmo_so_com_ponto_ponto_no_inicio_e_recusado(self):
+        r, chamado, _ = self.rodar_com_tar(membro("a", "dir"), membro("a/l", "link", alvo="../../x"))
+        self.assertEqual(r["codigo"], 2)
+        self.assertEqual(chamado, [])
+
+    def test_tar_corrompido_e_recusado(self):
+        corrompido = types.SimpleNamespace(returncode=0, stdout=b"isto nao e um tar" * 100, stderr=b"")
+        chamado = []
+        executar, _ = exec_falso([proc(), corrompido, lambda argv, **kw: chamado.append(1)])
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 2)
+        self.assertTrue(r["saida"].startswith("export inválido"))
+        self.assertEqual(chamado, [])
+
+    def test_tar_vazio_e_aceito(self):
+        r, chamado, _ = self.rodar_com_tar()
+        self.assertEqual(r["codigo"], 0)
+        self.assertEqual(len(chamado), 1)
+
+    def test_entrada_ponto_da_raiz_e_ignorada_e_barra_dupla_normalizada(self):
+        vistos = []
+
+        def comando(argv, **kwargs):
+            vistos.append(sorted(os.listdir(kwargs["cwd"])))
+            return proc()
+
+        executar, _ = exec_falso(
+            [proc(), archive(membro("./", "dir"), membro("./a.txt", conteudo=b"a"), membro("b//c.txt", conteudo=b"b")), comando]
+        )
+        verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(vistos, [["a.txt", "b"]])
 
 
 def git(cwd, *args, **kwargs):
@@ -1165,6 +1546,21 @@ def git(cwd, *args, **kwargs):
     return subprocess.run(
         base + list(args), cwd=cwd, check=True, capture_output=True, text=True, **kwargs
     ).stdout.strip()
+
+
+def processo_vivo(pid):
+    """True se o processo existe e não é zumbi."""
+    estado = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(estado) and not estado.startswith("Z")
+
+
+def esperar_morte(pid, limite_s=5.0):
+    fim = time.monotonic() + limite_s
+    while time.monotonic() < fim:
+        if not processo_vivo(pid):
+            return True
+        time.sleep(0.05)
+    return not processo_vivo(pid)
 
 
 class TestesVerificarComGitReal(unittest.TestCase):
@@ -1179,21 +1575,19 @@ class TestesVerificarComGitReal(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.base = pathlib.Path(base.name)
+        self.base = pathlib.Path(base.name).resolve()
         self.origem = self.base / "origem"
         self.origem.mkdir()
         git(self.origem, "init", "--quiet", "-b", "main")
-        (self.origem / "a.txt").write_text("a")
-        git(self.origem, "add", "a.txt")
-        git(self.origem, "commit", "--quiet", "-m", "um")
-        self.sha1 = git(self.origem, "rev-parse", "HEAD")
+        self.sha1 = self.commitar({"a.txt": "a", "teste.sh": "exit 0\n"}, "um")
         self.clone = self.base / "clone"
         git(self.base, "clone", "--quiet", str(self.origem), str(self.clone))
 
-    def novo_commit_na_origem(self):
-        (self.origem / "b.txt").write_text("b")
-        git(self.origem, "add", "b.txt")
-        git(self.origem, "commit", "--quiet", "-m", "dois")
+    def commitar(self, arquivos, mensagem):
+        for nome, conteudo in arquivos.items():
+            (self.origem / nome).write_text(conteudo)
+            git(self.origem, "add", nome)
+        git(self.origem, "commit", "--quiet", "-m", mensagem)
         return git(self.origem, "rev-parse", "HEAD")
 
     def test_sucesso_com_arquivo_presente(self):
@@ -1206,20 +1600,107 @@ class TestesVerificarComGitReal(unittest.TestCase):
         self.assertEqual(r["codigo"], 7)
         self.assertIn("falhei", r["saida"])
 
-    def test_fetch_traz_o_commit_novo_e_o_checkout_deixa_head_destacado(self):
-        sha2 = self.novo_commit_na_origem()
+    def test_comando_roda_fora_do_repositorio_sem_git_e_o_diretorio_some(self):
+        r = verificacao.verificar(self.clone, self.sha1, "test ! -e .git && pwd -P")
+        self.assertEqual(r["codigo"], 0, r)
+        cwd = pathlib.Path(r["saida"].strip())
+        self.assertNotEqual(cwd, self.clone)
+        self.assertNotIn(self.clone, cwd.parents)
+        self.assertFalse(cwd.exists())
+        self.assertFalse(cwd.parent.exists())
+
+    def test_o_repositorio_nao_e_tocado_pela_verificacao(self):
+        sha2 = self.commitar({"b.txt": "b"}, "dois")
+        antes = git(self.clone, "rev-parse", "HEAD")
+        r = verificacao.verificar(self.clone, sha2, "test -f b.txt && touch novo.txt")
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertEqual(git(self.clone, "rev-parse", "HEAD"), antes)
+        self.assertEqual(git(self.clone, "status", "--porcelain"), "")
+        self.assertFalse((self.clone / "novo.txt").exists())
+        self.assertFalse((self.clone / "b.txt").exists())
+
+    def test_fetch_traz_o_commit_novo_e_a_exportacao_e_a_do_sha_pedido(self):
+        sha2 = self.commitar({"b.txt": "b"}, "dois")
         r = verificacao.verificar(self.clone, sha2, "test -f b.txt")
         self.assertEqual(r["codigo"], 0, r)
-        self.assertEqual(git(self.clone, "rev-parse", "HEAD"), sha2)
-        self.assertEqual(git(self.clone, "rev-parse", "--abbrev-ref", "HEAD"), "HEAD")
-        r = verificacao.verificar(self.clone, self.sha1, "test ! -f b.txt")
+        r = verificacao.verificar(self.clone, self.sha1, "test ! -f b.txt && test -f a.txt")
         self.assertEqual(r["codigo"], 0, r)
+
+    def test_modificacao_e_arquivo_novo_de_uma_verificacao_nao_passam_para_a_proxima(self):
+        sha_b = self.commitar({"teste.sh": "exit 1\n"}, "teste quebrado")
+        r = verificacao.verificar(
+            self.clone, self.sha1, "echo 'exit 0' > teste.sh; echo x > sujeira.txt; echo x > a.txt; bash teste.sh"
+        )
+        self.assertEqual(r["codigo"], 0, r)
+        r = verificacao.verificar(self.clone, sha_b, "test ! -e sujeira.txt && bash teste.sh")
+        self.assertEqual(r["codigo"], 1, r)
+        r = verificacao.verificar(self.clone, sha_b, "bash teste.sh")
+        self.assertEqual(r["codigo"], 1, r)
+        r = verificacao.verificar(self.clone, self.sha1, "test \"$(cat a.txt)\" = a && test ! -e sujeira.txt")
+        self.assertEqual(r["codigo"], 0, r)
+
+    def test_commit_ja_exportado_antes_continua_falhando_depois_de_adulterado(self):
+        sha_b = self.commitar({"teste.sh": "exit 1\n"}, "teste quebrado")
+        verificacao.verificar(self.clone, sha_b, "echo 'exit 0' > teste.sh")
+        self.assertEqual(verificacao.verificar(self.clone, sha_b, "bash teste.sh")["codigo"], 1)
+
+    def test_comando_nao_consegue_plantar_hooks_em_repo_dir(self):
+        hooks = self.clone / ".git" / "hooks"
+        antes = sorted(os.listdir(hooks))
+        r = verificacao.verificar(
+            self.clone,
+            self.sha1,
+            "test ! -e .git; mkdir -p .git/hooks && printf '#!/bin/sh\\n' > .git/hooks/post-checkout; true",
+        )
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertEqual(sorted(os.listdir(hooks)), antes)
+
+    def plantar_hook(self, repo, nome, marcador):
+        hook = repo / ".git" / "hooks" / nome
+        hook.write_text("#!/bin/sh\necho executou >> '%s'\n" % marcador)
+        hook.chmod(0o755)
+
+    def test_hooks_plantados_a_mao_nao_rodam_durante_verificar(self):
+        sha2 = self.commitar({"b.txt": "b"}, "dois")
+        marcador = self.base / "marcador.txt"
+        controle = self.base / "controle"
+        shutil.copytree(self.clone, controle, symlinks=True)
+        for nome in ("post-checkout", "reference-transaction", "post-merge", "pre-auto-gc"):
+            self.plantar_hook(self.clone, nome, marcador)
+            self.plantar_hook(controle, nome, self.base / "marcador-controle.txt")
+        # Controle positivo: um fetch comum no mesmo cenário dispara o hook de transação de refs.
+        git(controle, "fetch", "--quiet", "origin")
+        if not (self.base / "marcador-controle.txt").exists():
+            self.skipTest("este git não dispara hooks no fetch; o teste não provaria nada")
+        r = verificacao.verificar(self.clone, sha2, "test -f b.txt")
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertFalse(marcador.exists(), marcador.read_text() if marcador.exists() else "")
+
+    def test_fsmonitor_plantado_no_config_nao_roda(self):
+        sha2 = self.commitar({"b.txt": "b"}, "dois")
+        marcador = self.base / "fsmonitor.txt"
+        script = self.base / "fsm.sh"
+        script.write_text("#!/bin/sh\necho executou >> '%s'\n" % marcador)
+        script.chmod(0o755)
+        git(self.clone, "config", "core.fsmonitor", str(script))
+        r = verificacao.verificar(self.clone, sha2, "true")
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertFalse(marcador.exists())
 
     def test_sha_inexistente_devolve_codigo_do_git(self):
         r = verificacao.verificar(self.clone, "d" * 40, "true")
         self.assertNotEqual(r["codigo"], 0)
         self.assertNotEqual(r["codigo"], 124)
         self.assertTrue(r["saida"])
+
+    def test_ref_com_nome_de_sha_curto_nao_desvia_a_verificacao(self):
+        sha2 = self.commitar({"b.txt": "b"}, "dois")
+        git(self.clone, "fetch", "--quiet", "origin")
+        git(self.clone, "branch", self.sha1[:7], sha2)
+        r = verificacao.verificar(self.clone, self.sha1[:7], "true")
+        self.assertEqual(r, {"sha": self.sha1[:7], "codigo": 2, "saida": "sha inválido"})
+        r = verificacao.verificar(self.clone, self.sha1, "test ! -f b.txt")
+        self.assertEqual(r["codigo"], 0, r)
 
     def test_sem_remoto_origin_o_fetch_falha_com_codigo_do_git(self):
         sem_remoto = self.base / "sem"
@@ -1229,9 +1710,93 @@ class TestesVerificarComGitReal(unittest.TestCase):
         self.assertNotEqual(r["codigo"], 0)
         self.assertTrue(r["saida"])
 
+    def test_arquivos_executaveis_e_links_do_commit_sao_preservados(self):
+        (self.origem / "run.sh").write_text("#!/bin/sh\necho oi\n")
+        (self.origem / "run.sh").chmod(0o755)
+        os.symlink("a.txt", self.origem / "lnk")
+        git(self.origem, "add", "run.sh", "lnk")
+        git(self.origem, "commit", "--quiet", "-m", "exec e link")
+        sha2 = git(self.origem, "rev-parse", "HEAD")
+        r = verificacao.verificar(self.clone, sha2, 'test -x run.sh && test ! -x a.txt && test -L lnk && test "$(cat lnk)" = a && ./run.sh')
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertIn("oi", r["saida"])
+
     def test_timeout_real_da_124(self):
         r = verificacao.verificar(self.clone, self.sha1, "sleep 30", timeout_s=1)
         self.assertEqual(r["codigo"], 124)
+
+    # Contenção de processos
+
+    def pid_do_marcador(self, marcador):
+        return int(pathlib.Path(marcador).read_text().strip())
+
+    def test_processo_de_segundo_plano_morre_no_retorno_normal(self):
+        marcador = self.base / "pid1"
+        inicio = time.monotonic()
+        r = verificacao.verificar(self.clone, self.sha1, "sleep 30 & echo $! > '%s'; echo pronto" % marcador)
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertIn("pronto", r["saida"])
+        self.assertLess(time.monotonic() - inicio, 15)
+        pid = self.pid_do_marcador(marcador)
+        self.assertTrue(esperar_morte(pid), "o processo de segundo plano sobreviveu")
+
+    def test_processo_de_segundo_plano_que_ignora_sigterm_tambem_morre(self):
+        marcador = self.base / "pid2"
+        r = verificacao.verificar(
+            self.clone, self.sha1, "trap '' TERM; sleep 30 & echo $! > '%s'; exit 0" % marcador
+        )
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertTrue(esperar_morte(self.pid_do_marcador(marcador)))
+
+    def test_netos_morrem_no_timeout(self):
+        marcador = self.base / "pid3"
+        inicio = time.monotonic()
+        r = verificacao.verificar(
+            self.clone, self.sha1, "(sleep 30 & echo $! > '%s'; wait) & sleep 30" % marcador, timeout_s=1
+        )
+        self.assertEqual(r["codigo"], 124)
+        self.assertLess(time.monotonic() - inicio, 15)
+        self.assertTrue(esperar_morte(self.pid_do_marcador(marcador)))
+
+    def test_processo_tardio_nao_escreve_depois_do_retorno(self):
+        tardio = self.base / "tardio.txt"
+        r = verificacao.verificar(self.clone, self.sha1, "(sleep 2; echo x > '%s') >/dev/null 2>&1 & exit 0" % tardio)
+        self.assertEqual(r["codigo"], 0, r)
+        time.sleep(3)
+        self.assertFalse(tardio.exists())
+
+    def test_saida_de_segundo_plano_nao_segura_a_leitura(self):
+        inicio = time.monotonic()
+        r = verificacao.verificar(self.clone, self.sha1, "sleep 30 & echo ok")
+        self.assertLess(time.monotonic() - inicio, 15)
+        self.assertEqual(r["saida"].strip(), "ok")
+
+    def test_saida_enorme_e_cortada_em_4000_e_pega_a_cauda(self):
+        r = verificacao.verificar(
+            self.clone, self.sha1, "head -c 300000 /dev/zero | tr '\\0' x; echo; echo FIM"
+        )
+        self.assertEqual(r["codigo"], 0)
+        self.assertEqual(len(r["saida"]), 4000)
+        self.assertTrue(r["saida"].endswith("xxx\nFIM\n"))
+
+    def test_stdout_e_stderr_aparecem_na_saida(self):
+        r = verificacao.verificar(self.clone, self.sha1, "echo para-stdout; echo para-stderr >&2")
+        self.assertIn("para-stdout", r["saida"])
+        self.assertIn("para-stderr", r["saida"])
+
+    def test_comando_sem_stdin_nao_trava(self):
+        r = verificacao.verificar(self.clone, self.sha1, "cat; echo fim", timeout_s=10)
+        self.assertEqual(r["codigo"], 0, r)
+
+    def test_executar_como_com_prefixo_real_inofensivo(self):
+        r = verificacao.verificar(
+            self.clone,
+            self.sha1,
+            'test "$(stat -f %Lp a.txt 2>/dev/null || stat -c %a a.txt)" = 666 && echo ok',
+            executar_como=["env"],
+        )
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertIn("ok", r["saida"])
 
     def test_comando_nao_enxerga_segredos_do_ambiente_do_pai(self):
         segredos = {

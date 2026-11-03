@@ -24,8 +24,9 @@ _NOME = r"[A-Za-z0-9_.-]+"
 _URL = re.compile(r"https://github\.com/(%s)/(%s)/(pull|issues)/([0-9]+)" % (_NOME, _NOME))
 _REPO = re.compile(r"(%s)/(%s)" % (_NOME, _NOME))
 _SHA = re.compile(r"[0-9a-fA-F]{7,40}")
-_CONCLUSOES_VERMELHAS = frozenset({"failure", "cancelled", "timed_out", "action_required"})
-_ESTADOS_DE_STATUS = frozenset({"success", "pending", "failure", "error"})
+_SHA_COMPLETO = re.compile(r"[0-9a-f]{40}")
+# Só estas conclusões contam como sucesso; qualquer outra (inclusive vazia ou nova) é vermelho.
+_CONCLUSOES_VERDES = frozenset({"success", "neutral", "skipped"})
 
 
 def _validar_token(token) -> str:
@@ -64,6 +65,13 @@ def _analisar_url(url, tipo: str) -> tuple[str, str, int]:
 
 def _validar_sha(sha) -> str:
     if not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
+        raise ValueError("sha inválido")
+    return sha
+
+
+def _validar_sha_completo(sha) -> str:
+    """40 hex minúsculos: um sha curto também seria lido como nome de branch ou tag."""
+    if not isinstance(sha, str) or _SHA_COMPLETO.fullmatch(sha) is None:
         raise ValueError("sha inválido")
     return sha
 
@@ -207,10 +215,7 @@ class ForjaGitHub:
                 raise RuntimeError("GET %s: resposta sem o campo 'check_runs' (lista de objetos)" % caminho)
             for item in itens:
                 estado = self._texto(item, "check_runs[].", "status", "GET", caminho)
-                conclusao = item.get("conclusion")
-                if estado == "completed" and not isinstance(conclusao, str):
-                    raise RuntimeError("GET %s: check_runs[].conclusion ausente num check completo" % caminho)
-                runs.append({"status": estado, "conclusion": conclusao})
+                runs.append({"status": estado, "conclusion": item.get("conclusion")})
             if len(runs) >= total:
                 return runs
             if not itens:
@@ -219,7 +224,7 @@ class ForjaGitHub:
 
     def ci(self, repo: str, sha: str) -> str:
         dono, nome = _analisar_repo(repo)
-        _validar_sha(sha)
+        _validar_sha_completo(sha)
         base = "/repos/%s/%s/commits/%s" % (dono, nome, sha)
         runs = self._check_runs(base)
         caminho = base + "/status"
@@ -231,13 +236,13 @@ class ForjaGitHub:
         if total > 0:
             # Sem statuses a API devolve "pending"; isso significa "nenhum status", não "pendente".
             estado = dados.get("state")
-            if estado not in _ESTADOS_DE_STATUS:
-                raise RuntimeError("GET %s: campo 'state' desconhecido" % caminho)
-        if not runs and estado is None:
+        if not runs and total == 0:
             return "ausente"
-        if any(r["status"] != "completed" for r in runs) or estado == "pending":
+        if any(r["status"] != "completed" for r in runs) or (total > 0 and estado == "pending"):
             return "pendente"
-        if any(r["conclusion"] in _CONCLUSOES_VERMELHAS for r in runs) or estado in ("failure", "error"):
+        if any(not isinstance(r["conclusion"], str) or r["conclusion"] not in _CONCLUSOES_VERDES for r in runs):
+            return "vermelho"
+        if total > 0 and estado != "success":  # failure, error, ausente ou desconhecido
             return "vermelho"
         return "verde"
 
@@ -346,7 +351,7 @@ class ForjaFalsa:
 
     def definir_ci(self, repo: str, sha: str, resultado: str) -> None:
         _analisar_repo(repo)
-        _validar_sha(sha)
+        _validar_sha_completo(sha)
         if resultado not in RESULTADOS_CI:
             raise ValueError("resultado de CI desconhecido: %r" % (resultado,))
         self._ci[(repo, sha)] = resultado
@@ -372,7 +377,7 @@ class ForjaFalsa:
     def ci(self, repo: str, sha: str) -> str:
         self._registrar("ci", repo=repo, sha=sha)
         _analisar_repo(repo)
-        _validar_sha(sha)
+        _validar_sha_completo(sha)
         if (repo, sha) not in self._ci:
             raise KeyError("CI desconhecido: %r" % ((repo, sha),))
         return self._ci[(repo, sha)]
