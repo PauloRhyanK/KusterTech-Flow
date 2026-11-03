@@ -58,12 +58,17 @@ def _descrever_achados(veredito):
     return "; ".join(itens)
 
 
-def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos, ci_ausente_recente=False) -> dict:
+def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos, ci_ausente_recente=False, ci_opcional=False) -> dict:
     """Decide `mergear`, `aguardar`, `corrigir` ou `humano`; a ordem das regras é o contrato.
 
     F1: com `ci_ausente_recente` (head visto há menos de 10 min), CI "ausente" é tratado como pendente: o GitHub cria
     os check runs alguns segundos depois do push.
+
+    `ci_opcional` (`ciObrigatorioNasSeeds: false` na config): repositório sem CI conta como verde. CI vermelho ou
+    pendente continua valendo, e os outros gates não mudam.
     """
+    if ci == "ausente" and ci_opcional is True:
+        ci = "verde"
     faltando = []
     if not _veredito_valido(veredito, head_sha):
         faltando.append("revisao")

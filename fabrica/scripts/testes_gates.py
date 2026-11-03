@@ -67,6 +67,23 @@ class AvaliarMergeTest(unittest.TestCase):
         self.assertEqual(r["decisao"], "humano")
         self.assertTrue(any("sem CI" in m for m in r["motivos"]))
 
+    def test_ci_opcional_trata_ausente_como_verde_e_mergeia(self):
+        self.assertEqual(avaliar(ci="ausente", ci_opcional=True)["decisao"], "mergear")
+
+    def test_ci_opcional_nao_afrouxa_os_outros_gates(self):
+        self.assertEqual(avaliar(ci="ausente", ci_opcional=True, veredito=None)["decisao"], "aguardar")
+        self.assertEqual(avaliar(ci="ausente", ci_opcional=True, verificacao=None)["decisao"], "aguardar")
+        self.assertEqual(avaliar(ci="ausente", ci_opcional=True, verificacao=verificacao_ok(codigo=1))["decisao"], "corrigir")
+        self.assertEqual(avaliar(ci="ausente", ci_opcional=True, arquivos=["db/migrations/1.sql"])["decisao"], "humano")
+
+    def test_ci_opcional_respeita_ci_que_existe(self):
+        self.assertEqual(avaliar(ci="vermelho", ci_opcional=True)["decisao"], "corrigir")
+        self.assertEqual(avaliar(ci="pendente", ci_opcional=True)["decisao"], "aguardar")
+
+    def test_ci_opcional_so_vale_com_true(self):
+        for valor in (False, None, 1, "true"):
+            self.assertEqual(avaliar(ci="ausente", ci_opcional=valor)["decisao"], "humano", repr(valor))
+
     def test_sem_ci_prevalece_sobre_faltando_e_vermelho(self):
         r = avaliar(ci="ausente", veredito=None, verificacao=verificacao_ok(codigo=1))
         self.assertEqual(r["decisao"], "humano")

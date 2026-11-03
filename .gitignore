@@ -50,3 +50,7 @@ next-env.d.ts
 # fábrica de agentes (Python) e workspace local do Superpowers
 __pycache__/
 .superpowers/
+
+# deixados no workspace pelos runs da Fábrica
+.claude/.credentials.json
+.pnpm-store/

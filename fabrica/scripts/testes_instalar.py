@@ -130,6 +130,7 @@ class Base(unittest.TestCase):
                 ".fabrica/globs.py",
                 ".fabrica/config.json",
                 ".warren/config.yaml",
+                ".gitignore",
                 ".claude/settings.json",
                 "AGENTS.md",
             ]
@@ -341,6 +342,34 @@ class TestesInstalacaoLimpa(Base):
         for p in self.arquivos_do_destino():
             self.assertNotIn(".tmp", p)
             self.assertNotIn("~", p)
+
+
+class TestesGitignore(Base):
+    def gitignore(self):
+        return (self.destino / ".gitignore").read_text(encoding="utf-8")
+
+    def test_acrescenta_sem_apagar_o_que_existe(self):
+        (self.destino / ".gitignore").write_text("node_modules/", encoding="utf-8")
+        self.instalar()
+        self.assertEqual(self.gitignore(), "node_modules/\n.claude/.credentials.json\n.pnpm-store/\n")
+
+    def test_e_idempotente(self):
+        self.instalar()
+        primeira = self.gitignore()
+        resultado = self.instalar()
+        self.assertEqual(self.gitignore(), primeira)
+        self.assertNotIn(".gitignore", resultado["atualizados"])
+
+    def test_so_acrescenta_o_que_falta(self):
+        (self.destino / ".gitignore").write_text(".pnpm-store/\n", encoding="utf-8")
+        self.instalar()
+        self.assertEqual(self.gitignore(), ".pnpm-store/\n.claude/.credentials.json\n")
+
+    def test_nao_utf8_avisa_e_nao_altera(self):
+        (self.destino / ".gitignore").write_bytes(b"\xff\xfe")
+        resultado = self.instalar()
+        self.assertEqual((self.destino / ".gitignore").read_bytes(), b"\xff\xfe")
+        self.assertTrue(any(".gitignore" in a for a in resultado["avisos"]))
 
 
 class TestesAtualizacao(Base):

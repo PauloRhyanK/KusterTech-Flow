@@ -108,6 +108,9 @@ PROTEGIDOS_FIXOS = (".github/**", ".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
 ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
+# O Warren reapa como falha o run que não commitou num branch existente; o revisor não commita por desenho,
+# então nesses dois motivos vale o veredito dele. Sem veredito válido, continua sendo falha.
+MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
 
 MAX_SEM_RESULTADO = 2
 MAX_FALHAS_DE_LEITURA = 5
@@ -531,6 +534,8 @@ def _validar_config(config) -> dict:
         raise ConfigInvalida("limiteParalelo")
     if not isinstance(config.setdefault("ciObrigatorioNoPlano", False), bool):
         raise ConfigInvalida("ciObrigatorioNoPlano")
+    if not isinstance(config.setdefault("ciObrigatorioNasSeeds", True), bool):
+        raise ConfigInvalida("ciObrigatorioNasSeeds")
     try:
         verificacao._validar_conteiner(config.get("verificacao"))
     except verificacao._ConfigInvalida as erro:
@@ -1353,15 +1358,19 @@ class Despachante:
                 if texto is None:
                     continue  # tenta de novo no próximo ciclo, sem gastar tentativa
                 veredito = None
-                if revisao and run["estado"] == "succeeded":
+                estado_run, motivo_falha = run["estado"], run.get("motivoFalha")
+                sem_commit = revisao and estado_run == "failed" and motivo_falha in MOTIVOS_SEM_COMMIT
+                if revisao and (estado_run == "succeeded" or sem_commit):
                     veredito = _veredito_limpo(prompts.extrair_veredito(texto))
-                cota = prompts.eh_falha_de_cota(run.get("motivoFalha"), texto)
+                if sem_commit and veredito is not None:
+                    estado_run, motivo_falha = "succeeded", None
+                cota = prompts.eh_falha_de_cota(motivo_falha, texto)
                 self._mudar(
                     est.registrar_fim_de_run(
                         self.estado,
                         run_id,
-                        estado_run=run["estado"],
-                        motivo_falha=run.get("motivoFalha"),
+                        estado_run=estado_run,
+                        motivo_falha=motivo_falha,
                         veredito=veredito,
                         cota=cota,
                     )
@@ -2794,7 +2803,13 @@ class Despachante:
         # I3: com a substituição ainda pendente, a tentativa antiga não recebe gate nem retomar
         pendentes = {a["raia"] for a in self._acoes_de_substituicao()}
         seeds = _dict(self.estado.get("seeds"))
-        acoes = est.proximas_acoes(self.estado, self._plano_despachavel(), self._protegidos(), agora=self._agora())
+        acoes = est.proximas_acoes(
+            self.estado,
+            self._plano_despachavel(),
+            self._protegidos(),
+            agora=self._agora(),
+            ci_opcional=self.config["ciObrigatorioNasSeeds"] is False,
+        )
         incertas = self._chaves_incertas()
         orquestrador_incerto = self._orquestrador_incerto()
         acoes = [
