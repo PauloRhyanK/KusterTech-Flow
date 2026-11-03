@@ -15,6 +15,7 @@ PADRAO = {
     "oomEm": None,
     "reservas": {},
     "orquestrador": {},
+    "esperando": {},
 }
 
 
@@ -65,6 +66,10 @@ class TestesLeitura(Base):
             {"reservas": {"p": "raia"}},
             {"reservas": {"p": [1]}},
             {"orquestrador": {"r": 1}},
+            {"esperando": []},
+            {"esperando": {"r": "A"}},
+            {"esperando": {"r": [1]}},
+            {"esperando": {"Dono/Repo": ["A"], "dono/repo": ["B"]}},
         ):
             with self.subTest(ruim=ruim):
                 self.caminho.write_text(json.dumps(ruim), encoding="utf-8")
@@ -303,6 +308,74 @@ class TestesOrquestrador(Base):
     def test_soltar_sem_trava_nao_falha(self):
         cap.soltar_orquestrador(self.caminho, "dono/repo", "A")
         self.assertEqual(cap.ler(self.caminho)["orquestrador"], {})
+
+
+class TestesEsperaDoOrquestrador(Base):
+    def espera(self, repo="dono/repo"):
+        return cap.ler(self.caminho)["esperando"].get(repo)
+
+    def test_fifo_de_tres_planos(self):
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))  # entra uma vez só
+        self.assertEqual(self.espera(), ["B", "C"])
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertEqual(self.espera(), ["B", "C"])  # soltar não mexe na espera
+        # com a trava livre, só o primeiro da espera toma
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "Dono/Repo", "A"))
+        self.assertEqual(self.espera(), ["B", "C", "A"])
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {})
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+        self.assertEqual(self.espera(), ["C", "A"])
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "B")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "C")
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertIsNone(self.espera())
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+
+    def test_espera_vazia_deixa_qualquer_um_tomar(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+
+    def test_espera_e_por_repositorio(self):
+        cap.tomar_orquestrador(self.caminho, "dono/r1", "A")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/r1", "B"))
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/r2", "C"))
+        self.assertEqual(cap.ler(self.caminho)["esperando"], {"dono/r1": ["B"]})
+
+    def test_dono_que_reafirma_nao_entra_na_espera(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "B")
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertEqual(self.espera(), ["B"])
+
+    def test_espera_escrita_a_mao_e_normalizada_ao_ler(self):
+        self.caminho.write_text(json.dumps({"esperando": {"Dono/Repo": ["B", "C", "B"]}}), encoding="utf-8")
+        self.assertEqual(cap.ler(self.caminho)["esperando"], {"dono/repo": ["B", "C"]})
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "C"))
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+
+    def test_orfao_sai_da_espera(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "vivo")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "morto")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "outro")
+        cap.tomar_orquestrador(self.caminho, "dono/r2", "x")
+        cap.tomar_orquestrador(self.caminho, "dono/r2", "morto")
+        self.assertEqual(sorted(cap.limpar_orfaos(self.caminho, {"vivo", "outro", "x"})), ["morto"])
+        self.assertEqual(cap.ler(self.caminho)["esperando"], {"dono/repo": ["outro"]})
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "vivo")
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "outro"))
+
+    def test_orfao_so_na_espera_sai_e_a_espera_vazia_some(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "vivo")
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "morto")
+        self.assertEqual(cap.limpar_orfaos(self.caminho, {"vivo"}), ["morto"])
+        self.assertEqual(cap.ler(self.caminho)["esperando"], {})
 
 
 class TestesOrfaos(Base):

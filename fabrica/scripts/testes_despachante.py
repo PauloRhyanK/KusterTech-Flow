@@ -5927,6 +5927,148 @@ class TestesCapacidadeGlobal(Base):
             self.assertEqual(self.log_de(d, "sem_vaga"), [])
         self.assertEqual(self.estado_de(a)["limiteParalelo"], 2)
 
+    # ------------------------------------------------ rodada 1
+
+    def trava(self):
+        return despachante.capacidade.ler(self.cap)["orquestrador"]
+
+    def espera(self):
+        return despachante.capacidade.ler(self.cap)["esperando"]
+
+    def test_trava_solta_a_cada_acordada_mesmo_com_pendentes_e_em_fifo(self):
+        for n in (1, 2, 3):
+            self.forja.definir_arquivo(REPO, "main", "docs/s%d.md" % n, "# spec %d" % n)
+        a = self.de("a", [raia("a1")])
+        a.iniciar(spec="docs/s1.md")
+        rid1 = self.estado_de(a)["orquestrador"]["runId"]
+        self.assertTrue(rid1)
+        a.iniciar(spec="docs/s2.md")
+        a.iniciar(spec="docs/s3.md")
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        b = self.de("b", [raia("b1")])
+        b.ciclo()
+        self.falhar_raia(b, "b1")
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})
+        # o 1º run de A termina; A ainda tem 3 acordadas na fila, mas a trava sai e B é o primeiro da espera
+        self.motor.definir_run(rid1, estado="failed", motivoFalha="timeout")
+        a.ciclo()
+        self.assertEqual(len(self.estado_de(a)["acordarPendentes"]), 3)
+        self.assertIsNone(self.estado_de(a)["orquestrador"]["runId"])
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(self.trava(), {})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b"), self.plano_id("a")]})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        rid_b = self.estado_de(b)["orquestrador"]["runId"]
+        self.assertTrue(rid_b)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})
+        a.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        # o run de B termina: B volta para a fila atrás de A, e A acorda a 2ª
+        self.motor.definir_run(rid_b, estado="failed", motivoFalha="timeout")
+        b.ciclo()
+        self.assertEqual(self.trava(), {})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a"), self.plano_id("b")]})
+        a.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 3)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+
+    def test_plano_pausado_com_acordada_na_fila_nao_segura_a_trava(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        self.falhar_raia(b, "b1")
+        a.ciclo()
+        b.ciclo()
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        a.estado["pausado"] = "pausa de teste"
+        a._salvar()
+        self.motor.definir_run(rid, estado="failed", motivoFalha="timeout")
+        a.ciclo()
+        disco = self.estado_de(a)
+        self.assertTrue(disco["pausado"])
+        self.assertTrue(disco["acordarPendentes"])
+        self.assertEqual(self.trava(), {})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+
+    def test_arquivo_apagado_volta_com_as_reservas_e_a_trava_depois_de_um_ciclo(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1"), raia("a2"), raia("a3")])
+        a.ciclo()
+        self.falhar_raia(a, "a3")
+        a.ciclo()
+        self.assertTrue(self.estado_de(a)["orquestrador"]["runId"])
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1", "a2"]})
+        self.cap.unlink()
+        a.ciclo()
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1", "a2"]})
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        b = self.de("b", [raia("b1"), raia("b2")])
+        b.ciclo()
+        b.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 4)  # a1, a2, a3 e só b1
+        self.assertEqual(sum(len(r) for r in self.reservas().values()), 3)
+        self.assertEqual(self.estado_de(b)["raias"]["b2"]["estado"], "planejada")
+
+    def test_trava_perdida_para_outro_plano_vira_conflito_uma_vez(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        self.cap.unlink()
+        self.falhar_raia(b, "b1")
+        b.ciclo()  # o arquivo novo não sabe da trava de A: B toma e acorda
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+        for _ in range(2):
+            a.ciclo()
+        conflitos = self.log_de(a, "trava_em_conflito")
+        self.assertEqual([(x["evento"], x["dono"]) for x in conflitos], [("trava_em_conflito", self.plano_id("b"))])
+        self.assertTrue(self.estado_de(a)["orquestrador"]["runId"])  # o run em curso segue
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+
+    def test_dono_reafirma_a_trava_a_cada_ciclo_com_pr_em_decisao(self):
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        self.motor.definir_run(rid, estado="succeeded", prUrl=PR_ORQ)
+        self.forja.definir_pr(PR_ORQ, head_sha=H3, branch="warren/orq", arquivos=["src/x.ts"])
+        self.forja.definir_ci(REPO, H3, "verde")
+        a.ciclo()
+        self.assertEqual(self.estado_de(a)["prsOrquestrador"], [PR_ORQ])
+        self.cap.unlink()
+        a.ciclo()
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+
+    def test_sem_o_primeiro_sincronizar_do_ciclo_nao_ha_reserva(self):
+        a = self.de("a", [raia("a1")])
+        with mock.patch.object(despachante.capacidade, "sincronizar", side_effect=OSError("disco cheio")):
+            a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        self.assertEqual(self.reservas(), {})
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    def test_oom_de_filho_sem_run_id_tambem_chega_a_capacidade(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.motor.definir_plano(self.plan_run(a, "a1"), "running", [{"seedId": "s-1", "estado": "failed", "falha": "oom_killed"}])
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+
     # ------------------------------------------------ construção
 
     def ambiente_real(self, **extra):

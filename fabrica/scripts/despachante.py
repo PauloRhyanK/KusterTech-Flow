@@ -569,6 +569,7 @@ class Despachante:
         self.capacidade = capacidade
         self.plano_id = plano_id
         self._mem_disponivel = mem_disponivel
+        self._capacidade_sincronizada = False
         self.motor = motor
         self.forja = forja
         self.raiz = pathlib.Path(raiz)
@@ -852,6 +853,7 @@ class Despachante:
         self._falhas_do_ciclo = []
         self._rede_do_ciclo = set()
         self._ja_cancelados = set()
+        self._capacidade_sincronizada = False
         self._recuperar_acao_interrompida()
         self._recuperar_decisoes_pendentes()
         self._recarregar_plano()
@@ -869,9 +871,11 @@ class Despachante:
         self._contabilizar_falhas_de_leitura()
         self._contabilizar_warren()
         self._fechar_prs()
+        # a acordada que terminou neste ciclo solta a trava antes de _agir: quem espera passa na frente
+        self._cuidar_da_trava()
         executadas = self._agir()
         self._sincronizar_capacidade()
-        self._soltar_orquestrador_se_livre()
+        self._cuidar_da_trava()
         self._garantir_decisao_de_bloqueio()
         self._garantir_decisao_de_pausa()
         return executadas
@@ -1599,6 +1603,7 @@ class Despachante:
                     # P2: a raia não falha; ao retomar ela volta a planejada e ganha um Plan Run novo
                     estado_plano, falha = "running", None
             oom_antes = set(_lista(self.estado.get("runsOom")))
+            limite_antes = self.estado.get("limiteParalelo")
             self._mudar(
                 est.registrar_plano(
                     self.estado,
@@ -1608,7 +1613,8 @@ class Despachante:
                     filhos=filhos,
                 )
             )
-            if not set(_lista(self.estado.get("runsOom"))) <= oom_antes:
+            # um filho OOM com runId entra em runsOom; sem runId, só o limite local cai
+            if not set(_lista(self.estado.get("runsOom"))) <= oom_antes or self.estado.get("limiteParalelo") != limite_antes:
                 self._notar_oom()
             depois = _dict(self.estado.get("seeds"))
             self._guardar_tentativas_reiniciadas(antes, depois)
@@ -2809,6 +2815,9 @@ class Despachante:
         return True
 
     def _reservar_vaga(self, raia_id) -> bool:
+        if not self._capacidade_sincronizada:
+            # as reservas do plano são refeitas pelo 1º sincronizar do ciclo; sem ele, nada de vaga nova
+            return False
         try:
             reservada = capacidade.reservar(
                 self.capacidade, self.plano_id, raia_id, mem_disponivel_mb=self._mem_disponivel()
@@ -2858,6 +2867,7 @@ class Despachante:
         except (capacidade.CapacidadeInvalida, OSError) as exc:
             self._erro_de_capacidade("sincronizar", self.plano_id, exc)
             return
+        self._capacidade_sincronizada = True
         self._capacidade_ok()
 
     def _notar_oom(self) -> None:
@@ -2881,23 +2891,36 @@ class Despachante:
         self._salvar()
         self._log({"evento": "oom_registrado_na_capacidade", "oomEm": pendente})
 
-    def _orquestrador_livre(self) -> bool:
-        """Sem run, sem acordar incerto, sem PR esperando gates ou o Paulo e sem acordada na fila."""
+    def _orquestrador_em_curso(self) -> bool:
+        """Run, acordar incerto ou em curso, ou PR do orquestrador esperando gates ou o Paulo.
+
+        As acordadas na fila não contam: a trava é solta ao fim de cada acordada, mesmo com o
+        plano pausado ou bloqueado, e quem espera na fila do repositório passa na frente.
+        """
         return (
-            self._orq().get("runId") is None
-            and not self._orquestrador_incerto()
-            and _dict(self.estado.get("acaoEmCurso")).get("tipo") != "acordar"
-            and not _lista(self.estado.get("prsOrquestrador"))
-            and not _lista(self.estado.get("acordarPendentes"))
+            self._orq().get("runId") is not None
+            or self._orquestrador_incerto()
+            or _dict(self.estado.get("acaoEmCurso")).get("tipo") == "acordar"
+            or bool(_lista(self.estado.get("prsOrquestrador")))
         )
 
-    def _soltar_orquestrador_se_livre(self) -> None:
-        if self.capacidade is None or not self._orquestrador_livre():
+    def _cuidar_da_trava(self) -> None:
+        """Sem orquestrador em curso, solta a trava; com ele, reafirma (um arquivo recriado a esqueceu)."""
+        if self.capacidade is None:
             return
         try:
-            capacidade.soltar_orquestrador(self.capacidade, self.repo, self.plano_id)
+            if not self._orquestrador_em_curso():
+                capacidade.soltar_orquestrador(self.capacidade, self.repo, self.plano_id)
+                return
+            if capacidade.tomar_orquestrador(self.capacidade, self.repo, self.plano_id):
+                self._esquecer("trava_em_conflito")
+                return
+            dono = capacidade.ler(self.capacidade)["orquestrador"].get(self.repo.lower())
         except (capacidade.CapacidadeInvalida, OSError) as exc:
-            self._erro_de_capacidade("soltar_orquestrador", self.repo, exc)
+            self._erro_de_capacidade("trava_do_orquestrador", self.repo, exc)
+            return
+        # não há como desfazer o run em curso: registra o conflito; nada novo acorda sem a trava
+        self._log_repetivel("trava_em_conflito", {"evento": "trava_em_conflito", "dono": dono})
 
     def _executar(self, acao: dict) -> None:
         tipo = acao.get("tipo")

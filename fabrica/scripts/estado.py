@@ -681,7 +681,9 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
             raia["estado"] = "executando"
             raia["planRunId"] = resultado["planRunId"]
         else:
-            # o despacho pode ter acontecido: falhar e acordar é melhor que despachar de novo
+            # o despacho pode ter acontecido: falhar e acordar é melhor que despachar de novo.
+            # Com a capacidade global, a vaga segue esta regra: a raia sai de `executando` e a vaga é
+            # solta, mesmo que o Plan Run exista (vale também para o cancelamento que falhou de vez).
             raia["estado"] = "falhou"
             raia["falha"] = "despacho sem planRunId"
             _avisar(estado, f"raia {acao['raia']!r}: despacho sem planRunId")

@@ -30,6 +30,7 @@ def _padrao() -> dict:
         "oomEm": None,
         "reservas": {},
         "orquestrador": {},
+        "esperando": {},
     }
 
 
@@ -62,6 +63,12 @@ def _validar(dados, caminho) -> dict:
         isinstance(plano, str) for plano in orquestrador.values()
     ):
         problemas.append("orquestrador deve mapear repositório para plano")
+    esperando = resultado["esperando"]
+    if not isinstance(esperando, dict) or not all(
+        isinstance(planos, list) and all(isinstance(p, str) for p in planos)
+        for planos in esperando.values()
+    ):
+        problemas.append("esperando deve mapear repositório para lista de planos")
     if problemas:
         raise CapacidadeInvalida("%s: %s." % (caminho, "; ".join(problemas)))
     resultado["reservas"] = {plano: sorted(set(raias)) for plano, raias in reservas.items()}
@@ -71,6 +78,13 @@ def _validar(dados, caminho) -> dict:
             "%s: orquestrador tem repositórios repetidos (maiúsculas e minúsculas)." % caminho
         )
     resultado["orquestrador"] = normalizado
+    # a espera é FIFO: sem duplicata, mantendo a ordem de chegada
+    fila = {repo.lower(): list(dict.fromkeys(planos)) for repo, planos in esperando.items()}
+    if len(fila) != len(esperando):
+        raise CapacidadeInvalida(
+            "%s: esperando tem repositórios repetidos (maiúsculas e minúsculas)." % caminho
+        )
+    resultado["esperando"] = fila
     return resultado
 
 
@@ -194,18 +208,30 @@ def registrar_oom(caminho, agora: str) -> None:
 
 
 def tomar_orquestrador(caminho, repo: str, plano: str) -> bool:
-    """Toma a trava de orquestrador do repositório; True se estava livre ou já era do plano."""
+    """Toma a trava de orquestrador do repositório; True se já era do plano ou se ele pôde tomá-la.
+
+    A espera é FIFO por repositório: com a trava livre, só toma o primeiro da espera (ou qualquer um,
+    com a espera vazia), e quem toma sai dela. Recusado, o plano entra no fim da espera, uma vez só.
+    """
     chave = repo.lower()
     with _transacao(caminho) as dados:
         dono = dados["orquestrador"].get(chave)
-        if dono is not None and dono != plano:
-            return False
-        dados["orquestrador"][chave] = plano
-        return True
+        fila = dados["esperando"].get(chave, [])
+        if dono == plano or (dono is None and (not fila or fila[0] == plano)):
+            dados["orquestrador"][chave] = plano
+            restante = [p for p in fila if p != plano]
+            if restante:
+                dados["esperando"][chave] = restante
+            else:
+                dados["esperando"].pop(chave, None)
+            return True
+        if plano not in fila:
+            dados["esperando"][chave] = [*fila, plano]
+        return False
 
 
 def soltar_orquestrador(caminho, repo: str, plano: str) -> None:
-    """Solta a trava do repositório, somente se for do plano."""
+    """Solta a trava do repositório, somente se for do plano; a espera não muda."""
     chave = repo.lower()
     with _transacao(caminho) as dados:
         if dados["orquestrador"].get(chave) == plano:
@@ -213,10 +239,13 @@ def soltar_orquestrador(caminho, repo: str, plano: str) -> None:
 
 
 def limpar_orfaos(caminho, ativos: set[str]) -> list[str]:
-    """Remove reservas e travas de planos fora de `ativos`; devolve os ids removidos."""
+    """Remove reservas, travas e lugares na espera de planos fora de `ativos`; devolve os ids removidos."""
     with _transacao(caminho) as dados:
         removidos = {plano for plano in dados["reservas"] if plano not in ativos}
         removidos |= {plano for plano in dados["orquestrador"].values() if plano not in ativos}
+        removidos |= {p for planos in dados["esperando"].values() for p in planos if p not in ativos}
+        fila = {repo: [p for p in planos if p in ativos] for repo, planos in dados["esperando"].items()}
+        dados["esperando"] = {repo: planos for repo, planos in fila.items() if planos}
         for plano in removidos:
             dados["reservas"].pop(plano, None)
         dados["orquestrador"] = {
