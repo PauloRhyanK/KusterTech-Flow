@@ -1,15 +1,21 @@
 """Cliente HTTP do Warren 0.19.3 (token bearer, JSON, eventos em NDJSON)."""
 
+import http.client
 import json
+import pathlib
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from motor import MotorOcupado
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from motor import MotorOcupado  # noqa: E402
 
 TIMEOUT_REQUISICAO_S = 30
 TIMEOUT_EVENTOS_S = 180
 RETRY_AFTER_PADRAO = 30
+PREFIXO_FILHO = "child_"
 
 
 class _SemRedirecionamento(urllib.request.HTTPRedirectHandler):
@@ -27,22 +33,52 @@ def _abrir(req, timeout):
 
 
 def _transporte_urllib(metodo, url, headers, corpo):
-    """Transporte padrão: `(status, headers, corpo)`; HTTP >= 400 também volta como tupla."""
+    """Transporte padrão: `(status, headers, corpo)`; HTTP >= 400 também volta como tupla.
+
+    Falhas de rede, de protocolo ou de timeout viram `RuntimeError` com método, caminho e o
+    nome da classe da exceção (nunca o texto dela, que pode conter dados da resposta).
+    """
     caminho = urllib.parse.urlsplit(url).path
     timeout = TIMEOUT_EVENTOS_S if caminho.endswith("/events") else TIMEOUT_REQUISICAO_S
-    req = urllib.request.Request(url, data=corpo, headers=dict(headers), method=metodo)
     try:
-        with _abrir(req, timeout=timeout) as resposta:
-            return resposta.status, dict(resposta.headers), resposta.read()
-    except urllib.error.HTTPError as erro:
+        req = urllib.request.Request(url, data=corpo, headers=dict(headers), method=metodo)
         try:
-            return erro.code, dict(erro.headers or {}), erro.read()
-        finally:
-            erro.close()
+            with _abrir(req, timeout=timeout) as resposta:
+                return resposta.status, dict(resposta.headers), resposta.read()
+        except urllib.error.HTTPError as erro:
+            try:
+                return erro.code, dict(erro.headers or {}), erro.read()
+            finally:
+                erro.close()
+    except (http.client.HTTPException, OSError) as erro:
+        raise RuntimeError("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from erro
 
 
-def _id(valor: str) -> str:
+def _id(valor) -> str:
+    if not isinstance(valor, str) or valor in ("", ".", ".."):
+        raise ValueError("id inválido")
     return urllib.parse.quote(valor, safe="")
+
+
+def _sem_prefixo_de_filho(motivo):
+    """`child_oom_killed` -> `oom_killed`. Códigos compostos (`child_seed_not_found:x`) ficam como vieram."""
+    if not isinstance(motivo, str) or not motivo:
+        return None
+    resto = motivo[len(PREFIXO_FILHO) :]
+    if motivo.startswith(PREFIXO_FILHO) and resto and ":" not in resto:
+        return resto
+    return motivo
+
+
+def _validar_token(token) -> str:
+    if not isinstance(token, str):
+        raise ValueError("token inválido")
+    token = token.strip()
+    if not token:
+        raise ValueError("token do Warren vazio")
+    if not all(33 <= ord(c) <= 126 for c in token):
+        raise ValueError("token inválido")
+    return token
 
 
 def _cabecalho(headers: dict, nome: str):
@@ -62,10 +98,8 @@ def _retry_after(headers: dict) -> int:
 
 class MotorWarren:
     def __init__(self, base_url: str, token: str, transporte=None):
-        if not token:
-            raise ValueError("token do Warren vazio")
+        self._token = _validar_token(token)
         self._base = base_url.rstrip("/")
-        self._token = token
         self._transporte = transporte or _transporte_urllib
 
     # Camada HTTP. Nenhuma mensagem de erro carrega token nem corpo de resposta.
@@ -176,17 +210,27 @@ class MotorWarren:
         runs_brutos = dados.get("runs", [])
         if not isinstance(runs_brutos, list):
             raise RuntimeError("GET %s: campo 'runs' não é uma lista" % caminho)
-        pr_por_run = {r["id"]: r.get("prUrl") for r in runs_brutos if isinstance(r, dict) and "id" in r}
+        runs_por_id = {}
+        for run in runs_brutos:
+            if not isinstance(run, dict):
+                raise RuntimeError("GET %s: 'runs' tem item que não é objeto" % caminho)
+            runs_por_id[self._texto(run, "runs[]", "id", "GET", caminho)] = run
         filhos = []
         for filho in filhos_brutos:
             run_id = filho.get("runId")
+            if run_id is not None and not isinstance(run_id, str):
+                raise RuntimeError("GET %s: campo 'children[].runId' não é texto" % caminho)
+            run = runs_por_id.get(run_id) if run_id is not None else None
+            motivo_run = run.get("failureReason") if run is not None else None
+            if not isinstance(motivo_run, str) or not motivo_run:
+                motivo_run = None
             filhos.append(
                 {
                     "seedId": self._texto(filho, "children[]", "seedId", "GET", caminho),
                     "estado": self._texto(filho, "children[]", "state", "GET", caminho),
                     "runId": run_id,
-                    "prUrl": pr_por_run.get(run_id) if run_id is not None else None,
-                    "falha": filho.get("failureReason"),
+                    "prUrl": run.get("prUrl") if run is not None else None,
+                    "falha": motivo_run or _sem_prefixo_de_filho(filho.get("failureReason")),
                 }
             )
         return {"estado": estado, "falha": plan_run.get("failureReason"), "filhos": filhos}
@@ -205,16 +249,17 @@ class MotorWarren:
     def ultimo_texto(self, run_id: str) -> str:
         bruto = self._requisitar("GET", "/runs/%s/events?follow=0" % _id(run_id))
         ultimo = ""
-        for linha in bruto.decode("utf-8", errors="replace").splitlines():
+        # O separador do NDJSON é só "\n": splitlines() também quebraria em U+2028, U+2029 e U+0085.
+        for linha in bruto.split(b"\n"):
             try:
-                evento = json.loads(linha)
+                evento = json.loads(linha.decode("utf-8", errors="replace"))
             except ValueError:
                 continue
             if not isinstance(evento, dict) or evento.get("kind") != "text":
                 continue
             payload = evento.get("payload")
             texto = payload.get("text") if isinstance(payload, dict) else None
-            if isinstance(texto, str):
+            if isinstance(texto, str) and texto.strip():
                 ultimo = texto
         return ultimo
 

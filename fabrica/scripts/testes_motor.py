@@ -1,8 +1,10 @@
+import http.client
 import io
 import json
 import pathlib
 import subprocess
 import sys
+import traceback
 import unittest
 import urllib.error
 import urllib.request
@@ -33,8 +35,7 @@ class TransporteFalso:
         self.requisicoes.append((metodo, url, dict(headers), corpo))
         if not self.respostas:
             raise AssertionError("requisição inesperada: %s %s" % (metodo, url))
-        resposta = self.respostas.pop(0) if len(self.respostas) > 1 else self.respostas[0]
-        return resposta
+        return self.respostas.pop(0)
 
     @property
     def ultima(self):
@@ -76,6 +77,7 @@ class TestesDespachoWarren(unittest.TestCase):
     def test_despachar_plano_corpo_url_e_autorizacao(self):
         m, t = novo(ok({"planRun": {"id": "pr-9", "state": "pending"}, "children": []}, 201))
         self.assertEqual(m.despachar_plano(**ARGS_PLANO), "pr-9")
+        self.assertEqual(len(t.requisicoes), 1)
         metodo, url, headers, corpo = t.ultima
         self.assertEqual(metodo, "POST")
         self.assertEqual(url, BASE + "/plan-runs")
@@ -95,14 +97,17 @@ class TestesDespachoWarren(unittest.TestCase):
 
     def test_aceita_qualquer_2xx(self):
         for status in (200, 201, 202):
-            m, _ = novo(ok({"planRun": {"id": "pr-1"}}, status))
+            m, t = novo(ok({"planRun": {"id": "pr-1"}}, status))
             self.assertEqual(m.despachar_plano(**ARGS_PLANO), "pr-1")
-            m, _ = novo(ok({"run": {"id": "r-1"}}, status))
+            self.assertEqual(len(t.requisicoes), 1)
+            m, t = novo(ok({"run": {"id": "r-1"}}, status))
             self.assertEqual(m.despachar_run(**ARGS_RUN), "r-1")
+            self.assertEqual(len(t.requisicoes), 1)
 
     def test_despachar_run_sem_branch_nao_envia_existing_branch(self):
         m, t = novo(ok({"run": {"id": "r-5"}, "sandbox": {}}))
         self.assertEqual(m.despachar_run(**ARGS_RUN), "r-5")
+        self.assertEqual(len(t.requisicoes), 1)
         metodo, url, headers, _ = t.ultima
         self.assertEqual((metodo, url), ("POST", BASE + "/runs"))
         self.assertEqual(headers["Authorization"], "Bearer " + TOKEN)
@@ -118,10 +123,16 @@ class TestesDespachoWarren(unittest.TestCase):
         )
         self.assertNotIn("existingBranch", t.corpo_json())
 
+    def test_branch_vazio_nao_envia_existing_branch(self):
+        m, t = novo(ok({"run": {"id": "r-5"}}))
+        m.despachar_run(**dict(ARGS_RUN, branch_existente=""))
+        self.assertNotIn("existingBranch", t.corpo_json())
+
     def test_despachar_run_com_branch_envia_existing_branch(self):
         m, t = novo(ok({"run": {"id": "r-6"}}))
         args = dict(ARGS_RUN, branch_existente="feat/clientes")
         m.despachar_run(**args)
+        self.assertEqual(len(t.requisicoes), 1)
         corpo = t.corpo_json()
         self.assertEqual(corpo["existingBranch"], "feat/clientes")
         self.assertEqual(
@@ -137,21 +148,36 @@ class TestesDespachoWarren(unittest.TestCase):
     def test_retomar_plano_envia_corpo_vazio(self):
         m, t = novo(ok({}))
         self.assertIsNone(m.retomar_plano("pr-3"))
+        self.assertEqual(len(t.requisicoes), 1)
         metodo, url, headers, corpo = t.ultima
         self.assertEqual((metodo, url), ("POST", BASE + "/plan-runs/pr-3/resume"))
         self.assertEqual(json.loads(corpo), {})
         self.assertEqual(headers["Authorization"], "Bearer " + TOKEN)
 
     def test_token_vazio_e_recusado(self):
-        with self.assertRaises(ValueError):
-            motor_warren.MotorWarren(BASE, "", TransporteFalso())
+        for token in ("", "  \n", None, 5):
+            with self.assertRaises(ValueError):
+                motor_warren.MotorWarren(BASE, token, TransporteFalso())
+
+    def test_token_com_quebra_de_linha_final_e_limpo(self):
+        t = TransporteFalso(ok({"run": {"id": "r-1", "state": "running"}}))
+        m = motor_warren.MotorWarren(BASE, "abc\n", t)
+        m.run("r-1")
+        self.assertEqual(t.ultima[2]["Authorization"], "Bearer abc")
+
+    def test_token_com_espaco_interno_ou_controle_e_invalido_e_nao_vaza(self):
+        for token in ("a b", "a\tb", "ab\x00c", "ab\ncd", "toké"):
+            with self.assertRaises(ValueError) as ctx:
+                motor_warren.MotorWarren(BASE, token, TransporteFalso())
+            self.assertEqual(str(ctx.exception), "token inválido")
+            self.assertNotIn(token.strip(), str(ctx.exception))
 
 
 PLANO_WARREN = {
     "planRun": {"id": "pr-1", "state": "running", "failureReason": None},
     "children": [
         {"planRunId": "pr-1", "seq": 0, "seedId": "sd-a", "runId": "r-a", "state": "merged", "failureReason": None},
-        {"planRunId": "pr-1", "seq": 1, "seedId": "sd-b", "runId": "r-b", "state": "failed", "failureReason": "oom_killed"},
+        {"planRunId": "pr-1", "seq": 1, "seedId": "sd-b", "runId": "r-b", "state": "failed", "failureReason": "child_oom_killed"},
         {"planRunId": "pr-1", "seq": 2, "seedId": "sd-c", "runId": None, "state": "pending", "failureReason": None},
     ],
     "runs": [
@@ -418,6 +444,235 @@ class TestesFormatoInesperado(unittest.TestCase):
         self.assert_formato(chamada, ok({"run": []}), "run")
 
 
+class TestesRodada1(unittest.TestCase):
+    def plano_com_filho(self, filho, runs=None):
+        corpo = {
+            "planRun": {"id": "pr-1", "state": "running", "failureReason": None},
+            "children": [dict({"seedId": "sd-a", "state": "failed", "runId": None}, **filho)],
+        }
+        if runs is not None:
+            corpo["runs"] = runs
+        m, t = novo(ok(corpo))
+        return m.plano("pr-1")["filhos"][0], t
+
+    # A: `falha` do filho é sempre um RunFailureReason sem o prefixo `child_`
+
+    def test_falha_so_do_filho_perde_o_prefixo_child(self):
+        for runs in (None, [], [{"id": "r-a", "state": "failed"}], [{"id": "r-a", "failureReason": None}],
+                     [{"id": "r-a", "failureReason": ""}], [{"id": "r-a", "failureReason": 5}]):
+            filho, _ = self.plano_com_filho(
+                {"runId": "r-a", "failureReason": "child_oom_killed"}, runs
+            )
+            self.assertEqual(filho["falha"], "oom_killed")
+
+    def test_falha_do_run_tem_prioridade_sobre_a_do_filho(self):
+        filho, _ = self.plano_com_filho(
+            {"runId": "r-a", "failureReason": "child_failed"},
+            [{"id": "r-a", "state": "failed", "failureReason": "oom_killed"}],
+        )
+        self.assertEqual(filho["falha"], "oom_killed")
+
+    def test_falha_do_run_vem_do_run_do_filho_e_nao_de_outro(self):
+        filho, _ = self.plano_com_filho(
+            {"runId": "r-a", "failureReason": "child_timeout"},
+            [{"id": "r-x", "failureReason": "oom_killed"}, {"id": "r-a", "failureReason": None}],
+        )
+        self.assertEqual(filho["falha"], "timeout")
+
+    def test_falha_com_estado_do_run_quando_nao_ha_motivo(self):
+        filho, _ = self.plano_com_filho({"runId": "r-a", "failureReason": "child_cancelled"})
+        self.assertEqual(filho["falha"], "cancelled")
+
+    def test_codigos_compostos_do_warren_passam_adiante(self):
+        for motivo in (
+            "dispatch_failed:burrow unreachable",
+            "child_seed_not_found:warren-a",
+            "child_seed_not_resolved:sd-9",
+        ):
+            filho, _ = self.plano_com_filho({"failureReason": motivo})
+            self.assertEqual(filho["falha"], motivo)
+
+    def test_sem_nenhum_motivo_a_falha_e_none(self):
+        for motivo in (None, "", 7, "child_"):
+            filho, _ = self.plano_com_filho({"runId": "r-a", "failureReason": motivo}, [{"id": "r-a"}])
+            if motivo == "child_":
+                self.assertEqual(filho["falha"], "child_")
+            else:
+                self.assertIsNone(filho["falha"])
+        filho, _ = self.plano_com_filho({"state": "pending"})
+        self.assertIsNone(filho["falha"])
+
+    def test_falha_do_plano_continua_crua(self):
+        corpo = {
+            "planRun": {"state": "failed", "failureReason": "child_pr_merge_timeout"},
+            "children": [],
+        }
+        m, _ = novo(ok(corpo))
+        self.assertEqual(m.plano("pr-1")["falha"], "child_pr_merge_timeout")
+
+    # B e J: último texto
+
+    def test_ultimo_texto_nao_quebra_em_separadores_unicode(self):
+        texto = "antes\u2028meio\u2029fim\x85fim\x0b\x0c\x1c"
+        evento = json.dumps({"kind": "text", "payload": {"text": texto}}, ensure_ascii=False)
+        antigo = json.dumps({"kind": "text", "payload": {"text": "antigo"}})
+        bruto = (antigo + "\n" + evento + "\n").encode("utf-8")
+        m, _ = novo((200, {}, bruto))
+        self.assertEqual(m.ultimo_texto("r-1"), texto)
+
+    def test_ultimo_texto_tolera_cr_no_fim_da_linha(self):
+        m, _ = novo((200, {}, b'{"kind": "text", "payload": {"text": "a"}}\r\n{"kind": "text", "payload": {"text": "b"}}\r'))
+        self.assertEqual(m.ultimo_texto("r-1"), "b")
+
+    def test_ultimo_texto_ignora_texto_vazio_ou_so_com_espacos(self):
+        eventos = (
+            b'{"kind": "text", "payload": {"text": "VEREDITO aprovado"}}\n'
+            b'{"kind": "text", "payload": {"text": ""}}\n'
+            b'{"kind": "text", "payload": {"text": "  \\n\\t "}}\n'
+        )
+        m, _ = novo((200, {}, eventos))
+        self.assertEqual(m.ultimo_texto("r-1"), "VEREDITO aprovado")
+        m, _ = novo((200, {}, b'{"kind": "text", "payload": {"text": " "}}\n'))
+        self.assertEqual(m.ultimo_texto("r-1"), "")
+
+    # C: falhas de transporte
+
+    def test_transporte_padrao_converte_falhas_em_runtime_error(self):
+        erros = [
+            http.client.IncompleteRead(b"segredo ghs_x"),
+            http.client.BadStatusLine("segredo ghs_x"),
+            http.client.RemoteDisconnected("segredo ghs_x"),
+            urllib.error.URLError("segredo ghs_x"),
+            TimeoutError("segredo ghs_x"),
+            ConnectionResetError("segredo ghs_x"),
+            OSError("segredo ghs_x"),
+        ]
+        for erro in erros:
+            with mock.patch.object(motor_warren, "_abrir", side_effect=erro):
+                with self.assertRaises(RuntimeError) as ctx:
+                    motor_warren._transporte_urllib("GET", BASE + "/runs/r-1/events?follow=0", {}, None)
+            msg = str(ctx.exception)
+            self.assertIn("GET", msg)
+            self.assertIn("/runs/r-1/events", msg)
+            self.assertIn(type(erro).__name__, msg)
+            self.assertNotIn("segredo", msg)
+            self.assertNotIn("ghs_", msg)
+            self.assertIs(ctx.exception.__cause__, erro)
+
+    def test_transporte_padrao_converte_falha_na_leitura_do_corpo(self):
+        resposta = mock.MagicMock()
+        resposta.status = 200
+        resposta.headers = {}
+        resposta.read.side_effect = http.client.IncompleteRead(b"segredo")
+        resposta.__enter__.return_value = resposta
+        resposta.__exit__.return_value = False
+        with mock.patch.object(motor_warren, "_abrir", return_value=resposta):
+            with self.assertRaises(RuntimeError) as ctx:
+                motor_warren._transporte_urllib("POST", BASE + "/runs", {}, b"{}")
+        self.assertIn("IncompleteRead", str(ctx.exception))
+        self.assertNotIn("segredo", str(ctx.exception))
+
+    def test_transporte_padrao_converte_falha_na_leitura_do_corpo_de_erro_http(self):
+        fp = mock.MagicMock()
+        fp.read.side_effect = http.client.IncompleteRead(b"segredo")
+        erro = urllib.error.HTTPError(BASE + "/runs", 500, "boom", {}, fp)
+        with mock.patch.object(motor_warren, "_abrir", side_effect=erro):
+            with self.assertRaises(RuntimeError) as ctx:
+                motor_warren._transporte_urllib("POST", BASE + "/runs", {}, b"{}")
+        self.assertIn("IncompleteRead", str(ctx.exception))
+
+    def test_falha_de_transporte_injetado_nao_vaza_nem_encadeia_o_token(self):
+        for erro in (urllib.error.URLError("x"), OSError("x"), TimeoutError("x")):
+
+            def transporte(metodo, url, headers, corpo, erro=erro):
+                raise type(erro)("tok " + headers["Authorization"])
+
+            m = motor_warren.MotorWarren(BASE, TOKEN, transporte)
+            with self.assertRaises(RuntimeError) as ctx:
+                m.run("r-1")
+            impresso = "".join(traceback.format_exception(ctx.exception))
+            self.assertNotIn(TOKEN, impresso)
+
+    def test_opener_padrao_nao_segue_redirecionamento(self):
+        tipos = [type(h) for h in motor_warren._OPENER.handlers]
+        self.assertIn(motor_warren._SemRedirecionamento, tipos)
+        self.assertNotIn(urllib.request.HTTPRedirectHandler, tipos)
+
+    # F: envelope de erro real do Warren
+
+    def test_envelope_json_de_erro_nao_vaza_na_mensagem(self):
+        envelope = json_bytes({"error": {"code": "x", "message": "segredo ghs_abc " + TOKEN, "hint": "dica"}})
+        for status in (400, 404, 422, 500):
+            for chamada in (
+                lambda m: m.despachar_plano(**ARGS_PLANO),
+                lambda m: m.despachar_run(**ARGS_RUN),
+                lambda m: m.plano("pr-1"),
+                lambda m: m.run("r-1"),
+                lambda m: m.ultimo_texto("r-1"),
+                lambda m: m.retomar_plano("pr-1"),
+            ):
+                m, t = novo((status, {}, envelope))
+                with self.assertRaises(RuntimeError) as ctx:
+                    chamada(m)
+                self.assertEqual(len(t.requisicoes), 1)
+                msg = str(ctx.exception)
+                for proibido in ("ghs_", "segredo", TOKEN, "dica", '"code"'):
+                    self.assertNotIn(proibido, msg)
+                self.assertIn(str(status), msg)
+
+    # H: entradas malformadas
+
+    def test_runs_e_run_id_malformados_dao_runtime_error_com_o_campo(self):
+        base = {"planRun": {"state": "running"}}
+        casos = [
+            ({"children": [], "runs": [{"id": ["x"]}]}, "runs[]"),
+            ({"children": [], "runs": [{}]}, "runs[]"),
+            ({"children": [], "runs": ["x"]}, "runs"),
+            ({"children": [], "runs": [None]}, "runs"),
+            ({"children": [], "runs": [{"id": ""}]}, "runs[]"),
+            ({"children": [{"seedId": "a", "state": "x", "runId": ["r"]}], "runs": []}, "children[].runId"),
+            ({"children": [{"seedId": "a", "state": "x", "runId": {"a": 1}}]}, "children[].runId"),
+            ({"children": [{"seedId": "a", "state": "x", "runId": 5}]}, "children[].runId"),
+        ]
+        for extra, campo in casos:
+            m, _ = novo(ok(dict(base, **extra)))
+            with self.assertRaises(RuntimeError) as ctx:
+                m.plano("pr-1")
+            self.assertIn(campo, str(ctx.exception))
+
+    # I: ids inválidos
+
+    def test_ids_invalidos_levantam_value_error_sem_requisicao(self):
+        for invalido in ("", ".", "..", None, 7, b"r-1", ["r"]):
+            for chamada in (
+                lambda m, i: m.plano(i),
+                lambda m, i: m.run(i),
+                lambda m, i: m.ultimo_texto(i),
+                lambda m, i: m.retomar_plano(i),
+            ):
+                m, t = novo(ok({}))
+                with self.assertRaises(ValueError) as ctx:
+                    chamada(m, invalido)
+                self.assertEqual(str(ctx.exception), "id inválido")
+                self.assertEqual(t.requisicoes, [])
+
+    def test_id_com_pontos_dentro_de_um_nome_e_valido(self):
+        m, t = novo(ok({"run": {"id": "r", "state": "running"}}))
+        m.run("...")
+        self.assertEqual(t.ultima[1], BASE + "/runs/...")
+
+    # K: bootstrap de sys.path
+
+    def test_motor_warren_importa_sozinho_em_modo_isolado(self):
+        resultado = subprocess.run(
+            [sys.executable, "-I", "-B", str(RAIZ / "motor_warren.py")],
+            capture_output=True,
+            text=True,
+            cwd="/",
+        )
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+
+
 class TransporteUrllibTestes(unittest.TestCase):
     def resposta_falsa(self, status=200, headers=None, corpo=b"{}"):
         r = mock.MagicMock()
@@ -614,6 +869,48 @@ class TestesMotorFalso(unittest.TestCase):
         self.assertEqual(m.plano(plano_id)["filhos"], [])
         run_id = m.despachar_run(**ARGS_RUN)
         self.assertEqual(m.run(run_id)["estado"], "running")
+
+    def test_armazenamento_por_id_mantem_dados_separados(self):
+        m = motor.MotorFalso()
+        m.definir_run("r-1", estado="running", custoUsd=1.0)
+        m.definir_run("r-2", estado="failed", motivoFalha="oom_killed", prUrl="https://gh/2")
+        m.definir_plano("p-1", "running", [{"seedId": "a", "estado": "pending"}])
+        m.definir_plano("p-2", "failed", [{"seedId": "b", "estado": "merged"}], falha="x")
+        m.definir_texto("r-1", "texto um")
+        m.definir_texto("r-2", "texto dois")
+        self.assertEqual(m.run("r-1")["estado"], "running")
+        self.assertEqual(m.run("r-1")["custoUsd"], 1.0)
+        self.assertEqual(m.run("r-2")["estado"], "failed")
+        self.assertEqual(m.run("r-2")["prUrl"], "https://gh/2")
+        self.assertEqual(m.plano("p-1")["filhos"][0]["seedId"], "a")
+        self.assertEqual(m.plano("p-1")["falha"], None)
+        self.assertEqual(m.plano("p-2")["filhos"][0]["seedId"], "b")
+        self.assertEqual(m.plano("p-2")["falha"], "x")
+        self.assertEqual(m.ultimo_texto("r-1"), "texto um")
+        self.assertEqual(m.ultimo_texto("r-2"), "texto dois")
+
+    def test_id_desconhecido_tem_comportamento_definido(self):
+        m = motor.MotorFalso()
+        m.definir_run("r-1")
+        m.definir_texto("r-1", "texto")
+        with self.assertRaises(KeyError):
+            m.run("r-2")
+        with self.assertRaises(KeyError):
+            m.plano("p-2")
+        self.assertEqual(m.ultimo_texto("r-2"), "")
+
+    def test_leituras_e_retomada_nao_consomem_a_lotacao(self):
+        m = motor.MotorFalso()
+        m.definir_run("r-1")
+        m.definir_plano("p-1", "running", [])
+        m.lotar(3)
+        m.plano("p-1")
+        m.run("r-1")
+        m.ultimo_texto("r-1")
+        m.retomar_plano("p-1")
+        with self.assertRaises(motor.MotorOcupado) as ctx:
+            m.despachar_plano(**ARGS_PLANO)
+        self.assertEqual(ctx.exception.retry_after, 3)
 
     def test_falso_e_warren_cumprem_o_protocolo(self):
         self.assertIsInstance(motor.MotorFalso(), motor.Motor)
