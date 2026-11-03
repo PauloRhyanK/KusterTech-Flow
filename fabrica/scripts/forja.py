@@ -23,7 +23,6 @@ RESULTADOS_CI = ("ausente", "pendente", "vermelho", "verde")
 _NOME = r"[A-Za-z0-9_.-]+"
 _URL = re.compile(r"https://github\.com/(%s)/(%s)/(pull|issues)/([0-9]+)" % (_NOME, _NOME))
 _REPO = re.compile(r"(%s)/(%s)" % (_NOME, _NOME))
-_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 _SHA_COMPLETO = re.compile(r"[0-9a-f]{40}")
 # Só estas conclusões contam como sucesso; qualquer outra (inclusive vazia ou nova) é vermelho.
 _CONCLUSOES_VERDES = frozenset({"success", "neutral", "skipped"})
@@ -61,12 +60,6 @@ def _analisar_url(url, tipo: str) -> tuple[str, str, int]:
         raise ValueError("url inválida")
     dono, nome = _componente(achado.group(1)), _componente(achado.group(2))
     return dono, nome, int(achado.group(4))
-
-
-def _validar_sha(sha) -> str:
-    if not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-        raise ValueError("sha inválido")
-    return sha
 
 
 def _validar_sha_completo(sha) -> str:
@@ -250,7 +243,7 @@ class ForjaGitHub:
 
     def mergear(self, url: str, sha: str) -> bool:
         dono, nome, numero = _analisar_url(url, "pull")
-        _validar_sha(sha)
+        _validar_sha_completo(sha)
         caminho = "/repos/%s/%s/pulls/%d/merge" % (dono, nome, numero)
         status, _ = self._enviar("PUT", caminho, {"sha": sha, "merge_method": "merge"})
         if status == 200:
@@ -339,7 +332,7 @@ class ForjaFalsa:
         self, url: str, *, head_sha: str, branch: str, arquivos=(), aberto: bool = True
     ) -> None:
         dono, nome, numero = _analisar_url(url, "pull")
-        _validar_sha(head_sha)
+        _validar_sha_completo(head_sha)
         self._prs[url] = {
             "aberto": bool(aberto),
             "headSha": head_sha,
@@ -385,7 +378,7 @@ class ForjaFalsa:
     def mergear(self, url: str, sha: str) -> bool:
         self._registrar("mergear", url=url, sha=sha)
         _analisar_url(url, "pull")
-        _validar_sha(sha)
+        _validar_sha_completo(sha)
         if url not in self._prs:
             raise KeyError("PR desconhecido: %r" % (url,))
         pr = self._prs[url]

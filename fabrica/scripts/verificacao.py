@@ -34,6 +34,7 @@ CODIGO_ENTRADA_INVALIDA = 2
 CODIGO_NAO_EXECUTOU = 127
 
 _SHA = re.compile(r"[0-9a-f]{40}")
+ATRIBUTOS_DE_EXPORT = "* -export-ignore -export-subst\n"
 _GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
 
 
@@ -299,25 +300,37 @@ def verificar(
             **extras,
         )
 
-    try:
-        resultado = git(["fetch", "--quiet", "origin"], True)
-    except subprocess.TimeoutExpired as erro:
-        saida = "git fetch: tempo esgotado após %s s\n%s" % (TIMEOUT_GIT_S, _texto(erro.stdout) + _texto(erro.stderr))
-        return _resposta(sha, CODIGO_TIMEOUT, saida)
-    except OSError as erro:
-        return _nao_executou(sha, "git", erro)
-    if resultado.returncode != 0:
-        return _resposta(sha, resultado.returncode, _saida(resultado))
+    def passo(nome: str, args: list[str], texto: bool):
+        """`(resultado, None)` se o git terminou com 0; senão `(None, resposta pronta)`."""
+        try:
+            resultado = git(args, texto)
+        except subprocess.TimeoutExpired as erro:
+            saida = "git %s: tempo esgotado após %s s\n%s" % (nome, TIMEOUT_GIT_S, _texto(erro.stdout) + _texto(erro.stderr))
+            return None, _resposta(sha, CODIGO_TIMEOUT, saida)
+        except OSError as erro:
+            return None, _nao_executou(sha, "git", erro)
+        if resultado.returncode != 0:
+            return None, _resposta(sha, resultado.returncode, _saida(resultado))
+        return resultado, None
 
+    _, falha = passo("fetch", ["fetch", "--quiet", "origin"], True)
+    if falha:
+        return falha
+    dir_git, falha = passo("rev-parse", ["rev-parse", "--git-dir"], True)
+    if falha:
+        return falha
+    # Sem isto, um .gitattributes do commit com export-ignore/export-subst esconderia arquivos
+    # (por exemplo os testes) do export. O info/attributes tem precedência sobre o da árvore.
     try:
-        resultado = git(["archive", "--format=tar", sha], False)
-    except subprocess.TimeoutExpired as erro:
-        saida = "git archive: tempo esgotado após %s s\n%s" % (TIMEOUT_GIT_S, _texto(erro.stdout) + _texto(erro.stderr))
-        return _resposta(sha, CODIGO_TIMEOUT, saida)
+        info = os.path.join(os.fspath(repo_dir), _texto(dir_git.stdout).strip(), "info")
+        os.makedirs(info, exist_ok=True)
+        with open(os.path.join(info, "attributes"), "w", encoding="utf-8") as arquivo:
+            arquivo.write(ATRIBUTOS_DE_EXPORT)
     except OSError as erro:
-        return _nao_executou(sha, "git", erro)
-    if resultado.returncode != 0:
-        return _resposta(sha, resultado.returncode, _saida(resultado))
+        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "não foi possível gravar info/attributes (%s)" % type(erro).__name__)
+    resultado, falha = passo("archive", ["archive", "--format=tar", sha], False)
+    if falha:
+        return falha
     if not isinstance(resultado.stdout, (bytes, bytearray)):
         return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "export inválido: saída do git archive não é binária")
 

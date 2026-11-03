@@ -521,7 +521,7 @@ class TestesMergear(unittest.TestCase):
             self.assertNotIn(SEGREDO, str(ctx.exception))
 
     def test_sha_invalido_sem_requisicao(self):
-        for sha in ("", "abc", "abcdef", "x" * 40, "a" * 41, None, SHA + "\n"):
+        for sha in ("", "abc", "abcdef", "abc1234", "a" * 39, "x" * 40, "a" * 41, "A" * 40, None, 5, SHA + "\n", "main"):
             f, t = novo()
             with self.assertRaises(ValueError, msg=repr(sha)):
                 f.mergear(PR_URL, sha)
@@ -1032,6 +1032,10 @@ def tar_de(*membros):
     return buffer.getvalue()
 
 
+def git_dir(argv, **kwargs):
+    return proc(0, str(pathlib.Path(kwargs["cwd"]) / ".git") + "\n")
+
+
 def archive(*membros):
     return types.SimpleNamespace(returncode=0, stdout=tar_de(*membros), stderr=b"")
 
@@ -1046,8 +1050,8 @@ def tar_padrao():
 
 
 def sequencia(final=None):
-    """fetch ok, archive ok, e o comando."""
-    return [proc(), tar_padrao(), final if final is not None else proc()]
+    """fetch ok, rev-parse ok, archive ok, e o comando."""
+    return [proc(), git_dir, tar_padrao(), final if final is not None else proc()]
 
 
 class TestesVerificarComFalso(unittest.TestCase):
@@ -1072,12 +1076,13 @@ class TestesVerificarComFalso(unittest.TestCase):
         r = verificacao.verificar(self.dir, SHA, "pnpm test", executar=executar)
         self.assertEqual(r, {"sha": SHA, "codigo": 0, "saida": "tudo ok\n"})
         self.assertEqual(executar.fila, [])
-        self.assertEqual(len(chamadas), 3)
+        self.assertEqual(len(chamadas), 4)
         git = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
         self.assertEqual(chamadas[0][0], git + ["fetch", "--quiet", "origin"])
-        self.assertEqual(chamadas[1][0], git + ["archive", "--format=tar", SHA])
-        self.assertEqual(chamadas[2][0], ["bash", "-lc", "pnpm test"])
-        for _, kwargs in chamadas[:2]:
+        self.assertEqual(chamadas[1][0], git + ["rev-parse", "--git-dir"])
+        self.assertEqual(chamadas[2][0], git + ["archive", "--format=tar", SHA])
+        self.assertEqual(chamadas[3][0], ["bash", "-lc", "pnpm test"])
+        for _, kwargs in chamadas[:3]:
             self.assertEqual(kwargs["cwd"], self.dir)
         # O comando nunca roda em repo_dir; o diretório é novo, sem .git, e some no fim.
         cwd = vistos["cwd"]
@@ -1097,9 +1102,9 @@ class TestesVerificarComFalso(unittest.TestCase):
         verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertTrue(chamadas[0][1]["text"])
         self.assertTrue(chamadas[0][1]["capture_output"])
-        self.assertFalse(chamadas[1][1].get("text", False))
-        self.assertTrue(chamadas[1][1]["capture_output"])
-        self.assertTrue(chamadas[2][1]["text"])
+        self.assertFalse(chamadas[2][1].get("text", False))
+        self.assertTrue(chamadas[2][1]["capture_output"])
+        self.assertTrue(chamadas[3][1]["text"])
 
     def test_diretorios_novos_a_cada_chamada(self):
         cwds = []
@@ -1117,16 +1122,16 @@ class TestesVerificarComFalso(unittest.TestCase):
     def test_timeout_padrao_1800_e_configuravel(self):
         executar, chamadas = exec_falso(sequencia())
         verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        self.assertEqual(chamadas[2][1]["timeout"], 1800)
+        self.assertEqual(chamadas[3][1]["timeout"], 1800)
         executar, chamadas = exec_falso(sequencia())
         verificacao.verificar(self.dir, SHA, "x", timeout_s=42, executar=executar)
-        self.assertEqual(chamadas[2][1]["timeout"], 42)
+        self.assertEqual(chamadas[3][1]["timeout"], 42)
 
     def test_git_tem_timeout_proprio_sem_prompt_e_sem_config_do_sistema(self):
         executar, chamadas = exec_falso(sequencia())
         with mock.patch.dict(os.environ, {"GIT_CONFIG_NOSYSTEM": "0"}):
             verificacao.verificar(self.dir, SHA, "x", timeout_s=42, executar=executar)
-        for argv, kwargs in chamadas[:2]:
+        for argv, kwargs in chamadas[:3]:
             self.assertIsInstance(kwargs["timeout"], int)
             self.assertGreater(kwargs["timeout"], 0)
             self.assertNotEqual(kwargs["timeout"], 42)
@@ -1137,7 +1142,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         executar, chamadas = exec_falso(sequencia())
         with mock.patch.dict(os.environ, {"GIT_ASKPASS": "/bin/askpass-teste"}):
             verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        for _, kwargs in chamadas[:2]:
+        for _, kwargs in chamadas[:3]:
             self.assertEqual(kwargs["env"]["GIT_ASKPASS"], "/bin/askpass-teste")
 
     def test_ambiente_do_comando_e_limpo(self):
@@ -1156,7 +1161,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, sujo, clear=True):
             verificacao.verificar(self.dir, SHA, "x", executar=executar)
-        env = chamadas[2][1]["env"]
+        env = chamadas[3][1]["env"]
         self.assertEqual(set(env), {"PATH", "HOME", "LANG", "CI"})
         self.assertEqual(env["PATH"], "/usr/bin:/bin:/opt/x")
         self.assertEqual(env["LANG"], "C.UTF-8")
@@ -1235,8 +1240,8 @@ class TestesVerificarComFalso(unittest.TestCase):
 
         executar, chamadas = exec_falso(sequencia(comando))
         verificacao.verificar(self.dir, SHA, "x", executar=executar, executar_como=None)
-        self.assertEqual(len(chamadas), 3)
-        self.assertEqual(chamadas[2][0], ["bash", "-lc", "x"])
+        self.assertEqual(len(chamadas), 4)
+        self.assertEqual(chamadas[3][0], ["bash", "-lc", "x"])
         self.assertEqual(vistos["arq"], 0o644)
         self.assertEqual(vistos["exe"], 0o755)
         self.assertEqual(vistos["sub"], 0o755)
@@ -1263,7 +1268,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         executar, chamadas = exec_falso(sequencia(comando) + [proc()])
         r = verificacao.verificar(self.dir, SHA, "make test", executar=executar, executar_como=prefixo)
         self.assertEqual(r, {"sha": SHA, "codigo": 5, "saida": "saída\n"})
-        self.assertEqual(chamadas[2][0], prefixo + ["bash", "-lc", "make test"])
+        self.assertEqual(chamadas[3][0], prefixo + ["bash", "-lc", "make test"])
         self.assertEqual(vistos["src"], 0o777)
         self.assertEqual(vistos["home"], 0o777)
         self.assertEqual(vistos["sub"], 0o777)
@@ -1271,12 +1276,11 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(vistos["exe"], 0o777)
         self.assertEqual(vistos["base"] & 0o011, 0o011)
         # Depois do comando, devolve a permissão ao despachante e só então apaga.
-        self.assertEqual(len(chamadas), 4)
-        self.assertEqual(chamadas[3][0], prefixo + ["chmod", "-R", "a+rwX", str(vistos["base_path"])])
+        self.assertEqual(len(chamadas), 5)
+        self.assertEqual(chamadas[4][0], prefixo + ["chmod", "-R", "a+rwX", str(vistos["base_path"])])
         self.assertFalse(vistos["base_path"].exists())
         # O git nunca usa o prefixo.
-        self.assertEqual(chamadas[0][0][0], "git")
-        self.assertEqual(chamadas[1][0][0], "git")
+        self.assertEqual([c[0][0] for c in chamadas[:3]], ["git", "git", "git"])
 
     def test_executar_como_limpa_mesmo_com_timeout_e_ignora_falha_da_limpeza(self):
         prefixo = ["sudo", "-n", "-u", "fabrica-verif", "--"]
@@ -1285,8 +1289,8 @@ class TestesVerificarComFalso(unittest.TestCase):
         )
         r = verificacao.verificar(self.dir, SHA, "x", timeout_s=1, executar=executar, executar_como=prefixo)
         self.assertEqual(r["codigo"], 124)
-        self.assertEqual(len(chamadas), 4)
-        self.assertEqual(chamadas[3][0][: len(prefixo)], prefixo)
+        self.assertEqual(len(chamadas), 5)
+        self.assertEqual(chamadas[4][0][: len(prefixo)], prefixo)
 
     def test_executar_como_invalido_nao_executa_nada(self):
         for ruim in ([], "sudo", ["sudo", ""], ["sudo", 5], ["su\0do"], 5, ()):
@@ -1326,7 +1330,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(r["sha"], SHA)
         self.assertIn("parcial-out parcial-err", r["saida"])
         self.assertIn("[tempo esgotado após 5 s]", r["saida"])
-        self.assertEqual(len(chamadas), 3)
+        self.assertEqual(len(chamadas), 4)
 
     def test_timeout_sem_saida_ou_com_texto(self):
         for out in (None, "texto"):
@@ -1347,8 +1351,8 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertIn("e" * 100, r["saida"])
 
     def test_timeout_no_fetch_ou_no_archive_da_124_para_e_corta_em_4000(self):
-        for posicao, nome in ((0, "fetch"), (1, "archive")):
-            fila = [proc(), tar_padrao()]
+        for posicao, nome in ((0, "fetch"), (1, "rev-parse"), (2, "archive")):
+            fila = [proc(), git_dir, tar_padrao()]
             fila[posicao] = subprocess.TimeoutExpired(["git"], 9, output=b"o" * 9000, stderr=b"e" * 9000)
             executar, chamadas = exec_falso(fila)
             r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
@@ -1358,8 +1362,8 @@ class TestesVerificarComFalso(unittest.TestCase):
             self.assertTrue(r["saida"].endswith("e" * 100))
 
     def test_timeout_curto_do_git_mostra_o_nome_do_passo(self):
-        for posicao, nome in ((0, "fetch"), (1, "archive")):
-            fila = [proc(), tar_padrao()]
+        for posicao, nome in ((0, "fetch"), (1, "rev-parse"), (2, "archive")):
+            fila = [proc(), git_dir, tar_padrao()]
             fila[posicao] = subprocess.TimeoutExpired(["git"], 9)
             executar, _ = exec_falso(fila)
             r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
@@ -1373,20 +1377,20 @@ class TestesVerificarComFalso(unittest.TestCase):
 
     def test_falha_no_archive_devolve_codigo_e_saida_do_git_sem_rodar_o_comando(self):
         falha = types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"fatal: sha inexistente\n")
-        executar, chamadas = exec_falso([proc(), falha])
+        executar, chamadas = exec_falso([proc(), git_dir, falha])
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(r, {"sha": SHA, "codigo": 1, "saida": "fatal: sha inexistente\n"})
-        self.assertEqual(len(chamadas), 2)
+        self.assertEqual(len(chamadas), 3)
 
     def test_saida_do_git_tambem_e_cortada(self):
         executar, _ = exec_falso([proc(2, "", "e" * 9000)])
         self.assertEqual(len(verificacao.verificar(self.dir, SHA, "x", executar=executar)["saida"]), 4000)
 
     def test_archive_com_saida_nao_binaria_e_recusado(self):
-        executar, chamadas = exec_falso([proc(), proc(0, "texto")])
+        executar, chamadas = exec_falso([proc(), git_dir, proc(0, "texto")])
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(r["codigo"], 2)
-        self.assertEqual(len(chamadas), 2)
+        self.assertEqual(len(chamadas), 3)
 
     # Entradas inválidas
 
@@ -1426,6 +1430,46 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertIn("bash", r["saida"])
         self.assertFalse(pathlib.Path(cwds[0]).exists())
 
+    # Atributos de export (export-ignore / export-subst não podem esconder arquivos)
+
+    def test_grava_info_attributes_antes_do_archive_e_sobrescreve_o_que_havia(self):
+        alvo = self.dir / ".git" / "info" / "attributes"
+        alvo.parent.mkdir(parents=True)
+        alvo.write_text("tests/ export-ignore\n")
+        vistos = []
+
+        def archive_conferindo(argv, **kwargs):
+            vistos.append(alvo.read_text())
+            return tar_padrao()
+
+        executar, chamadas = exec_falso([proc(), git_dir, archive_conferindo, proc()])
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 0)
+        self.assertEqual(vistos, ["* -export-ignore -export-subst\n"])
+        self.assertEqual(alvo.read_text(), "* -export-ignore -export-subst\n")
+        self.assertEqual(chamadas[1][0][-2:], ["rev-parse", "--git-dir"])
+
+    def test_git_dir_relativo_e_absoluto_sao_resolvidos(self):
+        outro = self.dir / "outro-git"
+        for saida, esperado in ((".git\n", self.dir / ".git"), (str(outro) + "\n", outro), ("sub/gd\n", self.dir / "sub" / "gd")):
+            executar, _ = exec_falso([proc(), proc(0, saida), tar_padrao(), proc()])
+            verificacao.verificar(self.dir, SHA, "x", executar=executar)
+            self.assertTrue((esperado / "info" / "attributes").is_file(), saida)
+
+    def test_falha_no_rev_parse_devolve_o_codigo_do_git_sem_archive(self):
+        executar, chamadas = exec_falso([proc(), proc(128, "", "fatal: not a git repository\n")])
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r, {"sha": SHA, "codigo": 128, "saida": "fatal: not a git repository\n"})
+        self.assertEqual(len(chamadas), 2)
+
+    def test_nao_conseguir_gravar_attributes_da_codigo_2_sem_archive_nem_comando(self):
+        (self.dir / ".git").write_text("arquivo no lugar do diretório")
+        executar, chamadas = exec_falso([proc(), git_dir])
+        r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
+        self.assertEqual(r["codigo"], 2)
+        self.assertIn("info/attributes", r["saida"])
+        self.assertEqual(len(chamadas), 2)
+
     # Extração segura do tar
 
     def rodar_com_tar(self, *membros):
@@ -1435,7 +1479,7 @@ class TestesVerificarComFalso(unittest.TestCase):
             chamado.append(kwargs["cwd"])
             return proc()
 
-        executar, chamadas = exec_falso([proc(), archive(*membros), comando])
+        executar, chamadas = exec_falso([proc(), git_dir, archive(*membros), comando])
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         return r, chamado, chamadas
 
@@ -1461,9 +1505,9 @@ class TestesVerificarComFalso(unittest.TestCase):
             self.assertEqual(r["codigo"], 2, nome)
             self.assertTrue(r["saida"].startswith("export inválido"), (nome, r["saida"]))
             self.assertEqual(chamado, [], nome)
-            self.assertEqual(len(chamadas), 2, nome)
+            self.assertEqual(len(chamadas), 3, nome)
             self.assertFalse(pathlib.Path("/tmp/forja-fora.txt").exists(), nome)
-        self.assertEqual(list(self.dir.iterdir()), [])
+        self.assertEqual([p.name for p in self.dir.iterdir()], [".git"])
 
     def test_escrita_atraves_de_link_interno_fica_dentro(self):
         vistos = []
@@ -1476,6 +1520,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         executar, _ = exec_falso(
             [
                 proc(),
+                git_dir,
                 archive(membro("d", "dir"), membro("l", "link", alvo="d"), membro("l/x.txt", conteudo=b"x")),
                 comando,
             ]
@@ -1495,6 +1540,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         executar, _ = exec_falso(
             [
                 proc(),
+                git_dir,
                 archive(
                     membro("a", "dir"),
                     membro("a/b", "dir"),
@@ -1516,7 +1562,7 @@ class TestesVerificarComFalso(unittest.TestCase):
     def test_tar_corrompido_e_recusado(self):
         corrompido = types.SimpleNamespace(returncode=0, stdout=b"isto nao e um tar" * 100, stderr=b"")
         chamado = []
-        executar, _ = exec_falso([proc(), corrompido, lambda argv, **kw: chamado.append(1)])
+        executar, _ = exec_falso([proc(), git_dir, corrompido, lambda argv, **kw: chamado.append(1)])
         r = verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(r["codigo"], 2)
         self.assertTrue(r["saida"].startswith("export inválido"))
@@ -1535,7 +1581,7 @@ class TestesVerificarComFalso(unittest.TestCase):
             return proc()
 
         executar, _ = exec_falso(
-            [proc(), archive(membro("./", "dir"), membro("./a.txt", conteudo=b"a"), membro("b//c.txt", conteudo=b"b")), comando]
+            [proc(), git_dir, archive(membro("./", "dir"), membro("./a.txt", conteudo=b"a"), membro("b//c.txt", conteudo=b"b")), comando]
         )
         verificacao.verificar(self.dir, SHA, "x", executar=executar)
         self.assertEqual(vistos, [["a.txt", "b"]])
@@ -1686,6 +1732,38 @@ class TestesVerificarComGitReal(unittest.TestCase):
         r = verificacao.verificar(self.clone, sha2, "true")
         self.assertEqual(r["codigo"], 0, r)
         self.assertFalse(marcador.exists())
+
+    def test_export_ignore_do_commit_nao_esconde_os_testes(self):
+        (self.origem / "tests").mkdir()
+        sha = self.commitar(
+            {".gitattributes": "tests/ export-ignore\n", "tests/falha.sh": "exit 1\n"}, "esconde os testes"
+        )
+        r = verificacao.verificar(self.clone, sha, "bash tests/falha.sh")
+        self.assertEqual(r["codigo"], 1, r)
+        r = verificacao.verificar(self.clone, sha, "test -f tests/falha.sh && test -f .gitattributes")
+        self.assertEqual(r["codigo"], 0, r)
+
+    def test_export_ignore_em_arquivo_e_com_padrao_tambem_nao_esconde(self):
+        sha = self.commitar(
+            {".gitattributes": "teste.sh export-ignore\n*.spec export-ignore\n", "x.spec": "s\n"}, "esconde arquivos"
+        )
+        r = verificacao.verificar(self.clone, sha, "test -f teste.sh && test -f x.spec")
+        self.assertEqual(r["codigo"], 0, r)
+
+    def test_export_subst_do_commit_nao_substitui_nada(self):
+        sha = self.commitar({".gitattributes": "v.txt export-subst\n", "v.txt": "versao $Format:%H$\n"}, "subst")
+        r = verificacao.verificar(self.clone, sha, "grep -F '$Format:%H$' v.txt")
+        self.assertEqual(r["codigo"], 0, r)
+
+    def test_comando_que_apaga_info_attributes_nao_reabre_o_buraco(self):
+        (self.origem / "tests").mkdir()
+        sha = self.commitar({".gitattributes": "tests/ export-ignore\n", "tests/falha.sh": "exit 1\n"}, "esconde")
+        atributos = self.clone / ".git" / "info" / "attributes"
+        r = verificacao.verificar(self.clone, sha, "true")
+        self.assertEqual(r["codigo"], 0, r)
+        atributos.write_text("")
+        r = verificacao.verificar(self.clone, sha, "bash tests/falha.sh")
+        self.assertEqual(r["codigo"], 1, r)
 
     def test_sha_inexistente_devolve_codigo_do_git(self):
         r = verificacao.verificar(self.clone, "d" * 40, "true")
