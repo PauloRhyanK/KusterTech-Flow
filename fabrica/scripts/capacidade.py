@@ -44,12 +44,13 @@ def _validar(dados, caminho) -> dict:
     resultado = _padrao()
     resultado.update(dados)
     problemas = []
-    if not _inteiro(resultado["vagasConfig"]):
-        problemas.append("vagasConfig deve ser inteiro")
-    if not _inteiro(resultado["ramMinimaMb"]):
-        problemas.append("ramMinimaMb deve ser inteiro")
-    if resultado["oomEm"] is not None and not isinstance(resultado["oomEm"], str):
-        problemas.append("oomEm deve ser texto ou nulo")
+    if not _inteiro(resultado["vagasConfig"]) or resultado["vagasConfig"] < 1:
+        problemas.append("vagasConfig deve ser inteiro maior ou igual a 1")
+    if not _inteiro(resultado["ramMinimaMb"]) or resultado["ramMinimaMb"] < 0:
+        problemas.append("ramMinimaMb deve ser inteiro não negativo")
+    oom = resultado["oomEm"]
+    if oom is not None and (not isinstance(oom, str) or not oom):
+        problemas.append("oomEm deve ser texto não vazio ou nulo")
     reservas = resultado["reservas"]
     if not isinstance(reservas, dict) or not all(
         isinstance(raias, list) and all(isinstance(r, str) for r in raias)
@@ -63,6 +64,13 @@ def _validar(dados, caminho) -> dict:
         problemas.append("orquestrador deve mapear repositório para plano")
     if problemas:
         raise CapacidadeInvalida("%s: %s." % (caminho, "; ".join(problemas)))
+    resultado["reservas"] = {plano: sorted(set(raias)) for plano, raias in reservas.items()}
+    normalizado = {repo.lower(): plano for repo, plano in orquestrador.items()}
+    if len(normalizado) != len(orquestrador):
+        raise CapacidadeInvalida(
+            "%s: orquestrador tem repositórios repetidos (maiúsculas e minúsculas)." % caminho
+        )
+    resultado["orquestrador"] = normalizado
     return resultado
 
 
@@ -103,17 +111,27 @@ def _gravar_atomico(caminho: pathlib.Path, dados: dict) -> None:
 
 
 @contextlib.contextmanager
-def _transacao(caminho):
-    """Trava `<caminho>.lock` (bloqueante), lê o estado e grava de volta se o bloco o alterou."""
+def _transacao(caminho, *, recriar_se_corrompido=False):
+    """Trava `<caminho>.lock` (bloqueante), lê o estado e grava de volta se o bloco o alterou.
+
+    Com `recriar_se_corrompido`, um arquivo corrompido vira o padrão e é sempre regravado.
+    """
     caminho = pathlib.Path(caminho)
     caminho.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(caminho.with_name(caminho.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        dados = _ler_arquivo(caminho)
+        corrompido = False
+        try:
+            dados = _ler_arquivo(caminho)
+        except CapacidadeInvalida:
+            if not recriar_se_corrompido:
+                raise
+            dados = _padrao()
+            corrompido = True
         original = copy.deepcopy(dados)
         yield dados
-        if dados != original or not caminho.exists():
+        if corrompido or dados != original or not caminho.exists():
             _gravar_atomico(caminho, dados)
     finally:
         os.close(fd)
@@ -125,12 +143,15 @@ def ler(caminho) -> dict:
 
 
 def configurar(caminho, *, vagas: int, ram_minima_mb: int) -> None:
-    """Define vagas e RAM mínima e limpa o `oomEm`: o comando do Paulo para subir as vagas de volta."""
-    if not _inteiro(vagas) or vagas < 0:
-        raise ValueError("vagas deve ser um inteiro não negativo.")
+    """Define vagas e RAM mínima e limpa o `oomEm`: o comando do Paulo para subir as vagas de volta.
+
+    Se o arquivo estiver corrompido, regrava a partir dos padrões (sem reservas nem travas).
+    """
+    if not _inteiro(vagas) or vagas < 1:
+        raise ValueError("vagas deve ser um inteiro maior ou igual a 1.")
     if not _inteiro(ram_minima_mb) or ram_minima_mb < 0:
         raise ValueError("ram_minima_mb deve ser um inteiro não negativo.")
-    with _transacao(caminho) as dados:
+    with _transacao(caminho, recriar_se_corrompido=True) as dados:
         dados["vagasConfig"] = vagas
         dados["ramMinimaMb"] = ram_minima_mb
         dados["oomEm"] = None

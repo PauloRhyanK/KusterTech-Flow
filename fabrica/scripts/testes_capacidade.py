@@ -55,6 +55,12 @@ class TestesLeitura(Base):
             {"vagasConfig": True},
             {"ramMinimaMb": 1.5},
             {"oomEm": 5},
+            {"oomEm": ""},
+            {"vagasConfig": 0},
+            {"vagasConfig": -1},
+            {"ramMinimaMb": -1},
+            {"ramMinimaMb": True},
+            {"orquestrador": []},
             {"reservas": []},
             {"reservas": {"p": "raia"}},
             {"reservas": {"p": [1]}},
@@ -64,6 +70,42 @@ class TestesLeitura(Base):
                 self.caminho.write_text(json.dumps(ruim), encoding="utf-8")
                 with self.assertRaises(cap.CapacidadeInvalida):
                     cap.ler(self.caminho)
+
+    def test_utf8_invalido_levanta_capacidade_invalida(self):
+        self.caminho.write_bytes(b'{"vagasConfig": 3, "oomEm": "\xff\xfe"}')
+        with self.assertRaises(cap.CapacidadeInvalida):
+            cap.ler(self.caminho)
+
+    def test_chaves_de_orquestrador_sao_normalizadas_para_minusculas_ao_ler(self):
+        self.caminho.write_text(
+            json.dumps({"orquestrador": {"Dono/Repo": "A"}}), encoding="utf-8"
+        )
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+
+    def test_chaves_de_orquestrador_que_colidem_levantam_capacidade_invalida(self):
+        self.caminho.write_text(
+            json.dumps({"orquestrador": {"Dono/Repo": "A", "dono/repo": "A"}}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(cap.CapacidadeInvalida):
+            cap.ler(self.caminho)
+
+    def test_tomar_e_soltar_enxergam_trava_escrita_a_mao_em_maiusculas(self):
+        self.caminho.write_text(
+            json.dumps({"orquestrador": {"Dono/Repo": "A"}}), encoding="utf-8"
+        )
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+        cap.soltar_orquestrador(self.caminho, "DONO/REPO", "B")
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {})
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+
+    def test_raias_duplicadas_na_reserva_sao_normalizadas_ao_ler(self):
+        self.caminho.write_text(
+            json.dumps({"reservas": {"p": ["b", "a", "b"]}}), encoding="utf-8"
+        )
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p": ["a", "b"]})
 
     def test_chaves_ausentes_recebem_o_padrao(self):
         self.caminho.write_text(json.dumps({"vagasConfig": 5}), encoding="utf-8")
@@ -105,6 +147,16 @@ class TestesVagas(Base):
     def test_ram_abaixo_do_minimo_recusa(self):
         self.assertFalse(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=1500))
         self.assertEqual(cap.ler(self.caminho)["reservas"], {})
+
+    def test_reserva_repetida_da_mesma_raia_com_ram_baixa_continua_valendo(self):
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=4096))
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=100))
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p1": ["a"]})
+
+    def test_raia_nova_com_ram_baixa_e_recusada(self):
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=4096))
+        self.assertFalse(cap.reservar(self.caminho, "p1", "b", mem_disponivel_mb=100))
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p1": ["a"]})
 
     def test_ram_exatamente_no_minimo_aceita(self):
         self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=2048))
@@ -154,8 +206,38 @@ class TestesVagas(Base):
         self.assertEqual(dados["orquestrador"], {"dono/repo": "p1"})
         self.assertEqual((dados["vagasConfig"], dados["ramMinimaMb"]), (4, 1024))
 
+    def test_configurar_regrava_arquivo_corrompido_a_partir_dos_padroes(self):
+        corrompidos = (
+            b"{isso nao e json",
+            b'{"oomEm": "\xff"}',
+            b'{"reservas": []}',
+            b"[1]",
+        )
+        for conteudo in corrompidos:
+            with self.subTest(conteudo=conteudo):
+                self.caminho.write_bytes(conteudo)
+                cap.configurar(self.caminho, vagas=5, ram_minima_mb=1024)
+                esperado = dict(PADRAO, vagasConfig=5, ramMinimaMb=1024)
+                self.assertEqual(cap.ler(self.caminho), esperado)
+
+    def test_configurar_arquivo_corrompido_zera_oom_reservas_e_travas(self):
+        self.caminho.write_text(
+            json.dumps({"vagasConfig": "x", "oomEm": "ontem", "reservas": {"p": ["a"]}}),
+            encoding="utf-8",
+        )
+        cap.configurar(self.caminho, vagas=3, ram_minima_mb=2048)
+        self.assertEqual(cap.ler(self.caminho), PADRAO)
+
     def test_configurar_rejeita_valores_invalidos(self):
-        for vagas, ram in ((-1, 2048), (3, -1), ("3", 2048), (3, None), (True, 2048)):
+        for vagas, ram in (
+            (0, 2048),
+            (-1, 2048),
+            (3, -1),
+            ("3", 2048),
+            (3, None),
+            (True, 2048),
+            (3, True),
+        ):
             with self.subTest(vagas=vagas, ram=ram):
                 with self.assertRaises(ValueError):
                     cap.configurar(self.caminho, vagas=vagas, ram_minima_mb=ram)
