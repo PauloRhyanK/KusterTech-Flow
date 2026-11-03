@@ -294,6 +294,7 @@ class TestRegistrarPlano(unittest.TestCase):
                 "fixerRunId": None,
                 "fixerUsado": False,
                 "tentativasMerge": 0,
+                "interrupcoes": 0,
                 "pendenteHumano": None,
                 "motivoHumano": None,
             },
@@ -1058,7 +1059,7 @@ class TestNovaTentativa(unittest.TestCase):
 
     def campos_da_tentativa(self, s):
         chaves = ["fixerUsado", "tentativasRevisao", "headSha", "ci", "veredito", "verificacao", "arquivos",
-                  "branch", "motivoHumano", "tentativasMerge", "pendenteHumano", "vereditoAnterior",
+                  "branch", "motivoHumano", "tentativasMerge", "interrupcoes", "pendenteHumano", "vereditoAnterior",
                   "revisaoRunId", "fixerRunId"]
         return {k: s[k] for k in chaves}
 
@@ -1409,6 +1410,238 @@ class TestPerguntaDoOrquestrador(unittest.TestCase):
     def test_outros_arquivos_de_fabrica_nao_sao_pergunta(self):
         for arquivos in [[".fabrica/perguntas.md"], [".fabrica/x/pergunta.md"], [".fabrica/pergunta.md.bak"]]:
             self.assertEqual(est.decidir_pr_orquestrador(motivo="raia_falhou", arquivos=arquivos, erros_plano=[]), "mergear")
+
+
+def replanejar(e, raia="a", plano_seeds="pl-NEW"):
+    """Raia falha → acordar → orquestrador termina → plano novo com outro planoSeeds."""
+    e = est.registrar_plano(e, raia, estado_plano="failed", falha="run_failed", filhos=[])
+    e = est.aplicar(e, {"tipo": "acordar", "motivo": "raia_falhou", "alvo": raia}, {"runId": "orq1"})
+    e = est.concluir_orquestrador(e)
+    p = plano()
+    for r in p["raias"]:
+        if r["id"] == raia:
+            r["planoSeeds"] = plano_seeds
+    return est.sincronizar_plano(e, p), p
+
+
+class TestSeedsObsoletas(unittest.TestCase):
+    """K: replanejar uma raia falha torna obsoletas as seeds da tentativa anterior."""
+
+    AVISO = f"PR {PR_URL} da tentativa anterior da raia a ficou obsoleto; feche-o"
+
+    def test_cenario_pr_verde_da_tentativa_antiga_nunca_e_mergeado(self):
+        e = tudo_verde()
+        self.assertIn({"tipo": "mergear", "seed": "s1", "sha": "bbb"}, acoes(e))
+        e, p = replanejar(e)
+        self.assertEqual(e["raias"]["a"]["estado"], "planejada")
+        self.assertEqual(e["seeds"]["s1"]["estado"], "obsoleta")
+        self.assertIn(self.AVISO, e["avisos"])
+        lista = acoes(e, p)
+        self.assertNotIn("mergear", [a["tipo"] for a in lista])
+        self.assertEqual(da_seed(lista), [])
+        self.assertIn({"tipo": "despachar_raia", "raia": "a"}, lista)
+        e, feitas = ciclo(e, executor(), p)
+        self.assertEqual(da_seed(feitas), [])
+        self.assertEqual(e["raias"]["a"]["estado"], "executando")
+        # o Warren ainda fala da seed antiga: nada muda
+        for obs in [filho("s1", "pr_open", pr=PR2), filho("s1", "running", run="r9"), filho("s1", "merged"), filho("s1", "failed")]:
+            novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[obs])
+            self.assertEqual(novo["seeds"]["s1"], e["seeds"]["s1"], obs)
+        for _ in range(2):
+            e, feitas = ciclo(e, executor(), p)
+            self.assertEqual(da_seed(feitas), [])
+        self.assertEqual(e["seeds"]["s1"]["estado"], "obsoleta")
+
+    def test_idempotente(self):
+        e, p = replanejar(tudo_verde())
+        self.assertEqual(est.sincronizar_plano(e, p), e)
+        self.assertEqual(e["avisos"].count(self.AVISO), 1)
+        self.assertEqual(acoes(e, p), acoes(e, p))
+
+    def test_todo_estado_nao_mergeado_vira_obsoleta(self):
+        for estado in ["executando", "em_revisao", "aguardando_gates", "corrigindo", "bloqueada_humano", "falhou"]:
+            e = tudo_verde()
+            e["seeds"]["s1"]["estado"] = estado
+            e["seeds"]["s1"]["pendenteHumano"] = "x"
+            e, p = replanejar(e)
+            self.assertEqual(e["seeds"]["s1"]["estado"], "obsoleta", estado)
+            self.assertEqual(da_seed(acoes(e, p)), [], estado)
+
+    def test_mergeada_fica_e_outras_raias_nao_mudam(self):
+        e = tudo_verde()
+        e["seeds"]["s1"]["estado"] = "mergeada"
+        e = despachar(e, "b")
+        e = est.registrar_plano(e, "b", estado_plano="running", falha=None, filhos=[filho("s2", "pr_open", pr=PR2)])
+        e["seeds"]["s3"] = dict(est._seed_nova("a"), estado="em_revisao")  # sem PR: sem aviso
+        e, _ = replanejar(e)
+        self.assertEqual({s: e["seeds"][s]["estado"] for s in e["seeds"]}, {"s1": "mergeada", "s2": "em_revisao", "s3": "obsoleta"})
+        self.assertFalse(any("obsoleto" in a for a in e["avisos"]))
+
+    def test_fim_de_run_nao_ressuscita_obsoleta(self):
+        e = tudo_verde(ci="vermelho")
+        e = est.aplicar(e, da_seed(acoes(e))[0], {"runId": "fx1"})
+        e, _ = replanejar(e)
+        for estado_run, motivo in [("failed", "run_failed"), ("succeeded", None), ("failed", "oom_killed")]:
+            novo = est.registrar_fim_de_run(e, "fx1", estado_run=estado_run, motivo_falha=motivo, veredito=None, cota=False)
+            self.assertEqual(novo["seeds"]["s1"]["estado"], "obsoleta", estado_run)
+            self.assertEqual(da_seed(acoes(novo)), [])
+
+    def test_mesmo_plano_seeds_nao_torna_obsoleta(self):
+        e = est.registrar_plano(tudo_verde(), "a", estado_plano="failed", falha="x", filhos=[])
+        e = est.sincronizar_plano(e, plano())
+        self.assertEqual(e["seeds"]["s1"]["estado"], "aguardando_gates")
+
+
+class TestInterrupcoesPorOom(unittest.TestCase):
+    """L: OOM repetido no fixer ou no revisor da mesma seed vai para o Paulo na 3ª vez."""
+
+    HUMANO = {"tipo": "aguardar_humano", "seed": "s1", "motivos": ["OOM repetido no fixer/revisor"]}
+
+    def test_tres_ooms_no_fixer_vao_para_o_paulo_sem_quarto_corrigir(self):
+        e = tudo_verde(ci="vermelho")
+        for n in [1, 2, 3]:
+            [acao] = da_seed(acoes(e))
+            self.assertEqual(acao["tipo"], "corrigir", n)
+            e = est.aplicar(e, acao, {"runId": f"fx{n}"})
+            e = est.registrar_fim_de_run(e, f"fx{n}", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
+            self.assertEqual(e["seeds"]["s1"]["interrupcoes"], n)
+        self.assertEqual(da_seed(acoes(e)), [self.HUMANO])
+        e = est.aplicar(e, self.HUMANO, {})
+        self.assertEqual(e["seeds"]["s1"]["estado"], "bloqueada_humano")
+        self.assertEqual(da_seed(acoes(e)), [])
+
+    def test_tres_ooms_no_revisor_vao_para_o_paulo_sem_quarto_revisar(self):
+        e = verificar(com_pr(sha="bbb"), "bbb")
+        for n in [1, 2, 3]:
+            self.assertEqual(da_seed(acoes(e)), [{"tipo": "revisar", "seed": "s1", "sha": "bbb"}], n)
+            e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": f"rv{n}"})
+            e = est.registrar_fim_de_run(e, f"rv{n}", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
+        self.assertEqual(da_seed(acoes(e)), [self.HUMANO])
+
+    def test_cenario_oom_persistente_para_em_tres_runs(self):
+        e = tudo_verde(ci="vermelho")
+        corrigir = 0
+        for _ in range(6):
+            e, feitas = ciclo(e, executor())
+            corrigir += len(dos_tipos(da_seed(feitas), "corrigir"))
+            if e["seeds"]["s1"]["fixerRunId"]:
+                e = est.registrar_fim_de_run(e, e["seeds"]["s1"]["fixerRunId"], estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
+        self.assertEqual(corrigir, 3)
+        self.assertEqual(e["seeds"]["s1"]["estado"], "bloqueada_humano")
+
+    def test_fixer_e_revisor_somam_na_mesma_seed(self):
+        e = tudo_verde(ci="vermelho")
+        e = est.aplicar(e, da_seed(acoes(e))[0], {"runId": "fx1"})
+        e = est.registrar_fim_de_run(e, "fx1", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
+        e["seeds"]["s1"]["veredito"] = None
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv9"})
+        e = est.registrar_fim_de_run(e, "rv9", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
+        self.assertEqual((e["seeds"]["s1"]["interrupcoes"], e["seeds"]["s1"]["pendenteHumano"]), (2, None))
+
+    def test_cota_nao_conta(self):
+        e = tudo_verde(ci="vermelho")
+        for n in range(4):
+            [acao] = da_seed(acoes(e))
+            self.assertEqual(acao["tipo"], "corrigir")
+            e = est.aplicar(e, acao, {"runId": f"fx{n}"})
+            e = est.registrar_fim_de_run(e, f"fx{n}", estado_run="failed", motivo_falha="provider_error", veredito=None, cota=True)
+            self.assertEqual(e["seeds"]["s1"]["interrupcoes"], 0)
+            e["pausado"] = None
+
+    def test_head_novo_zera_o_contador(self):
+        e = tudo_verde(ci="vermelho")
+        e["seeds"]["s1"]["interrupcoes"] = 2
+        mesmo = est.registrar_pr(e, "s1", head_sha="bbb", branch="warren/s1", arquivos=["src/a/x.ts"], ci="vermelho")
+        self.assertEqual(mesmo["seeds"]["s1"]["interrupcoes"], 2)
+        novo = est.registrar_pr(e, "s1", head_sha="ccc", branch="warren/s1", arquivos=["src/a/x.ts"], ci="vermelho")
+        self.assertEqual(novo["seeds"]["s1"]["interrupcoes"], 0)
+
+    def test_reinicio_da_seed_zera_o_contador(self):
+        e = tudo_verde(ci="vermelho")
+        e["seeds"]["s1"]["interrupcoes"] = 2
+        e = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[filho("s1", "running", run="r2")])
+        self.assertEqual(e["seeds"]["s1"]["interrupcoes"], 0)
+
+    def test_contador_malformado_vai_para_o_paulo(self):
+        e = tudo_verde(ci="vermelho")
+        e["seeds"]["s1"]["interrupcoes"] = "x"
+        e = est.aplicar(e, da_seed(acoes(e))[0], {"runId": "fx1"})
+        e = est.registrar_fim_de_run(e, "fx1", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
+        self.assertEqual(da_seed(acoes(e)), [self.HUMANO])
+
+
+class TestRedespachoPorRunId(unittest.TestCase):
+    """M: um runId novo do Warren reinicia a seed em qualquer estado não terminal."""
+
+    def test_run_novo_reinicia_em_qualquer_estado_nao_terminal(self):
+        for estado in ["executando", "em_revisao", "aguardando_gates", "corrigindo", "bloqueada_humano", "falhou"]:
+            e = corrigir_apos_gate_vermelho()
+            e["seeds"]["s1"]["estado"] = estado
+            e["seeds"]["s1"]["pendenteHumano"] = "despacho do fixer sem runId"
+            e["seeds"]["s1"]["motivoHumano"] = "m"
+            for obs in ["running", "dispatched"]:
+                novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[filho("s1", obs, run="r2")])
+                s = novo["seeds"]["s1"]
+                fresca = dict(est._seed_nova("a"), runId="r2")
+                self.assertEqual(s, fresca, (estado, obs))
+                self.assertEqual(da_seed(acoes(novo)), [])
+
+    def test_mesmo_run_nao_muda_nada(self):
+        for estado in ["executando", "em_revisao", "aguardando_gates", "corrigindo", "bloqueada_humano", "falhou"]:
+            e = corrigir_apos_gate_vermelho()
+            e["seeds"]["s1"]["estado"] = estado
+            for f in [filho("s1", "running", run="r1"), filho("s1", "dispatched", run=None)]:
+                novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[f])
+                self.assertEqual(novo["seeds"]["s1"], e["seeds"]["s1"], (estado, f))
+
+    def test_terminais_nao_reiniciam(self):
+        for estado in ["mergeada", "obsoleta"]:
+            e = corrigir_apos_gate_vermelho()
+            e["seeds"]["s1"]["estado"] = estado
+            novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[filho("s1", "running", run="r2")])
+            self.assertEqual(novo["seeds"]["s1"], e["seeds"]["s1"], estado)
+
+    def test_cenario_bloqueada_redespachada_ganha_fixer_novo(self):
+        """minor rr1-1: pendenteHumano → bloqueada_humano → o Warren redespacha → a seed recomeça."""
+        e = est.aplicar(tudo_verde(ci="vermelho"), {"tipo": "corrigir", "seed": "s1", "sha": "bbb", "motivos": [], "achados": []}, {})
+        e = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[filho("s1", "failed")])
+        e, feitas = ciclo(e, executor())
+        self.assertEqual([a["tipo"] for a in da_seed(feitas)], ["aguardar_humano"])
+        self.assertEqual(e["seeds"]["s1"]["estado"], "bloqueada_humano")
+        # mesmo PR (o Warren reaproveita o branch): só o runId novo pode reiniciar a seed
+        for obs in [filho("s1", "running", run="r2"), filho("s1", "pr_open", run="r2")]:
+            e = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[obs])
+        self.assertEqual(e["seeds"]["s1"]["estado"], "em_revisao")
+        e = est.registrar_pr(e, "s1", head_sha="zzz", branch="warren/s1-2", arquivos=["src/a/x.ts"], ci="vermelho")
+        e = revisar(e, "zzz", "rv5", veredito("zzz"))
+        e = verificar(e, "zzz")
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["corrigir"])
+
+
+class TestMutantesSobreviventes(unittest.TestCase):
+    """N: o desconto da revisão é exatamente 1 e o reinício de H zera `retomadas`."""
+
+    def test_revisao_interrompida_devolve_exatamente_uma_tentativa(self):
+        for motivo, cota in [("oom_killed", False), ("provider_error", True)]:
+            e = com_pr(sha="bbb")
+            e["seeds"]["s1"]["tentativasRevisao"] = 1
+            e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv2"})
+            self.assertEqual(e["seeds"]["s1"]["tentativasRevisao"], 2)
+            e = est.registrar_fim_de_run(e, "rv2", estado_run="failed", motivo_falha=motivo, veredito=None, cota=cota)
+            self.assertEqual(e["seeds"]["s1"]["tentativasRevisao"], 1, motivo)
+
+    def test_reinicio_de_h_zera_retomadas_e_o_resto(self):
+        e = despachar(estado_inicial(), "a")
+        e["raias"]["a"].update(retomadas=3, retomar=True)
+        e = est.registrar_plano(e, "a", estado_plano="failed", falha="child_pr_merge_timeout", filhos=[])
+        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["retomadas"]), ("falhou", 3))
+        p = plano()
+        p["raias"][1]["planoSeeds"] = "pl-NEW"
+        e = est.sincronizar_plano(e, p)
+        self.assertEqual(
+            e["raias"]["a"],
+            {"estado": "planejada", "planRunId": None, "retomar": False, "retomadas": 0, "falha": None, "planoSeeds": "pl-NEW"},
+        )
 
 
 if __name__ == "__main__":

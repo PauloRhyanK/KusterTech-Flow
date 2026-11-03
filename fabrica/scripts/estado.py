@@ -19,6 +19,8 @@ MAX_RETOMADAS = 3
 MAX_TENTATIVAS_REVISAO = 2
 MAX_RECUSAS_DE_MERGE = 3
 MAX_FALHAS_ACORDAR = 3
+MAX_INTERRUPCOES = 3
+TERMINAIS = ("mergeada", "obsoleta")
 ESTADOS_DE_GATE = ("em_revisao", "aguardando_gates", "corrigindo")
 MOTIVOS_DO_PAULO = ("nova_spec", "fase_concluida")
 PREFIXOS_DO_ORQUESTRADOR = (".fabrica/", ".seeds/")
@@ -54,6 +56,7 @@ def _seed_nova(raia_id: str) -> dict:
         "fixerRunId": None,
         "fixerUsado": False,
         "tentativasMerge": 0,
+        "interrupcoes": 0,
         "pendenteHumano": None,
         "motivoHumano": None,
     }
@@ -177,7 +180,21 @@ def sincronizar_plano(estado: dict, plano: dict) -> dict:
             raias_do_estado[id_] = _raia_nova(plano_seeds)
             chave = _chave("raia_falhou", id_)
             estado["chavesAcordadas"] = [c for c in _lista(estado.get("chavesAcordadas")) if c != chave]
+            _tornar_obsoletas(estado, id_)
     return estado
+
+
+def _tornar_obsoletas(estado: dict, raia_id: str) -> None:
+    """As seeds da tentativa anterior da raia nunca mais recebem ação (nem merge)."""
+    for seed in _seeds(estado).values():
+        if not isinstance(seed, dict) or seed.get("raia") != raia_id or seed.get("estado") in TERMINAIS:
+            continue
+        seed["estado"] = "obsoleta"
+        if _texto(seed.get("pr")):
+            _avisar(
+                estado,
+                f"PR {seed['pr']} da tentativa anterior da raia {raia_id} ficou obsoleto; feche-o",
+            )
 
 
 # ---------------------------------------------------------------- observações
@@ -214,14 +231,16 @@ def _registrar_filho(estado: dict, raia_id: str, filho) -> None:
     if not isinstance(seeds.get(seed_id), dict):
         seeds[seed_id] = _seed_nova(raia_id)
     seed = seeds[seed_id]
-    if _texto(filho.get("runId")):
-        seed["runId"] = filho["runId"]
     atual = seed.get("estado")
-    if atual == "mergeada":
-        return  # terminal: nada no Warren desfaz um merge
+    if atual in TERMINAIS:
+        return  # mergeada ou obsoleta: nada que o Warren diga muda a seed
+    run_id = filho.get("runId")
+    run_novo = _texto(run_id) and run_id != seed.get("runId")
+    if _texto(run_id):
+        seed["runId"] = run_id
     if obs in ("dispatched", "running"):
-        if atual == "falhou":
-            # redespacho: nada da tentativa anterior vale para a nova
+        if run_novo:
+            # o Warren redespachou a seed: nada da tentativa anterior vale para a nova
             _nova_tentativa(seeds, seed_id, seed)
     elif obs == "pr_open":
         url = filho.get("prUrl")
@@ -287,6 +306,7 @@ def registrar_pr(
         anterior = seed.get("headSha")
         if _texto(anterior) and anterior != head_sha:
             seed["tentativasMerge"] = 0  # head novo: as recusas eram do head antigo
+            seed["interrupcoes"] = 0
         seed["headSha"] = head_sha
     else:
         # sem head legível nenhum gate vale e nenhuma ação é emitida para a seed
@@ -304,6 +324,17 @@ def registrar_verificacao(estado: dict, seed_id: str, verificacao: dict) -> dict
     if seed is not None:
         seed["verificacao"] = copy.deepcopy(verificacao)
     return estado
+
+
+def _contar_interrupcao(estado: dict, seed_id: str, seed: dict, motivo_falha) -> None:
+    """OOM repetido na mesma seed vai para o Paulo; a cota não conta (já pausa tudo)."""
+    if motivo_falha != OOM:
+        return
+    n = seed.get("interrupcoes")
+    n = (n if _inteiro(n) and n >= 0 else MAX_INTERRUPCOES - 1) + 1
+    seed["interrupcoes"] = n
+    if n >= MAX_INTERRUPCOES:
+        _pedir_humano(estado, seed_id, seed, "OOM repetido no fixer/revisor")
 
 
 def registrar_fim_de_run(
@@ -330,6 +361,7 @@ def registrar_fim_de_run(
                 tentativas = seed.get("tentativasRevisao")
                 if _inteiro(tentativas) and tentativas > 0:
                     seed["tentativasRevisao"] = tentativas - 1
+                _contar_interrupcao(estado, seed_id, seed, motivo_falha)
             elif (
                 estado_run == "succeeded"
                 and isinstance(veredito, dict)
@@ -344,9 +376,10 @@ def registrar_fim_de_run(
                 # o fixer volta a ser emitido: devolve o veredito que o motivou
                 seed["fixerUsado"] = False
                 seed["veredito"] = seed.get("vereditoAnterior")
+                _contar_interrupcao(estado, seed_id, seed, motivo_falha)
             elif estado_run == "succeeded":
                 seed["veredito"] = None  # o head mudou: o próximo ciclo pede revisão nova
-            elif seed.get("estado") != "mergeada":
+            elif seed.get("estado") not in TERMINAIS:
                 seed["estado"] = "falhou"
                 _avisar(estado, f"seed {seed_id!r}: fixer terminou em {estado_run!r}")
             seed["vereditoAnterior"] = None
@@ -445,7 +478,7 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str]) -> list[dic
         if not isinstance(seed, dict):
             continue
         pendente = seed.get("pendenteHumano")
-        if pendente and seed.get("estado") not in ("mergeada", "bloqueada_humano"):
+        if pendente and seed.get("estado") not in TERMINAIS + ("bloqueada_humano",):
             motivo = pendente if _texto(pendente) else "decisão humana necessária"
             acoes.append({"tipo": "aguardar_humano", "seed": seed_id, "motivos": [motivo]})
             continue
