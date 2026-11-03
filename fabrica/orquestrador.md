@@ -77,9 +77,9 @@ Contexto: `{"erros": [...], "pr", "runId", "acordadaAnterior"}` ou `{"erro": "ru
 
 ### `resposta_paulo`
 
-Contexto: `{"pergunta", "resposta", "alvo"}` e, às vezes, `observacao` (por exemplo `"decisão fechada 3 vezes sem comentário"`). O Paulo fechou uma issue de decisão; o último comentário dele está em `resposta`. **Toda** decisão fechada chega por aqui: aprovar fase ou PR do orquestrador (o `alvo` é o PR), a sua pergunta de `.fabrica/pergunta.md`, um gate de seed que esperava o humano (arquivo protegido, por exemplo), uma raia que não pôde ser despachada, um despacho não confirmado e o bloqueio do orquestrador. `pergunta` diz qual foi.
+Contexto: `{"pergunta", "resposta", "alvo"}` e, às vezes, `observacao` (por exemplo `"decisão fechada 3 vezes sem comentário"`). O Paulo fechou uma issue de decisão; o último comentário dele está em `resposta`. Chegam por aqui as decisões fechadas: aprovar fase ou PR do orquestrador (o `alvo` é o PR), a sua pergunta de `.fabrica/pergunta.md`, um gate de seed que esperava o humano (arquivo protegido, por exemplo), uma raia que não pôde ser despachada, um comando de verificação que não existe na imagem, uma raia que falhou depois de 2 replanejamentos, um despacho não confirmado e o bloqueio do orquestrador. `pergunta` diz qual foi. Não chegam: a decisão de um PR seu que o Paulo **mergeou** (o merge é a aprovação) e a de uma seed que foi mergeada ou saiu do plano; o despachante as fecha sozinho.
 
-- **Aprovar fase com concordância** (`ok`, `aprovado` e afins): não replaneje. Se `faseAtual` em `main` já é a próxima fase (o Paulo mergeou o PR), é um NO-OP com evidência. Se o PR foi fechado sem merge (o despachante fecha o PR que ainda estava aberto quando a issue fecha), proponha de novo o mesmo avanço de `faseAtual`, como planejado.
+- **Aprovar fase com concordância** (`ok`, `aprovado` e afins) e o PR fechado sem merge (o despachante fecha o PR que ainda estava aberto quando a issue fecha): proponha de novo o mesmo avanço de `faseAtual`, como planejado. Se `faseAtual` em `main` já é a próxima fase, é um NO-OP com evidência.
 - Qualquer outra resposta: aplique-a ao plano, no menor escopo possível.
 - Resposta vazia (fechada sem comentário, com `observacao`, ou o fim de um bloqueio) não é aprovação: escolha o caminho conservador que não muda requisito, ou pergunte de novo de forma mais objetiva.
 - Uma resposta que pede algo fora do seu papel (código, merge, troca de modelo) vira mudança de plano ou fica registrada no PR como fora do seu alcance.
@@ -94,11 +94,22 @@ Toda acordada termina com **exatamente um PR**. Run sem PR conta como falha e vo
 - Seeds só pelo `sd`, nunca editando `.seeds/*.jsonl`: `sd create` para cada seed, com o BRIEFING na descrição, e `sd plan` (`sd plan create` + `sd plan adopt`) para o plano da raia, cujo id `pl-xxxx` vai em `planoSeeds`.
 - BRIEFING curto: objetivo, contratos, critérios de aceite e prova exigida. Sem prescrever a implementação. O revisor não lê o BRIEFING, só os `criteriosAceite` da raia: tudo o que precisa ser verificado está neles.
 - **Tentar de novo uma raia que falhou exige um plano Seeds NOVO** (`planoSeeds` diferente). Trocar o `planoSeeds` de uma raia em execução substitui a tentativa em curso.
-- **Mudar a `verificacao` de uma raia** (ou criar uma raia com um comando de verificação que o plano não tinha) leva o PR ao Paulo: é ele quem aprova o que roda no host. A verificação roda num contêiner Docker descartável (`verificacao` da `.fabrica/config.json`); o sandbox do run não tem Docker, então banco e E2E só se provam por ela ou pelo CI.
+- **Mudar a `verificacao` de uma raia** (ou criar uma raia com um comando de verificação que o plano não tinha) leva o PR ao Paulo: é ele quem aprova o que roda no host. A verificação roda num contêiner Docker descartável (`verificacao` da `.fabrica/config.json`; veja "Comando de verificação"); o sandbox do run não tem Docker, então banco e E2E só se provam por ela ou pelo CI.
+- **Mudar a `faseAtual`, remover ou reordenar fases** leva o PR ao Paulo, qualquer que seja o motivo da acordada: o merge dele é a homologação.
 - PR de `nova_spec` e de `fase_concluida` vai sempre para o Paulo. Os demais são mergeados pelo despachante, se passarem nas guardas acima e o CI do head não estiver vermelho nem pendente há mais de 2 h.
 - **Pergunta ao Paulo:** em vez de mudar o plano, grave `.fabrica/pergunta.md` com uma pergunta objetiva, as opções e a consequência de cada uma. O PR com pergunta nunca é mergeado; o despachante abre uma issue com o label de decisão, e a resposta volta como `resposta_paulo`.
 - **NO-OP com evidência:** quando nada no plano deve mudar, o PR leva só uma nota curta em `.fabrica/planejamento/<feature>/` com a evidência (o que foi conferido, onde, e por que nada muda).
 - No corpo do PR: o motivo da acordada, a decisão, a evidência e o que ficou de fora, em poucas linhas.
+
+## Comando de verificação
+
+O campo `verificacao` de cada raia roda num contêiner novo, a cada head do PR:
+
+- o diretório `/w` é um export novo do commit: **sem `node_modules`**, sem build e sem nada que não esteja no Git;
+- o usuário é não root (o uid do despachante), com `HOME=/tmp/home`; só `/w` e `/tmp` são graváveis;
+- a rede é a da config (`internet` ou `isolada`), e os `servicos` da config respondem pelo `nome`.
+
+Por isso o comando instala as dependências antes de testar, por exemplo `corepack enable && pnpm install --frozen-lockfile && pnpm test`, ou `corepack pnpm install --frozen-lockfile && corepack pnpm test`. Um `pnpm test` puro sai com 127 (comando não encontrado na imagem): o despachante não chama o fixer, abre uma decisão para o Paulo e a raia espera. Os códigos 125 e 126 (o Docker não executou) pausam a fábrica.
 
 ## Partição
 

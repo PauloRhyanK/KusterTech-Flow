@@ -26,10 +26,12 @@
 # alguém corrigir e reiniciar.
 #   - .fabrica/config.json inválida ou ilegível: abre uma issue de decisão, mas só se já existe
 #     estado.json deste mesmo repositório (FABRICA_REPO) em FABRICA_RAIZ;
-#   - variável obrigatória ausente ou arquivo de token ilegível: sai com 2 SEM abrir issue.
+#   - variável obrigatória ausente ou arquivo de token ilegível: sai com 2 SEM abrir issue;
+#   - sem estado.json em FABRICA_RAIZ (rode iniciar antes) ou estado.json corrompido: sai com 2 SEM abrir
+#     issue e sem recriar o arquivo.
 # Nos dois casos, `systemctl --user status fabrica-despachante` mostra "failed" com status=2, e
 # `journalctl --user -u fabrica-despachante` mostra a causa ("config inválida: ...", "defina FABRICA_RAIZ",
-# "não foi possível ler o token em ..."). Corrija e rode `systemctl --user restart fabrica-despachante`.
+# "não foi possível ler o token em ...", "estado.json ilegível em ..."). Corrija e rode `systemctl --user restart fabrica-despachante`.
 
 [Unit]
 Description=Despachante da Fábrica de agentes

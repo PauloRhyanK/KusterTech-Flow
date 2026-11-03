@@ -14,7 +14,7 @@ Kit para entregar features de projetos de clientes com equipes de agentes de IA 
 
 ## Instalar num projeto cliente
 
-Requisitos no repositório do cliente: CI em `.github/workflows/` e Seeds iniciado (`sd init`). Depois:
+Requisitos no repositório do cliente: CI em `.github/workflows/`, Seeds iniciado (`sd init`) e **commits de merge permitidos** (Settings → General → Pull Requests → "Allow merge commits"). O despachante mergeia com `merge_method: "merge"` e o sha do head; um repositório só com squash ou rebase recusa o merge, e a seed vai para o Paulo depois de 3 recusas. Depois:
 
 ```bash
 python3 -I fabrica/scripts/instalar.py <caminho do repositório do cliente>
@@ -39,7 +39,7 @@ Na máquina de agentes: clone este repositório em `~/fabrica/kit`, clone o repo
 - O usuário do despachante no grupo `docker` (a verificação roda em contêiner).
 - `loginctl enable-linger <usuário>`, para o serviço de usuário rodar sem sessão aberta.
 
-Sem o sudo ou sem o Warren nesses caminhos, o `preparar_warren` devolve `erro` (ou `versao_desconhecida`, com outro adaptador): todos os papéis rodam no modelo padrão da conta, só com um aviso, e o drop-in do merge timeout e o desligamento do `warren-automerge.service` também não acontecem. Sem o grupo `docker`, a verificação das raias falha; sem o linger, o serviço para quando a sessão fecha.
+Sem o sudo, o `preparar_warren` devolve `erro` e nada é aplicado: nem o `--model`, nem o drop-in do merge timeout, nem o desligamento do `warren-automerge.service`. Com um adaptador que não é o esperado (`versao_desconhecida`), só o `--model` deixa de ser aplicado; o drop-in e o desligamento do automerge seguem. Sem o `--model`, todos os papéis rodam no modelo padrão da conta, com um aviso. Enquanto o `warren-automerge.service` não for desligado, o despachante segura os merges (os despachos seguem) e abre uma issue de decisão, que fecha sozinha quando o automerge sai. Sem o grupo `docker`, a verificação não executa e o despachante pausa com uma issue; sem o linger, o serviço para quando a sessão fecha.
 
 ## Iniciar
 
@@ -68,14 +68,18 @@ O despachante faz sozinho:
 - **Cria o label** `fabrica:decisao` no repositório do cliente.
 - **Toda decisão do Paulo vira uma issue** com esse label. Fechar a issue com um comentário é a resposta, e ela volta ao orquestrador. Uma pausa (cota, falhas seguidas do orquestrador, ação interrompida) também abre uma issue, e fechá-la retoma.
 - **Fecha os PRs substituídos:** os PRs de uma tentativa antiga de raia e os PRs antigos do orquestrador.
+- **Fecha as decisões resolvidas:** a decisão de uma seed que foi mergeada (pelo merge do Paulo, por exemplo) ou saiu do plano, e a de um PR do orquestrador que o Paulo mergeou (o merge é a aprovação). Nenhuma delas acorda o orquestrador.
+- **Limita o custo das falhas:** CI ausente logo depois de um push espera 10 min pelos checks; uma verificação que nem executou (Docker fora, código 125 ou 126, ou erro do próprio verificador) pausa a fábrica com uma issue, e um comando que não existe na imagem (código 127) abre uma decisão da raia, sem fixer nem orquestrador; depois de 2 replanejamentos de uma raia, a próxima falha dela vai para o Paulo em vez de acordar o orquestrador.
 - Registra cada acordada em `acordadas.jsonl` e cada ação em `log.jsonl`, na `FABRICA_RAIZ`.
 
 **Quando o serviço para sozinho (saída 2).** Entrada inválida faz o despachante sair com 2, e a unit não reinicia (`RestartPreventExitStatus=2`):
 
 - `.fabrica/config.json` inválida ou ilegível: abre uma issue de decisão, mas só se já existe `estado.json` deste mesmo repositório (`FABRICA_REPO`) na `FABRICA_RAIZ`;
-- variável obrigatória ausente ou arquivo de token ilegível: sai **sem** abrir issue.
+- variável obrigatória ausente ou arquivo de token ilegível: sai **sem** abrir issue;
+- sem `estado.json` na `FABRICA_RAIZ` (rode `iniciar` antes do serviço): sai **sem** abrir issue;
+- `estado.json` corrompido (JSON inválido ou que não é um objeto): sai **sem** abrir issue e **sem** recriar o arquivo. Restaure-o de um backup ou corrija-o à mão; apagá-lo recomeça a fábrica do zero.
 
-Nos dois casos, `systemctl --user status fabrica-despachante` mostra o serviço `failed` com `status=2`, e `journalctl --user -u fabrica-despachante` mostra a causa (`config inválida: ...`, `defina FABRICA_RAIZ`, `não foi possível ler o token em ...`). Corrija e rode `systemctl --user restart fabrica-despachante`.
+Em todos os casos, `systemctl --user status fabrica-despachante` mostra o serviço `failed` com `status=2`, e `journalctl --user -u fabrica-despachante` mostra a causa (`config inválida: ...`, `defina FABRICA_RAIZ`, `não foi possível ler o token em ...`, `sem estado.json em ...`, `estado.json ilegível em ...`). Corrija e rode `systemctl --user restart fabrica-despachante`.
 
 ## O que ainda é do Paulo
 
@@ -110,7 +114,7 @@ Limitações:
 ## Riscos residuais
 
 - **Rede da verificação:** com `"rede": "internet"`, o contêiner da verificação alcança as portas publicadas no host da máquina de agentes. `"rede": "isolada"` corta isso, mas impede instalar dependências com rede durante a verificação.
-- **Duplicata paga rara (N6 e N7):** se o Warren levar mais de 90 s para mostrar um retry automático ou um Plan Run cuja resposta se perdeu, o despachante pode pagar de novo uma revisão, um orquestrador ou, no pior caso, uma raia inteira. A `Idempotency-Key` e a busca por nonce cobrem os outros casos; o piso de tempo que fecha estes dois fica para a correção final.
+- **Duplicata paga rara (N6 e N7):** o despachante só desiste de achar um retry automático do Warren ou um despacho cuja resposta se perdeu depois de 3 leituras boas **e** 5 min desde que viu a falha. Um Warren que leve mais de 5 min para listar o run ou o Plan Run ainda pode levar a um pagamento repetido (uma revisão, um orquestrador ou, no pior caso, uma raia).
 
 ## Compatibilidade com as skills `fabrica-*`
 
@@ -131,3 +135,5 @@ Limitações:
   ```
 
   Banco e outros serviços de que a verificação precisa entram em `servicos`, acessíveis pelo `nome`.
+
+- **Contrato do comando de verificação:** o contêiner recebe um export novo do commit, **sem `node_modules`** nem nada fora do Git, roda com um usuário não root (o uid do despachante), com `HOME=/tmp/home`, e com a rede da config (`internet` ou `isolada`). O comando precisa instalar as dependências, por exemplo `corepack enable && pnpm install --frozen-lockfile && pnpm test` (ou `corepack pnpm install --frozen-lockfile && corepack pnpm test`). Um `pnpm test` puro sai com 127 (comando não encontrado) e vira uma decisão da raia. As skills `fabrica-*` precisam gerar comandos nesse formato.
