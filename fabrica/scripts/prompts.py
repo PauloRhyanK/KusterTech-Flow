@@ -9,6 +9,9 @@ INICIO_VEREDITO = "FABRICA_VEREDITO_INICIO"
 FIM_VEREDITO = "FABRICA_VEREDITO_FIM"
 
 LIMITE_SAIDA_VERIFICACAO = 4000
+# Valores de preenchimento do exemplo do revisor: um veredito que os traga é cópia, não revisão.
+ARQUIVO_EXEMPLO = "caminho/do/arquivo.ts"
+MOTIVO_EXEMPLO = "descreva o problema"
 _RESULTADOS = ("aprovado", "correcoes")
 _COTA = re.compile(r"(?i)(\b429\b|quota(?!tion)|rate.?limit|usage limit|(?:hour|weekly|daily) limit reached)")
 
@@ -36,7 +39,7 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
         {
             "sha": sha,
             "resultado": "correcoes",
-            "achados": [{"arquivo": "caminho/do/arquivo.ts", "motivo": "descreva o problema"}],
+            "achados": [{"arquivo": ARQUIVO_EXEMPLO, "motivo": MOTIVO_EXEMPLO}],
         },
         ensure_ascii=False,
     )
@@ -104,7 +107,11 @@ def prompt_orquestrador(*, motivo: str, estado_compacto: dict, contexto: dict) -
 
 def _achados_validos(achados) -> bool:
     return isinstance(achados, list) and all(
-        isinstance(a, dict) and isinstance(a.get("arquivo"), str) and isinstance(a.get("motivo"), str)
+        isinstance(a, dict)
+        and isinstance(a.get("arquivo"), str)
+        and isinstance(a.get("motivo"), str)
+        and a["arquivo"] != ARQUIVO_EXEMPLO
+        and a["motivo"] != MOTIVO_EXEMPLO
         for a in achados
     )
 

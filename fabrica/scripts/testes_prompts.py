@@ -7,6 +7,7 @@ from unittest import mock
 RAIZ = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ))
 
+import prompts  # noqa: E402
 from prompts import (  # noqa: E402
     FIM_VEREDITO,
     INICIO_VEREDITO,
@@ -320,16 +321,55 @@ class ExtrairVereditoTest(unittest.TestCase):
         with mock.patch("prompts.json.loads", side_effect=RecursionError):
             self.assertIsNone(extrair_veredito(bloco(veredito_valido())))
 
-    def test_exemplo_do_prompt_do_revisor_e_valido_mas_nunca_aprova(self):
+    def test_exemplo_do_prompt_do_revisor_nao_vira_veredito(self):
         texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
+        self.assertIsNone(extrair_veredito(texto))
+
+    def test_exemplo_do_prompt_so_difere_por_ser_placeholder(self):
+        # O exemplo é JSON válido: trocar o achado de preenchimento por um real o torna veredito.
+        texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
+        real = texto.replace(prompts.ARQUIVO_EXEMPLO, "src/a.ts").replace(prompts.MOTIVO_EXEMPLO, "falta teste")
         self.assertEqual(
-            extrair_veredito(texto),
-            {
-                "sha": SHA,
-                "resultado": "correcoes",
-                "achados": [{"arquivo": "caminho/do/arquivo.ts", "motivo": "descreva o problema"}],
-            },
+            extrair_veredito(real),
+            {"sha": SHA, "resultado": "correcoes", "achados": [{"arquivo": "src/a.ts", "motivo": "falta teste"}]},
         )
+
+    def test_constantes_do_exemplo_vem_do_modulo_e_estao_no_prompt(self):
+        self.assertEqual(prompts.ARQUIVO_EXEMPLO, "caminho/do/arquivo.ts")
+        self.assertEqual(prompts.MOTIVO_EXEMPLO, "descreva o problema")
+        texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
+        self.assertIn(prompts.ARQUIVO_EXEMPLO, texto)
+        self.assertIn(prompts.MOTIVO_EXEMPLO, texto)
+
+    def test_exemplo_com_resultado_trocado_para_aprovado_e_none(self):
+        v = veredito_valido(
+            resultado="aprovado",
+            achados=[{"arquivo": prompts.ARQUIVO_EXEMPLO, "motivo": prompts.MOTIVO_EXEMPLO}],
+        )
+        self.assertIsNone(extrair_veredito(bloco(v)))
+
+    def test_achado_com_so_um_dos_placeholders_e_none(self):
+        casos = {
+            "arquivo": {"arquivo": prompts.ARQUIVO_EXEMPLO, "motivo": "falta teste"},
+            "motivo": {"arquivo": "src/a.ts", "motivo": prompts.MOTIVO_EXEMPLO},
+        }
+        for nome, achado in casos.items():
+            with self.subTest(nome):
+                self.assertIsNone(extrair_veredito(bloco(veredito_valido(achados=[achado]))))
+
+    def test_placeholder_misturado_com_achado_real_e_none(self):
+        achados = [
+            {"arquivo": "src/a.ts", "motivo": "falta teste"},
+            {"arquivo": prompts.ARQUIVO_EXEMPLO, "motivo": prompts.MOTIVO_EXEMPLO},
+        ]
+        self.assertIsNone(extrair_veredito(bloco(veredito_valido(achados=achados))))
+
+    def test_veredito_real_com_outros_arquivo_e_motivo_continua_valido(self):
+        v = veredito_valido(
+            resultado="correcoes",
+            achados=[{"arquivo": "src/modules/clientes/model.ts", "motivo": "CNPJ sem validação"}],
+        )
+        self.assertEqual(extrair_veredito(bloco(v)), v)
 
     def test_eco_do_prompt_seguido_de_resposta_sem_bloco_nao_aprova(self):
         prompt = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
