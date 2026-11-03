@@ -10,7 +10,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import globs  # noqa: E402
 
-PAPEIS_DE_RAIA = ("arquiteto", "ux-engineer", "backend", "frontend", "qa")
+# Os papéis do catálogo de equipes do Paulo (`fabrica/equipes/<papel>.md`) que podem ser dono de uma raia.
+PAPEIS_DE_RAIA = ("produto", "arquiteto", "ux-ui", "frontend", "backend", "qa", "devops", "seguranca")
+# Nomes antigos ainda aceitos no plano; valem como o papel canônico (pacote, modelo e prompt).
+ALIASES_DE_PAPEL = {"ux-engineer": "ux-ui"}
 
 _PLANO_SEEDS = re.compile(r"pl-[0-9a-f]{4}")
 
@@ -23,10 +26,15 @@ def _texto_vazio(valor) -> bool:
     return not isinstance(valor, str) or not valor.strip()
 
 
+def papel_normalizado(papel):
+    """O papel canônico de um alias (`ux-engineer` → `ux-ui`); qualquer outro valor volta como veio."""
+    return ALIASES_DE_PAPEL.get(papel, papel) if isinstance(papel, str) else papel
+
+
 def _erros_da_raia(raia: dict) -> list[str]:
     id_ = raia.get("id")
     erros = []
-    if raia.get("papel") not in PAPEIS_DE_RAIA:
+    if papel_normalizado(raia.get("papel")) not in PAPEIS_DE_RAIA:
         erros.append(
             f"raia '{id_}': papel inválido {raia.get('papel')!r} "
             f"(permitidos: {', '.join(PAPEIS_DE_RAIA)})"

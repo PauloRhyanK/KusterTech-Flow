@@ -386,9 +386,10 @@ def globs_sobrepoem(a, b):
   - `raiz` é o diretório de trabalho: `estado.json`, `plano.json` (cópia do branch padrão), `acordadas.jsonl` e `log.jsonl`;
   - `config` é o `.fabrica/config.json` do cliente (formato na Task 8);
   - `iniciar(*, spec: str) -> None` cria o estado se ele não existir e emite `acordar` com o motivo `nova_spec` e o contexto `{"spec": spec}`;
+  - **entrada de plano já aprovado** (o pacote das skills `fabrica-*`, mergeado pelo Paulo em `main`): `iniciar` **sem** `spec` lê `.fabrica/plano.json` do branch padrão, recusa com os erros de `validar_plano`, adota o plano e cria o estado **sem** acordar o orquestrador. O gate humano já aconteceu no merge do pacote; o próximo `ciclo()` despacha as raias prontas da `faseAtual`. Com o estado já existente, mantém o estado: pacotes seguintes entram pelo passo 1 do `ciclo()`. (Já implementado em `cd13115`: `test_iniciar_sem_spec_usa_o_plano_valido_e_nao_acorda` e `test_iniciar_sem_spec_com_plano_invalido_ou_ausente_recusa`.)
   - `ciclo() -> list[dict]` devolve as ações executadas.
 - Passos de `ciclo()`:
-  1. **Recarregar o plano:** `forja.arquivo(repo, "main", ".fabrica/plano.json")`; se mudou, grava em `raiz` e chama `sincronizar_plano`.
+  1. **Recarregar o plano:** `forja.arquivo(repo, "main", ".fabrica/plano.json")`; se mudou, passa por `validar_plano`. Válido: grava em `raiz` e chama `sincronizar_plano`. Inválido: mantém o plano anterior e registra um aviso, sem despachar raia nova (`test_plano_invalido_no_branch_nao_substitui_o_anterior`).
   2. **Observar:**
      - para cada raia `executando`: `motor.plano` → `registrar_plano`;
      - para cada seed com `pr`: `forja.pr` + `forja.ci` → `registrar_pr`;
@@ -411,7 +412,7 @@ def globs_sobrepoem(a, b):
   - por último, limpa `orquestrador.runId`.
 - Uma decisão aberta e fechada pelo Paulo com comentário vira `acordar` com o motivo `resposta_paulo` e o comentário no contexto. A lista de URLs de decisões abertas fica em `estado["decisoes"]`.
 - CLI:
-  - `python3 -I fabrica/scripts/despachante.py iniciar --spec <caminho no repo>`;
+  - `python3 -I fabrica/scripts/despachante.py iniciar --spec <caminho no repo>`, ou `iniciar` sem `--spec` para um plano já aprovado em `main`;
   - `... rodar [--intervalo 30]`, que repete `ciclo()` e dorme `intervalo` segundos, com log JSON por ação em `log.jsonl`;
   - `... status`, que imprime raias, seeds, avisos e pausa em formato compacto;
   - `... retomar`, que zera `pausado`.
@@ -516,7 +517,7 @@ def globs_sobrepoem(a, b):
   
   Troca `docs/ai-plans/tasks.json` pelo Seeds e pelo `.fabrica/plano.json`. Seções obrigatórias:
   1. "Faz / nunca faz" (spec §4, literal);
-  2. "Entrada de cada acordada" (os motivos `nova_spec`, `fase_concluida`, `raia_falhou`, `gate_falhou_apos_fixer`, `plano_invalido`, `resposta_paulo` e o que fazer em cada um);
+  2. "Entrada de cada acordada" (os motivos `nova_spec`, `fase_concluida`, `raia_falhou`, `gate_falhou_apos_fixer`, `plano_invalido`, `resposta_paulo` e o que fazer em cada um). Em `fase_concluida`, quando a próxima fase já está em `.fabrica/plano.json` e os relatórios da fase concluída não contradizem o plano, o orquestrador **só avança `faseAtual`**, sem replanejar, e diz no PR por que o plano continua valendo; replaneja só a parte que um relatório contradiz. Vale para fases planejadas antes da execução, seja por um pacote das skills `fabrica-*`, seja pelo próprio orquestrador;
   3. "Saída": um PR que só toca `.fabrica/**` e `.seeds/**`, com `.fabrica/plano.json` validado por `python3 -I .fabrica/raias.py validar .fabrica/plano.json` antes do commit, seeds criadas com `sd create` e `sd plan`, e BRIEFINGs curtos com objetivo, contratos, critérios de aceite e prova exigida. Ou então `.fabrica/pergunta.md`, com uma pergunta objetiva;
   4. "Partição", com dono exclusivo de arquivos e arquivos compartilhados na fundação;
   5. "Orçamento", sem ler o repositório inteiro (progressive disclosure, §6 do original).
@@ -534,14 +535,15 @@ def globs_sobrepoem(a, b):
     - dar ao token de `~/.warren-gh-token` as permissões Checks (read), Commit statuses (read) e Issues (read/write), além das que ele já tem;
     - criar o label `fabrica:decisao`;
   - instalar num projeto;
-  - iniciar com uma spec;
+  - iniciar com uma spec (`iniciar --spec`) ou com um plano já aprovado (`iniciar` sem `--spec`, depois de mergear o PR do pacote das skills `fabrica-*`);
   - operar (`status`, `retomar`, `journalctl --user -u fabrica-despachante`);
   - o que é decisão do Paulo.
 - **`fabrica/servico/fabrica-despachante.service`**: uma unit systemd **de usuário** com `ExecStart=/usr/bin/python3 -I %h/fabrica/kit/fabrica/scripts/despachante.py rodar --intervalo 30`, `EnvironmentFile=%h/fabrica/despachante.env`, `Restart=always` e `RestartSec=15`.
 - **Teste de contrato** (`testes_contratos.py`):
   - todo pacote de `PAPEIS_DE_RAIA` + `revisor` + `fixer` existe e tem as seis seções;
   - `revisor.md` contém os dois marcadores e um exemplo que `extrair_veredito` aceita;
-  - `orquestrador.md` cita todos os motivos de acordada que `estado.py` emite (os seis acima) e o comando de validação.
+  - `orquestrador.md` cita todos os motivos de acordada que `estado.py` emite (os seis acima) e o comando de validação;
+  - `orquestrador.md` tem a regra de `fase_concluida` que só avança `faseAtual` quando a próxima fase já está planejada (procure `faseAtual` na seção "Entrada de cada acordada").
 - [ ] **Passo 1: escrever `testes_contratos.py` e ver falhar.**
 - [ ] **Passo 2: escrever os documentos e a unit; ajustar `CLAUDE.md` e `.agents/README.md`.**
 - [ ] **Passo 3: testes verdes, mais `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test`.**
@@ -566,3 +568,13 @@ Esta tarefa é operacional. As ações marcadas **(Paulo)** são dele; as outras
   - os ids de modelo efetivamente aceitos.
   
   Abrir um PR para a homologação do Paulo.
+
+## Adendo de 03/11/2026
+
+Mudanças decididas pelo controlador durante a execução; o código e `fabrica/README.md` prevalecem sobre o texto das tasks acima.
+
+- **Task 6:** a verificação passou do host para um contêiner Docker descartável por chamada (`verificacao.py` + `exportar.py`), com a config `verificacao` em `.fabrica/config.json`.
+- **Task 7:** operação zero manual (pausas como issues, caixa de entrada, decisões rastreadas por nonce, fechamento de PRs substituídos), `Idempotency-Key` e busca por nonce contra a duplicata paga; N6 e N7 ficaram para a correção final.
+- **Task 7b (nova):** `preparar_warren.py` aplica o `--model` no adaptador do Warren 0.19.3, o drop-in do merge timeout de 3 h e desliga o `warren-automerge`, com drenagem limitada e rollback.
+- **Task 8:** tabela de modelos por papel real, esforço por modelo em `.claude/settings.json`, `PADROES-COMUNS.md` no instalador e label de decisão criado pelo despachante.
+- **Task 9:** o catálogo de equipes do Paulo entra como `fabrica/equipes/` (mais o `fixer`), com os papéis de raia novos e `ux-engineer` como alias de `ux-ui`; o prompt do fixer lê também o pacote do papel da raia; o orquestrador combina o perfil do Paulo com os princípios do `architect-orchestrator`.

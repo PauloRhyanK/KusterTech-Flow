@@ -83,8 +83,8 @@ PERMITIDOS_AO_ORQUESTRADOR = (
 )
 # Valem em todo PR de seed, somados aos `protegidos` da config do cliente.
 PROTEGIDOS_FIXOS = (".github/**", ".warren/**", ".fabrica/**", ".claude/**")
-# Ponto único da normalização de papel: a Task 9 só precisa publicar `raias.ALIASES_DE_PAPEL`.
-ALIASES_DE_PAPEL = dict(getattr(raias, "ALIASES_DE_PAPEL", {"ux-engineer": "ux-ui"}))
+# Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
+ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 
 MAX_SEM_RESULTADO = 2
@@ -2870,12 +2870,16 @@ class Despachante:
             else:
                 modelo = self._modelo("fixer")
                 saida = _dict(seed.get("verificacao")).get("saida")
-                prompt = prompts.prompt_fixer(
-                    seed_id=acao["seed"],
-                    motivos=[m for m in _lista(acao.get("motivos")) if isinstance(m, str)],
-                    achados=[a for a in _lista(acao.get("achados")) if isinstance(a, dict)],
-                    saida_verificacao=saida if isinstance(saida, str) else "",
-                )
+                try:
+                    prompt = prompts.prompt_fixer(
+                        seed_id=acao["seed"],
+                        papel=self._papel_da_raia(seed.get("raia")),
+                        motivos=[m for m in _lista(acao.get("motivos")) if isinstance(m, str)],
+                        achados=[a for a in _lista(acao.get("achados")) if isinstance(a, dict)],
+                        saida_verificacao=saida if isinstance(saida, str) else "",
+                    )
+                except ValueError as exc:
+                    raise _NaoExecutada(str(exc)) from None
             run_id = self.motor.despachar_run(
                 projeto=self.projeto,
                 agente=modelo["agente"],

@@ -206,3 +206,14 @@ Leitura do código do Warren v0.19.3 (tag `v0.19.3`) e sondagem só com GET na m
   - `acordadas.jsonl` mostra só exceções;
   - a Central lista as execuções.
 - Gates do Flow intactos: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test`. A pasta `fabrica/` fica fora do build do Next.
+
+## 12. Atualizações de 03/11/2026
+
+Decisões tomadas durante a implementação do kit; prevalecem sobre as seções anteriores onde divergem.
+
+- **Verificação em contêiner.** O comando `verificacao` de cada raia não roda mais no host: roda num contêiner Docker descartável por chamada (sem capabilities, `no-new-privileges`, limites de memória, CPU e processos, só a cópia exportada do commit montada), com os serviços de apoio declarados em `.fabrica/config.json` (`verificacao`). O modo de rede `internet` alcança portas publicadas no host; `isolada` corta isso.
+- **Modelos por papel.** A tabela de `.fabrica/config.json` vale de fato: o despachante prepara o Warren 0.19.3 sozinho (`preparar_warren.py`: `--model` no adaptador `claude-code`, drop-in com o merge timeout de 3 h e `warren-automerge.service` desligado) e confere o modelo efetivo de cada run. O esforço vale por modelo, via `.claude/settings.json`.
+- **Catálogo de papéis do Paulo.** `fabrica/equipes/` traz os dez perfis aprovados mais o `fixer` e `fabrica/PADROES-COMUNS.md`. Os papéis de raia são `produto`, `arquiteto`, `ux-ui`, `frontend`, `backend`, `qa`, `devops` e `seguranca`, com `ux-engineer` aceito como alias de `ux-ui`. O fixer é uma função: o especialista da raia em modo de correção.
+- **Planejamento prévio.** As skills `fabrica-*` do Claude Code planejam a feature antes da execução; com o plano aprovado em `main`, `iniciar` sem `--spec` adota o plano sem acordar o orquestrador, que passa a ser executor e replanejador por exceção.
+- **Operação zero manual.** Pausas viram issues que retomam ao serem fechadas; `iniciar --spec` e `retomar` entram por uma caixa de entrada com o serviço rodando; as decisões são issues rastreadas por nonce; PRs substituídos são fechados pelo despachante; a reinicialização do Warren usa uma drenagem limitada.
+- **Duplicata paga.** `POST /runs` leva `Idempotency-Key` e toda ação paga carrega um nonce procurado antes de repetir. Restam dois casos raros (retry ou Plan Run visível só depois de 90 s), registrados como riscos residuais em `fabrica/README.md`.

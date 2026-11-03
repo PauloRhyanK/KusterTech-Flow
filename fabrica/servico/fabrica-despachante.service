@@ -1,0 +1,39 @@
+# Despachante da Fábrica de agentes: unit systemd DE USUÁRIO (sem sudo).
+#
+# Instalação (na máquina de agentes, como o usuário que roda o Warren e o Docker):
+#   mkdir -p ~/.config/systemd/user
+#   cp fabrica/servico/fabrica-despachante.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now fabrica-despachante
+#   loginctl enable-linger "$USER"   # continua rodando sem sessão aberta
+#
+# ~/fabrica/despachante.env: uma variável por linha, sem comentário no fim da linha. Só caminhos e
+# nomes, NUNCA um token: os tokens ficam em arquivos próprios, e o .env aponta para eles.
+#   FABRICA_RAIZ=/home/<usuário>/fabrica/<projeto>
+#   FABRICA_REPO_DIR=/home/<usuário>/fabrica/<projeto>/repo
+#   FABRICA_PROJETO=<projeto no Warren>
+#   FABRICA_REPO=<dono>/<repositório no GitHub>
+#   WARREN_API=http://127.0.0.1:8080
+#   WARREN_TOKEN_FILE=/home/<usuário>/.warren-token
+#   GH_TOKEN_FILE=/home/<usuário>/.warren-gh-token
+# FABRICA_RAIZ guarda estado.json, plano.json, log.jsonl, acordadas.jsonl e a caixa entrada/.
+# FABRICA_REPO_DIR é um clone do repositório do cliente (config e verificação).
+# WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE são opcionais; os valores acima são os padrões.
+#
+# Saída 2 é config ou ambiente inválido: o serviço não reinicia em laço; o despachante abre uma issue
+# de decisão e o Paulo corrige e reinicia (systemctl --user restart fabrica-despachante).
+# Logs: journalctl --user -u fabrica-despachante
+
+[Unit]
+Description=Despachante da Fábrica de agentes
+
+[Service]
+Type=simple
+EnvironmentFile=%h/fabrica/despachante.env
+ExecStart=/usr/bin/python3 -I %h/fabrica/kit/fabrica/scripts/despachante.py rodar --intervalo 30
+Restart=always
+RestartSec=15
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target

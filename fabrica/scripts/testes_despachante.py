@@ -270,6 +270,8 @@ class TestesJornada(Base):
         self.assertEqual(fixer["max_custo_usd"], 5)
         self.assertIn("CI vermelho", fixer["prompt"])
         self.assertIn("saída da verificação de 1111", fixer["prompt"])
+        self.assertIn(".fabrica/equipes/fixer.md", fixer["prompt"])
+        self.assertIn(".fabrica/equipes/backend.md", fixer["prompt"])
         fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
 
         self.motor.definir_run(fid, estado="succeeded")
@@ -1612,6 +1614,35 @@ class TestesConfig(Base):
         d.ciclo()
         (despacho,) = self.planos_despachados()
         self.assertEqual((despacho["modelo"], despacho["max_custo_usd"]), ("modelo-ux", 7))
+        self.assertIn(".fabrica/equipes/ux-ui.md", despacho["prompt_template"])
+
+    def test_fixer_le_o_pacote_do_papel_da_raia_normalizado(self):
+        d = self.preparar_raia(plano(raia("a", papel="ux-engineer")))
+        self.abrir_pr(H1, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        acoes = d.ciclo()
+        self.assertEqual([a["tipo"] for a in acoes], ["corrigir"])
+        (fixer,) = self.runs(HAIKU)
+        self.assertIn(".fabrica/equipes/fixer.md", fixer["prompt"])
+        self.assertIn(".fabrica/equipes/ux-ui.md", fixer["prompt"])
+        self.assertNotIn("ux-engineer", fixer["prompt"])
+
+    def test_fixer_sem_papel_conhecido_nao_e_despachado(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        # a raia some do plano: sem papel, o fixer não tem pacote para ler e nada é pago
+        with mock.patch.object(d, "_papel_da_raia", return_value=None):
+            d.ciclo()
+            d.ciclo()
+        self.assertEqual(self.runs(HAIKU), [])
+        self.assertIsNone(self.estado()["seeds"]["s-1"].get("fixerRunId"))
+        self.assertTrue(
+            any(e.get("erro", "").startswith("_NaoExecutada") and "papel desconhecido" in e["erro"] for e in self.log()),
+            self.log(),
+        )
 
     def test_protegidos_fixos_valem_mesmo_fora_da_config(self):
         config = dict(CONFIG, protegidos=["**/migrations/**"])

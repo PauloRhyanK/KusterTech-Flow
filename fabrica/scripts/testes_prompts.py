@@ -85,6 +85,16 @@ class TemplateRaiaTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             prompt_template_raia("../../etc/passwd")
 
+    def test_alias_ux_engineer_aponta_o_pacote_ux_ui(self):
+        texto = prompt_template_raia("ux-engineer")
+        self.assertIn(".fabrica/equipes/ux-ui.md", texto)
+        self.assertNotIn("ux-engineer", texto)
+
+    def test_papel_nao_texto_levanta(self):
+        for papel in (None, ["backend"], 3):
+            with self.subTest(papel=papel), self.assertRaises(ValueError):
+                prompt_template_raia(papel)
+
     def test_curto(self):
         for papel in PAPEIS_DE_RAIA:
             self.assertLessEqual(len(prompt_template_raia(papel).splitlines()), 25)
@@ -133,9 +143,10 @@ class PromptRevisorTest(unittest.TestCase):
 
 
 class PromptFixerTest(unittest.TestCase):
-    def chamar(self, saida="ok", motivos=None, achados=None):
+    def chamar(self, saida="ok", motivos=None, achados=None, papel="backend"):
         return prompt_fixer(
             seed_id="sd-42",
+            papel=papel,
             motivos=["ci vermelho"] if motivos is None else motivos,
             achados=[{"arquivo": "src/a.ts", "motivo": "falta teste"}] if achados is None else achados,
             saida_verificacao=saida,
@@ -146,6 +157,27 @@ class PromptFixerTest(unittest.TestCase):
         self.assertIn(".fabrica/equipes/fixer.md", texto)
         self.assertIn("sd-42", texto)
         self.assertIn("só o listado", texto)
+
+    def test_manda_ler_o_fixer_e_o_pacote_do_papel_da_raia(self):
+        for papel in PAPEIS_DE_RAIA:
+            with self.subTest(papel=papel):
+                texto = self.chamar(papel=papel)
+                self.assertIn(".fabrica/equipes/fixer.md", texto)
+                self.assertIn(f".fabrica/equipes/{papel}.md", texto)
+
+    def test_alias_do_papel_vira_o_pacote_canonico(self):
+        texto = self.chamar(papel="ux-engineer")
+        self.assertIn(".fabrica/equipes/ux-ui.md", texto)
+        self.assertNotIn("ux-engineer", texto)
+
+    def test_papel_desconhecido_levanta(self):
+        for papel in ("../../etc/passwd", "revisor", "fixer", None, ["backend"]):
+            with self.subTest(papel=papel), self.assertRaises(ValueError):
+                self.chamar(papel=papel)
+
+    def test_papel_e_obrigatorio(self):
+        with self.assertRaises(TypeError):
+            prompt_fixer(seed_id="sd-42", motivos=[], achados=[], saida_verificacao="")
 
     def test_lista_motivos_e_achados(self):
         texto = self.chamar(

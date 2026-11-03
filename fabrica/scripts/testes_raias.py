@@ -139,8 +139,48 @@ class TestesPlano(unittest.TestCase):
     def test_papeis_de_raia(self):
         self.assertEqual(
             raias.PAPEIS_DE_RAIA,
-            ("arquiteto", "ux-engineer", "backend", "frontend", "qa"),
+            ("produto", "arquiteto", "ux-ui", "frontend", "backend", "qa", "devops", "seguranca"),
         )
+
+    def test_aliases_de_papel(self):
+        self.assertEqual(raias.ALIASES_DE_PAPEL, {"ux-engineer": "ux-ui"})
+        for alias, canonico in raias.ALIASES_DE_PAPEL.items():
+            self.assertNotIn(alias, raias.PAPEIS_DE_RAIA)
+            self.assertIn(canonico, raias.PAPEIS_DE_RAIA)
+
+    def test_papel_normalizado(self):
+        self.assertEqual(raias.papel_normalizado("ux-engineer"), "ux-ui")
+        self.assertEqual(raias.papel_normalizado("backend"), "backend")
+        self.assertEqual(raias.papel_normalizado("inexistente"), "inexistente")
+        self.assertIsNone(raias.papel_normalizado(None))
+        self.assertEqual(raias.papel_normalizado(["ux-engineer"]), ["ux-engineer"])
+
+    def test_todo_papel_novo_e_valido(self):
+        for papel in raias.PAPEIS_DE_RAIA:
+            with self.subTest(papel=papel):
+                plano = plano_referencia()
+                raia_de(plano, "fundacao")["papel"] = papel
+                self.assertEqual(raias.validar_plano(plano), [])
+
+    def test_alias_ux_engineer_continua_valido_sem_mudar_o_plano(self):
+        plano = plano_referencia()
+        raia_de(plano, "front-clientes")["papel"] = "ux-engineer"
+        antes = copy.deepcopy(plano)
+        self.assertEqual(raias.validar_plano(plano), [])
+        self.assertEqual(plano, antes)
+
+    def test_papel_invalido_cita_os_permitidos(self):
+        plano = plano_referencia()
+        raia_de(plano, "fundacao")["papel"] = "designer"
+        erros = self.assertErro(plano, "papel inválido 'designer'")
+        self.assertTrue(any("ux-ui" in e and "seguranca" in e for e in erros), erros)
+
+    def test_papel_nao_texto_e_invalido(self):
+        for papel in (None, ["backend"], {"ux-engineer": 1}, 3):
+            with self.subTest(papel=papel):
+                plano = plano_referencia()
+                raia_de(plano, "fundacao")["papel"] = papel
+                self.assertErro(plano, "papel inválido")
 
     def test_plano_de_referencia_e_valido(self):
         self.assertEqual(raias.validar_plano(plano_referencia()), [])

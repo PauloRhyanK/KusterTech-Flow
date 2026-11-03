@@ -3,7 +3,7 @@
 import json
 import re
 
-from raias import PAPEIS_DE_RAIA
+from raias import PAPEIS_DE_RAIA, papel_normalizado
 
 INICIO_VEREDITO = "FABRICA_VEREDITO_INICIO"
 FIM_VEREDITO = "FABRICA_VEREDITO_FIM"
@@ -16,14 +16,21 @@ _RESULTADOS = ("aprovado", "correcoes")
 _COTA = re.compile(r"(?i)(\b429\b|quota(?!tion)|rate.?limit|usage limit|(?:hour|weekly|daily) limit reached)")
 
 
+def _pacote_do_papel(papel) -> str:
+    """O pacote `.fabrica/equipes/<papel>.md` do papel de raia (alias normalizado) ou ValueError."""
+    canonico = papel_normalizado(papel)
+    if canonico not in PAPEIS_DE_RAIA:
+        raise ValueError(f"papel desconhecido: {papel!r}")
+    return ".fabrica/equipes/" + canonico + ".md"
+
+
 def prompt_template_raia(papel: str) -> str:
     """Prompt de uma raia; o `{seed_id}` é preenchido pelo despachante."""
-    if papel not in PAPEIS_DE_RAIA:
-        raise ValueError(f"papel desconhecido: {papel!r}")
+    pacote = _pacote_do_papel(papel)
     return (
         "Você executa uma raia da fábrica de agentes.\n"
         "\n"
-        "1. Leia `AGENTS.md` e o seu pacote de papel `.fabrica/equipes/" + papel + ".md`.\n"
+        "1. Leia `AGENTS.md` e o seu pacote de papel `" + pacote + "`.\n"
         "2. Leia a seed com `sd show {seed_id}`.\n"
         "3. Trabalhe só nessa seed: não toque em outras seeds nem em arquivos fora do escopo da raia.\n"
         "4. Rode a verificação da raia (descrita na seed) e cole a saída no corpo do PR.\n"
@@ -64,15 +71,18 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
     )
 
 
-def prompt_fixer(*, seed_id: str, motivos: list[str], achados: list[dict], saida_verificacao: str) -> str:
-    """Prompt do fixer: corrige só o que foi listado."""
+def prompt_fixer(
+    *, seed_id: str, papel: str, motivos: list[str], achados: list[dict], saida_verificacao: str
+) -> str:
+    """Prompt do fixer: o especialista da raia (`papel`) em modo de correção, só no que foi listado."""
+    pacote = _pacote_do_papel(papel)
     linhas_motivos = "\n".join(f"- {m}" for m in motivos) or "- (nenhum)"
     linhas_achados = "\n".join(f"- {a.get('arquivo')}: {a.get('motivo')}" for a in achados) or "- (nenhum)"
     saida = saida_verificacao[-LIMITE_SAIDA_VERIFICACAO:]
     return (
         f"Você corrige o PR da seed {seed_id}.\n"
         "\n"
-        "Leia `AGENTS.md` e o seu pacote de papel `.fabrica/equipes/fixer.md`.\n"
+        "Leia `AGENTS.md`, o pacote `.fabrica/equipes/fixer.md` e o pacote do papel da raia `" + pacote + "`.\n"
         "Corrija só o listado abaixo, sem ampliar o escopo. Faça commit na branch atual do PR.\n"
         "\n"
         "Motivos:\n"
