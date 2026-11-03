@@ -100,6 +100,8 @@ class PromptRevisorTest(unittest.TestCase):
 
     def test_sha_preenchido_no_bloco_de_exemplo(self):
         self.assertIn(f'"sha": "{SHA}"', self.texto)
+        self.assertNotIn("<sha>", self.texto)
+        self.assertNotIn("aprovado ou correcoes", self.texto)
 
     def test_lista_cada_criterio(self):
         self.assertIn("Cliente é criado com CNPJ válido", self.texto)
@@ -317,9 +319,63 @@ class ExtrairVereditoTest(unittest.TestCase):
         with mock.patch("prompts.json.loads", side_effect=RecursionError):
             self.assertIsNone(extrair_veredito(bloco(veredito_valido())))
 
-    def test_prompt_do_revisor_nao_vira_veredito(self):
+    def test_exemplo_do_prompt_do_revisor_e_um_veredito_valido(self):
         texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
-        self.assertIsNone(extrair_veredito(texto))
+        self.assertEqual(
+            extrair_veredito(texto), {"sha": SHA, "resultado": "aprovado", "achados": []}
+        )
+
+    def test_json_em_bloco_de_codigo_dentro_dos_marcadores(self):
+        v = veredito_valido()
+        corpo = json.dumps(v, indent=2)
+        casos = {
+            "json": f"```json\n{corpo}\n```",
+            "simples": f"```\n{corpo}\n```",
+            "maiusculo": f"```JSON\n{corpo}\n```",
+            "com espaco": f"  ```json  \n{corpo}\n  ```  ",
+        }
+        for nome, envolvido in casos.items():
+            with self.subTest(nome):
+                texto = f"Pronto.\n{INICIO_VEREDITO}\n{envolvido}\n{FIM_VEREDITO}\n"
+                self.assertEqual(extrair_veredito(texto), v)
+
+    def test_marcadores_decorados(self):
+        v = veredito_valido()
+        corpo = json.dumps(v)
+        casos = {
+            "negrito": f"**{INICIO_VEREDITO}**\n{corpo}\n**{FIM_VEREDITO}**",
+            "crase": f"`{INICIO_VEREDITO}`\n{corpo}\n`{FIM_VEREDITO}`",
+            "negrito e bloco": f"**{INICIO_VEREDITO}**\n```json\n{corpo}\n```\n**{FIM_VEREDITO}**",
+            "bloco em volta de tudo": f"```\n{INICIO_VEREDITO}\n{corpo}\n{FIM_VEREDITO}\n```",
+        }
+        for nome, texto in casos.items():
+            with self.subTest(nome):
+                self.assertEqual(extrair_veredito(texto), v)
+
+    def test_json_invalido_dentro_de_bloco_de_codigo_continua_none(self):
+        invalidos = [
+            '```json\n{"sha": "abc", "resultado": \n```',
+            "```json\n" + json.dumps(veredito_valido(resultado="ok")) + "\n```",
+            "```json\n" + json.dumps(veredito_valido(achados=[{"arquivo": "a"}])) + "\n```",
+            "```json\nnão é json\n```",
+            "```json\n```",
+            "```",
+        ]
+        for corpo in invalidos:
+            with self.subTest(corpo=corpo[:30]):
+                self.assertIsNone(extrair_veredito(f"{INICIO_VEREDITO}\n{corpo}\n{FIM_VEREDITO}"))
+
+    def test_decoracao_nao_salva_json_invalido(self):
+        self.assertIsNone(extrair_veredito(f"**{INICIO_VEREDITO}**\n{{\n**{FIM_VEREDITO}**"))
+
+    def test_prompt_do_revisor_manda_json_cru(self):
+        texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
+        self.assertIn("JSON cru, sem bloco de código nem formatação", texto)
+        self.assertIn("cada marcador sozinho na sua linha", texto)
+        self.assertIn('"resultado": "correcoes"', texto)
+        linhas = texto.splitlines()
+        self.assertIn(INICIO_VEREDITO, linhas)
+        self.assertIn(FIM_VEREDITO, linhas)
 
     def test_espacos_em_volta_do_json(self):
         v = veredito_valido()
@@ -339,6 +395,24 @@ class FalhaDeCotaTest(unittest.TestCase):
     def test_provider_error_sem_sinal_de_cota(self):
         self.assertFalse(eh_falha_de_cota("provider_error", "boom"))
         self.assertFalse(eh_falha_de_cota("provider_error", ""))
+
+    def test_mensagens_de_limite_do_claude_code(self):
+        casos = [
+            "Claude AI usage limit reached|1730000000",
+            "5-hour limit reached ∙ resets 3pm",
+            "Individual quota reached",
+            "Usage Limit Reached",
+            "usage limit exceeded for this account",
+        ]
+        for texto in casos:
+            with self.subTest(texto=texto):
+                self.assertTrue(eh_falha_de_cota("provider_error", texto))
+                self.assertFalse(eh_falha_de_cota("timed_out", texto))
+
+    def test_quotation_nao_e_cota(self):
+        self.assertFalse(eh_falha_de_cota("provider_error", "quotation marks"))
+        self.assertFalse(eh_falha_de_cota("provider_error", "unquoted"))
+        self.assertTrue(eh_falha_de_cota("provider_error", "(quota)"))
 
     def test_429_precisa_ser_palavra(self):
         self.assertFalse(eh_falha_de_cota("provider_error", "erro 14290 no stack"))

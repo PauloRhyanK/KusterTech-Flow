@@ -10,7 +10,7 @@ FIM_VEREDITO = "FABRICA_VEREDITO_FIM"
 
 LIMITE_SAIDA_VERIFICACAO = 4000
 _RESULTADOS = ("aprovado", "correcoes")
-_COTA = re.compile(r"(?i)(\b429\b|quota|rate.?limit)")
+_COTA = re.compile(r"(?i)(\b429\b|\bquota\b|rate.?limit|usage limit|limit reached)")
 
 
 def prompt_template_raia(papel: str) -> str:
@@ -32,10 +32,7 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
     """Prompt do revisor independente do PR da seed, no commit `sha`."""
     criterios = raia.get("criteriosAceite") or []
     lista = "\n".join(f"- {c}" for c in criterios) or "- (nenhum critério listado)"
-    exemplo = json.dumps(
-        {"sha": sha, "resultado": "aprovado ou correcoes", "achados": [{"arquivo": "...", "motivo": "..."}]},
-        ensure_ascii=False,
-    )
+    exemplo = json.dumps({"sha": sha, "resultado": "aprovado", "achados": []}, ensure_ascii=False)
     return (
         f"Você revisa o PR da seed {seed_id} no commit {sha}.\n"
         "\n"
@@ -45,11 +42,14 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
         "\n"
         "Não faça commit nem push: você só lê e avalia.\n"
         "\n"
-        "Termine a sua mensagem final com este bloco, como a última coisa escrita:\n"
+        "Termine a sua mensagem final com o bloco abaixo, como a última coisa escrita.\n"
+        "Escreva o JSON cru, sem bloco de código nem formatação (sem ``` e sem negrito),\n"
+        "e deixe cada marcador sozinho na sua linha. Sem problemas, use exatamente:\n"
         f"{INICIO_VEREDITO}\n"
         f"{exemplo}\n"
         f"{FIM_VEREDITO}\n"
-        'Use "aprovado" sem achados, ou "correcoes" com um achado por problema.'
+        'Com problemas, troque por "resultado": "correcoes" e liste um achado por problema\n'
+        'em "achados", cada um como {"arquivo": "...", "motivo": "..."}.'
     )
 
 
@@ -101,6 +101,13 @@ def _achados_validos(achados) -> bool:
     )
 
 
+def _limpar_corpo(corpo: str) -> str:
+    """Tira a decoração colada aos marcadores e um invólucro opcional de bloco de código."""
+    corpo = re.sub(r"^\s*[*`]+[ \t]*\r?\n", "", corpo)
+    corpo = re.sub(r"^\s*```[A-Za-z]*[ \t]*\r?\n", "", corpo)
+    return re.sub(r"[*`\s]+$", "", corpo).strip()
+
+
 def extrair_veredito(texto: str) -> dict | None:
     """O veredito do último bloco entre os marcadores, ou None se faltar ou for inválido."""
     if not isinstance(texto, str):
@@ -113,7 +120,7 @@ def extrair_veredito(texto: str) -> dict | None:
     if fim < 0:
         return None
     try:
-        dados = json.loads(texto[corpo_ini:fim])
+        dados = json.loads(_limpar_corpo(texto[corpo_ini:fim]))
     except (ValueError, RecursionError):
         return None
     if not isinstance(dados, dict):
