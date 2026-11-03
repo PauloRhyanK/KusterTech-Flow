@@ -616,8 +616,9 @@ def plano_concluido(estado: dict, plano: dict) -> bool:
     """O plano terminou: última fase com as raias concluídas, homologada, e nada em curso nem aberto.
 
     "Homologada" é a acordada `fase_concluida:<faseAtual>` já em `chavesAcordadas`; o orquestrador
-    precisa estar livre (`runId` None), sem acordadas na fila, decisões abertas nem intenções de decisão
-    (`decisoesPendentes`). Entrada malformada é `False`.
+    precisa estar livre (`runId` None), sem acordadas na fila, decisões abertas, intenções de decisão
+    (`decisoesPendentes`) nem PR ou issue esperando o fechamento (`prsParaFechar`, que o despachante
+    esvazia mesmo quando desiste depois de `MAX_TENTATIVAS_DE_FECHAR`). Entrada malformada é `False`.
     """
     if not isinstance(estado, dict) or not isinstance(plano, dict):
         return False
@@ -637,7 +638,37 @@ def plano_concluido(estado: dict, plano: dict) -> bool:
     orquestrador = estado.get("orquestrador")
     if not isinstance(orquestrador, dict) or orquestrador.get("runId") is not None:
         return False
-    return all(_vazia(estado.get(c)) for c in ("acordarPendentes", "decisoes", "decisoesPendentes"))
+    return all(_vazia(estado.get(c)) for c in ("acordarPendentes", "decisoes", "decisoesPendentes", "prsParaFechar"))
+
+
+def raias_ocupadas(estado: dict) -> set:
+    """As raias que seguram vaga: `executando`, a de um `despachar_raia` em curso e as de um incerto.
+
+    Função pura (o despachante e o coordenador usam a mesma regra); entrada malformada dá o que for legível.
+    """
+    estado = _dict(estado)
+    ocupadas = {raia_id for raia_id, raia in _dict(estado.get("raias")).items() if _dict(raia).get("estado") == "executando"}
+    acoes = [_dict(estado.get("acaoEmCurso"))]
+    acoes += [_dict(_dict(item).get("acao")) for item in _lista(estado.get("despachosIncertos"))]
+    for acao in acoes:
+        if acao.get("tipo") == "despachar_raia" and _texto(acao.get("raia")):
+            ocupadas.add(acao["raia"])
+    return ocupadas
+
+
+def orquestrador_em_curso(estado: dict) -> bool:
+    """Run do orquestrador, acordar incerto ou em curso, ou PR do orquestrador esperando gates ou o Paulo.
+
+    As acordadas na fila não contam: a trava é solta ao fim de cada acordada. Função pura.
+    """
+    estado = _dict(estado)
+    incertos = {_dict(item).get("chave") for item in _lista(estado.get("despachosIncertos"))}
+    return (
+        _dict(estado.get("orquestrador")).get("runId") is not None
+        or any(str(c).startswith("acordar:") for c in incertos)
+        or _dict(estado.get("acaoEmCurso")).get("tipo") == "acordar"
+        or bool(_lista(estado.get("prsOrquestrador")))
+    )
 
 
 # ---------------------------------------------------------------- aplicação

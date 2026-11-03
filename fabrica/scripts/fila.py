@@ -22,6 +22,8 @@ _CAMINHO = re.compile(r"\.fabrica/(?:(plano)|planos/([a-z0-9]+(?:-[a-z0-9]+)*))\
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 _INSTANTE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _FORMATO_DO_INSTANTE = "%Y-%m-%dT%H:%M:%SZ"
+# o mesmo limite da skill fabrica-preparar-execucao: o nome da unit fabrica-plano@<id> fica bem abaixo de 255
+FEATURE_MAX = 41
 _FORA_DO_ALFABETO = re.compile(r"[^a-z0-9-]+")
 _TRACOS = re.compile(r"-{2,}")
 
@@ -57,14 +59,17 @@ def hash_do_plano(plano: dict) -> str:
 
 
 def feature_do_caminho(caminho: str) -> str | None:
-    """`.fabrica/planos/<f>.json` dá `<f>`; `.fabrica/plano.json` dá `plano`; o resto dá `None`."""
+    """`.fabrica/planos/<f>.json` dá `<f>`; `.fabrica/plano.json` dá `plano`; o resto dá `None`.
+
+    `<f>` tem no máximo `FEATURE_MAX` (41) caracteres.
+    """
     if not isinstance(caminho, str):
         return None
     achado = _CAMINHO.fullmatch(caminho)
     if achado is None:
         return None
     feature = achado.group(1) or achado.group(2)
-    if achado.group(2) == "plano":
+    if achado.group(2) == "plano" or len(feature) > FEATURE_MAX:
         return None
     return feature
 

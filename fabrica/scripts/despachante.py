@@ -63,6 +63,8 @@ CAMINHO_PLANO = ".fabrica/plano.json"
 # a feature `plano` sob `planos/` colide com o legado e é recusada
 PADRAO_CAMINHO_PLANO = re.compile(r"^\.fabrica/(plano|planos/[a-z0-9]+(-[a-z0-9]+)*)\.json$")
 CAMINHO_PLANO_PROIBIDO = ".fabrica/planos/plano.json"
+# feature de no máximo 41 caracteres (o limite da skill e de `fila.FEATURE_MAX`): `.fabrica/planos/` + 41 + `.json`
+TAMANHO_MAXIMO_CAMINHO_PLANO = len(".fabrica/planos/") + 41 + len(".json")
 CAMINHO_CONFIG = ".fabrica/config.json"
 # `FABRICA_PLANO_ID`: `<dono>--<repo>--<feature>`, só `[a-z0-9-]` (fullmatch: nada de `\n` no fim)
 PADRAO_PLANO_ID = re.compile(r"[a-z0-9-]+")
@@ -435,7 +437,12 @@ def _plano_id_valido(plano_id) -> bool:
 
 
 def _caminho_plano_valido(caminho) -> bool:
-    return isinstance(caminho, str) and caminho != CAMINHO_PLANO_PROIBIDO and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
+    return (
+        isinstance(caminho, str)
+        and caminho != CAMINHO_PLANO_PROIBIDO
+        and len(caminho) <= TAMANHO_MAXIMO_CAMINHO_PLANO
+        and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
+    )
 
 
 def _raias_por_id(plano) -> dict:
@@ -2880,16 +2887,8 @@ class Despachante:
         return True
 
     def _raias_ocupadas(self) -> set:
-        """As raias que seguram vaga: `executando`, a de um `despachar_raia` em curso e as de um incerto."""
-        ocupadas = {
-            raia_id for raia_id, raia in _dict(self.estado.get("raias")).items() if _dict(raia).get("estado") == "executando"
-        }
-        acoes = [_dict(self.estado.get("acaoEmCurso"))]
-        acoes += [_dict(_dict(item).get("acao")) for item in _lista(self.estado.get("despachosIncertos"))]
-        for acao in acoes:
-            if acao.get("tipo") == "despachar_raia" and _texto(acao.get("raia")):
-                ocupadas.add(acao["raia"])
-        return ocupadas
+        """As raias que seguram vaga (`estado.raias_ocupadas`, a mesma regra do coordenador)."""
+        return est.raias_ocupadas(self.estado)
 
     def _sincronizar_capacidade(self) -> None:
         if self.capacidade is None:
@@ -2954,12 +2953,8 @@ class Despachante:
         As acordadas na fila não contam: a trava é solta ao fim de cada acordada, mesmo com o
         plano pausado ou bloqueado, e quem espera na fila do repositório passa na frente.
         """
-        return (
-            self._orq().get("runId") is not None
-            or self._orquestrador_incerto()
-            or _dict(self.estado.get("acaoEmCurso")).get("tipo") == "acordar"
-            or bool(_lista(self.estado.get("prsOrquestrador")))
-        )
+        self._orq()  # normaliza o `orquestrador` do estado, como antes
+        return est.orquestrador_em_curso(self.estado)
 
     def _cuidar_da_trava(self) -> None:
         """Sem orquestrador em curso, solta a trava; com ele, reafirma (um arquivo recriado a esqueceu)."""
@@ -3563,7 +3558,8 @@ def construir(ambiente) -> Despachante:
         raise ErroDeEntrada(
             [
                 "FABRICA_PLANO inválido: %r; use .fabrica/plano.json ou .fabrica/planos/<feature>.json "
-                "(feature de a-z e 0-9 em partes separadas por um só -, e nunca `plano`)" % _cortar(caminho_plano, 200)
+                "(feature de até 41 caracteres, a-z e 0-9 em partes separadas por um só -, e nunca `plano`)"
+                % _cortar(caminho_plano, 200)
             ]
         )
     caminho_capacidade = ambiente.get("FABRICA_CAPACIDADE")

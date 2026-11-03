@@ -1012,6 +1012,16 @@ class TestPlanoConcluido(unittest.TestCase):
         del e["decisoesPendentes"]
         self.assertIs(est.plano_concluido(e, p), True)
 
+    def test_falso_com_pr_ou_issue_para_fechar(self):
+        # final M10: a issue de decisão do fase_concluida ainda não foi fechada
+        e, p = self.completo()
+        e["prsParaFechar"] = [{"url": "https://github.com/dono/nome/issues/9", "decisao": True, "tentativas": 0}]
+        self.assertIs(est.plano_concluido(e, p), False)
+        e["prsParaFechar"] = []
+        self.assertIs(est.plano_concluido(e, p), True)
+        del e["prsParaFechar"]
+        self.assertIs(est.plano_concluido(e, p), True)
+
     def test_falso_quando_a_fase_atual_nao_e_a_ultima(self):
         e, p = self.completo()
         p["faseAtual"] = "fundacao"
@@ -1035,6 +1045,7 @@ class TestPlanoConcluido(unittest.TestCase):
             (dict(e, decisoes=0), p),
             (dict(e, decisoesPendentes="x"), p),
             (dict(e, decisoesPendentes={}), p),
+            (dict(e, prsParaFechar="x"), p),
             (e, dict(p, fases=[p["fases"][0], {"id": "nucleo", "raias": []}])),
             (e, dict(p, fases=[p["fases"][0], {"id": "nucleo", "raias": "x"}])),
             (e, dict(p, fases=[p["fases"][0], "nucleo"])),
@@ -1049,6 +1060,48 @@ class TestPlanoConcluido(unittest.TestCase):
         antes = (copy.deepcopy(e), copy.deepcopy(p))
         est.plano_concluido(e, p)
         self.assertEqual((e, p), antes)
+
+
+class TestOcupacaoDoPlano(unittest.TestCase):
+    """Final I1: o que o plano segura (vagas e trava), lido só do estado.json, sem mutar nada."""
+
+    def base(self):
+        p = plano(fase="nucleo")
+        return est.novo_estado(p, projeto="prj", repo="dono/nome")
+
+    def test_raias_ocupadas_executando_acao_em_curso_e_incertos(self):
+        e = self.base()
+        self.assertEqual(est.raias_ocupadas(e), set())
+        e["raias"]["a"]["estado"] = "executando"
+        e["acaoEmCurso"] = {"tipo": "despachar_raia", "raia": "b"}
+        e["despachosIncertos"] = [
+            {"chave": "despachar_raia:c", "acao": {"tipo": "despachar_raia", "raia": "c"}},
+            {"chave": "acordar:x", "acao": {"tipo": "acordar", "motivo": "x"}},
+            "lixo",
+        ]
+        antes = copy.deepcopy(e)
+        self.assertEqual(est.raias_ocupadas(e), {"a", "b", "c"})
+        self.assertEqual(e, antes)
+
+    def test_raias_ocupadas_com_entrada_malformada(self):
+        for estado_ in (None, {}, {"raias": "x", "acaoEmCurso": "x", "despachosIncertos": {}}, {"raias": {"a": None}}):
+            with self.subTest(estado=estado_):
+                self.assertEqual(est.raias_ocupadas(estado_), set())
+
+    def test_orquestrador_em_curso(self):
+        e = self.base()
+        self.assertIs(est.orquestrador_em_curso(e), False)
+        for mudanca in (
+            {"orquestrador": {"runId": "orq-1", "motivo": "m"}},
+            {"prsOrquestrador": ["https://github.com/dono/nome/pull/3"]},
+            {"acaoEmCurso": {"tipo": "acordar", "motivo": "m"}},
+            {"despachosIncertos": [{"chave": "acordar:m:x", "acao": {"tipo": "acordar"}}]},
+        ):
+            with self.subTest(mudanca=mudanca):
+                self.assertIs(est.orquestrador_em_curso(dict(e, **mudanca)), True)
+        self.assertIs(est.orquestrador_em_curso(dict(e, acaoEmCurso={"tipo": "despachar_raia", "raia": "a"})), False)
+        self.assertIs(est.orquestrador_em_curso(dict(e, orquestrador=None)), False)
+        self.assertIs(est.orquestrador_em_curso(None), False)
 
 
 class TestNaoMutacao(unittest.TestCase):

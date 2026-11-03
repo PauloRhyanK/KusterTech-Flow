@@ -5502,6 +5502,7 @@ class TestCaminhoDoPlano(Base):
             ".fabrica/planos/0.json",
             ".fabrica/planos/login-v2.json",
             ".fabrica/planos/planos.json",
+            ".fabrica/planos/%s.json" % ("a" * 41),
         ):
             with self.subTest(caminho=caminho):
                 self.assertEqual(despachante.construir(self.ambiente_real(FABRICA_PLANO=caminho)).caminho_plano, caminho)
@@ -5526,6 +5527,7 @@ class TestCaminhoDoPlano(Base):
             ".fabrica/planos/a--b.json",
             ".fabrica/planos/a-.json",
             ".fabrica/planos/-a.json",
+            ".fabrica/planos/%s.json" % ("a" * 42),
         ):
             with self.subTest(caminho=caminho):
                 with self.assertRaises(despachante.ErroDeEntrada) as ctx:
@@ -5583,6 +5585,28 @@ class TestCaminhoDoPlano(Base):
         )
         self.assertEqual(len(self.forja.decisoes), antes)
         self.assertNotIn(url, [_dict_url(i) for i in self.estado().get("prsParaFechar", [])])
+
+    def test_issue_que_nao_fecha_sai_da_fila_e_o_plano_conclui(self):
+        # final M10: plano_concluido exige prsParaFechar vazio; o despachante desiste depois de MAX_TENTATIVAS_DE_FECHAR
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        d.estado["raias"]["a"]["estado"] = "concluida"
+        d.estado["chavesAcordadas"] = ["fase_concluida:f1"]
+        d._fechar_depois("https://github.com/%s/issues/77" % REPO, "homologado", decisao=True)
+        d._salvar()
+        self.assertFalse(despachante.est.plano_concluido(d.estado, d.plano))
+
+        def quebra(url, comentario):
+            raise RuntimeError("GitHub fora")
+
+        self.forja.fechar_decisao = quebra
+        for _ in range(despachante.MAX_TENTATIVAS_DE_FECHAR - 1):
+            d._fechar_prs()
+            self.assertEqual(len(self.estado()["prsParaFechar"]), 1)
+        d._fechar_prs()
+        self.assertEqual(self.estado()["prsParaFechar"], [])
+        self.assertTrue(despachante.est.plano_concluido(self.estado(), d.plano))
 
     def test_status_diz_se_o_plano_concluiu(self):
         self.publicar(plano(raia("a")))

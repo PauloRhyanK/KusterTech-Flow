@@ -10,7 +10,8 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
    `plano.env`, roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
 4. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
    concluído (`estado.plano_concluido`) tem a unit desligada, as reservas soltas e vira `concluido`;
-5. limpa as reservas e travas de planos sem unit ativa;
+5. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
+   rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
 6. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
@@ -47,6 +48,7 @@ ARQ_FILA_ESTADO = "fila-estado.json"
 ARQ_CAPACIDADE = "capacidade.json"
 ARQ_TRAVA = "coordenador.lock"
 ARQ_LOG = "log.jsonl"
+ARQ_COORDENADOR_ENV = "coordenador.env"
 DIR_PLANOS = "planos"
 DIR_PLANOS_NO_REPO = ".fabrica/planos"
 CAMINHO_LEGADO = ".fabrica/plano.json"
@@ -121,6 +123,41 @@ def ler_config(raiz) -> dict:
             raise ErroDeEntrada(["%s: repositório repetido: %s" % (caminho, item["repo"])])
         vistos.add(item["repo"].lower())
     return dados
+
+
+def ler_coordenador_env(raiz) -> dict:
+    """`<raiz>/coordenador.env` (o `EnvironmentFile` do `fabrica-fila`): só WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE.
+
+    Uma `CHAVE=VALOR` por linha, sem expansão; linha vazia ou começando por `#` é ignorada, e aspas em volta do
+    valor saem. Ausente vale `{}`; ilegível levanta `ErroDeEntrada`.
+    """
+    caminho = pathlib.Path(raiz) / ARQ_COORDENADOR_ENV
+    try:
+        texto = caminho.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError):
+        raise ErroDeEntrada(["%s ilegível: corrija ou apague o arquivo" % caminho]) from None
+    valores = {}
+    for linha in texto.splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, valor = (parte.strip() for parte in linha.split("=", 1))
+        if len(valor) >= 2 and valor[0] == valor[-1] and valor[0] in "'\"":
+            valor = valor[1:-1]
+        if chave in VARIAVEIS_REPASSADAS and valor:
+            valores[chave] = valor
+    return valores
+
+
+def _com_coordenador_env(ambiente, raiz) -> dict:
+    """O ambiente do processo completado pelo `coordenador.env` (o ambiente tem precedência)."""
+    resultado = dict(ambiente)
+    for chave, valor in ler_coordenador_env(raiz).items():
+        if not resultado.get(chave):
+            resultado[chave] = valor
+    return resultado
 
 
 def _padrao_do_estado() -> dict:
@@ -531,8 +568,8 @@ class Coordenador:
         """`(plano, erros)` de um arquivo de plano do branch padrão."""
         if fila.feature_do_caminho(caminho) is None:
             return None, [
-                "nome de arquivo inválido: use .fabrica/planos/<feature>.json, feature de a-z e 0-9 em partes "
-                "separadas por um só - (nunca plano)"
+                "nome de arquivo inválido: use .fabrica/planos/<feature>.json, feature de até 41 caracteres, a-z e 0-9 "
+                "em partes separadas por um só - (nunca plano)"
             ]
         try:
             plano = despachante._json_estrito(texto)
@@ -709,7 +746,8 @@ class Coordenador:
             self._erro_de_etapa("ler_estado_do_plano", id_, exc)
         codigo, saida = self.systemd("is-active", unit)
         situacao = (saida or "").strip().split("\n")[0].strip()
-        if est.plano_concluido(estado_do_plano, plano):
+        # o plano.json adotado precisa ser o da entrada: um PR mergeado pode ter trazido fases novas ao main
+        if est.plano_concluido(estado_do_plano, plano) and fila.hash_do_plano(plano) == entrada.get("hash"):
             causa = self._causa(unit) if situacao == "failed" else None
             codigo, saida = self.systemd("disable", "--now", unit)
             if codigo != 0:
@@ -770,16 +808,59 @@ class Coordenador:
     def _passo_orfaos(self, rodando: set, confiavel: bool, eventos: list) -> None:
         if not confiavel:
             return  # sem a resposta do systemd para todos, nada é solto
-        # `admitindo` conta como ativo: a unit pode estar subindo (ou ter subido antes de o coordenador morrer)
-        rodando = set(rodando) | {i for i, e in _atuais(self.dados["fila"]).items() if e["estado"] == "admitindo"}
+        atuais = _atuais(self.dados["fila"])
+        ocupando = {i for i, e in atuais.items() if e["estado"] in fila.OCUPANDO}
+        # `admitindo` fica como está: a unit pode estar subindo (ou ter subido antes de o coordenador morrer)
+        for id_ in sorted(i for i in ocupando - set(rodando) if atuais[i]["estado"] != "admitindo"):
+            try:
+                self._refazer_ocupacao(id_, atuais[id_])
+            except Exception as exc:  # noqa: BLE001 - um plano não derruba os outros
+                self._erro_de_etapa("refazer_ocupacao", id_, exc)
         try:
-            removidos = capacidade.limpar_orfaos(self.capacidade, rodando)
+            # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera
+            removidos = capacidade.limpar_orfaos(self.capacidade, ocupando)
         except Exception as exc:  # noqa: BLE001
             self._erro_de_etapa("limpar_orfaos", "capacidade", exc)
             return
         if removidos:
             self._log({"evento": "orfaos", "planos": removidos})
             eventos.append({"evento": "orfaos", "planos": removidos})
+
+
+    def _refazer_ocupacao(self, id_: str, entrada: dict) -> None:
+        """Plano ocupando sem unit rodando: o que ele segura vem do `estado.json`, como no despachante.
+
+        Os Plan Runs e o PR do orquestrador continuam vivos no Warren e no GitHub com a unit parada, então
+        as vagas são refeitas (raias `executando`, despacho em curso e incertos) e a trava fica enquanto há
+        orquestrador em curso. Feito sob a trava do despachante: com ela ocupada, um despachante vivo cuida
+        disso. `estado.json` ausente ou ilegível: nada muda (avisa uma vez).
+        """
+        pasta = self._pasta(id_)
+        try:
+            with despachante.travar(pasta):
+                try:
+                    estado = despachante._ler_json(pasta / despachante.ARQ_ESTADO)
+                except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+                    estado = None
+                if not isinstance(estado, dict):
+                    self._aviso(
+                        "ocupacao:%s" % id_,
+                        "%s parado com estado.json ausente ou ilegível: as vagas e a trava dele ficam como estão "
+                        "até a unit voltar (corrija o estado.json ou remova o plano)" % id_,
+                        assinatura="ilegivel",
+                    )
+                    return
+                self._esquecer("ocupacao:%s" % id_)
+                capacidade.sincronizar(self.capacidade, id_, est.raias_ocupadas(estado))
+                repo = entrada["repo"]
+                if not est.orquestrador_em_curso(estado):
+                    capacidade.soltar_orquestrador(self.capacidade, repo, id_)
+                    capacidade.desistir_orquestrador(self.capacidade, repo, id_)
+                elif not capacidade.tomar_orquestrador(self.capacidade, repo, id_, em_curso=True):
+                    dono = capacidade.ler(self.capacidade)["orquestrador"].get(repo.lower())
+                    self._log_repetivel("trava_em_conflito:%s" % id_, {"evento": "trava_em_conflito", "id": id_, "dono": dono})
+        except despachante.OutroDespachante:
+            return
 
 
 # ---------------------------------------------------------------- status
@@ -835,6 +916,9 @@ def _executar(argv, env):
     return resultado.returncode, (resultado.stdout or "") + (resultado.stderr or "")
 
 
+HOST_DO_HELPER = "https://github.com"
+
+
 def helper_de_credencial(token_file: str) -> str:
     """O `credential.helper` que lê o token do arquivo na hora: só o caminho (absoluto) fica no `.git/config`."""
     caminho = os.path.abspath(os.path.expanduser(str(token_file)))
@@ -849,24 +933,27 @@ def helper_de_credencial(token_file: str) -> str:
 def _clonar(repo, destino, *, token_file, base="https://github.com/", rodar=subprocess.run):
     """Clona num temporário ao lado e troca de nome no fim: `repo/` nunca fica pela metade.
 
-    Autentica pelo `credential.helper` local (o vazio antes zera os helpers globais), passado ao próprio clone
-    com `-c` e regravado no `.git/config` depois: nenhum token em argv, ambiente ou URL.
+    Autentica pelo helper local em `credential.https://github.com.helper` (só o GitHub recebe o token; o
+    `credential.helper` vazio antes zera os helpers globais), passado ao próprio clone com `-c` e regravado no
+    `.git/config` depois: nenhum token em argv, ambiente ou URL.
     """
     helper = helper_de_credencial(token_file)
     destino = pathlib.Path(destino)
     tmp = destino.with_name(".repo.clonando")
     shutil.rmtree(tmp, ignore_errors=True)
     url = "%s%s.git" % (base, repo)
+    chave = "credential.%s.helper" % HOST_DO_HELPER
     comandos = [
-        ["git", "clone", "--quiet", "-c", "credential.helper=", "-c", "credential.helper=" + helper, url, str(tmp)],
+        ["git", "clone", "--quiet", "-c", "credential.helper=", "-c", "%s=%s" % (chave, helper), url, str(tmp)],
         ["git", "-C", str(tmp), "config", "--local", "--unset-all", "credential.helper"],
         ["git", "-C", str(tmp), "config", "--local", "--add", "credential.helper", ""],
-        ["git", "-C", str(tmp), "config", "--local", "--add", "credential.helper", helper],
+        ["git", "-C", str(tmp), "config", "--local", "--unset-all", chave],
+        ["git", "-C", str(tmp), "config", "--local", "--add", chave, helper],
     ]
     for posicao, argv in enumerate(comandos):
         resultado = rodar(argv, capture_output=True, text=True, timeout=1800)
         # `--unset-all` sem nada para tirar sai com 5
-        if resultado.returncode != 0 and not (posicao == 1 and resultado.returncode == 5):
+        if resultado.returncode != 0 and not (posicao in (1, 3) and resultado.returncode == 5):
             shutil.rmtree(tmp, ignore_errors=True)
             raise RuntimeError(
                 "git %s saiu com %d: %s" % (argv[1] if posicao == 0 else "config", resultado.returncode, despachante._cortar(resultado.stderr or "", LIMITE_SAIDA))
@@ -951,6 +1038,9 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, dor
     args = _parser().parse_args(argv)
     raiz = pathlib.Path(args.raiz).expanduser()
     try:
+        if args.comando in ("registrar", "status", "vagas"):
+            # a CLI roda na shell, sem o EnvironmentFile da unit: lê o mesmo coordenador.env
+            ambiente = _com_coordenador_env(ambiente, raiz)
         if args.comando == "status":
             print(status(raiz), file=saida)
             return 0

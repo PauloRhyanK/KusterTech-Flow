@@ -618,6 +618,160 @@ class TestesObservacao(Base):
         self.assertEqual(self.ligados(), [self.unit(a)])
 
 
+class TestesOcupacaoDePlanoParado(Base):
+    """Final I1: plano OCUPANDO sem unit rodando continua segurando as vagas e a trava que o estado.json mostra."""
+
+    def setUp(self):
+        super().setUp()
+        self.cap = self.raiz / "capacidade.json"
+
+    def admitir_com(self, feature, globs_, **mudancas):
+        id_ = self.publicar(feature, globs_)
+        c = self.novo()
+        c.ciclo()
+        estado = self.estado_do_plano(id_)
+        for chave, valor in mudancas.items():
+            estado[chave] = valor
+        self.gravar_estado_do_plano(id_, estado)
+        return id_, c
+
+    def test_unit_failed_mantem_as_vagas_executando_e_a_trava_com_pr_do_orquestrador(self):
+        a, c = self.admitir_com("login", ["src/login/**"], prsOrquestrador=["https://github.com/dono/cliente/pull/7"])
+        estado = self.estado_do_plano(a)
+        estado["raias"]["raia-0"]["estado"] = "executando"
+        self.gravar_estado_do_plano(a, estado)
+        capacidade.reservar(self.cap, a, "raia-0", mem_disponivel_mb=None)
+        capacidade.tomar_orquestrador(self.cap, REPO, a)
+        self.systemd.estados[self.unit(a)] = "failed"
+        for _ in range(3):
+            c.ciclo()
+        self.assertEqual(self.estados()[a], "pausado")
+        dados = capacidade.ler(self.cap)
+        self.assertEqual(dados["reservas"], {a: ["raia-0"]})
+        self.assertEqual(dados["orquestrador"], {REPO: a})
+
+    def test_cenario_do_driver_outro_plano_do_repo_nao_acorda_nem_passa_das_vagas(self):
+        # A tem 3 raias executando e o PR de fase_concluida esperando o Paulo; a unit de A cai (failed).
+        a = self.publicar("login", ["src/login/a/**"], ["src/login/b/**"], ["src/login/c/**"])
+        b = self.publicar("perfil", ["src/perfil/**"])
+        c = self.novo()
+        c.ciclo()
+        self.assertEqual((self.estados()[a], self.estados()[b]), ("ativo", "ativo"))
+        estado = self.estado_do_plano(a)
+        for raia in estado["raias"].values():
+            raia["estado"] = "executando"
+        estado["prsOrquestrador"] = ["https://github.com/dono/cliente/pull/9"]
+        self.gravar_estado_do_plano(a, estado)
+        for raia in estado["raias"]:
+            self.assertTrue(capacidade.reservar(self.cap, a, raia, mem_disponivel_mb=None))
+        self.assertTrue(capacidade.tomar_orquestrador(self.cap, REPO, a, em_curso=True))
+        self.systemd.estados[self.unit(a)] = "failed"
+        for _ in range(3):
+            c.ciclo()
+            # o despachante de B, vivo, tenta acordar o orquestrador e despachar uma raia nova
+            self.assertFalse(capacidade.tomar_orquestrador(self.cap, REPO, b))
+            self.assertFalse(capacidade.reservar(self.cap, b, "raia-0", mem_disponivel_mb=None))
+        dados = capacidade.ler(self.cap)
+        self.assertEqual(dados["orquestrador"], {REPO: a})
+        self.assertEqual(sum(len(r) for r in dados["reservas"].values()), 3)
+        # o Paulo reinicia a unit de A: tudo segue com A
+        self.systemd.estados[self.unit(a)] = "active"
+        c.ciclo()
+        self.assertEqual(capacidade.ler(self.cap)["orquestrador"], {REPO: a})
+
+    def test_trava_esquecida_e_retomada_enquanto_o_estado_mostra_o_orquestrador(self):
+        for mudanca in (
+            {"orquestrador": {"runId": "orq-1", "motivo": "fase_concluida"}},
+            {"acaoEmCurso": {"tipo": "acordar", "motivo": "fase_concluida", "alvo": "unica"}},
+            {"despachosIncertos": [{"chave": "acordar:fase_concluida:unica", "acao": {"tipo": "acordar"}}]},
+        ):
+            with self.subTest(mudanca=mudanca):
+                self.setUp()
+                a, c = self.admitir_com("login", ["src/login/**"], **mudanca)
+                self.systemd.estados[self.unit(a)] = "inactive"
+                c.ciclo()
+                self.assertEqual(capacidade.ler(self.cap)["orquestrador"], {REPO: a})
+
+    def test_reserva_de_despacho_em_curso_ou_incerto_fica(self):
+        a, c = self.admitir_com(
+            "login",
+            ["src/login/**"],
+            acaoEmCurso={"tipo": "despachar_raia", "raia": "raia-0"},
+            despachosIncertos=[{"chave": "despachar_raia:raia-9", "acao": {"tipo": "despachar_raia", "raia": "raia-9"}}],
+        )
+        self.systemd.estados[self.unit(a)] = "failed"
+        c.ciclo()
+        self.assertEqual(capacidade.ler(self.cap)["reservas"], {a: ["raia-0", "raia-9"]})
+
+    def test_sem_orquestrador_em_curso_solta_a_trava_e_sai_da_espera(self):
+        a, c = self.admitir_com("login", ["src/login/**"])
+        z = "dono--cliente--outro--abcdef"
+        capacidade.tomar_orquestrador(self.cap, REPO, z)
+        capacidade.tomar_orquestrador(self.cap, REPO, a)  # recusado: A entra na espera
+        capacidade.soltar_orquestrador(self.cap, REPO, z)
+        capacidade.tomar_orquestrador(self.cap, REPO, a)  # A é o 1º da espera e toma
+        self.assertEqual(capacidade.ler(self.cap)["orquestrador"], {REPO: a})
+        self.systemd.estados[self.unit(a)] = "inactive"
+        c.ciclo()
+        dados = capacidade.ler(self.cap)
+        self.assertEqual((dados["orquestrador"], dados["esperando"], dados["reservas"]), ({}, {}, {}))
+
+    def test_parado_na_espera_sem_demanda_nao_bloqueia_quem_vem_depois(self):
+        a, c = self.admitir_com("login", ["src/login/**"])
+        z = "dono--cliente--outro--abcdef"
+        capacidade.tomar_orquestrador(self.cap, REPO, z)
+        capacidade.tomar_orquestrador(self.cap, REPO, a)  # A espera
+        capacidade.soltar_orquestrador(self.cap, REPO, z)
+        self.systemd.estados[self.unit(a)] = "failed"
+        c.ciclo()
+        self.assertEqual(capacidade.ler(self.cap)["esperando"], {})
+
+    def test_estado_json_ilegivel_nao_mexe_e_avisa_uma_vez(self):
+        a, c = self.admitir_com("login", ["src/login/**"])
+        capacidade.reservar(self.cap, a, "raia-0", mem_disponivel_mb=None)
+        capacidade.tomar_orquestrador(self.cap, REPO, a)
+        (self.pasta(a) / "estado.json").write_text("{ruim", encoding="utf-8")
+        self.systemd.estados[self.unit(a)] = "failed"
+        for _ in range(3):
+            c.ciclo()
+        dados = capacidade.ler(self.cap)
+        self.assertEqual((dados["reservas"], dados["orquestrador"]), ({a: ["raia-0"]}, {REPO: a}))
+        self.assertEqual(len([m for m in self.avisos() if "estado.json" in m and a in m]), 1)
+
+    def test_despachante_vivo_fora_do_systemd_cuida_das_proprias_vagas(self):
+        a, c = self.admitir_com("login", ["src/login/**"])
+        capacidade.reservar(self.cap, a, "raia-0", mem_disponivel_mb=None)
+        self.systemd.estados[self.unit(a)] = "inactive"
+        with coordenador.despachante.travar(self.pasta(a)):
+            c.ciclo()
+        self.assertEqual(capacidade.ler(self.cap)["reservas"], {a: ["raia-0"]})
+
+    def test_concluido_e_removido_continuam_sendo_limpos(self):
+        a, c = self.admitir_com("login", ["src/login/**"])
+        capacidade.reservar(self.cap, "dono--cliente--fantasma--abcdef", "r", mem_disponivel_mb=None)
+        c.ciclo()
+        self.assertNotIn("dono--cliente--fantasma--abcdef", capacidade.ler(self.cap)["reservas"])
+
+
+class TestesConclusaoComPlanoAdotado(Base):
+    """Final M1: só conclui quando o plano.json adotado é o da entrada da fila (mesmo hash)."""
+
+    def test_plano_novo_no_main_ainda_nao_adotado_nao_conclui(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.novo()
+        c.ciclo()
+        self.concluir(a)
+        novo = plano_com(["src/login/**"])
+        novo["raias"][0]["criteriosAceite"] = ["ok", "e mais um"]
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/planos/login.json", json.dumps(novo))
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "ativo")
+        self.assertEqual(self.systemd.de("disable"), [])
+        (self.pasta(a) / "plano.json").write_text(json.dumps(novo), encoding="utf-8")
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "concluido")
+
+
 class TestesIdsDoArquivo(Base):
     def test_id_invalido_no_fila_estado_e_ignorado_com_aviso_e_nunca_vira_unit_nem_caminho(self):
         bom = self.publicar("login", ["src/login/**"])
@@ -875,6 +1029,36 @@ class TestesMain(Base):
         )
         return codigo, saida.getvalue(), erro.getvalue()
 
+    def test_cli_le_o_coordenador_env_e_o_ambiente_vale_mais(self):
+        # final M3: registrar (e status/vagas) rodam na shell, sem o EnvironmentFile da unit
+        (self.raiz / "coordenador.env").write_text(
+            "# tokens fora do padrão\nWARREN_API=http://127.0.0.1:9090\nWARREN_TOKEN_FILE=/seg/w\nGH_TOKEN_FILE=\"/seg/g\"\nOUTRA=1\n",
+            encoding="utf-8",
+        )
+        vistos = []
+
+        def construir(ambiente, raiz):
+            vistos.append(dict(ambiente))
+            raise coordenador.ErroDeEntrada(["parou aqui"])
+
+        for ambiente in ({}, {"GH_TOKEN_FILE": "/do/processo"}):
+            coordenador.main(["--raiz", str(self.raiz), "registrar", REPO], ambiente=ambiente, construir=construir, saida=io.StringIO(), erro=io.StringIO())
+        self.assertEqual(vistos[0], {"WARREN_API": "http://127.0.0.1:9090", "WARREN_TOKEN_FILE": "/seg/w", "GH_TOKEN_FILE": "/seg/g"})
+        self.assertEqual(vistos[1]["GH_TOKEN_FILE"], "/do/processo")
+        self.assertEqual(vistos[1]["WARREN_TOKEN_FILE"], "/seg/w")
+        for comando in (["status"], ["vagas", "2"]):
+            self.assertEqual(coordenador.main(["--raiz", str(self.raiz), *comando], ambiente={}, saida=io.StringIO(), erro=io.StringIO()), 0)
+
+    def test_ler_coordenador_env(self):
+        self.assertEqual(coordenador.ler_coordenador_env(self.raiz), {})
+        (self.raiz / "coordenador.env").write_text(
+            "  # comentário\n\nWARREN_TOKEN_FILE = $HOME/w\nGH_TOKEN_FILE='~/g'\nWARREN_API=\nlixo\nPATH=/x\n", encoding="utf-8"
+        )
+        self.assertEqual(coordenador.ler_coordenador_env(self.raiz), {"WARREN_TOKEN_FILE": "$HOME/w", "GH_TOKEN_FILE": "~/g"})
+        (self.raiz / "coordenador.env").write_bytes(b"\xff\xfe")
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            coordenador.ler_coordenador_env(self.raiz)
+
     def test_fila_json_corrompido_sai_com_2(self):
         (self.raiz / "fila.json").write_text("{ruim", encoding="utf-8")
         codigo, _, erro = self.rodar("rodar", "--ciclos", "1")
@@ -1046,7 +1230,9 @@ class TestesClone(unittest.TestCase):
         clone = next(c for c in self.chamadas if c[:2] == ["git", "clone"])
         self.assertIn("file://%s/dono/cliente.git" % (self.tmp / "remoto"), clone)
         self.assertIn("credential.helper=", clone)  # o vazio zera os helpers globais durante o clone
-        self.assertTrue([x for x in clone if x.startswith("credential.helper=!f()")])
+        # final M5: o helper só responde ao github.com
+        self.assertTrue([x for x in clone if x.startswith("credential.https://github.com.helper=!f()")])
+        self.assertFalse([x for x in clone if x.startswith("credential.helper=!f()")])
         segredo = self.token.read_text(encoding="utf-8").strip()
         for argv in self.chamadas:
             self.assertNotIn(segredo, " ".join(argv))
@@ -1060,6 +1246,14 @@ class TestesClone(unittest.TestCase):
         self.assertEqual(saida.returncode, 0, saida.stderr)
         self.assertIn("username=x-access-token", saida.stdout)
         self.assertIn("password=%s" % segredo, saida.stdout)
+        outro = self.gravar(
+            ["git", "-C", str(destino), "credential", "fill"],
+            input="protocol=https\nhost=exemplo.com\nusername=u\npassword=p\n\n",
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotIn(segredo, outro.stdout + outro.stderr)
+        self.assertNotIn("x-access-token", outro.stdout)
 
     def test_url_padrao_do_github_e_falha_sem_deixar_pasta(self):
         def falha(argv, **kw):

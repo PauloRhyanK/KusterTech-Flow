@@ -146,6 +146,14 @@ class TestesFeatureDoCaminho(unittest.TestCase):
             with self.subTest(caminho=caminho):
                 self.assertIsNone(fila.feature_do_caminho(caminho))
 
+    def test_feature_de_ate_41_caracteres(self):
+        # final M6: o mesmo limite da skill; acima disso o nome da unit pode passar de 255
+        limite = "a" * 41
+        self.assertEqual(fila.feature_do_caminho(".fabrica/planos/%s.json" % limite), limite)
+        self.assertEqual(fila.feature_do_caminho(".fabrica/planos/%s.json" % ("ab-" * 13 + "ab")), "ab-" * 13 + "ab")
+        self.assertIsNone(fila.feature_do_caminho(".fabrica/planos/%s.json" % ("a" * 42)))
+        self.assertIsNone(fila.feature_do_caminho(".fabrica/planos/%s.json" % ("a-" * 200 + "a")))
+
     def test_nao_texto_da_none(self):
         self.assertIsNone(fila.feature_do_caminho(None))
 
