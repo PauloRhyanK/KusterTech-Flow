@@ -1,0 +1,304 @@
+import json
+import multiprocessing
+import pathlib
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+import capacidade as cap  # noqa: E402
+
+PADRAO = {
+    "vagasConfig": 3,
+    "ramMinimaMb": 2048,
+    "oomEm": None,
+    "reservas": {},
+    "orquestrador": {},
+}
+
+
+def _disputar(caminho, plano, barreira, fila):
+    """Processo filho: espera a largada e tenta reservar a única vaga."""
+    barreira.wait(timeout=30)
+    fila.put((plano, cap.reservar(caminho, plano, "raia", mem_disponivel_mb=None)))
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.caminho = pathlib.Path(self._tmp.name) / "capacidade.json"
+
+
+class TestesLeitura(Base):
+    def test_arquivo_ausente_devolve_o_padrao(self):
+        self.assertEqual(cap.ler(self.caminho), PADRAO)
+
+    def test_arquivo_ausente_nao_e_criado_pela_leitura(self):
+        cap.ler(self.caminho)
+        self.assertFalse(self.caminho.exists())
+
+    def test_arquivo_corrompido_levanta_capacidade_invalida(self):
+        self.caminho.write_text("{isso nao e json", encoding="utf-8")
+        with self.assertRaises(cap.CapacidadeInvalida):
+            cap.ler(self.caminho)
+
+    def test_json_que_nao_e_objeto_levanta_capacidade_invalida(self):
+        self.caminho.write_text("[1, 2]", encoding="utf-8")
+        with self.assertRaises(cap.CapacidadeInvalida):
+            cap.ler(self.caminho)
+
+    def test_tipos_errados_levantam_capacidade_invalida(self):
+        for ruim in (
+            {"vagasConfig": "3"},
+            {"vagasConfig": True},
+            {"ramMinimaMb": 1.5},
+            {"oomEm": 5},
+            {"reservas": []},
+            {"reservas": {"p": "raia"}},
+            {"reservas": {"p": [1]}},
+            {"orquestrador": {"r": 1}},
+        ):
+            with self.subTest(ruim=ruim):
+                self.caminho.write_text(json.dumps(ruim), encoding="utf-8")
+                with self.assertRaises(cap.CapacidadeInvalida):
+                    cap.ler(self.caminho)
+
+    def test_chaves_ausentes_recebem_o_padrao(self):
+        self.caminho.write_text(json.dumps({"vagasConfig": 5}), encoding="utf-8")
+        esperado = dict(PADRAO, vagasConfig=5)
+        self.assertEqual(cap.ler(self.caminho), esperado)
+
+    def test_escrita_sobre_arquivo_corrompido_nao_o_recria(self):
+        self.caminho.write_text("{ruim", encoding="utf-8")
+        with self.assertRaises(cap.CapacidadeInvalida):
+            cap.reservar(self.caminho, "p", "a", mem_disponivel_mb=None)
+        self.assertEqual(self.caminho.read_text(encoding="utf-8"), "{ruim")
+
+
+class TestesVagas(Base):
+    def test_quarta_reserva_de_outro_plano_e_recusada(self):
+        for plano in ("p1", "p2", "p3"):
+            self.assertTrue(cap.reservar(self.caminho, plano, "a", mem_disponivel_mb=None))
+        self.assertFalse(cap.reservar(self.caminho, "p4", "a", mem_disponivel_mb=None))
+        self.assertEqual(sorted(cap.ler(self.caminho)["reservas"]), ["p1", "p2", "p3"])
+
+    def test_reservas_de_um_mesmo_plano_somam_no_total(self):
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=None))
+        self.assertTrue(cap.reservar(self.caminho, "p1", "b", mem_disponivel_mb=None))
+        self.assertTrue(cap.reservar(self.caminho, "p2", "a", mem_disponivel_mb=None))
+        self.assertFalse(cap.reservar(self.caminho, "p1", "c", mem_disponivel_mb=None))
+
+    def test_reservar_repetido_nao_consome_segunda_vaga(self):
+        for _ in range(5):
+            self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=None))
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p1": ["a"]})
+        self.assertTrue(cap.reservar(self.caminho, "p2", "a", mem_disponivel_mb=None))
+        self.assertTrue(cap.reservar(self.caminho, "p3", "a", mem_disponivel_mb=None))
+
+    def test_reserva_repetida_vale_mesmo_com_tudo_ocupado(self):
+        for plano in ("p1", "p2", "p3"):
+            cap.reservar(self.caminho, plano, "a", mem_disponivel_mb=None)
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=None))
+
+    def test_ram_abaixo_do_minimo_recusa(self):
+        self.assertFalse(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=1500))
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {})
+
+    def test_ram_exatamente_no_minimo_aceita(self):
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=2048))
+
+    def test_ram_desconhecida_aceita(self):
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=None))
+
+    def test_ram_minima_vem_da_configuracao(self):
+        cap.configurar(self.caminho, vagas=3, ram_minima_mb=4096)
+        self.assertFalse(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=3000))
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=4096))
+
+    def test_vagas_efetivas_sem_oom_e_a_configurada(self):
+        self.assertEqual(cap.vagas_efetivas(cap.ler(self.caminho)), 3)
+        self.assertEqual(cap.vagas_efetivas({"vagasConfig": 5, "oomEm": None}), 5)
+
+    def test_oom_limita_a_duas_vagas(self):
+        cap.registrar_oom(self.caminho, "2026-11-03T10:00:00Z")
+        dados = cap.ler(self.caminho)
+        self.assertEqual(dados["oomEm"], "2026-11-03T10:00:00Z")
+        self.assertEqual(cap.vagas_efetivas(dados), 2)
+
+    def test_oom_nao_aumenta_vagas_configuradas_menores(self):
+        cap.configurar(self.caminho, vagas=1, ram_minima_mb=2048)
+        cap.registrar_oom(self.caminho, "agora")
+        self.assertEqual(cap.vagas_efetivas(cap.ler(self.caminho)), 1)
+
+    def test_oom_faz_a_terceira_reserva_ser_recusada(self):
+        cap.registrar_oom(self.caminho, "agora")
+        self.assertTrue(cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=None))
+        self.assertTrue(cap.reservar(self.caminho, "p2", "a", mem_disponivel_mb=None))
+        self.assertFalse(cap.reservar(self.caminho, "p3", "a", mem_disponivel_mb=None))
+
+    def test_configurar_volta_as_vagas_e_limpa_o_oom(self):
+        cap.registrar_oom(self.caminho, "agora")
+        cap.configurar(self.caminho, vagas=3, ram_minima_mb=2048)
+        dados = cap.ler(self.caminho)
+        self.assertIsNone(dados["oomEm"])
+        self.assertEqual(cap.vagas_efetivas(dados), 3)
+
+    def test_configurar_preserva_reservas_e_travas(self):
+        cap.reservar(self.caminho, "p1", "a", mem_disponivel_mb=None)
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "p1")
+        cap.configurar(self.caminho, vagas=4, ram_minima_mb=1024)
+        dados = cap.ler(self.caminho)
+        self.assertEqual(dados["reservas"], {"p1": ["a"]})
+        self.assertEqual(dados["orquestrador"], {"dono/repo": "p1"})
+        self.assertEqual((dados["vagasConfig"], dados["ramMinimaMb"]), (4, 1024))
+
+    def test_configurar_rejeita_valores_invalidos(self):
+        for vagas, ram in ((-1, 2048), (3, -1), ("3", 2048), (3, None), (True, 2048)):
+            with self.subTest(vagas=vagas, ram=ram):
+                with self.assertRaises(ValueError):
+                    cap.configurar(self.caminho, vagas=vagas, ram_minima_mb=ram)
+
+    def test_sincronizar_libera_a_vaga(self):
+        for plano in ("p1", "p2", "p3"):
+            cap.reservar(self.caminho, plano, "a", mem_disponivel_mb=None)
+        self.assertFalse(cap.reservar(self.caminho, "p4", "a", mem_disponivel_mb=None))
+        cap.sincronizar(self.caminho, "p1", set())
+        self.assertNotIn("p1", cap.ler(self.caminho)["reservas"])
+        self.assertTrue(cap.reservar(self.caminho, "p4", "a", mem_disponivel_mb=None))
+
+    def test_sincronizar_grava_o_conjunto_ordenado(self):
+        cap.sincronizar(self.caminho, "p1", {"b", "a"})
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p1": ["a", "b"]})
+        cap.sincronizar(self.caminho, "p1", {"c"})
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p1": ["c"]})
+
+    def test_sincronizar_vazio_sem_reserva_nao_cria_chave(self):
+        cap.sincronizar(self.caminho, "p1", set())
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {})
+
+    def test_sincronizar_nao_mexe_nos_outros_planos(self):
+        cap.reservar(self.caminho, "p2", "x", mem_disponivel_mb=None)
+        cap.sincronizar(self.caminho, "p1", {"a"})
+        self.assertEqual(cap.ler(self.caminho)["reservas"], {"p1": ["a"], "p2": ["x"]})
+
+
+class TestesOrquestrador(Base):
+    def test_trava_livre_e_tomada(self):
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+
+    def test_trava_do_proprio_plano_e_idempotente(self):
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "A"))
+
+    def test_outro_plano_no_mesmo_repositorio_nao_toma(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+
+    def test_repositorio_e_comparado_em_minusculas(self):
+        cap.tomar_orquestrador(self.caminho, "Dono/Repo", "A")
+        self.assertFalse(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+
+    def test_repositorio_diferente_toma(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/outro", "B"))
+
+    def test_soltar_de_outro_plano_nao_solta(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "B")
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {"dono/repo": "A"})
+
+    def test_soltar_do_dono_libera_para_o_outro(self):
+        cap.tomar_orquestrador(self.caminho, "dono/repo", "A")
+        cap.soltar_orquestrador(self.caminho, "Dono/Repo", "A")
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {})
+        self.assertTrue(cap.tomar_orquestrador(self.caminho, "dono/repo", "B"))
+
+    def test_soltar_sem_trava_nao_falha(self):
+        cap.soltar_orquestrador(self.caminho, "dono/repo", "A")
+        self.assertEqual(cap.ler(self.caminho)["orquestrador"], {})
+
+
+class TestesOrfaos(Base):
+    def test_remove_reservas_e_travas_de_planos_fora_dos_ativos(self):
+        cap.reservar(self.caminho, "vivo", "a", mem_disponivel_mb=None)
+        cap.reservar(self.caminho, "morto", "a", mem_disponivel_mb=None)
+        cap.tomar_orquestrador(self.caminho, "dono/r1", "vivo")
+        cap.tomar_orquestrador(self.caminho, "dono/r2", "morto")
+        cap.tomar_orquestrador(self.caminho, "dono/r3", "fantasma")
+        removidos = cap.limpar_orfaos(self.caminho, {"vivo"})
+        self.assertEqual(sorted(removidos), ["fantasma", "morto"])
+        dados = cap.ler(self.caminho)
+        self.assertEqual(dados["reservas"], {"vivo": ["a"]})
+        self.assertEqual(dados["orquestrador"], {"dono/r1": "vivo"})
+
+    def test_plano_que_aparece_nos_dois_lugares_sai_uma_vez(self):
+        cap.reservar(self.caminho, "morto", "a", mem_disponivel_mb=None)
+        cap.tomar_orquestrador(self.caminho, "dono/r", "morto")
+        self.assertEqual(cap.limpar_orfaos(self.caminho, set()), ["morto"])
+
+    def test_nada_a_remover_devolve_lista_vazia(self):
+        cap.reservar(self.caminho, "vivo", "a", mem_disponivel_mb=None)
+        self.assertEqual(cap.limpar_orfaos(self.caminho, {"vivo"}), [])
+        self.assertEqual(cap.limpar_orfaos(self.caminho, {"vivo", "outro"}), [])
+
+
+class TestesConcorrencia(Base):
+    def test_dois_processos_disputam_uma_vaga_e_um_so_vence(self):
+        ctx = multiprocessing.get_context("spawn")
+        for rodada in range(20):
+            caminho = pathlib.Path(self._tmp.name) / ("cap-%d.json" % rodada)
+            cap.configurar(caminho, vagas=1, ram_minima_mb=0)
+            barreira = ctx.Barrier(2)
+            fila = ctx.Queue()
+            procs = [
+                ctx.Process(target=_disputar, args=(str(caminho), plano, barreira, fila))
+                for plano in ("A", "B")
+            ]
+            for proc in procs:
+                proc.start()
+            resultados = dict(fila.get(timeout=60) for _ in procs)
+            for proc in procs:
+                proc.join(timeout=60)
+                self.assertEqual(proc.exitcode, 0)
+            with self.subTest(rodada=rodada):
+                self.assertEqual(sorted(resultados.values()), [False, True])
+                reservas = cap.ler(caminho)["reservas"]
+                self.assertEqual(len(reservas), 1)
+                vencedor = [p for p, ok in resultados.items() if ok][0]
+                self.assertEqual(reservas, {vencedor: ["raia"]})
+
+
+class TestesMemoria(Base):
+    def _meminfo(self, texto):
+        arquivo = pathlib.Path(self._tmp.name) / "meminfo"
+        arquivo.write_text(texto, encoding="utf-8")
+        return arquivo
+
+    def test_le_memavailable_em_mb(self):
+        arquivo = self._meminfo(
+            "MemTotal:       16384000 kB\n"
+            "MemFree:         1000000 kB\n"
+            "MemAvailable:    3145728 kB\n"
+            "Buffers:           10000 kB\n"
+        )
+        self.assertEqual(cap.mem_disponivel_mb(str(arquivo)), 3072)
+
+    def test_arquivo_ausente_devolve_none(self):
+        self.assertIsNone(cap.mem_disponivel_mb(str(pathlib.Path(self._tmp.name) / "nada")))
+
+    def test_sem_memavailable_devolve_none(self):
+        arquivo = self._meminfo("MemTotal: 100 kB\nMemFree: 50 kB\n")
+        self.assertIsNone(cap.mem_disponivel_mb(str(arquivo)))
+
+    def test_valor_ilegivel_devolve_none(self):
+        arquivo = self._meminfo("MemAvailable: muito kB\n")
+        self.assertIsNone(cap.mem_disponivel_mb(str(arquivo)))
+
+
+if __name__ == "__main__":
+    unittest.main()
