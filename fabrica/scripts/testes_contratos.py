@@ -346,6 +346,8 @@ class TestesInstaladorComOKitReal(unittest.TestCase):
         textos.append(prompts.prompt_orquestrador(motivo="m", estado_compacto={}, contexto={}))
         textos.append(ler(self.destino / "AGENTS.md"))
         citados = {c for t in textos for c in re.findall(r"\.fabrica/[A-Za-z0-9_./-]+\.md", t)}
+        # a pergunta é saída do orquestrador (ele a cria no PR), não um pacote do kit
+        citados.discard(est.PERGUNTA_DO_ORQUESTRADOR)
         self.assertIn(".fabrica/orquestrador.md", citados)
         self.assertIn(".fabrica/equipes/fixer.md", citados)
         for caminho in sorted(citados):

@@ -616,7 +616,8 @@ def plano_concluido(estado: dict, plano: dict) -> bool:
     """O plano terminou: última fase com as raias concluídas, homologada, e nada em curso nem aberto.
 
     "Homologada" é a acordada `fase_concluida:<faseAtual>` já em `chavesAcordadas`; o orquestrador
-    precisa estar livre, sem acordadas na fila nem decisões abertas. Entrada malformada é `False`.
+    precisa estar livre (`runId` None), sem acordadas na fila, decisões abertas nem intenções de decisão
+    (`decisoesPendentes`). Entrada malformada é `False`.
     """
     if not isinstance(estado, dict) or not isinstance(plano, dict):
         return False
@@ -636,7 +637,7 @@ def plano_concluido(estado: dict, plano: dict) -> bool:
     orquestrador = estado.get("orquestrador")
     if not isinstance(orquestrador, dict) or orquestrador.get("runId") is not None:
         return False
-    return _vazia(estado.get("acordarPendentes")) and _vazia(estado.get("decisoes"))
+    return all(_vazia(estado.get(c)) for c in ("acordarPendentes", "decisoes", "decisoesPendentes"))
 
 
 # ---------------------------------------------------------------- aplicação

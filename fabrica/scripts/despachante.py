@@ -58,8 +58,10 @@ ARQ_LOG = "log.jsonl"
 ARQ_TRAVA = "despachante.lock"
 DIR_ENTRADA = "entrada"
 CAMINHO_PLANO = ".fabrica/plano.json"
-# `FABRICA_PLANO`: o plano legado ou um `.fabrica/planos/<feature>.json` (fullmatch: nada de `\n` no fim)
-PADRAO_CAMINHO_PLANO = re.compile(r"\.fabrica/(plano|planos/[a-z0-9][a-z0-9-]*)\.json")
+# `FABRICA_PLANO`: o plano legado ou um `.fabrica/planos/<feature>.json` (fullmatch: nada de `\n` no fim);
+# a feature `plano` sob `planos/` colide com o legado e é recusada
+PADRAO_CAMINHO_PLANO = re.compile(r"^\.fabrica/(plano|planos/[a-z0-9]+(-[a-z0-9]+)*)\.json$")
+CAMINHO_PLANO_PROIBIDO = ".fabrica/planos/plano.json"
 CAMINHO_CONFIG = ".fabrica/config.json"
 
 WARREN_API_PADRAO = "http://127.0.0.1:8080"
@@ -421,7 +423,7 @@ def _permitido_ao_orquestrador(caminho, caminho_plano=CAMINHO_PLANO) -> bool:
 
 
 def _caminho_plano_valido(caminho) -> bool:
-    return isinstance(caminho, str) and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
+    return isinstance(caminho, str) and caminho != CAMINHO_PLANO_PROIBIDO and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
 
 
 def _raias_por_id(plano) -> dict:
@@ -1820,8 +1822,9 @@ class Despachante:
                 self._fechar_depois(decisao["url"], "A config voltou a ser válida; issue fechada pelo despachante.", decisao=True)
                 continue
             if decisao.get("tipo") == "automerge":
-                # F8: fecha sozinha quando o preparo informa o automerge desligado ou ausente
-                if self._merges_suspensos():
+                # F8: fecha sozinha quando o preparo informa o automerge desligado ou ausente; sem preparo
+                # (FABRICA_PREPARAR_WARREN=0) o dono do preparo é o coordenador: a decisão fica como está
+                if self._preparar_warren is None or self._merges_suspensos():
                     restantes.append(decisao)
                     continue
                 mudou = True
@@ -3316,7 +3319,7 @@ def construir(ambiente) -> Despachante:
         raise ErroDeEntrada(
             [
                 "FABRICA_PLANO inválido: %r; use .fabrica/plano.json ou .fabrica/planos/<feature>.json "
-                "(feature só com a-z, 0-9 e -)" % _cortar(caminho_plano, 200)
+                "(feature de a-z e 0-9 em partes separadas por um só -, e nunca `plano`)" % _cortar(caminho_plano, 200)
             ]
         )
     # o coordenador da fila prepara o Warren; os despachantes de plano rodam com FABRICA_PREPARAR_WARREN=0

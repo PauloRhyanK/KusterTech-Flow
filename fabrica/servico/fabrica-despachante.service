@@ -22,7 +22,8 @@
 # FABRICA_REPO_DIR é um clone do repositório do cliente (config e verificação).
 # WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE são opcionais; os valores acima são os padrões.
 # FABRICA_PLANO (opcional) é o plano deste despachante: .fabrica/plano.json (o padrão) ou
-# .fabrica/planos/<feature>.json, feature só com a-z, 0-9 e -. Outro valor sai com 2.
+# .fabrica/planos/<feature>.json, feature de a-z e 0-9 em partes separadas por um só - (nunca
+# `plano`). Outro valor sai com 2.
 # FABRICA_PREPARAR_WARREN=0 (opcional) desliga o preparo do Warren, que fica com o coordenador da fila.
 #
 # Saída 2 é entrada inválida, e o serviço NÃO reinicia (RestartPreventExitStatus=2): fica parado até

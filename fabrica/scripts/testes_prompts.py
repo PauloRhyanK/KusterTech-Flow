@@ -247,7 +247,9 @@ class PromptOrquestradorTest(unittest.TestCase):
         texto = prompt_orquestrador(motivo="m", estado_compacto={}, contexto={}, caminho_plano=".fabrica/planos/login.json")
         self.assertIn("Seu plano: `.fabrica/planos/login.json`", texto)
         self.assertIn(
-            "Seu plano: `.fabrica/planos/login.json`. Só ele, `.fabrica/planejamento/**` e `.seeds/**` podem mudar.", texto
+            "Seu plano: `.fabrica/planos/login.json`. Só ele, `.fabrica/pergunta.md`, `.fabrica/planejamento/**` e "
+            "`.seeds/**` podem mudar.",
+            texto,
         )
         self.assertNotIn("`.fabrica/plano.json`", texto)
 

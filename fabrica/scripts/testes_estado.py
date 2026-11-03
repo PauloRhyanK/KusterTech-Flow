@@ -1003,6 +1003,15 @@ class TestPlanoConcluido(unittest.TestCase):
         e["acordarPendentes"] = [{"motivo": "resposta_paulo", "alvo": "x"}]
         self.assertIs(est.plano_concluido(e, p), False)
 
+    def test_falso_com_intencao_de_decisao_pendente(self):
+        e, p = self.completo()
+        e["decisoesPendentes"] = [{"nonce": "a" * 32, "tipo": "config", "alvo": "config:x"}]
+        self.assertIs(est.plano_concluido(e, p), False)
+        e["decisoesPendentes"] = []
+        self.assertIs(est.plano_concluido(e, p), True)
+        del e["decisoesPendentes"]
+        self.assertIs(est.plano_concluido(e, p), True)
+
     def test_falso_quando_a_fase_atual_nao_e_a_ultima(self):
         e, p = self.completo()
         p["faseAtual"] = "fundacao"
@@ -1018,9 +1027,22 @@ class TestPlanoConcluido(unittest.TestCase):
             (e, dict(p, fases="x")),
             (dict(e, raias="x"), p),
             (dict(e, orquestrador=None), p),
+            (dict(e, orquestrador={"runId": ""}), p),
             (dict(e, chavesAcordadas=None), p),
+            (dict(e, acordarPendentes="x"), p),
+            (dict(e, acordarPendentes={}), p),
+            (dict(e, decisoes="x"), p),
+            (dict(e, decisoes=0), p),
+            (dict(e, decisoesPendentes="x"), p),
+            (dict(e, decisoesPendentes={}), p),
+            (e, dict(p, fases=[p["fases"][0], {"id": "nucleo", "raias": []}])),
+            (e, dict(p, fases=[p["fases"][0], {"id": "nucleo", "raias": "x"}])),
+            (e, dict(p, fases=[p["fases"][0], "nucleo"])),
+            (dict(e, raias=dict(e["raias"], c="concluida")), p),
+            (dict(e, raias=dict(e["raias"], c=None)), p),
         ]:
-            self.assertIs(est.plano_concluido(estado_, plano_), False)
+            with self.subTest(estado=estado_, plano=plano_):
+                self.assertIs(est.plano_concluido(estado_, plano_), False)
 
     def test_nao_muta_a_entrada(self):
         e, p = self.completo()

@@ -5410,8 +5410,11 @@ class TestesCorrecaoFinalPreparo(Base):
                 self.assertIs(self.estado()["warrenPreparado"]["dropinCarregado"], esperado)
 
 
-
 # ---------------------------------------------------------------- fila por plano (Task 1)
+
+
+def _dict_url(item):
+    return item.get("url") if isinstance(item, dict) else None
 
 
 class TestCaminhoDoPlano(Base):
@@ -5492,7 +5495,14 @@ class TestCaminhoDoPlano(Base):
 
     def test_construir_le_fabrica_plano(self):
         self.assertEqual(despachante.construir(self.ambiente_real()).caminho_plano, ".fabrica/plano.json")
-        for caminho in (".fabrica/plano.json", self.CAMINHO, ".fabrica/planos/a1-b2.json", ".fabrica/planos/0.json"):
+        for caminho in (
+            ".fabrica/plano.json",
+            self.CAMINHO,
+            ".fabrica/planos/a1-b2.json",
+            ".fabrica/planos/0.json",
+            ".fabrica/planos/login-v2.json",
+            ".fabrica/planos/planos.json",
+        ):
             with self.subTest(caminho=caminho):
                 self.assertEqual(despachante.construir(self.ambiente_real(FABRICA_PLANO=caminho)).caminho_plano, caminho)
 
@@ -5512,6 +5522,10 @@ class TestCaminhoDoPlano(Base):
             ".fabrica/plano.json.bak",
             ".fabrica/config.json",
             ".fabrica/planos/l_x.json",
+            ".fabrica/planos/plano.json",
+            ".fabrica/planos/a--b.json",
+            ".fabrica/planos/a-.json",
+            ".fabrica/planos/-a.json",
         ):
             with self.subTest(caminho=caminho):
                 with self.assertRaises(despachante.ErroDeEntrada) as ctx:
@@ -5542,6 +5556,33 @@ class TestCaminhoDoPlano(Base):
             with self.subTest(valor=valor):
                 d = despachante.construir(self.ambiente_real(FABRICA_PREPARAR_WARREN=valor))
                 self.assertIsInstance(d._preparar_warren, functools.partial)
+
+    def test_caminho_invalido_no_construtor_e_config_invalida(self):
+        for caminho in ("../x.json", ".fabrica/planos/plano.json", ".fabrica/planos/a--b.json", None):
+            with self.subTest(caminho=caminho):
+                with self.assertRaises(despachante.ConfigInvalida):
+                    self.novo(caminho_plano=caminho)
+
+    def test_sem_preparo_nao_mexe_na_decisao_de_automerge(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo(preparar_warren=None)
+        d.iniciar()
+        url = self.forja.abrir_decisao(REPO, despachante.TITULO_AUTOMERGE, "corpo")
+        antiga = {"url": url, "motivo": despachante.MOTIVO_AUTOMERGE, "alvo": "warren", "tipo": "automerge"}
+        d.estado["decisoes"].append(dict(antiga))
+        d.estado["warrenPreparado"] = {"estado": "ja_aplicado", "automerge": "erro"}
+        d._salvar()
+        antes = len(self.forja.decisoes)
+        for _ in range(3):
+            d.ciclo()
+        self.assertEqual([x for x in self.estado()["decisoes"] if x.get("tipo") == "automerge"], [antiga])
+        self.assertFalse(self.forja._decisoes[url]["fechada"])
+        self.assertEqual(
+            [c for c in self.forja.chamadas if c[0] in ("fechar_decisao", "reabrir_decisao", "comentar") and c[1].get("url") == url],
+            [],
+        )
+        self.assertEqual(len(self.forja.decisoes), antes)
+        self.assertNotIn(url, [_dict_url(i) for i in self.estado().get("prsParaFechar", [])])
 
     def test_status_diz_se_o_plano_concluiu(self):
         self.publicar(plano(raia("a")))

@@ -111,7 +111,7 @@ def prompt_orquestrador(
         "\n"
         "Leia `.fabrica/orquestrador.md` e siga o roteiro.\n"
         "\n"
-        f"Seu plano: `{caminho_plano}`. Só ele, `.fabrica/planejamento/**` e `.seeds/**` podem mudar.\n"
+        f"Seu plano: `{caminho_plano}`. Só ele, `.fabrica/pergunta.md`, `.fabrica/planejamento/**` e `.seeds/**` podem mudar.\n"
         "\n"
         f"Motivo: {motivo}\n"
         "\n"
