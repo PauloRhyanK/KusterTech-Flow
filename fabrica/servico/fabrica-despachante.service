@@ -1,4 +1,6 @@
-# Despachante da Fábrica de agentes: unit systemd DE USUÁRIO (sem sudo).
+# Despachante da Fábrica de agentes: unit systemd DE USUÁRIO. Instalar a unit não exige sudo; o
+# despachante, ao preparar o Warren, exige `sudo -n` sem senha (veja "Requisitos da máquina de agentes"
+# em fabrica/README.md).
 #
 # Instalação (na máquina de agentes, como o usuário que roda o Warren e o Docker):
 #   mkdir -p ~/.config/systemd/user
@@ -20,9 +22,14 @@
 # FABRICA_REPO_DIR é um clone do repositório do cliente (config e verificação).
 # WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE são opcionais; os valores acima são os padrões.
 #
-# Saída 2 é config ou ambiente inválido: o serviço não reinicia em laço; o despachante abre uma issue
-# de decisão e o Paulo corrige e reinicia (systemctl --user restart fabrica-despachante).
-# Logs: journalctl --user -u fabrica-despachante
+# Saída 2 é entrada inválida, e o serviço NÃO reinicia (RestartPreventExitStatus=2): fica parado até
+# alguém corrigir e reiniciar.
+#   - .fabrica/config.json inválida ou ilegível: abre uma issue de decisão, mas só se já existe
+#     estado.json deste mesmo repositório (FABRICA_REPO) em FABRICA_RAIZ;
+#   - variável obrigatória ausente ou arquivo de token ilegível: sai com 2 SEM abrir issue.
+# Nos dois casos, `systemctl --user status fabrica-despachante` mostra "failed" com status=2, e
+# `journalctl --user -u fabrica-despachante` mostra a causa ("config inválida: ...", "defina FABRICA_RAIZ",
+# "não foi possível ler o token em ..."). Corrija e rode `systemctl --user restart fabrica-despachante`.
 
 [Unit]
 Description=Despachante da Fábrica de agentes

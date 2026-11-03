@@ -30,7 +30,16 @@ O instalador é idempotente e grava:
 
 Commit e PR desses arquivos no repositório do cliente ficam com o Paulo.
 
-Na máquina de agentes: clone este repositório em `~/fabrica/kit`, clone o repositório do cliente em `FABRICA_REPO_DIR`, preencha `~/fabrica/despachante.env` e instale a unit `servico/fabrica-despachante.service` (as instruções e as variáveis estão no comentário da própria unit). O usuário precisa poder rodar `docker`.
+Na máquina de agentes: clone este repositório em `~/fabrica/kit`, clone o repositório do cliente em `FABRICA_REPO_DIR`, preencha `~/fabrica/despachante.env` e instale a unit `servico/fabrica-despachante.service` (as instruções e as variáveis estão no comentário da própria unit).
+
+## Requisitos da máquina de agentes
+
+- `sudo -n` sem senha para o usuário do despachante, como root (systemd do Warren) e como `-u agentops` (arquivos do Warren): o `preparar_warren` não pede senha. Instalar a unit de usuário não exige sudo.
+- Warren **0.19.3** instalado em `/home/agentops/.bun/` (adaptador em `/home/agentops/.bun/install/global/node_modules/@os-eco/warren-cli/src/runtime/adapters/claude-code.ts`, `bun` em `/home/agentops/.bun/bin/bun`), rodando como `warren.service`.
+- O usuário do despachante no grupo `docker` (a verificação roda em contêiner).
+- `loginctl enable-linger <usuário>`, para o serviço de usuário rodar sem sessão aberta.
+
+Sem o sudo ou sem o Warren nesses caminhos, o `preparar_warren` devolve `erro` (ou `versao_desconhecida`, com outro adaptador): todos os papéis rodam no modelo padrão da conta, só com um aviso, e o drop-in do merge timeout e o desligamento do `warren-automerge.service` também não acontecem. Sem o grupo `docker`, a verificação das raias falha; sem o linger, o serviço para quando a sessão fecha.
 
 ## Iniciar
 
@@ -60,6 +69,13 @@ O despachante faz sozinho:
 - **Toda decisão do Paulo vira uma issue** com esse label. Fechar a issue com um comentário é a resposta, e ela volta ao orquestrador. Uma pausa (cota, falhas seguidas do orquestrador, ação interrompida) também abre uma issue, e fechá-la retoma.
 - **Fecha os PRs substituídos:** os PRs de uma tentativa antiga de raia e os PRs antigos do orquestrador.
 - Registra cada acordada em `acordadas.jsonl` e cada ação em `log.jsonl`, na `FABRICA_RAIZ`.
+
+**Quando o serviço para sozinho (saída 2).** Entrada inválida faz o despachante sair com 2, e a unit não reinicia (`RestartPreventExitStatus=2`):
+
+- `.fabrica/config.json` inválida ou ilegível: abre uma issue de decisão, mas só se já existe `estado.json` deste mesmo repositório (`FABRICA_REPO`) na `FABRICA_RAIZ`;
+- variável obrigatória ausente ou arquivo de token ilegível: sai **sem** abrir issue.
+
+Nos dois casos, `systemctl --user status fabrica-despachante` mostra o serviço `failed` com `status=2`, e `journalctl --user -u fabrica-despachante` mostra a causa (`config inválida: ...`, `defina FABRICA_RAIZ`, `não foi possível ler o token em ...`). Corrija e rode `systemctl --user restart fabrica-despachante`.
 
 ## O que ainda é do Paulo
 

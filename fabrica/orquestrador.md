@@ -77,7 +77,12 @@ Contexto: `{"erros": [...], "pr", "runId", "acordadaAnterior"}` ou `{"erro": "ru
 
 ### `resposta_paulo`
 
-Contexto: `{"pergunta", "resposta", "alvo"}`. O Paulo fechou uma issue de decisão, com o comentário em `resposta`. Aplique a resposta ao plano, no menor escopo possível. Resposta vazia (a issue foi fechada sem comentário) não é aprovação: escolha o caminho conservador que não muda requisito, ou pergunte de novo de forma mais objetiva. Uma resposta que pede algo fora do seu papel (código, merge, troca de modelo) vira mudança de plano ou fica registrada no PR como fora do seu alcance.
+Contexto: `{"pergunta", "resposta", "alvo"}` e, às vezes, `observacao` (por exemplo `"decisão fechada 3 vezes sem comentário"`). O Paulo fechou uma issue de decisão; o último comentário dele está em `resposta`. **Toda** decisão fechada chega por aqui: aprovar fase ou PR do orquestrador (o `alvo` é o PR), a sua pergunta de `.fabrica/pergunta.md`, um gate de seed que esperava o humano (arquivo protegido, por exemplo), uma raia que não pôde ser despachada, um despacho não confirmado e o bloqueio do orquestrador. `pergunta` diz qual foi.
+
+- **Aprovar fase com concordância** (`ok`, `aprovado` e afins): não replaneje. Se `faseAtual` em `main` já é a próxima fase (o Paulo mergeou o PR), é um NO-OP com evidência. Se o PR foi fechado sem merge (o despachante fecha o PR que ainda estava aberto quando a issue fecha), proponha de novo o mesmo avanço de `faseAtual`, como planejado.
+- Qualquer outra resposta: aplique-a ao plano, no menor escopo possível.
+- Resposta vazia (fechada sem comentário, com `observacao`, ou o fim de um bloqueio) não é aprovação: escolha o caminho conservador que não muda requisito, ou pergunte de novo de forma mais objetiva.
+- Uma resposta que pede algo fora do seu papel (código, merge, troca de modelo) vira mudança de plano ou fica registrada no PR como fora do seu alcance.
 
 ## Saída
 

@@ -64,31 +64,68 @@ def secao(texto: str, titulo: str, nivel: str = "##") -> str | None:
     return None
 
 
-def motivos_de_acordar() -> set[str]:
-    """Os motivos que o código emite: dicts `{"tipo": "acordar", "motivo": "<x>"}` e `_enfileirar_acordar("<x>", ...)`."""
-    motivos = set()
-    for nome in ("estado.py", "despachante.py"):
-        for no in ast.walk(ast.parse(ler(RAIZ / nome))):
-            if isinstance(no, ast.Dict):
-                pares = {k.value: v for k, v in zip(no.keys, no.values) if isinstance(k, ast.Constant)}
-                tipo, motivo = pares.get("tipo"), pares.get("motivo")
-                if (
-                    isinstance(tipo, ast.Constant)
-                    and tipo.value == "acordar"
-                    and isinstance(motivo, ast.Constant)
-                    and isinstance(motivo.value, str)
-                ):
-                    motivos.add(motivo.value)
+ARQUIVOS_QUE_ACORDAM = ("estado.py", "despachante.py")
+# Os únicos pontos em que o motivo de uma acordada não é constante: eles só repassam um motivo que já está na fila
+# (`acordarPendentes`) ou na acordada em curso, nunca criam um. (arquivo, função, expressão do motivo)
+REPASSES_DE_MOTIVO = {
+    ("despachante.py", "_reenfileirar_acordada", "acordada['motivo']"),
+    ("despachante.py", "_enfileirar_acordar", "motivo"),
+    ("despachante.py", "_proposta_de_pendente", "pendente.get('motivo')"),
+}
+
+
+def sitios_de_motivo(fontes: dict[str, str]) -> list[tuple[str, str | None, ast.expr | None]]:
+    """Todo ponto em que um motivo entra numa acordada: `(arquivo, função, expressão do motivo)`.
+
+    São os dicts `{"tipo": "acordar", "motivo": ...}`, os dicts com `motivo` montados em `_enfileirar_acordar`
+    (as entradas de `acordarPendentes`) e as chamadas `_enfileirar_acordar(<motivo>, ...)` ou `(motivo=...)`.
+    """
+    sitios = []
+
+    def visitar(arquivo, no, funcao):
+        for filho in ast.iter_child_nodes(no):
+            dentro = filho.name if isinstance(filho, (ast.FunctionDef, ast.AsyncFunctionDef)) else funcao
+            if isinstance(filho, ast.Dict):
+                pares = {k.value: v for k, v in zip(filho.keys, filho.values) if isinstance(k, ast.Constant)}
+                tipo = pares.get("tipo")
+                acordar = isinstance(tipo, ast.Constant) and tipo.value == "acordar"
+                if "motivo" in pares and (acordar or dentro == "_enfileirar_acordar"):
+                    sitios.append((arquivo, dentro, pares["motivo"]))
             elif (
-                isinstance(no, ast.Call)
-                and isinstance(no.func, ast.Attribute)
-                and no.func.attr == "_enfileirar_acordar"
-                and no.args
-                and isinstance(no.args[0], ast.Constant)
-                and isinstance(no.args[0].value, str)
+                isinstance(filho, ast.Call)
+                and isinstance(filho.func, ast.Attribute)
+                and filho.func.attr == "_enfileirar_acordar"
             ):
-                motivos.add(no.args[0].value)
-    return motivos
+                argumento = filho.args[0] if filho.args else None
+                argumento = argumento or next((k.value for k in filho.keywords if k.arg == "motivo"), None)
+                sitios.append((arquivo, dentro, argumento))
+            visitar(arquivo, filho, dentro)
+
+    for arquivo, fonte in fontes.items():
+        visitar(arquivo, ast.parse(fonte), None)
+    return sitios
+
+
+def _constante(expressao) -> bool:
+    return isinstance(expressao, ast.Constant) and isinstance(expressao.value, str)
+
+
+def fontes_que_acordam() -> dict[str, str]:
+    return {nome: ler(RAIZ / nome) for nome in ARQUIVOS_QUE_ACORDAM}
+
+
+def motivos_de_acordar() -> set[str]:
+    """Os motivos que o código emite, todos constantes (os repasses são conferidos à parte)."""
+    return {e.value for _, _, e in sitios_de_motivo(fontes_que_acordam()) if _constante(e)}
+
+
+def repasses(fontes: dict[str, str]) -> set[tuple[str, str | None, str | None]]:
+    """Os pontos cujo motivo não é uma constante de texto."""
+    return {
+        (arquivo, funcao, ast.unparse(e) if e is not None else None)
+        for arquivo, funcao, e in sitios_de_motivo(fontes)
+        if not _constante(e)
+    }
 
 
 def variaveis_do_despachante() -> set[str]:
@@ -205,6 +242,25 @@ class TestesOrquestrador(unittest.TestCase):
         self.assertTrue(set(est.MOTIVOS_DO_PAULO) <= motivos, motivos)
         self.assertIn("resposta_paulo", motivos)
         self.assertIn("plano_invalido", motivos)
+        # todo motivo que não é constante é um repasse conhecido: um motivo novo por variável não escapa
+        self.assertEqual(repasses(fontes_que_acordam()), REPASSES_DE_MOTIVO)
+
+    def test_extracao_acusa_motivo_por_variavel(self):
+        casos = {
+            "chamada": "def f(self):\n    self._enfileirar_acordar(nome, 'x', {})\n",
+            "chamada com motivo=": "def f(self):\n    self._enfileirar_acordar(motivo=nome, alvo='x', contexto={})\n",
+            "acao": "def f():\n    return [{'tipo': 'acordar', 'motivo': MOTIVO, 'alvo': 'x'}]\n",
+            "pendente": "def _enfileirar_acordar(self, m):\n    p = {'motivo': m.strip(), 'alvo': 1}\n",
+        }
+        for caso, fonte in casos.items():
+            with self.subTest(caso=caso):
+                (sitio,) = repasses({"novo.py": fonte})
+                self.assertEqual(sitio[0], "novo.py")
+        constante = "def f(self):\n    self._enfileirar_acordar('novo_motivo', 'x', {})\n"
+        self.assertEqual(repasses({"novo.py": constante}), set())
+        self.assertEqual(
+            {e.value for _, _, e in sitios_de_motivo({"novo.py": constante})}, {"novo_motivo"}
+        )
 
     def test_cita_todo_motivo_de_acordada_do_codigo(self):
         for motivo in sorted(motivos_de_acordar()):
@@ -228,6 +284,14 @@ class TestesOrquestrador(unittest.TestCase):
         self.assertIn("verificacao", saida)
         self.assertIn("sd create", saida)
         self.assertIn("sd plan", saida)
+
+    def test_resposta_paulo_cobre_observacao_e_aprovar_fase(self):
+        corpo = secao(self.entrada, "`resposta_paulo`", "###")
+        self.assertIn("observacao", corpo)
+        self.assertIn(despachante.OBSERVACAO_FECHADA_SEM_COMENTARIO, corpo)
+        self.assertIn("Aprovar fase", corpo)
+        self.assertIn("NO-OP com evidência", corpo)
+        self.assertIn("faseAtual", corpo)
 
     def test_planejamento_previo(self):
         self.assertIn("fabrica-*", self.texto)
@@ -337,6 +401,24 @@ class TestesOperacao(unittest.TestCase):
         ):
             self.assertIn(esperada, linhas)
         self.assertFalse(any(linha.startswith("User=") for linha in linhas))
+
+    def test_unit_e_readme_dizem_quando_a_saida_2_abre_issue(self):
+        for texto in (self.unit, self.readme):
+            self.assertIn("RestartPreventExitStatus=2", texto)
+            self.assertIn("estado.json", texto)
+            self.assertIn("systemctl --user status fabrica-despachante", texto)
+            self.assertIn("systemctl --user restart fabrica-despachante", texto)
+        self.assertIn("SEM abrir issue", self.unit)
+        self.assertIn("sem** abrir issue", self.readme)
+        self.assertNotIn("(sem sudo)", self.unit)
+
+    def test_readme_requisitos_da_maquina(self):
+        requisitos = secao(self.readme, "Requisitos da máquina de agentes")
+        self.assertIsNotNone(requisitos)
+        for trecho in ("sudo -n", "-u agentops", preparar_warren.CAMINHO_PADRAO, preparar_warren.BUN_PADRAO,
+                       "warren.service", "docker", "loginctl enable-linger", "0.19.3"):
+            with self.subTest(trecho=trecho):
+                self.assertIn(trecho, requisitos)
 
     def test_unit_documenta_as_variaveis_sem_segredo(self):
         comentarios = "\n".join(linha for linha in self.unit.splitlines() if linha.startswith("#"))
