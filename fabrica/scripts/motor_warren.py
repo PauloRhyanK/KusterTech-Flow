@@ -380,6 +380,23 @@ class MotorWarren:
             excluir=(run_id,),
         )
 
+    def visao_geral(self) -> dict:
+        """GET /ops/overview (ops-overview.ts): o `runs.nonTerminal` é exigido (inteiro >= 0)."""
+        caminho = "/ops/overview"
+        dados = self._json("GET", caminho)
+        runs = dados.get("runs")
+        ativos = runs.get("nonTerminal") if isinstance(runs, dict) else None
+        if not isinstance(ativos, int) or isinstance(ativos, bool) or ativos < 0:
+            raise RuntimeError("GET %s: resposta sem o campo 'runs.nonTerminal' (inteiro >= 0)" % caminho)
+        return dados
+
+    def versao(self) -> str:
+        """GET /version (meta.ts): `{"version": "0.19.3"}`."""
+        versao = self._json("GET", "/version").get("version")
+        if not isinstance(versao, str) or not versao.strip():
+            raise RuntimeError("GET /version: resposta sem o campo 'version'")
+        return versao
+
     def cancelar_plano(self, plan_run_id: str) -> None:
         self._requisitar("POST", "/plan-runs/%s/cancel" % _id(plan_run_id), {})
 

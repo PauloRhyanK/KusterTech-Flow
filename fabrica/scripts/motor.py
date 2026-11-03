@@ -17,6 +17,7 @@ MAX_PAGINAS_DA_BUSCA = 20
 # Janela de deduplicação do `Idempotency-Key` em POST /runs (idempotency.ts): 10 min por (projeto, chave).
 JANELA_IDEMPOTENCIA = datetime.timedelta(minutes=10)
 _DIALETOS = ("sqlite", "postgres")
+_NAO_TERMINAIS_DE_RUN = ("queued", "pending", "dispatched", "running")
 # R2: causas de falha que o Warren refaz sozinho, UMA vez, num run novo com o mesmo prompt e `retryOf` apontando para
 # o original (runs/retry/infra-lost-retry.ts, INFRA_LOST_RUN_FAILURE_REASONS); filhos de Plan Run ficam de fora.
 MOTIVOS_INFRA_PERDIDA = ("sandbox_run_lost", "preempted")
@@ -196,6 +197,14 @@ class Motor(typing.Protocol):
     def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
         """R2: o run que o Warren criou sozinho para substituir `run_id` (perda de infraestrutura): `retryOf == run_id`
         ou um run DIFERENTE do original com um dos nonces no prompt. `nonces` pode ser vazia (estado antigo)."""
+        ...
+
+    def visao_geral(self) -> dict:
+        """GET /ops/overview: `{"runs": {"nonTerminal": int, ...}, ...}` (o preparar_warren só reinicia com 0)."""
+        ...
+
+    def versao(self) -> str:
+        """GET /version: a versão do Warren; responder é o sinal de que ele está de pé."""
         ...
 
 
@@ -501,6 +510,15 @@ class MotorFalso:
 
     def procurar_plano(self, projeto: str, nonce: str) -> str | None:
         return self._procurar("procurar_plano", projeto, nonce, "plano-")
+
+    def visao_geral(self) -> dict:
+        self._registrar("visao_geral")
+        ativos = sum(1 for run in self._runs.values() if run.get("estado") in _NAO_TERMINAIS_DE_RUN)
+        return {"runs": {"nonTerminal": ativos, "total": len(self._runs)}}
+
+    def versao(self) -> str:
+        self._registrar("versao")
+        return "0.19.3"
 
     def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
         self._registrar("procurar_retry", projeto=projeto, run_id=run_id, nonces=nonces, desde=desde)

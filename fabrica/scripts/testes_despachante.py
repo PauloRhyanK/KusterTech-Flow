@@ -516,6 +516,191 @@ class TestesJornada(Base):
         self.assertIn("retomar", [linha.get("evento") for linha in self.log()])
 
 
+# ---------------------------------------------------------------- preparar_warren (Task 7b)
+
+
+class TestesPrepararWarren(Base):
+    AVISO = despachante.AVISO_WARREN_SEM_MODELO
+
+    def rodar_com(self, respostas, ciclos, config=None):
+        """Roda `ciclos` ciclos vazios com um preparar falso que devolve `respostas` em ordem (a última se repete)."""
+        self.chamadas_preparar = []
+        respostas = list(respostas)
+
+        def preparar():
+            self.chamadas_preparar.append(len(self.ciclos_feitos))
+            resposta = respostas.pop(0) if len(respostas) > 1 else respostas[0]
+            if isinstance(resposta, BaseException):
+                raise resposta
+            return {"estado": resposta, "detalhe": "detalhe de " + resposta}
+
+        self.ciclos_feitos = []
+        self.publicar(plano(raia("a")))
+        d = self.novo(preparar_warren=preparar, config=config)
+        d.iniciar()
+        d.ciclo = lambda: self.ciclos_feitos.append(1) or []
+        d.rodar(intervalo=1, ciclos=ciclos, dormir=lambda s: None)
+        return d
+
+    def avisos_de_modelo(self):
+        return [a for a in self.estado().get("avisos", []) if a == self.AVISO]
+
+    def test_aviso_tem_o_texto_da_decisao(self):
+        self.assertIn("não aplica modelo por papel", self.AVISO)
+        self.assertIn("conferência de modelo efetivo vai acusar a divergência", self.AVISO)
+
+    def test_chama_na_partida_sob_a_trava_antes_do_primeiro_ciclo(self):
+        tentativas = []
+
+        def preparar():
+            try:
+                with despachante.travar(self.raiz):
+                    tentativas.append("livre")
+            except despachante.OutroDespachante:
+                tentativas.append("tomada")
+            tentativas.append(len(ciclos))
+            return {"estado": "aplicado", "detalhe": "ok"}
+
+        ciclos = []
+        self.publicar(plano(raia("a")))
+        d = self.novo(preparar_warren=preparar)
+        d.iniciar()
+        d.ciclo = lambda: ciclos.append(1) or []
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda s: None)
+        self.assertEqual(tentativas, ["tomada", 0])
+        self.assertEqual(self.estado()["warrenPreparado"]["estado"], "aplicado")
+        self.assertEqual(self.estado()["warrenPreparado"]["detalhe"], "ok")
+        (linha,) = [linha for linha in self.log() if linha.get("evento") == "preparar_warren"]
+        self.assertEqual((linha["estado"], linha["detalhe"]), ("aplicado", "ok"))
+        self.assertEqual(self.avisos_de_modelo(), [])
+
+    def test_repete_a_cada_20_ciclos_enquanto_aguarda(self):
+        self.rodar_com(["aguardando_runs"], ciclos=20)
+        self.assertEqual(self.chamadas_preparar, [0])
+        self.setUp()
+        self.rodar_com(["aguardando_runs"], ciclos=21)
+        self.assertEqual(self.chamadas_preparar, [0, 20])
+        self.setUp()
+        self.rodar_com(["aguardando_runs"], ciclos=41)
+        self.assertEqual(self.chamadas_preparar, [0, 20, 40])
+        self.assertEqual(self.estado()["warrenPreparado"]["estado"], "aguardando_runs")
+        self.assertEqual(self.avisos_de_modelo(), [])
+        linhas = [linha for linha in self.log() if linha.get("evento") == "preparar_warren"]
+        self.assertEqual(len(linhas), 3)
+
+    def test_para_de_chamar_depois_de_aplicado(self):
+        self.rodar_com(["aguardando_runs", "aplicado", "aguardando_runs"], ciclos=81)
+        self.assertEqual(self.chamadas_preparar, [0, 20])
+        self.assertEqual(self.estado()["warrenPreparado"]["estado"], "aplicado")
+
+    def test_ja_aplicado_na_partida_nao_repete(self):
+        self.rodar_com(["ja_aplicado", "aplicado"], ciclos=41)
+        self.assertEqual(self.chamadas_preparar, [0])
+        self.assertEqual(self.estado()["warrenPreparado"]["estado"], "ja_aplicado")
+
+    def test_partida_chama_mesmo_com_estado_aplicado_de_antes(self):
+        self.rodar_com(["aplicado"], ciclos=1)
+        d = self.novo(preparar_warren=lambda: self.chamadas_preparar.append("de novo") or {"estado": "ja_aplicado", "detalhe": ""})
+        d.ciclo = lambda: []
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda s: None)
+        self.assertEqual(self.chamadas_preparar, [0, "de novo"])
+
+    def test_preparar_automatico_falso_nao_chama(self):
+        config = dict(copy.deepcopy(CONFIG), warren={"prepararAutomatico": False})
+        self.rodar_com(["aguardando_runs"], ciclos=41, config=config)
+        self.assertEqual(self.chamadas_preparar, [])
+        self.assertNotIn("warrenPreparado", self.estado())
+        self.assertEqual([linha for linha in self.log() if linha.get("evento") == "preparar_warren"], [])
+
+    def test_preparar_automatico_verdadeiro_ou_ausente_chama(self):
+        for warren in ({"prepararAutomatico": True}, {}, None):
+            with self.subTest(warren=warren):
+                self.setUp()
+                config = copy.deepcopy(CONFIG)
+                if warren is not None:
+                    config["warren"] = warren
+                self.rodar_com(["aplicado"], ciclos=1, config=config)
+                self.assertEqual(self.chamadas_preparar, [0])
+
+    def test_sem_preparar_injetado_nao_chama_nada(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        d.ciclo = lambda: []
+        d.rodar(intervalo=1, ciclos=21, dormir=lambda s: None)
+        self.assertNotIn("warrenPreparado", self.estado())
+
+    def test_aviso_unico_para_versao_desconhecida_e_erro(self):
+        self.rodar_com(["erro", "versao_desconhecida", "erro", "erro"], ciclos=61)
+        self.assertEqual(self.chamadas_preparar, [0, 20, 40, 60])
+        self.assertEqual(self.avisos_de_modelo(), [self.AVISO])
+        avisos_no_log = [linha for linha in self.log() if linha.get("evento") == "aviso" and linha.get("mensagem") == self.AVISO]
+        self.assertEqual(len(avisos_no_log), 1)
+
+    def test_versao_desconhecida_sozinha_tambem_avisa(self):
+        self.rodar_com(["versao_desconhecida"], ciclos=1)
+        self.assertEqual(self.avisos_de_modelo(), [self.AVISO])
+
+    def test_aguardando_e_aplicado_nao_avisam(self):
+        self.rodar_com(["aguardando_runs", "aplicado"], ciclos=21)
+        self.assertEqual(self.avisos_de_modelo(), [])
+
+    def test_excecao_no_preparar_vira_erro_e_o_laco_segue(self):
+        self.rodar_com([RuntimeError("quebrou com " + TOKEN), "aguardando_runs"], ciclos=21)
+        self.assertEqual(self.chamadas_preparar, [0, 20])
+        self.assertEqual(len(self.ciclos_feitos), 21)
+        linhas = [linha for linha in self.log() if linha.get("evento") == "preparar_warren"]
+        self.assertEqual(linhas[0]["estado"], "erro")
+        self.assertEqual(linhas[0]["detalhe"], "RuntimeError: quebrou com ***")
+        self.assertEqual(self.avisos_de_modelo(), [self.AVISO])
+        texto = (self.raiz / "log.jsonl").read_text(encoding="utf-8") + (self.raiz / "estado.json").read_text(encoding="utf-8")
+        self.assertNotIn(TOKEN, texto)
+
+    def test_detalhe_devolvido_tem_os_segredos_mascarados(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo(preparar_warren=lambda: {"estado": "erro", "detalhe": "falhou com " + TOKEN})
+        d.iniciar()
+        d.ciclo = lambda: []
+        d.rodar(intervalo=1, ciclos=1, dormir=lambda s: None)
+        self.assertEqual(self.estado()["warrenPreparado"]["detalhe"], "falhou com ***")
+        texto = (self.raiz / "log.jsonl").read_text(encoding="utf-8") + (self.raiz / "estado.json").read_text(encoding="utf-8")
+        self.assertNotIn(TOKEN, texto)
+
+    def test_resultado_malformado_vira_erro(self):
+        for resposta in (None, {"estado": "inventado", "detalhe": "x"}, {"detalhe": "x"}, "aplicado"):
+            with self.subTest(resposta=resposta):
+                self.setUp()
+                self.publicar(plano(raia("a")))
+                d = self.novo(preparar_warren=lambda resposta=resposta: resposta)
+                d.iniciar()
+                d.ciclo = lambda: []
+                d.rodar(intervalo=1, ciclos=1, dormir=lambda s: None)
+                self.assertEqual(self.estado()["warrenPreparado"]["estado"], "erro")
+                self.assertEqual(self.avisos_de_modelo(), [self.AVISO])
+
+    def test_construir_liga_o_preparar_real_ao_motor(self):
+        import functools
+
+        import preparar_warren
+
+        (self.repo_dir / ".fabrica").mkdir()
+        (self.repo_dir / ".fabrica" / "config.json").write_text(json.dumps(CONFIG), encoding="utf-8")
+        (self.tmp / "w").write_text(TOKEN + "\n", encoding="utf-8")
+        (self.tmp / "g").write_text(TOKEN_GH + "\n", encoding="utf-8")
+        ambiente = {
+            "FABRICA_RAIZ": str(self.raiz),
+            "FABRICA_REPO_DIR": str(self.repo_dir),
+            "FABRICA_PROJETO": PROJETO,
+            "FABRICA_REPO": REPO,
+            "WARREN_TOKEN_FILE": str(self.tmp / "w"),
+            "GH_TOKEN_FILE": str(self.tmp / "g"),
+        }
+        d = despachante.construir(ambiente)
+        self.assertIsInstance(d._preparar_warren, functools.partial)
+        self.assertIs(d._preparar_warren.func, preparar_warren.preparar)
+        self.assertEqual(d._preparar_warren.keywords, {"visao_geral": d.motor.visao_geral, "versao": d.motor.versao})
+
+
 # ---------------------------------------------------------------- ordem do ciclo
 
 

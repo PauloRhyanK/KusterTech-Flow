@@ -1527,6 +1527,76 @@ class TestesRodada5(unittest.TestCase):
         self.assertIsInstance(motor.MotorFalso(), motor.Motor)
 
 
+class TestesVisaoGeralEVersao(unittest.TestCase):
+    def test_visao_geral_le_ops_overview_com_token(self):
+        corpo = {"runs": {"byState": {"running": 2}, "nonTerminal": 2, "total": 9}, "window": "24h"}
+        m, t = novo(ok(corpo))
+        self.assertEqual(m.visao_geral(), corpo)
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/ops/overview"))
+        self.assertIsNone(t.ultima[3])
+        self.assertEqual(t.ultima[2]["Authorization"], "Bearer " + TOKEN)
+
+    def test_visao_geral_com_zero_runs(self):
+        m, _ = novo(ok({"runs": {"nonTerminal": 0}}))
+        self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 0)
+
+    def test_visao_geral_malformada(self):
+        for corpo in ({}, {"runs": None}, {"runs": []}, {"runs": {}}, {"runs": {"nonTerminal": "1"}}, {"runs": {"nonTerminal": True}}, {"runs": {"nonTerminal": -1}}, {"runs": {"nonTerminal": 1.5}}):
+            with self.subTest(corpo=corpo):
+                m, _ = novo(ok(corpo))
+                with self.assertRaises(RuntimeError) as ctx:
+                    m.visao_geral()
+                self.assertIn("runs.nonTerminal", str(ctx.exception))
+                self.assertIn("GET /ops/overview", str(ctx.exception))
+                self.assertNotIn(TOKEN, str(ctx.exception))
+
+    def test_visao_geral_http_e_rede_seguem_a_higiene(self):
+        m, _ = novo((500, {}, b"segredo"))
+        with self.assertRaises(RuntimeError) as ctx:
+            m.visao_geral()
+        self.assertEqual(str(ctx.exception), "GET /ops/overview: HTTP 500")
+        m, _ = novo((200, {}, b"segredo nao json"))
+        with self.assertRaises(RuntimeError) as ctx:
+            m.visao_geral()
+        self.assertNotIn("segredo", str(ctx.exception))
+
+    def test_versao_le_version(self):
+        m, t = novo(ok({"version": "0.19.3"}))
+        self.assertEqual(m.versao(), "0.19.3")
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/version"))
+
+    def test_versao_malformada(self):
+        for corpo in ({}, {"version": ""}, {"version": 3}):
+            with self.subTest(corpo=corpo):
+                m, _ = novo(ok(corpo))
+                with self.assertRaises(RuntimeError) as ctx:
+                    m.versao()
+                self.assertIn("version", str(ctx.exception))
+
+    def test_motor_falso_conta_os_runs_nao_terminais(self):
+        m = motor.MotorFalso()
+        self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 0)
+        a = m.despachar_run(**ARGS_RUN)
+        b = m.despachar_run(**dict(ARGS_RUN, prompt="outro"))
+        self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 2)
+        m.definir_run(a, estado="succeeded")
+        self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 1)
+        m.definir_run(b, estado="queued")
+        self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 1)
+        m.definir_run(b, estado="cancelled")
+        self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 0)
+        self.assertEqual(m.versao(), "0.19.3")
+        nomes = [nome for nome, _ in m.chamadas]
+        self.assertIn("visao_geral", nomes)
+        self.assertIn("versao", nomes)
+
+    def test_protocolo_tem_visao_geral_e_versao(self):
+        self.assertTrue(hasattr(motor.Motor, "visao_geral"))
+        self.assertTrue(hasattr(motor.Motor, "versao"))
+        self.assertIsInstance(motor.MotorFalso(), motor.Motor)
+        self.assertIsInstance(motor_warren.MotorWarren(BASE, TOKEN, TransporteFalso()), motor.Motor)
+
+
 class TestesExecucaoDireta(unittest.TestCase):
     def test_modulos_importam_so_com_biblioteca_padrao_em_modo_isolado(self):
         resultado = subprocess.run(

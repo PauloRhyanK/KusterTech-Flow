@@ -129,6 +129,11 @@ MAX_FECHAMENTOS_SEM_COMENTARIO = 3
 CICLOS_PARA_ACHAR_RETRY = 3
 LIMITE_NONCES_DE_RUNS = 100
 OBSERVACAO_FECHADA_SEM_COMENTARIO = "decisão fechada %d vezes sem comentário" % MAX_FECHAMENTOS_SEM_COMENTARIO
+# Task 7b: o preparar_warren roda na partida e, enquanto o --model não estiver no adaptador, a cada 20 ciclos
+CICLOS_PREPARAR_WARREN = 20
+ESTADOS_DO_PREPARAR = ("ja_aplicado", "versao_desconhecida", "aguardando_runs", "aplicado", "erro")
+WARREN_PREPARADO = ("ja_aplicado", "aplicado")
+AVISO_WARREN_SEM_MODELO = "o Warren não aplica modelo por papel; a conferência de modelo efetivo vai acusar a divergência"
 
 class OutroDespachante(Exception):
     """A trava da raiz já está com outro processo."""
@@ -455,6 +460,7 @@ class Despachante:
         repo: str,
         limpar_residuos=verificacao.limpar_residuos,
         segredos=(),
+        preparar_warren=None,
     ):
         if not _texto(projeto):
             raise ConfigInvalida("projeto")
@@ -471,6 +477,8 @@ class Despachante:
         self._verificar = verificar
         self._agora = agora
         self._limpar = limpar_residuos
+        # sem preparar injetado (testes, ou outro motor) nada é tocado no Warren; o `construir` liga o real
+        self._preparar_warren = preparar_warren
         conhecidos = {s for s in segredos if isinstance(s, str)} | {s.strip() for s in segredos if isinstance(s, str)}
         # os mais longos primeiro, para um segredo que contém outro ser trocado inteiro
         self._segredos = tuple(sorted((s for s in conhecidos if len(s) >= TAMANHO_MINIMO_SEGREDO), key=len, reverse=True))
@@ -774,6 +782,8 @@ class Despachante:
             self._log(dict({"evento": "limpar_residuos"}, **registro))
             feitos = 0
             while ciclos is None or feitos < ciclos:
+                if feitos == 0 or (feitos % CICLOS_PREPARAR_WARREN == 0 and not self._warren_preparado()):
+                    self._preparar_o_warren()
                 feitos += 1
                 try:
                     self.ciclo()
@@ -782,6 +792,34 @@ class Despachante:
                 if ciclos is not None and feitos >= ciclos:
                     break
                 dormir(max(intervalo, self._retry_after))
+
+    # ------------------------------------------------------------ preparar_warren (Task 7b)
+
+    def _warren_preparado(self) -> bool:
+        return _dict(self.estado.get("warrenPreparado")).get("estado") in WARREN_PREPARADO
+
+    def _preparar_o_warren(self) -> None:
+        """Aplica o --model no adaptador claude-code do Warren (`preparar_warren.preparar`), se a config deixar.
+
+        "versao_desconhecida" e "erro" geram um aviso único; "aguardando_runs" fica para daqui a 20 ciclos.
+        """
+        if self._preparar_warren is None or not _dict(self.config.get("warren")).get("prepararAutomatico", True):
+            return
+        try:
+            try:
+                resultado = self._preparar_warren()
+            except Exception as exc:  # noqa: BLE001 - o preparar não lança, mas o laço não pode cair por ele
+                resultado = {"estado": "erro", "detalhe": self._erro(exc)}
+            if not isinstance(resultado, dict) or resultado.get("estado") not in ESTADOS_DO_PREPARAR:
+                resultado = {"estado": "erro", "detalhe": "resultado inválido do preparar_warren"}
+            registro = {"estado": resultado["estado"], "detalhe": self._seguro(resultado.get("detalhe") or "")}
+            self.estado["warrenPreparado"] = dict(registro, em=self._agora().isoformat())
+            self._salvar()
+            self._log(dict({"evento": "preparar_warren"}, **registro))
+            if registro["estado"] in ("versao_desconhecida", "erro"):
+                self._aviso(AVISO_WARREN_SEM_MODELO)
+        except Exception as exc:  # noqa: BLE001 - tenta de novo daqui a 20 ciclos
+            self._erro_de_etapa("preparar_warren", "warren", exc)
 
     # ------------------------------------------------------------ entrada e pausa
 
@@ -2845,8 +2883,11 @@ def _ler_token(caminho: str) -> str:
 
 def construir(ambiente) -> Despachante:
     """O despachante real: Warren e GitHub com os tokens lidos dos arquivos do ambiente."""
+    import functools
+
     import forja as forja_github
     import motor_warren
+    import preparar_warren
 
     raiz = _exigir(ambiente, "FABRICA_RAIZ")
     repo_dir = _exigir(ambiente, "FABRICA_REPO_DIR")
@@ -2860,8 +2901,9 @@ def construir(ambiente) -> Despachante:
     except (OSError, ValueError) as erro:
         # Q6: config ilegível é ConfigInvalida: no `rodar`, decisão best-effort e saída 2 (sem parada silenciosa)
         raise ConfigInvalida("config.json ilegível (%s)" % type(erro).__name__) from None
+    motor = motor_warren.MotorWarren(ambiente.get("WARREN_API") or WARREN_API_PADRAO, token_warren)
     return Despachante(
-        motor=motor_warren.MotorWarren(ambiente.get("WARREN_API") or WARREN_API_PADRAO, token_warren),
+        motor=motor,
         forja=forja_github.ForjaGitHub(token_gh),
         raiz=raiz,
         repo_dir=repo_dir,
@@ -2869,6 +2911,7 @@ def construir(ambiente) -> Despachante:
         projeto=projeto,
         repo=repo,
         segredos=(token_warren, token_gh),
+        preparar_warren=functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
     )
 
 
