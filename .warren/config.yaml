@@ -1,0 +1,7 @@
+# Configuração do Warren para este repositório, instalada pela Fábrica de agentes.
+# O merge dos PRs é do despachante da Fábrica, nunca do Warren: não existe bloco `pr`
+# aqui, então o auto-merge do Warren (`pr.autoMerge`) fica desligado. Não o ligue.
+defaultBranch: main
+maxCostUsd: 20
+admission:
+  maxConcurrentRuns: 3

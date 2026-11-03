@@ -1,0 +1,98 @@
+{
+  "limiteParalelo": 3,
+  "branchPadrao": "main",
+  "ciObrigatorioNoPlano": false,
+  "warren": {
+    "prepararAutomatico": true
+  },
+  "protegidos": [
+    "**/migrations/**",
+    ".github/**",
+    ".warren/**",
+    ".claude/**",
+    ".fabrica/orquestrador.md",
+    ".fabrica/equipes/**",
+    ".fabrica/config.json",
+    "**/auth/**",
+    ".env*",
+    "fabrica/**"
+  ],
+  "modelos": {
+    "orquestrador": {
+      "agente": "claude-code",
+      "modelo": "claude-fable-5-1",
+      "esforco": "high",
+      "maxCustoUsd": 20
+    },
+    "arquiteto": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 15
+    },
+    "produto": {
+      "agente": "claude-code",
+      "modelo": "claude-haiku-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 5
+    },
+    "ux-ui": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 10
+    },
+    "frontend": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 10
+    },
+    "backend": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 10
+    },
+    "qa": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 10
+    },
+    "revisor": {
+      "agente": "claude-code",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 5
+    },
+    "devops": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 10
+    },
+    "seguranca": {
+      "agente": "claude-code",
+      "modelo": "claude-sonnet-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 10
+    },
+    "fixer": {
+      "agente": "claude-code",
+      "modelo": "claude-haiku-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 5
+    }
+  },
+  "verificacao": {
+    "imagem": "node:22-bookworm",
+    "shell": "bash",
+    "rede": "internet",
+    "memoria": "3g",
+    "cpus": "2",
+    "pids": 512,
+    "env": {},
+    "servicos": []
+  }
+}

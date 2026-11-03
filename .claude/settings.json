@@ -21,5 +21,19 @@
         ]
       }
     ]
+  },
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effortLevel": "high"
+    },
+    "claude-sonnet-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-haiku-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "medium"
+    }
   }
 }

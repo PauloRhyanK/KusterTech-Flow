@@ -23,3 +23,15 @@ Este repositório é a **Central de Operações** da KusterTech (painel administ
 - `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` verdes antes de cada commit. Cole a saída real dos comandos no relatório; texto de "sucesso" sem saída não é prova.
 - Nomes de domínio em português, termos técnicos em inglês. Enums do TypeScript proibidos (use uniões de string).
 - Sem infraestrutura ou dependências além do que a seed pede.
+
+<!-- fabrica:inicio -->
+
+## Fábrica de agentes
+
+- Seu papel tem um pacote em `.fabrica/equipes/<papel>.md`: leia-o, e leia `.fabrica/PADROES-COMUNS.md`, antes de começar.
+- A seed delimita o trabalho: faça o que ela pede, só nos arquivos da raia, e nada além.
+- É proibido `git push` para `main` e mergear qualquer PR. Quem mergeia é o despachante.
+- O revisor termina com o veredito no formato descrito em `.fabrica/equipes/revisor.md`.
+- Cole no PR a saída da verificação da raia (o comando de verificação da seed), com o resultado.
+
+<!-- fabrica:fim -->
