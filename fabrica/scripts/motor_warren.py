@@ -96,6 +96,21 @@ def _retry_after(headers: dict) -> int:
         return RETRY_AFTER_PADRAO
 
 
+def _modelo_do_init(evento):
+    """O `model` de um evento `system`/`init` (no envelope do Warren ou cru), ou None."""
+    if not isinstance(evento, dict):
+        return None
+    payload = evento.get("payload")
+    candidatos = [evento] + ([payload] if isinstance(payload, dict) else [])
+    if not any(c.get("kind") == "system" or c.get("type") == "system" for c in candidatos):
+        return None
+    for candidato in candidatos:
+        modelo = candidato.get("model")
+        if candidato.get("subtype") == "init" and isinstance(modelo, str) and modelo.strip():
+            return modelo
+    return None
+
+
 class MotorWarren:
     def __init__(self, base_url: str, token: str, transporte=None):
         self._token = _validar_token(token)
@@ -262,6 +277,19 @@ class MotorWarren:
             if isinstance(texto, str) and texto.strip():
                 ultimo = texto
         return ultimo
+
+    def modelo_efetivo(self, run_id: str) -> str | None:
+        bruto = self._requisitar("GET", "/runs/%s/events?follow=0" % _id(run_id))
+        # Mesmo cuidado de ultimo_texto: o separador do NDJSON é só "\n".
+        for linha in bruto.split(b"\n"):
+            try:
+                evento = json.loads(linha.decode("utf-8", errors="replace"))
+            except ValueError:
+                continue
+            modelo = _modelo_do_init(evento)
+            if modelo is not None:
+                return modelo
+        return None
 
     def retomar_plano(self, plan_run_id: str) -> None:
         self._requisitar("POST", "/plan-runs/%s/resume" % _id(plan_run_id), {})

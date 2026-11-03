@@ -917,6 +917,96 @@ class TestesMotorFalso(unittest.TestCase):
         self.assertIsInstance(motor_warren.MotorWarren(BASE, TOKEN, TransporteFalso()), motor.Motor)
 
 
+class TestesModeloEfetivo(unittest.TestCase):
+    def test_warren_le_o_modelo_do_evento_system_init(self):
+        eventos = (
+            b'{"kind": "text", "payload": {"text": "oi"}}\n'
+            b"isto nao e json {\n"
+            b'{"kind": "system", "payload": {"subtype": "init", "model": "claude-sonnet-5-5"}}\n'
+            b'{"kind": "text", "payload": {"text": "fim"}}\n'
+        )
+        m, t = novo((200, {}, eventos))
+        self.assertEqual(m.modelo_efetivo("r-1"), "claude-sonnet-5-5")
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs/r-1/events?follow=0"))
+        self.assertEqual(t.ultima[2]["Authorization"], "Bearer " + TOKEN)
+
+    def test_warren_aceita_o_evento_init_no_formato_do_claude_code(self):
+        m, _ = novo((200, {}, b'{"type": "system", "subtype": "init", "model": "claude-opus-5-5"}\n'))
+        self.assertEqual(m.modelo_efetivo("r-1"), "claude-opus-5-5")
+
+    def test_warren_vale_o_primeiro_init(self):
+        eventos = (
+            b'{"kind": "system", "payload": {"subtype": "init", "model": "primeiro"}}\n'
+            b'{"kind": "system", "payload": {"subtype": "init", "model": "segundo"}}\n'
+        )
+        m, _ = novo((200, {}, eventos))
+        self.assertEqual(m.modelo_efetivo("r-1"), "primeiro")
+
+    def test_warren_sem_init_valido_devolve_none(self):
+        for eventos in (
+            b"",
+            b'{"kind": "text", "payload": {"text": "x", "model": "m"}}\n',
+            b'{"kind": "system", "payload": {"subtype": "other", "model": "m"}}\n',
+            b'{"kind": "system", "payload": {"subtype": "init"}}\n',
+            b'{"kind": "system", "payload": {"subtype": "init", "model": 42}}\n',
+            b'{"kind": "system", "payload": {"subtype": "init", "model": "  "}}\n',
+            b'{"kind": "system", "payload": "init"}\n[1]\n"x"\n\xff\xfe\n',
+            b'{"kind": "tool", "payload": {"subtype": "init", "model": "m"}}\n',
+        ):
+            with self.subTest(eventos=eventos):
+                m, _ = novo((200, {}, eventos))
+                self.assertIsNone(m.modelo_efetivo("r-1"))
+
+    def test_warren_nao_quebra_em_separadores_unicode(self):
+        linha = '{"kind": "system", "payload": {"subtype": "init", "model": "m x\u0085y"}}\n'
+        m, _ = novo((200, {}, linha.encode("utf-8")))
+        self.assertEqual(m.modelo_efetivo("r-1"), "m x\u0085y")
+
+    def test_warren_tolera_crlf(self):
+        m, _ = novo((200, {}, b'{"kind": "system", "payload": {"subtype": "init", "model": "m"}}\r\n'))
+        self.assertEqual(m.modelo_efetivo("r-1"), "m")
+
+    def test_warren_codifica_o_id_e_trata_erros(self):
+        m, t = novo((200, {}, b""))
+        m.modelo_efetivo("a/b")
+        self.assertEqual(t.ultima[1], BASE + "/runs/a%2Fb/events?follow=0")
+        m, _ = novo((500, {}, b"corpo secreto"))
+        with self.assertRaises(RuntimeError) as ctx:
+            m.modelo_efetivo("r-1")
+        self.assertNotIn("corpo secreto", str(ctx.exception))
+        self.assertNotIn(TOKEN, str(ctx.exception))
+
+    def test_falso_devolve_none_por_padrao_e_o_modelo_definido(self):
+        m = motor.MotorFalso()
+        self.assertIsNone(m.modelo_efetivo("r-1"))
+        m.definir_modelo_efetivo("r-1", "claude-haiku-5-5")
+        self.assertEqual(m.modelo_efetivo("r-1"), "claude-haiku-5-5")
+        self.assertEqual(m.chamadas[-1], ("modelo_efetivo", {"run_id": "r-1"}))
+
+    def test_protocolo_exige_modelo_efetivo(self):
+        class SemModelo:
+            def despachar_plano(self, **_):
+                pass
+
+            def despachar_run(self, **_):
+                pass
+
+            def plano(self, _):
+                pass
+
+            def run(self, _):
+                pass
+
+            def ultimo_texto(self, _):
+                pass
+
+            def retomar_plano(self, _):
+                pass
+
+        self.assertNotIsInstance(SemModelo(), motor.Motor)
+        self.assertTrue(hasattr(motor.Motor, "modelo_efetivo"))
+
+
 class TestesExecucaoDireta(unittest.TestCase):
     def test_modulos_importam_so_com_biblioteca_padrao_em_modo_isolado(self):
         resultado = subprocess.run(

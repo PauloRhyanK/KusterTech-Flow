@@ -54,6 +54,10 @@ class Motor(typing.Protocol):
 
     def retomar_plano(self, plan_run_id: str) -> None: ...
 
+    def modelo_efetivo(self, run_id: str) -> str | None:
+        """O modelo que o run usou de fato (evento `system`/`init`), ou None se não houver."""
+        ...
+
 
 class MotorFalso:
     """Motor em memória para testar o despachante sem rede."""
@@ -63,6 +67,7 @@ class MotorFalso:
         self._planos: dict[str, dict] = {}
         self._runs: dict[str, dict] = {}
         self._textos: dict[str, str] = {}
+        self._modelos: dict[str, str] = {}
         self._lotado: int | None = None
         self._contador = 0
 
@@ -111,6 +116,9 @@ class MotorFalso:
 
     def definir_texto(self, run_id: str, texto: str) -> None:
         self._textos[run_id] = texto
+
+    def definir_modelo_efetivo(self, run_id: str, modelo: str) -> None:
+        self._modelos[run_id] = modelo
 
     # Protocolo Motor
 
@@ -180,3 +188,7 @@ class MotorFalso:
 
     def retomar_plano(self, plan_run_id: str) -> None:
         self._registrar("retomar_plano", plan_run_id=plan_run_id)
+
+    def modelo_efetivo(self, run_id: str) -> str | None:
+        self._registrar("modelo_efetivo", run_id=run_id)
+        return self._modelos.get(run_id)
