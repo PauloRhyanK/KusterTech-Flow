@@ -28,9 +28,11 @@ def _para_regex(glob: str) -> re.Pattern:
 
 
 def casa_glob(caminho: str, glob: str) -> bool:
+    regex = _para_regex(glob)
     if glob.endswith("/"):
-        return caminho.startswith(glob)
-    return _para_regex(glob).fullmatch(caminho) is not None
+        # a barra final ancora o casamento num limite de diretório; o resto do caminho é livre
+        return regex.match(caminho) is not None
+    return regex.fullmatch(caminho) is not None
 
 
 def _prefixo(g: str) -> str:
