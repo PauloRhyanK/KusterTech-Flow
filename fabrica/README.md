@@ -20,6 +20,8 @@ Requisitos no repositório do cliente: CI em `.github/workflows/`, Seeds iniciad
 python3 -I fabrica/scripts/instalar.py <caminho do repositório do cliente>
 ```
 
+Sem CI, use `--sem-ci`: o instalador aceita o repositório e grava `"ciObrigatorioNasSeeds": false` na config (veja "Merge sem CI" em [Operar](#operar-zero-manual)).
+
 O instalador é idempotente e grava:
 
 - `.fabrica/orquestrador.md`, `.fabrica/equipes/*.md`, `.fabrica/PADROES-COMUNS.md`, `.fabrica/raias.py` e `.fabrica/globs.py` (sempre a versão do kit);
