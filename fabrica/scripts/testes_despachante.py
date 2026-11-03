@@ -5410,5 +5410,912 @@ class TestesCorrecaoFinalPreparo(Base):
                 self.assertIs(self.estado()["warrenPreparado"]["dropinCarregado"], esperado)
 
 
+# ---------------------------------------------------------------- fila por plano (Task 1)
+
+
+def _dict_url(item):
+    return item.get("url") if isinstance(item, dict) else None
+
+
+class TestCaminhoDoPlano(Base):
+    """O despachante fala de um plano (`caminho_plano`), não do repositório."""
+
+    CAMINHO = ".fabrica/planos/login.json"
+
+    def publicar(self, plano_, ref="main"):
+        texto = plano_ if isinstance(plano_, str) else json.dumps(plano_)
+        self.forja.definir_arquivo(REPO, ref, self.CAMINHO, texto)
+
+    def novo(self, **extra):
+        extra.setdefault("caminho_plano", self.CAMINHO)
+        return super().novo(**extra)
+
+    def ambiente_real(self, **extra):
+        (self.repo_dir / ".fabrica").mkdir(exist_ok=True)
+        (self.repo_dir / ".fabrica" / "config.json").write_text(json.dumps(CONFIG), encoding="utf-8")
+        (self.tmp / "w").write_text(TOKEN + "\n", encoding="utf-8")
+        (self.tmp / "g").write_text(TOKEN_GH + "\n", encoding="utf-8")
+        ambiente = {
+            "FABRICA_RAIZ": str(self.raiz),
+            "FABRICA_REPO_DIR": str(self.repo_dir),
+            "FABRICA_PROJETO": PROJETO,
+            "FABRICA_REPO": REPO,
+            "WARREN_TOKEN_FILE": str(self.tmp / "w"),
+            "GH_TOKEN_FILE": str(self.tmp / "g"),
+        }
+        ambiente.update(extra)
+        return ambiente
+
+    def test_padrao_e_o_plano_legado(self):
+        d = super().novo()
+        self.assertEqual(d.caminho_plano, ".fabrica/plano.json")
+        self.assertEqual(despachante.permitidos_ao_orquestrador(".fabrica/plano.json"), despachante.PERMITIDOS_AO_ORQUESTRADOR)
+
+    def test_le_o_plano_do_caminho_dado(self):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/plano.json", json.dumps(plano(raia("x"))))
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        self.assertEqual(d.caminho_plano, self.CAMINHO)
+        d.iniciar()
+        self.assertEqual(sorted(self.estado()["raias"]), ["a"])
+        self.assertEqual(json.loads((self.raiz / "plano.json").read_text(encoding="utf-8"))["raias"][0]["id"], "a")
+
+    def test_plano_ausente_cita_o_caminho_dado(self):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/plano.json", json.dumps(plano(raia("x"))))
+        with self.assertRaises(despachante.ErroDeEntrada) as ctx:
+            self.novo().iniciar()
+        self.assertIn(self.CAMINHO, ctx.exception.erros[0])
+
+    def test_permitidos_trocam_so_o_plano(self):
+        self.assertEqual(
+            despachante.permitidos_ao_orquestrador(self.CAMINHO),
+            (self.CAMINHO, est.PERGUNTA_DO_ORQUESTRADOR, ".fabrica/planejamento/**", ".seeds/**"),
+        )
+
+    def test_pr_do_orquestrador_que_muda_so_o_seu_plano_e_mergeavel(self):
+        d, rid = self.acordar_por_falha()
+        self.assertIn("Seu plano: `%s`" % self.CAMINHO, self.runs(FABLE)[-1]["prompt"])
+        self.pr_do_orquestrador(rid, [self.CAMINHO, ".seeds/issues.jsonl"], plano(raia("a", plano_seeds="pl-00aa")))
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.assertEqual(self.forja.decisoes, [])
+
+    def test_pr_que_muda_outro_plano_vai_para_o_paulo(self):
+        for intruso in (".fabrica/planos/outro.json", ".fabrica/plano.json"):
+            for arquivos in ([intruso], [self.CAMINHO, intruso]):
+                with self.subTest(arquivos=arquivos):
+                    self.setUp()
+                    d, rid = self.acordar_por_falha()
+                    self.pr_do_orquestrador(rid, arquivos, plano(raia("a", plano_seeds="pl-00aa")))
+                    d.ciclo()
+                    self.assertEqual(self.forja.merges, [])
+                    ((titulo, corpo),) = self.forja.decisoes
+                    self.assertEqual(titulo, "[fábrica] orquestrador: PR do orquestrador precisa de aprovação")
+                    self.assertIn(intruso, corpo)
+
+    def test_construir_le_fabrica_plano(self):
+        self.assertEqual(despachante.construir(self.ambiente_real()).caminho_plano, ".fabrica/plano.json")
+        for caminho in (
+            ".fabrica/plano.json",
+            self.CAMINHO,
+            ".fabrica/planos/a1-b2.json",
+            ".fabrica/planos/0.json",
+            ".fabrica/planos/login-v2.json",
+            ".fabrica/planos/planos.json",
+            ".fabrica/planos/%s.json" % ("a" * 41),
+        ):
+            with self.subTest(caminho=caminho):
+                self.assertEqual(despachante.construir(self.ambiente_real(FABRICA_PLANO=caminho)).caminho_plano, caminho)
+
+    def test_fabrica_plano_invalido_e_erro_de_entrada(self):
+        for caminho in (
+            "../x.json",
+            "",
+            "/.fabrica/plano.json",
+            "./.fabrica/plano.json",
+            ".fabrica/planos/../plano.json",
+            ".fabrica/planos/Login.json",
+            ".fabrica/planos/-login.json",
+            ".fabrica/planos/a/b.json",
+            ".fabrica/planos/.json",
+            ".fabrica/planos/login.json\n",
+            ".fabrica/planos/login.jsonx",
+            ".fabrica/plano.json.bak",
+            ".fabrica/config.json",
+            ".fabrica/planos/l_x.json",
+            ".fabrica/planos/plano.json",
+            ".fabrica/planos/a--b.json",
+            ".fabrica/planos/a-.json",
+            ".fabrica/planos/-a.json",
+            ".fabrica/planos/%s.json" % ("a" * 42),
+        ):
+            with self.subTest(caminho=caminho):
+                with self.assertRaises(despachante.ErroDeEntrada) as ctx:
+                    despachante.construir(self.ambiente_real(FABRICA_PLANO=caminho))
+                self.assertIn("FABRICA_PLANO", ctx.exception.erros[0])
+
+    def test_fabrica_plano_invalido_sai_com_2_no_main(self):
+        for comando in (["rodar"], ["iniciar"]):
+            with self.subTest(comando=comando):
+                erro = io.StringIO()
+                codigo = despachante.main(
+                    comando,
+                    ambiente=self.ambiente_real(FABRICA_PLANO="../x.json"),
+                    construir=despachante.construir,
+                    saida=io.StringIO(),
+                    erro=erro,
+                    abrir_forja=lambda amb: self.forja,
+                )
+                self.assertEqual(codigo, 2)
+                self.assertIn("FABRICA_PLANO", erro.getvalue())
+                self.assertEqual(self.forja.decisoes, [])
+
+    def test_fabrica_preparar_warren_0_desliga_o_preparo(self):
+        import functools
+
+        self.assertIsNone(despachante.construir(self.ambiente_real(FABRICA_PREPARAR_WARREN="0"))._preparar_warren)
+        for valor in ("1", ""):
+            with self.subTest(valor=valor):
+                d = despachante.construir(self.ambiente_real(FABRICA_PREPARAR_WARREN=valor))
+                self.assertIsInstance(d._preparar_warren, functools.partial)
+
+    def test_caminho_invalido_no_construtor_e_config_invalida(self):
+        for caminho in ("../x.json", ".fabrica/planos/plano.json", ".fabrica/planos/a--b.json", None):
+            with self.subTest(caminho=caminho):
+                with self.assertRaises(despachante.ConfigInvalida):
+                    self.novo(caminho_plano=caminho)
+
+    def test_sem_preparo_nao_mexe_na_decisao_de_automerge(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo(preparar_warren=None)
+        d.iniciar()
+        url = self.forja.abrir_decisao(REPO, despachante.TITULO_AUTOMERGE, "corpo")
+        antiga = {"url": url, "motivo": despachante.MOTIVO_AUTOMERGE, "alvo": "warren", "tipo": "automerge"}
+        d.estado["decisoes"].append(dict(antiga))
+        d.estado["warrenPreparado"] = {"estado": "ja_aplicado", "automerge": "erro"}
+        d._salvar()
+        antes = len(self.forja.decisoes)
+        for _ in range(3):
+            d.ciclo()
+        self.assertEqual([x for x in self.estado()["decisoes"] if x.get("tipo") == "automerge"], [antiga])
+        self.assertFalse(self.forja._decisoes[url]["fechada"])
+        self.assertEqual(
+            [c for c in self.forja.chamadas if c[0] in ("fechar_decisao", "reabrir_decisao", "comentar") and c[1].get("url") == url],
+            [],
+        )
+        self.assertEqual(len(self.forja.decisoes), antes)
+        self.assertNotIn(url, [_dict_url(i) for i in self.estado().get("prsParaFechar", [])])
+
+    def test_issue_que_nao_fecha_sai_da_fila_e_o_plano_conclui(self):
+        # final M10: plano_concluido exige prsParaFechar vazio; o despachante desiste depois de MAX_TENTATIVAS_DE_FECHAR
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        d.estado["raias"]["a"]["estado"] = "concluida"
+        d.estado["chavesAcordadas"] = ["fase_concluida:f1"]
+        d._fechar_depois("https://github.com/%s/issues/77" % REPO, "homologado", decisao=True)
+        d._salvar()
+        self.assertFalse(despachante.est.plano_concluido(d.estado, d.plano))
+
+        def quebra(url, comentario):
+            raise RuntimeError("GitHub fora")
+
+        self.forja.fechar_decisao = quebra
+        for _ in range(despachante.MAX_TENTATIVAS_DE_FECHAR - 1):
+            d._fechar_prs()
+            self.assertEqual(len(self.estado()["prsParaFechar"]), 1)
+        d._fechar_prs()
+        self.assertEqual(self.estado()["prsParaFechar"], [])
+        self.assertTrue(despachante.est.plano_concluido(self.estado(), d.plano))
+
+    def test_status_diz_se_o_plano_concluiu(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        self.assertIn("concluído: não", despachante.status(self.raiz).splitlines())
+        disco = self.estado()
+        disco["raias"]["a"]["estado"] = "concluida"
+        disco["chavesAcordadas"] = ["fase_concluida:f1"]
+        (self.raiz / "estado.json").write_text(json.dumps(disco), encoding="utf-8")
+        self.assertIn("concluído: sim", despachante.status(self.raiz).splitlines())
+        disco["decisoes"] = [{"url": PR_ORQ, "motivo": "m", "alvo": PR_ORQ}]
+        (self.raiz / "estado.json").write_text(json.dumps(disco), encoding="utf-8")
+        self.assertIn("concluído: não", despachante.status(self.raiz).splitlines())
+
+
+class TestesCapacidadeGlobal(Base):
+    """Task 3: vagas globais entre planos e trava de orquestrador por repositório (capacidade.json)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cap = self.tmp / "fabrica" / "capacidade.json"
+        self.ram = 8000
+
+    def caminho(self, feature):
+        return ".fabrica/planos/%s.json" % feature
+
+    def plano_id(self, feature):
+        return "dono--cliente--%s" % feature
+
+    def de(self, feature, raias_, *, com_capacidade=True, **extra):
+        self.forja.definir_arquivo(REPO, "main", self.caminho(feature), json.dumps(plano(*raias_)))
+        argumentos = dict(raiz=self.tmp / ("raiz-" + feature), caminho_plano=self.caminho(feature))
+        if com_capacidade:
+            argumentos.update(capacidade=str(self.cap), plano_id=self.plano_id(feature), mem_disponivel=lambda: self.ram)
+        argumentos.update(extra)
+        d = self.novo(**argumentos)
+        d.iniciar()
+        return d
+
+    def estado_de(self, d):
+        return json.loads((d.raiz / "estado.json").read_text(encoding="utf-8"))
+
+    def log_de(self, d, evento=None):
+        caminho = d.raiz / "log.jsonl"
+        linhas = [json.loads(x) for x in caminho.read_text(encoding="utf-8").splitlines()] if caminho.exists() else []
+        return [x for x in linhas if evento is None or x.get("evento") == evento]
+
+    def espiar_intencoes(self, d):
+        vistos = []
+        original = d._salvar
+
+        def espiao():
+            vistos.append(copy.deepcopy(d.estado.get("acaoEmCurso")))
+            original()
+
+        d._salvar = espiao
+        return vistos
+
+    def reservas(self):
+        return despachante.capacidade.ler(self.cap)["reservas"]
+
+    def plan_run(self, d, raia_id):
+        return self.estado_de(d)["raias"][raia_id]["planRunId"]
+
+    # ------------------------------------------------ vagas
+
+    def test_tres_vagas_entre_dois_planos_e_a_quarta_espera_o_sincronizar(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1"), raia("a2")])
+        b = self.de("b", [raia("b1"), raia("b2")])
+        intencoes_b = self.espiar_intencoes(b)
+        for _ in range(2):
+            a.ciclo()
+            b.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 3)
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1", "a2"], self.plano_id("b"): ["b1"]})
+        disco_b = self.estado_de(b)
+        self.assertEqual(disco_b["raias"]["b2"]["estado"], "planejada")
+        self.assertNotIn("despachar_raia:b2", disco_b.get("cadeias") or {})
+        self.assertNotIn("despachar_raia:b2", disco_b.get("noncesRaiz") or {})
+        self.assertNotIn("b2", [(v or {}).get("raia") for v in intencoes_b])
+        # uma linha por raia enquanto ela espera
+        self.assertEqual([(x["evento"], x["raia"]) for x in self.log_de(b, "sem_vaga")], [("sem_vaga", "b2")])
+        self.motor.definir_plano(self.plan_run(a, "a1"), "succeeded", [])
+        b.ciclo()  # o plano A ainda não sincronizou: a vaga de a1 continua dele
+        self.assertEqual(len(self.planos_despachados()), 3)
+        a.ciclo()
+        self.assertEqual(self.reservas()[self.plano_id("a")], ["a2"])
+        b.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 4)
+        self.assertEqual(self.estado_de(b)["raias"]["b2"]["estado"], "executando")
+        self.assertEqual(self.reservas()[self.plano_id("b")], ["b1", "b2"])
+
+    def test_pouca_ram_nao_despacha_nem_grava_intencao(self):
+        self.ram = 1000
+        a = self.de("a", [raia("a1")])
+        intencoes = self.espiar_intencoes(a)
+        for _ in range(3):
+            a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        self.assertEqual([v for v in intencoes if v is not None], [])
+        disco = self.estado_de(a)
+        self.assertNotIn("acaoEmCurso", disco)
+        self.assertEqual(disco["raias"]["a1"]["estado"], "planejada")
+        self.assertNotIn("despachar_raia:a1", disco.get("cadeias") or {})
+        self.assertEqual(self.reservas(), {})
+        self.assertEqual(len(self.log_de(a, "sem_vaga")), 1)
+        self.ram = 4000
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1"]})
+
+    def test_despacho_incerto_segura_a_vaga_enquanto_incerto(self):
+        despachante.capacidade.configurar(self.cap, vagas=1, ram_minima_mb=0)
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_plano", 1, criar=False)
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        for _ in range(3):
+            a.ciclo()
+            disco = self.estado_de(a)
+            self.assertEqual([i["chave"] for i in disco["despachosIncertos"]], ["despachar_raia:a1"])
+            self.assertEqual(disco["raias"]["a1"]["estado"], "planejada")
+            self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1"]})
+            b.ciclo()
+            self.assertEqual(self.estado_de(b)["raias"]["b1"]["estado"], "planejada")
+        self.assertEqual(len(self.planos_despachados()), 1)
+        self.assertEqual(len(self.log_de(b, "sem_vaga")), 1)
+
+    def test_despacho_que_falha_de_vez_solta_a_vaga(self):
+        despachante.capacidade.configurar(self.cap, vagas=1, ram_minima_mb=0)
+
+        class MotorQueRecusa(motor.MotorFalso):
+            def despachar_plano(self, **argumentos):
+                self._registrar("despachar_plano", **argumentos)
+                raise ValueError("400 recusado")
+
+        self.motor = MotorQueRecusa()
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.assertEqual(self.estado_de(a)["raias"]["a1"]["estado"], "falhou")
+        self.assertEqual(self.reservas(), {})
+
+    def test_oom_no_plano_a_baixa_as_vagas_do_plano_b(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.motor.definir_plano(
+            self.plan_run(a, "a1"), "running", [{"seedId": "s-1", "estado": "failed", "runId": "run-x", "falha": "oom_killed"}]
+        )
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+        self.assertIsNone(self.estado_de(a)["oomCapacidade"]["pendente"])
+        b = self.de("b", [raia("b1"), raia("b2"), raia("b3")])
+        b.ciclo()
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1"], self.plano_id("b"): ["b1"]})
+        self.assertEqual(len(self.planos_despachados()), 2)
+
+    def test_oom_de_um_run_do_orquestrador_tambem_baixa_as_vagas(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.motor.definir_plano(self.plan_run(a, "a1"), "failed", [], falha="cancelado")
+        a.ciclo()
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        self.assertTrue(rid)
+        self.assertIsNone(despachante.capacidade.ler(self.cap)["oomEm"])
+        self.motor.definir_run(rid, estado="failed", motivoFalha="oom_killed")
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+
+    def test_oom_com_o_arquivo_ilegivel_fica_pendente_ate_gravar(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.motor.definir_plano(
+            self.plan_run(a, "a1"), "running", [{"seedId": "s-1", "estado": "failed", "runId": "run-x", "falha": "oom_killed"}]
+        )
+        self.cap.write_text("{", encoding="utf-8")
+        a.ciclo()
+        self.assertTrue(self.estado_de(a)["oomCapacidade"]["pendente"])
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+        self.assertIsNone(self.estado_de(a)["oomCapacidade"]["pendente"])
+
+    # ------------------------------------------------ trava de orquestrador
+
+    def falhar_raia(self, d, raia_id):
+        self.motor.definir_plano(self.plan_run(d, raia_id), "failed", [], falha="cancelado")
+
+    def test_dois_planos_do_mesmo_repo_acordam_um_de_cada_vez(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        intencoes_b = self.espiar_intencoes(b)
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        self.falhar_raia(b, "b1")
+        a.ciclo()
+        b.ciclo()
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        self.assertTrue(rid)
+        disco_b = self.estado_de(b)
+        self.assertIsNone(disco_b["orquestrador"]["runId"])
+        self.assertNotIn("acordar:raia_falhou:b1", disco_b.get("cadeias") or {})
+        self.assertNotIn("acordar", [(v or {}).get("tipo") for v in intencoes_b])
+        self.assertEqual(despachante.capacidade.ler(self.cap)["orquestrador"], {REPO: self.plano_id("a")})
+        self.assertEqual(len(self.log_de(b, "orquestrador_ocupado")), 1)
+        # o run de A termina com um PR mergeável: só depois do merge a trava é solta
+        self.motor.definir_run(rid, estado="succeeded", prUrl=PR_ORQ)
+        self.forja.definir_pr(PR_ORQ, head_sha=H3, branch="warren/orq", arquivos=[self.caminho("a")])
+        self.forja.definir_ci(REPO, H3, "verde")
+        self.forja.definir_arquivo(REPO, H3, self.caminho("a"), json.dumps(plano(raia("a1", plano_seeds="pl-00aa"))))
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        a.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.assertEqual(despachante.capacidade.ler(self.cap)["orquestrador"], {})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        self.assertTrue(self.estado_de(b)["orquestrador"]["runId"])
+        self.assertEqual(despachante.capacidade.ler(self.cap)["orquestrador"], {REPO: self.plano_id("b")})
+
+    def test_pr_do_orquestrador_esperando_o_paulo_segura_a_trava(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        self.falhar_raia(b, "b1")
+        a.ciclo()
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        # PR fora do plano: vai para o Paulo e fica acompanhado
+        self.motor.definir_run(rid, estado="succeeded", prUrl=PR_ORQ)
+        self.forja.definir_pr(PR_ORQ, head_sha=H3, branch="warren/orq", arquivos=["src/x.ts"])
+        self.forja.definir_ci(REPO, H3, "verde")
+        a.ciclo()
+        disco_a = self.estado_de(a)
+        self.assertIsNone(disco_a["orquestrador"]["runId"])
+        self.assertEqual(disco_a["prsOrquestrador"], [PR_ORQ])
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(despachante.capacidade.ler(self.cap)["orquestrador"], {REPO: self.plano_id("a")})
+        # o Paulo mergeia: a decisão fecha, o PR sai da lista e a trava é solta
+        self.forja.mergear(PR_ORQ, H3)
+        a.ciclo()
+        self.assertEqual(self.estado_de(a)["prsOrquestrador"], [])
+        self.assertEqual(despachante.capacidade.ler(self.cap)["orquestrador"], {})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+
+    def test_acordar_incerto_segura_a_trava(self):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1, criar=False)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.assertEqual([i["chave"] for i in self.estado_de(a)["despachosIncertos"]], ["acordar:raia_falhou:a1"])
+        self.assertIsNone(self.estado_de(a)["orquestrador"]["runId"])
+        self.assertEqual(despachante.capacidade.ler(self.cap)["orquestrador"], {REPO: self.plano_id("a")})
+
+    def test_iniciar_spec_com_a_trava_de_outro_plano_so_enfileira(self):
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO.upper(), self.plano_id("outro"))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        a = self.de("a", [raia("a1")])
+        saida = a.iniciar(spec="docs/spec.md")
+        self.assertIn("registrada", saida)
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertEqual(self.estado_de(a)["acordarPendentes"][0]["motivo"], "nova_spec")
+        despachante.capacidade.soltar_orquestrador(self.cap, REPO, self.plano_id("outro"))
+        a.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+
+    # ------------------------------------------------ arquivo corrompido
+
+    def test_arquivo_corrompido_pausa_os_despachos_com_aviso(self):
+        self.cap.parent.mkdir(parents=True)
+        self.cap.write_text("{ quebrado", encoding="utf-8")
+        a = self.de("a", [raia("a1")])
+        intencoes = self.espiar_intencoes(a)
+        for _ in range(3):
+            a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        self.assertEqual([v for v in intencoes if v is not None], [])
+        disco = self.estado_de(a)
+        self.assertIn(despachante.AVISO_CAPACIDADE, disco["avisos"])
+        self.assertEqual(disco["raias"]["a1"]["estado"], "planejada")
+        erros = [x for x in self.log_de(a, "erro") if x["etapa"].startswith("capacidade")]
+        self.assertTrue(erros)
+        self.assertIn("CapacidadeInvalida", erros[0]["erro"])
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+        self.assertNotIn(despachante.AVISO_CAPACIDADE, self.estado_de(a)["avisos"])
+
+    def test_arquivo_corrompido_nao_acorda_o_orquestrador(self):
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.falhar_raia(a, "a1")
+        self.cap.write_text("[]", encoding="utf-8")
+        for _ in range(2):
+            a.ciclo()
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertIn(despachante.AVISO_CAPACIDADE, self.estado_de(a)["avisos"])
+
+    def test_erro_de_disco_e_erro_de_etapa_e_nao_despacha(self):
+        a = self.de("a", [raia("a1")])
+        with mock.patch.object(despachante.capacidade, "reservar", side_effect=PermissionError("sem acesso")):
+            a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        self.assertIn(despachante.AVISO_CAPACIDADE, [x["mensagem"] for x in self.log_de(a, "aviso")])
+        self.assertTrue([x for x in self.log_de(a, "erro") if "PermissionError" in x["erro"]])
+
+    # ------------------------------------------------ sem capacidade
+
+    def test_sem_capacidade_nada_muda_e_nenhum_arquivo_e_criado(self):
+        proibido = mock.Mock(side_effect=AssertionError("capacidade chamada sem FABRICA_CAPACIDADE"))
+        nomes = ("ler", "configurar", "reservar", "sincronizar", "registrar_oom", "tomar_orquestrador", "soltar_orquestrador", "mem_disponivel_mb")
+        with mock.patch.multiple(despachante.capacidade, **{n: proibido for n in nomes}):
+            a = self.de("a", [raia("a1"), raia("a2")], com_capacidade=False, mem_disponivel=proibido)
+            b = self.de("b", [raia("b1"), raia("b2")], com_capacidade=False, mem_disponivel=proibido)
+            for _ in range(2):
+                a.ciclo()
+                b.ciclo()
+            self.assertEqual(len(self.planos_despachados()), 4)
+            self.motor.definir_plano(
+                self.plan_run(a, "a1"), "failed", [{"seedId": "s-1", "estado": "failed", "runId": "run-x", "falha": "oom_killed"}], falha="cancelado"
+            )
+            self.falhar_raia(b, "b1")
+            a.ciclo()
+            b.ciclo()
+            self.assertEqual(len(self.runs(FABLE)), 2)  # sem trava, cada plano acorda o seu
+        proibido.assert_not_called()
+        self.assertFalse((self.tmp / "fabrica").exists())
+        for d in (a, b):
+            disco = self.estado_de(d)
+            self.assertNotIn("oomCapacidade", disco)
+            self.assertNotIn(despachante.AVISO_CAPACIDADE, disco.get("avisos") or [])
+            self.assertEqual(self.log_de(d, "sem_vaga"), [])
+        self.assertEqual(self.estado_de(a)["limiteParalelo"], 2)
+
+    # ------------------------------------------------ drenagem pedida pelo coordenador (ruling da Task 6)
+
+    def test_drenagem_do_coordenador_segura_runs_e_merges_e_depois_libera(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1")])
+        despachante.capacidade.definir_drenagem(self.cap, self.desde_ha(a, 0))
+        self.assertTrue(a._drenando())
+        a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        despachante.capacidade.definir_drenagem(self.cap, None)
+        self.assertFalse(a._drenando())
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    def test_drenagem_do_coordenador_filtra_as_mesmas_acoes_da_local(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1")])
+        despachante.capacidade.definir_drenagem(self.cap, self.desde_ha(a, 0))
+        acoes = [
+            {"tipo": "despachar_raia", "raia": "a1"},
+            {"tipo": "revisar", "seed": "s-1"},
+            {"tipo": "corrigir", "seed": "s-2"},
+            {"tipo": "verificar", "seed": "s-3"},
+            {"tipo": "mergear", "seed": "s-4"},
+            {"tipo": "aguardar_humano", "seed": "s-5", "motivo": "x"},
+            {"tipo": "retomar_raia", "raia": "b"},
+            {"tipo": "acordar", "motivo": "raia_falhou", "alvo": "c"},
+        ]
+        a._observadas = {"s-1", "s-2", "s-3", "s-4", "s-5"}
+        feitas = []
+        a._executar = lambda acao: feitas.append(acao["tipo"])
+        a._liberada_pela_capacidade = lambda acao: True
+        a._proposta_de_pendente = lambda: None
+        with mock.patch.object(despachante.est, "proximas_acoes", return_value=copy.deepcopy(acoes)):
+            a._agir()
+        self.assertEqual(feitas, ["verificar", "aguardar_humano", "retomar_raia"])
+
+    def desde_ha(self, d, minutos):
+        instante = d._agora().astimezone(datetime.timezone.utc) - datetime.timedelta(minutes=minutos)
+        return instante.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_drenagem_global_vencida_e_ignorada_com_um_aviso_por_desde(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1")])
+        recente = self.desde_ha(a, despachante.DRENAGEM_MAXIMA.total_seconds() // 60 - 1)
+        despachante.capacidade.definir_drenagem(self.cap, recente)
+        self.assertTrue(a._drenando())
+        vencida = self.desde_ha(a, despachante.DRENAGEM_MAXIMA.total_seconds() // 60)
+        despachante.capacidade.definir_drenagem(self.cap, vencida)
+        self.assertFalse(a._drenando())
+        self.assertFalse(a._drenando())
+        avisos = [x for x in self.estado_de(a).get("avisos") or [] if "drenagem global vencida" in x]
+        self.assertEqual(avisos, ["drenagem global vencida desde %s" % vencida])
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+        outra = self.desde_ha(a, 120)
+        despachante.capacidade.definir_drenagem(self.cap, outra)
+        self.assertFalse(a._drenando())
+        avisos = [x for x in self.estado_de(a).get("avisos") or [] if "drenagem global vencida" in x]
+        self.assertEqual(len(avisos), 2)
+
+    def test_drenagem_global_ilegivel_e_ignorada_com_aviso(self):
+        a = self.de("a", [raia("a1")])
+        despachante.capacidade.definir_drenagem(self.cap, "ontem")
+        self.assertFalse(a._drenando())
+        self.assertTrue([x for x in self.estado_de(a).get("avisos") or [] if "ontem" in x])
+
+    def test_capacidade_ilegivel_nao_drena_nem_derruba(self):
+        a = self.de("a", [raia("a1")])
+        self.cap.parent.mkdir(parents=True, exist_ok=True)
+        self.cap.write_text("{ruim", encoding="utf-8")
+        self.assertFalse(a._drenando())
+
+    def test_sem_capacidade_a_drenagem_do_arquivo_nao_vale(self):
+        recente = self.instante.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        despachante.capacidade.definir_drenagem(self.cap, recente)
+        a = self.de("a", [raia("a1")], com_capacidade=False)
+        self.assertFalse(a._drenando())
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    # ------------------------------------------------ rodada 1
+
+    def trava(self):
+        return despachante.capacidade.ler(self.cap)["orquestrador"]
+
+    def espera(self):
+        return despachante.capacidade.ler(self.cap)["esperando"]
+
+    def test_trava_solta_a_cada_acordada_mesmo_com_pendentes_e_em_fifo(self):
+        for n in (1, 2, 3):
+            self.forja.definir_arquivo(REPO, "main", "docs/s%d.md" % n, "# spec %d" % n)
+        a = self.de("a", [raia("a1")])
+        a.iniciar(spec="docs/s1.md")
+        rid1 = self.estado_de(a)["orquestrador"]["runId"]
+        self.assertTrue(rid1)
+        a.iniciar(spec="docs/s2.md")
+        a.iniciar(spec="docs/s3.md")
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        b = self.de("b", [raia("b1")])
+        b.ciclo()
+        self.falhar_raia(b, "b1")
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})
+        # o 1º run de A termina; A ainda tem 3 acordadas na fila, mas a trava sai e B é o primeiro da espera
+        self.motor.definir_run(rid1, estado="failed", motivoFalha="timeout")
+        a.ciclo()
+        self.assertEqual(len(self.estado_de(a)["acordarPendentes"]), 3)
+        self.assertIsNone(self.estado_de(a)["orquestrador"]["runId"])
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(self.trava(), {})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b"), self.plano_id("a")]})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        rid_b = self.estado_de(b)["orquestrador"]["runId"]
+        self.assertTrue(rid_b)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})
+        a.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        # o run de B termina: B volta para a fila atrás de A, e A acorda a 2ª
+        self.motor.definir_run(rid_b, estado="failed", motivoFalha="timeout")
+        b.ciclo()
+        self.assertEqual(self.trava(), {})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a"), self.plano_id("b")]})
+        a.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 3)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+
+    def test_plano_pausado_com_acordada_na_fila_nao_segura_a_trava(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        self.falhar_raia(b, "b1")
+        a.ciclo()
+        b.ciclo()
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        a.estado["pausado"] = "pausa de teste"
+        a._salvar()
+        self.motor.definir_run(rid, estado="failed", motivoFalha="timeout")
+        a.ciclo()
+        disco = self.estado_de(a)
+        self.assertTrue(disco["pausado"])
+        self.assertTrue(disco["acordarPendentes"])
+        self.assertEqual(self.trava(), {})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+
+    def test_arquivo_apagado_volta_com_as_reservas_e_a_trava_depois_de_um_ciclo(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1"), raia("a2"), raia("a3")])
+        a.ciclo()
+        self.falhar_raia(a, "a3")
+        a.ciclo()
+        self.assertTrue(self.estado_de(a)["orquestrador"]["runId"])
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1", "a2"]})
+        self.cap.unlink()
+        a.ciclo()
+        self.assertEqual(self.reservas(), {self.plano_id("a"): ["a1", "a2"]})
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        b = self.de("b", [raia("b1"), raia("b2")])
+        b.ciclo()
+        b.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 4)  # a1, a2, a3 e só b1
+        self.assertEqual(sum(len(r) for r in self.reservas().values()), 3)
+        self.assertEqual(self.estado_de(b)["raias"]["b2"]["estado"], "planejada")
+
+    def test_trava_perdida_para_outro_plano_vira_conflito_uma_vez(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        self.cap.unlink()
+        self.falhar_raia(b, "b1")
+        b.ciclo()  # o arquivo novo não sabe da trava de A: B toma e acorda
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+        for _ in range(2):
+            a.ciclo()
+        conflitos = self.log_de(a, "trava_em_conflito")
+        self.assertEqual([(x["evento"], x["dono"]) for x in conflitos], [("trava_em_conflito", self.plano_id("b"))])
+        self.assertTrue(self.estado_de(a)["orquestrador"]["runId"])  # o run em curso segue
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+
+    def test_dono_reafirma_a_trava_a_cada_ciclo_com_pr_em_decisao(self):
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        rid = self.estado_de(a)["orquestrador"]["runId"]
+        self.motor.definir_run(rid, estado="succeeded", prUrl=PR_ORQ)
+        self.forja.definir_pr(PR_ORQ, head_sha=H3, branch="warren/orq", arquivos=["src/x.ts"])
+        self.forja.definir_ci(REPO, H3, "verde")
+        a.ciclo()
+        self.assertEqual(self.estado_de(a)["prsOrquestrador"], [PR_ORQ])
+        self.cap.unlink()
+        a.ciclo()
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+
+    def test_sem_o_primeiro_sincronizar_do_ciclo_nao_ha_reserva(self):
+        a = self.de("a", [raia("a1")])
+        with mock.patch.object(despachante.capacidade, "sincronizar", side_effect=OSError("disco cheio")):
+            a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        self.assertEqual(self.reservas(), {})
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    # ------------------------------------------------ rodada 2
+
+    def test_primeiro_da_espera_que_fica_pausado_desiste_e_o_seguinte_toma(self):
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, "outro")
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        self.falhar_raia(b, "b1")
+        a.ciclo()
+        b.ciclo()
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a"), self.plano_id("b")]})
+        despachante.capacidade.soltar_orquestrador(self.cap, REPO, "outro")
+        b.ciclo()  # A ainda é o primeiro da espera
+        self.assertEqual(self.runs(FABLE), [])
+        a.estado["pausado"] = "pausa de teste"
+        a._salvar()
+        a.ciclo()
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})
+        self.assertEqual(self.trava(), {})
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(self.trava(), {REPO: self.plano_id("b")})
+        self.assertEqual(self.espera(), {})
+
+    def test_plano_sem_acordada_nao_fica_na_espera(self):
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, "outro")
+        self.forja.definir_arquivo(REPO, "main", "docs/s.md", "# spec")
+        a = self.de("a", [raia("a1")])
+        a.iniciar(spec="docs/s.md")  # recusada: entra na espera
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})
+        a.ciclo()  # a acordada continua pronta e recusada: A fica
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})
+        a.estado["acordarPendentes"] = []
+        a._salvar()
+        a.ciclo()
+        self.assertEqual(self.espera(), {})
+        self.assertEqual(self.trava(), {REPO: "outro"})
+
+    def test_reafirmacao_com_run_em_curso_passa_na_frente_da_espera(self):
+        a = self.de("a", [raia("a1")])
+        b = self.de("b", [raia("b1")])
+        a.ciclo()
+        b.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.assertTrue(self.estado_de(a)["orquestrador"]["runId"])
+        # o arquivo foi recriado, e B entrou na espera com a trava livre
+        self.cap.unlink()
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, "outro")
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO, self.plano_id("b"))
+        despachante.capacidade.soltar_orquestrador(self.cap, REPO, "outro")
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})
+        a.ciclo()
+        self.assertEqual(self.trava(), {REPO: self.plano_id("a")})
+        self.assertEqual(self.log_de(a, "trava_em_conflito"), [])
+        self.falhar_raia(b, "b1")
+        b.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+
+    def test_conflito_registra_o_dono_atual(self):
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.falhar_raia(a, "a1")
+        a.ciclo()
+        self.cap.unlink()
+        despachante.capacidade.tomar_orquestrador(self.cap, REPO.upper(), "dono-x")
+        a.ciclo()
+        self.assertEqual([x["dono"] for x in self.log_de(a, "trava_em_conflito")], ["dono-x"])
+        self.assertNotIn(self.plano_id("a"), self.espera().get(REPO, []))
+
+    def test_oom_de_filho_com_limite_local_ja_em_2_e_sem_repetir(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        a.estado["limiteParalelo"] = 2
+        a._salvar()
+        filho = {"seedId": "s-1", "estado": "failed", "falha": "oom_killed"}
+        self.motor.definir_plano(self.plan_run(a, "a1"), "running", [filho])
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+        # o Paulo sobe as vagas de volta: o mesmo filho, visto de novo, não registra outro OOM
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a.ciclo()
+        a.ciclo()
+        self.assertIsNone(despachante.capacidade.ler(self.cap)["oomEm"])
+        # um filho OOM novo registra
+        outro = {"seedId": "s-2", "estado": "failed", "runId": "run-y", "falha": "oom_killed"}
+        self.motor.definir_plano(self.plan_run(a, "a1"), "running", [filho, outro])
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+
+    def test_oom_de_filho_sem_run_id_tambem_chega_a_capacidade(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=0)
+        a = self.de("a", [raia("a1")])
+        a.ciclo()
+        self.motor.definir_plano(self.plan_run(a, "a1"), "running", [{"seedId": "s-1", "estado": "failed", "falha": "oom_killed"}])
+        a.ciclo()
+        self.assertTrue(despachante.capacidade.ler(self.cap)["oomEm"])
+
+    # ------------------------------------------------ construção
+
+    def ambiente_real(self, **extra):
+        (self.repo_dir / ".fabrica").mkdir(exist_ok=True)
+        (self.repo_dir / ".fabrica" / "config.json").write_text(json.dumps(CONFIG), encoding="utf-8")
+        (self.tmp / "w").write_text(TOKEN + "\n", encoding="utf-8")
+        (self.tmp / "g").write_text(TOKEN_GH + "\n", encoding="utf-8")
+        ambiente = {
+            "FABRICA_RAIZ": str(self.raiz),
+            "FABRICA_REPO_DIR": str(self.repo_dir),
+            "FABRICA_PROJETO": PROJETO,
+            "FABRICA_REPO": REPO,
+            "WARREN_TOKEN_FILE": str(self.tmp / "w"),
+            "GH_TOKEN_FILE": str(self.tmp / "g"),
+        }
+        ambiente.update(extra)
+        return ambiente
+
+    def test_construir_le_capacidade_e_plano_id(self):
+        d = despachante.construir(self.ambiente_real())
+        self.assertIsNone(d.capacidade)
+        self.assertIsNone(d.plano_id)
+        d = despachante.construir(self.ambiente_real(FABRICA_CAPACIDADE=str(self.cap), FABRICA_PLANO_ID="dono--cliente--login"))
+        self.assertEqual(d.capacidade, str(self.cap))
+        self.assertEqual(d.plano_id, "dono--cliente--login")
+        self.assertIs(d._mem_disponivel, despachante.capacidade.mem_disponivel_mb)
+        self.assertFalse(self.cap.exists())
+
+    def test_construir_recusa_um_sem_o_outro_ou_id_invalido(self):
+        for extra in (
+            {"FABRICA_CAPACIDADE": str(self.cap)},
+            {"FABRICA_PLANO_ID": "dono--cliente--login"},
+            {"FABRICA_CAPACIDADE": "", "FABRICA_PLANO_ID": "dono--cliente--login"},
+            {"FABRICA_CAPACIDADE": str(self.cap), "FABRICA_PLANO_ID": ""},
+            {"FABRICA_CAPACIDADE": str(self.cap), "FABRICA_PLANO_ID": "Dono--Cliente"},
+            {"FABRICA_CAPACIDADE": str(self.cap), "FABRICA_PLANO_ID": "dono/cliente"},
+            {"FABRICA_CAPACIDADE": str(self.cap), "FABRICA_PLANO_ID": "x\n"},
+        ):
+            with self.subTest(extra=extra):
+                with self.assertRaises(despachante.ErroDeEntrada) as ctx:
+                    despachante.construir(self.ambiente_real(**extra))
+                self.assertTrue(any("FABRICA_" in e for e in ctx.exception.erros))
+
+    def test_construtor_exige_os_dois_juntos(self):
+        for extra in ({"capacidade": str(self.cap)}, {"plano_id": "dono--cliente--a"}, {"capacidade": str(self.cap), "plano_id": "A"}):
+            with self.subTest(extra=extra):
+                with self.assertRaises(despachante.ConfigInvalida):
+                    self.novo(**extra)
+
+
 if __name__ == "__main__":
     unittest.main()

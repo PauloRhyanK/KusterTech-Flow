@@ -1,0 +1,35 @@
+# Despachante de UM plano da fila (fabrica-plano@<id>): unit systemd DE USUÁRIO, em modelo. Quem a
+# liga e desliga é o coordenador (fabrica-fila.service); não é preciso habilitá-la à mão.
+#
+# Instalação (na máquina de agentes; o instalar_maquina.py faz isto):
+#   mkdir -p ~/.config/systemd/user
+#   cp fabrica/servico/fabrica-plano@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#
+# O coordenador, ao admitir o plano <id> (<dono>--<repo>--<feature>--<hash>):
+#   - clona o repositório em ~/fabrica/planos/<id>/repo;
+#   - grava ~/fabrica/planos/<id>/plano.env com FABRICA_RAIZ, FABRICA_REPO_DIR, FABRICA_PROJETO,
+#     FABRICA_REPO, FABRICA_PLANO, FABRICA_CAPACIDADE, FABRICA_PLANO_ID e FABRICA_PREPARAR_WARREN=0, mais
+#     WARREN_API, WARREN_TOKEN_FILE e GH_TOKEN_FILE quando definidos: só caminhos, NUNCA um token;
+#   - roda `despachante.py iniciar` uma vez (adota o plano sem acordar o orquestrador);
+#   - roda `systemctl --user enable --now fabrica-plano@<id>`.
+# Quando o plano conclui (última fase homologada), o coordenador roda `disable --now` e solta as vagas.
+#
+# Saída 2 é entrada inválida, e o serviço NÃO reinicia (RestartPreventExitStatus=2): o plano aparece
+# como `pausado` em `coordenador.py status`, com a causa de `journalctl --user -u fabrica-plano@<id>`.
+# Corrija e rode `systemctl --user restart fabrica-plano@<id>`: o coordenador volta o plano a `ativo`.
+# Parar a unit à mão (`systemctl --user stop`) também deixa o plano `pausado` até ela voltar.
+
+[Unit]
+Description=Despachante do plano %i da Fábrica de agentes
+
+[Service]
+Type=simple
+EnvironmentFile=%h/fabrica/planos/%i/plano.env
+ExecStart=/usr/bin/python3 -I %h/fabrica/kit/fabrica/scripts/despachante.py rodar
+Restart=always
+RestartSec=30
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target

@@ -62,6 +62,7 @@ SERVICO = "warren.service"
 
 PENDENTE = CAMINHO + ".fabrica-pendente"
 AUTOMERGE = "warren-automerge.service"
+AUTO = "warren-auto.service"
 DROPIN_DIR = "/etc/systemd/system/warren.service.d"
 DROPIN = DROPIN_DIR + "/fabrica.conf"
 DROPIN_CONTEUDO = (
@@ -205,20 +206,20 @@ class ExecutorFalso:
             return self._ok(argv)
         if args == ["show", SERVICO, "-P", "ActiveEnterTimestamp", "--timestamp=unix"]:
             return self._ok(argv, b"@%d\n" % self.ativo_desde)
-        if args == ["show", AUTOMERGE, "-P", "LoadState"]:
-            unit = self.units.get(AUTOMERGE)
+        if sub == "show" and args[2:] == ["-P", "LoadState"]:
+            unit = self.units.get(args[1])
             return self._ok(argv, (unit.get("load", "loaded") if unit else "not-found").encode() + b"\n")
         if sub in ("is-enabled", "is-active"):
-            assert args[1:] == [AUTOMERGE], args
-            unit = self.units.get(AUTOMERGE)
+            assert len(args) == 2 and args[1] in (AUTOMERGE, AUTO), args
+            unit = self.units.get(args[1])
             if unit is None:
                 return subprocess.CompletedProcess(argv, 4, b"not-found\n", b"")
             valor = unit["enabled" if sub == "is-enabled" else "active"]
             ligado = valor in ("enabled", "active")
             return subprocess.CompletedProcess(argv, 0 if ligado else 1, valor.encode() + b"\n", b"")
         if sub == "disable":
-            assert args == ["disable", "--now", AUTOMERGE], args
-            self.units[AUTOMERGE] = {"enabled": "disabled", "active": "inactive"}
+            assert args[:2] == ["disable", "--now"] and len(args) == 3 and args[2] in (AUTOMERGE, AUTO), args
+            self.units[args[2]] = {"enabled": "disabled", "active": "inactive"}
             return self._ok(argv)
         raise AssertionError("systemctl inesperado: %r" % (args,))
 
@@ -246,6 +247,7 @@ def root(*args):
 RESTART = root("systemctl", "restart", SERVICO)
 RELOAD = root("systemctl", "daemon-reload")
 LOADSTATE = root("systemctl", "show", AUTOMERGE, "-P", "LoadState")
+LOADSTATE_AUTO = root("systemctl", "show", AUTO, "-P", "LoadState")
 ATIVO_DESDE = root("systemctl", "show", SERVICO, "-P", "ActiveEnterTimestamp", "--timestamp=unix")
 
 
@@ -512,11 +514,12 @@ class TestesPrepararAplica(BasePreparar):
         self.assertEqual(resultado["estado"], "aplicado")
         self.assertEqual((resultado["dropin"], resultado["automerge"]), ("ok", "ausente"))
         chamadas = self.executor.chamadas
-        script = chamadas[8][6]
+        script = chamadas[9][6]
         self.assertEqual(
             chamadas,
             [
                 LOADSTATE,
+                LOADSTATE_AUTO,
                 cmd("cat", CAMINHO),
                 root("test", "-e", DROPIN),
                 root("cat", DROPIN),
@@ -1040,6 +1043,129 @@ class TestesAutomerge(BasePreparar):
         self.visoes = [dict(LIVRE, runs={"nonTerminal": 3})]
         resultado = self.preparar()
         self.assertEqual((resultado["estado"], resultado["automerge"]), ("aguardando_runs", "desligado"))
+        self.assertEqual(self.executor.restarts, 0)
+
+
+class TestesServicosDesligar(BasePreparar):
+    def com_automerge(self, enabled, active):
+        self.executor.units[AUTOMERGE] = {"enabled": enabled, "active": active}
+
+    def com_auto(self, enabled, active):
+        self.executor.units[AUTO] = {"enabled": enabled, "active": active}
+
+    def test_padrao_inclui_os_dois_servicos(self):
+        self.assertEqual(pw.SERVICOS_DESLIGAR_PADRAO, (AUTOMERGE, AUTO))
+        resultado = self.preparar()
+        self.assertEqual(resultado["desligados"], {AUTOMERGE: "ausente", AUTO: "ausente"})
+
+    def test_warren_auto_recebe_a_mesma_sequencia_do_automerge(self):
+        self.com_auto("enabled", "active")
+        resultado = self.preparar()
+        self.assertEqual(resultado["desligados"], {AUTOMERGE: "ausente", AUTO: "desligado"})
+        self.assertEqual(
+            self.executor.chamadas[:6],
+            [
+                LOADSTATE,
+                LOADSTATE_AUTO,
+                root("systemctl", "is-enabled", AUTO),
+                root("systemctl", "is-active", AUTO),
+                root("systemctl", "disable", "--now", AUTO),
+                cmd("cat", CAMINHO),
+            ],
+        )
+        self.assertEqual(self.executor.units[AUTO], {"enabled": "disabled", "active": "inactive"})
+
+    def test_warren_auto_ja_desligado_ou_mascarado(self):
+        self.com_auto("disabled", "inactive")
+        self.assertEqual(self.preparar()["desligados"][AUTO], "ja_desligado")
+        self.assertFalse(any("disable" in c for c in self.executor.chamadas))
+        self.setUp()
+        self.executor.units[AUTO] = {"load": "masked", "enabled": "masked", "active": "inactive"}
+        self.assertEqual(self.preparar()["desligados"][AUTO], "ja_desligado")
+
+    def test_warren_auto_ausente_nao_e_erro(self):
+        resultado = self.preparar()
+        self.assertEqual((resultado["estado"], resultado["desligados"][AUTO]), ("aplicado", "ausente"))
+        self.assertEqual(resultado["automerge"], "ausente")
+        self.assertFalse(any("disable" in c for c in self.executor.chamadas))
+
+    def test_erro_no_warren_auto_nao_muda_a_chave_automerge(self):
+        self.com_automerge("enabled", "active")
+        self.com_auto("enabled", "active")
+        original = self.executor._systemctl
+
+        def systemctl(argv, args, entrada):
+            if args[0] == "disable" and AUTO in args:
+                return subprocess.CompletedProcess(argv, 1, b"", b"x")
+            return original(argv, args, entrada)
+
+        self.executor._systemctl = systemctl
+        resultado = self.preparar()
+        self.assertEqual(resultado["automerge"], "desligado")
+        self.assertEqual(resultado["desligados"], {AUTOMERGE: "desligado", AUTO: "erro"})
+        self.assertEqual(resultado["estado"], "aplicado")
+
+    def test_excecao_no_warren_auto_e_so_dele(self):
+        self.com_automerge("enabled", "active")
+        original = self.executor._systemctl
+
+        def systemctl(argv, args, entrada):
+            if AUTO in args:
+                raise OSError("sem systemd")
+            return original(argv, args, entrada)
+
+        self.executor._systemctl = systemctl
+        resultado = self.preparar()
+        self.assertEqual(resultado["desligados"], {AUTOMERGE: "desligado", AUTO: "erro"})
+        self.assertEqual((resultado["estado"], resultado["automerge"]), ("aplicado", "desligado"))
+
+    def test_erro_no_automerge_nao_impede_desligar_o_warren_auto(self):
+        self.com_automerge("enabled", "active")
+        self.com_auto("enabled", "active")
+        original = self.executor._systemctl
+
+        def systemctl(argv, args, entrada):
+            if args[0] == "disable" and AUTOMERGE in args:
+                return subprocess.CompletedProcess(argv, 1, b"", b"x")
+            return original(argv, args, entrada)
+
+        self.executor._systemctl = systemctl
+        resultado = self.preparar()
+        self.assertEqual(resultado["automerge"], "erro")
+        self.assertEqual(resultado["desligados"], {AUTOMERGE: "erro", AUTO: "desligado"})
+
+    def test_servicos_desligar_personalizados_e_automerge_e_o_primeiro(self):
+        self.com_auto("enabled", "active")
+        resultado = self.preparar(servicos_desligar=(AUTO,))
+        self.assertEqual(resultado["desligados"], {AUTO: "desligado"})
+        self.assertEqual(resultado["automerge"], "desligado")
+        self.assertNotIn(LOADSTATE, self.executor.chamadas)
+
+    def test_servicos_desligar_vazio(self):
+        resultado = self.preparar(servicos_desligar=())
+        self.assertEqual((resultado["desligados"], resultado["automerge"]), ({}, "ausente"))
+        self.assertNotIn(LOADSTATE, self.executor.chamadas)
+        self.assertNotIn(LOADSTATE_AUTO, self.executor.chamadas)
+
+    def test_servicos_desligar_invalido_nunca_lanca(self):
+        for valor in (None, 5, ("ok.service", None), ("",)):
+            resultado = self.preparar(servicos_desligar=valor)
+            self.assertEqual(resultado["estado"], "erro", repr(valor))
+            self.assertEqual(resultado["automerge"], "erro")
+        self.assertEqual(self.executor.chamadas, [])
+
+    def test_resultado_de_erro_antecipado_traz_desligados_vazio(self):
+        self.executor.levantar["cat"] = OSError("sudo sumiu")
+        resultado = self.preparar()
+        self.assertEqual(resultado["estado"], "erro")
+        self.assertEqual(resultado["automerge"], "ausente")
+        self.assertEqual(set(resultado["desligados"]), {AUTOMERGE, AUTO})
+
+    def test_desliga_mesmo_sem_poder_reiniciar_o_warren(self):
+        self.com_auto("enabled", "active")
+        self.visoes = [dict(LIVRE, runs={"nonTerminal": 3})]
+        resultado = self.preparar()
+        self.assertEqual((resultado["estado"], resultado["desligados"][AUTO]), ("aguardando_runs", "desligado"))
         self.assertEqual(self.executor.restarts, 0)
 
 

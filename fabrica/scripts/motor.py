@@ -207,6 +207,10 @@ class Motor(typing.Protocol):
         """GET /version: a versão do Warren; responder é o sinal de que ele está de pé."""
         ...
 
+    def projetos(self) -> list[dict]:
+        """GET /projects: `[{"id", "gitUrl"}]`; o coordenador da fila acha o projeto de um repositório pelo gitUrl."""
+        ...
+
 
 class MotorFalso:
     """Motor em memória para testar o despachante sem rede."""
@@ -235,6 +239,7 @@ class MotorFalso:
         self._retries: dict[str, str] = {}
         # F6: o Plan Run também só aparece na busca pelo nonce depois do atraso de visibilidade
         self._planos_criados_em: dict[str, datetime.datetime] = {}
+        self._projetos: list[dict] = []
 
     def _registrar(self, nome: str, **argumentos) -> None:
         self.chamadas.append((nome, argumentos))
@@ -526,6 +531,13 @@ class MotorFalso:
     def versao(self) -> str:
         self._registrar("versao")
         return "0.19.3"
+
+    def projetos(self) -> list[dict]:
+        self._registrar("projetos")
+        return [dict(p) for p in self._projetos]
+
+    def definir_projeto(self, id_: str, git_url: str) -> None:
+        self._projetos.append({"id": id_, "gitUrl": git_url})
 
     def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
         self._registrar("procurar_retry", projeto=projeto, run_id=run_id, nonces=nonces, desde=desde)

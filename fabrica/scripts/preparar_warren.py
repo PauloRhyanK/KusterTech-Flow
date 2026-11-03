@@ -5,7 +5,8 @@
    já é o modelo efetivo do run (o `modelOverride` da API vem dobrado nele), como o runtime `pi` usa em `pi-argv.ts`.
 2. **Drop-in do systemd** com `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS=10800000`: o despachante precisa de tempo para o
    ciclo revisor → fixer → gates antes de o Plan Run falhar por merge timeout (padrão de 30 min).
-3. **`warren-automerge.service` desligado**: ele mergeia PRs com check falhando e foi substituído pelo despachante.
+3. **`warren-automerge.service` e `warren-auto.service` desligados**: o primeiro mergeia PRs com check falhando e o
+   segundo avança planos por conta própria; os dois foram substituídos pelo despachante e pelo coordenador.
 
 `preparar` é idempotente e conservador:
 
@@ -43,6 +44,8 @@ BUN_PADRAO = "/home/agentops/.bun/bin/bun"
 MODELO_DE_VALIDACAO = "claude-haiku-5-5"
 DROPIN_CONTEUDO = "# gerado pela fábrica de agentes\n[Service]\nEnvironment=WARREN_PLAN_RUN_MERGE_TIMEOUT_MS=10800000\n"
 SERVICO_AUTOMERGE = "warren-automerge.service"
+SERVICO_AUTO = "warren-auto.service"
+SERVICOS_DESLIGAR_PADRAO = (SERVICO_AUTOMERGE, SERVICO_AUTO)
 ESPERA_MAXIMA_S = 90
 INTERVALO_S = 3
 TIMEOUT_COMANDO_S = 60
@@ -151,10 +154,20 @@ def preparar(
     servico: str = "warren.service",
     dormir=time.sleep,
     sha_esperado: str = SHA_ORIGINAL_0_19_3,
-    servico_automerge: str = SERVICO_AUTOMERGE,
+    servicos_desligar: tuple[str, ...] = SERVICOS_DESLIGAR_PADRAO,
     sha_revertido: str | None = None,
 ) -> dict:
-    """`{"estado", "detalhe", "dropin", "automerge", "sha"}` (+ `warrenVoltou` depois de um rollback). Nunca lança."""
+    """`{"estado", "detalhe", "dropin", "automerge", "desligados", "sha"}` (+ `warrenVoltou` depois de um rollback). Nunca lança.
+
+    `desligados` mapeia cada serviço de `servicos_desligar` para "desligado", "ja_desligado", "ausente" ou "erro";
+    `automerge` repete o resultado do primeiro (o despachante só lê essa chave).
+    """
+    try:
+        servicos = tuple(servicos_desligar)
+    except TypeError:
+        servicos = None
+    if servicos is None or not all(isinstance(s, str) and s for s in servicos):
+        return {"estado": "erro", "detalhe": "servicos_desligar inválido", "dropin": "erro", "automerge": "erro", "desligados": {}, "sha": None}
     preparo = _Preparo(
         executar=executar,
         visao_geral=visao_geral,
@@ -165,7 +178,7 @@ def preparar(
         servico=servico,
         dormir=dormir,
         sha_esperado=sha_esperado,
-        servico_automerge=servico_automerge,
+        servicos_desligar=servicos,
         sha_revertido=sha_revertido,
     )
     try:
@@ -175,7 +188,7 @@ def preparar(
 
 
 class _Preparo:
-    def __init__(self, *, executar, visao_geral, versao, caminho, usuario, bun, servico, dormir, sha_esperado, servico_automerge, sha_revertido):
+    def __init__(self, *, executar, visao_geral, versao, caminho, usuario, bun, servico, dormir, sha_esperado, servicos_desligar, sha_revertido):
         self.executar = executar
         self.visao_geral = visao_geral
         self.versao = versao
@@ -185,13 +198,13 @@ class _Preparo:
         self.servico = servico
         self.dormir = dormir
         self.sha_esperado = sha_esperado
-        self.servico_automerge = servico_automerge
+        self.servicos_desligar = servicos_desligar
         self.sha_revertido = sha_revertido
         self.backup = caminho + SUFIXO_BACKUP
         self.novo = caminho + SUFIXO_NOVO
         self.pendente = caminho + SUFIXO_PENDENTE
         self.dropin = caminho_dropin(servico)
-        self.extra = {"dropin": "erro", "automerge": "erro", "sha": None}
+        self.extra = {"dropin": "erro", "automerge": "erro", "desligados": {}, "sha": None}
         self._subida = None
 
     def resultado(self, estado: str, detalhe: str, **mais) -> dict:
@@ -236,8 +249,12 @@ class _Preparo:
 
     # ---------------------------------------------------------------- consultas
 
-    def desligar_automerge(self) -> str:
-        unit = self.servico_automerge
+    def desligar_servicos(self) -> None:
+        """Desliga cada serviço; `automerge` é o resultado do primeiro e uma falha num não pula os outros."""
+        self.extra["desligados"] = {unit: self.desligar(unit) for unit in self.servicos_desligar}
+        self.extra["automerge"] = next(iter(self.extra["desligados"].values()), "ausente")
+
+    def desligar(self, unit: str) -> str:
         try:
             carga = self.comando("systemctl", "show", unit, "-P", "LoadState", root=True)
             if carga.returncode != 0:
@@ -325,7 +342,7 @@ class _Preparo:
     # ---------------------------------------------------------------- fluxo
 
     def rodar(self) -> dict:
-        self.extra["automerge"] = self.desligar_automerge()
+        self.desligar_servicos()
         conteudo = self.ler(self.caminho)
         sha = hashlib.sha256(conteudo).hexdigest()
         self.extra["sha"] = sha

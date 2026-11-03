@@ -3,7 +3,8 @@
 É a única camada operacional do kit e roda sem operação manual: tudo o que precisa do Paulo vira
 uma issue de decisão, e fechar a issue é a resposta. A cada ciclo:
 
-1. recarrega `.fabrica/plano.json` do branch padrão (só adota um plano válido);
+1. recarrega o plano (`caminho_plano`, por padrão `.fabrica/plano.json`) do branch padrão (só adota um
+   plano válido);
 2. aplica os pedidos da caixa `<raiz>/entrada/` e observa a issue de pausa;
 3. observa os runs de revisão, do fixer e do orquestrador;
 4. trata e conclui o PR do orquestrador que terminou (ou reenfileira a acordada, se o run falhou);
@@ -42,6 +43,7 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import capacidade  # noqa: E402
 import estado as est  # noqa: E402
 import globs  # noqa: E402
 import prompts  # noqa: E402
@@ -57,7 +59,20 @@ ARQ_LOG = "log.jsonl"
 ARQ_TRAVA = "despachante.lock"
 DIR_ENTRADA = "entrada"
 CAMINHO_PLANO = ".fabrica/plano.json"
+# `FABRICA_PLANO`: o plano legado ou um `.fabrica/planos/<feature>.json` (fullmatch: nada de `\n` no fim);
+# a feature `plano` sob `planos/` colide com o legado e é recusada
+PADRAO_CAMINHO_PLANO = re.compile(r"^\.fabrica/(plano|planos/[a-z0-9]+(-[a-z0-9]+)*)\.json$")
+CAMINHO_PLANO_PROIBIDO = ".fabrica/planos/plano.json"
+# feature de no máximo 41 caracteres (o limite da skill e de `fila.FEATURE_MAX`): `.fabrica/planos/` + 41 + `.json`
+TAMANHO_MAXIMO_CAMINHO_PLANO = len(".fabrica/planos/") + 41 + len(".json")
 CAMINHO_CONFIG = ".fabrica/config.json"
+# `FABRICA_PLANO_ID`: `<dono>--<repo>--<feature>`, só `[a-z0-9-]` (fullmatch: nada de `\n` no fim)
+PADRAO_PLANO_ID = re.compile(r"[a-z0-9-]+")
+LIMITE_OOM_FILHOS = 200  # chaves de filhos OOM já repassadas à capacidade (as mais novas)
+AVISO_CAPACIDADE = (
+    "arquivo de capacidade ilegível ou inacessível: nenhuma raia nova é despachada e o orquestrador não é "
+    "acordado até ele voltar (veja o log)"
+)
 
 WARREN_API_PADRAO = "http://127.0.0.1:8080"
 WARREN_TOKEN_PADRAO = "~/.warren-token"
@@ -74,13 +89,20 @@ TERMINAIS_DE_RUN = ("succeeded", "failed", "cancelled")
 ACOES_PAGAS = ("despachar_raia", "revisar", "corrigir", "acordar")
 ACOES_COM_INTENCAO = ACOES_PAGAS
 ACOES_DE_GATE = ("revisar", "verificar", "corrigir", "mergear")
-# O que o orquestrador pode mudar; qualquer outro arquivo leva o PR dele para o Paulo.
-PERMITIDOS_AO_ORQUESTRADOR = (
-    ".fabrica/plano.json",
-    est.PERGUNTA_DO_ORQUESTRADOR,
-    ".fabrica/planejamento/**",
-    ".seeds/**",
-)
+
+
+def permitidos_ao_orquestrador(caminho_plano) -> tuple:
+    """O que o orquestrador do plano pode mudar; qualquer outro arquivo (inclusive outro plano) leva o PR ao Paulo."""
+    return (
+        caminho_plano,
+        est.PERGUNTA_DO_ORQUESTRADOR,
+        ".fabrica/planejamento/**",
+        ".seeds/**",
+    )
+
+
+# o do plano legado (`caminho_plano` padrão)
+PERMITIDOS_AO_ORQUESTRADOR = permitidos_ao_orquestrador(CAMINHO_PLANO)
 # Valem em todo PR de seed, somados aos `protegidos` da config do cliente.
 PROTEGIDOS_FIXOS = (".github/**", ".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
@@ -402,12 +424,25 @@ def compactar(estado: dict, plano: dict) -> dict:
     }
 
 
-def _permitido_ao_orquestrador(caminho) -> bool:
+def _permitido_ao_orquestrador(caminho, caminho_plano=CAMINHO_PLANO) -> bool:
     if not _texto(caminho) or caminho.startswith("/"):
         return False
     if any(parte in ("", ".", "..") for parte in caminho.split("/")):
         return False
-    return any(globs.casa_glob(caminho, g) for g in PERMITIDOS_AO_ORQUESTRADOR)
+    return any(globs.casa_glob(caminho, g) for g in permitidos_ao_orquestrador(caminho_plano))
+
+
+def _plano_id_valido(plano_id) -> bool:
+    return isinstance(plano_id, str) and PADRAO_PLANO_ID.fullmatch(plano_id) is not None
+
+
+def _caminho_plano_valido(caminho) -> bool:
+    return (
+        isinstance(caminho, str)
+        and caminho != CAMINHO_PLANO_PROIBIDO
+        and len(caminho) <= TAMANHO_MAXIMO_CAMINHO_PLANO
+        and PADRAO_CAMINHO_PLANO.fullmatch(caminho) is not None
+    )
 
 
 def _raias_por_id(plano) -> dict:
@@ -522,11 +557,28 @@ class Despachante:
         limpar_residuos=verificacao.limpar_residuos,
         segredos=(),
         preparar_warren=None,
+        caminho_plano: str = CAMINHO_PLANO,
+        capacidade: str | None = None,
+        plano_id: str | None = None,
+        mem_disponivel=capacidade.mem_disponivel_mb,
     ):
         if not _texto(projeto):
             raise ConfigInvalida("projeto")
         if not _texto(repo):
             raise ConfigInvalida("repo")
+        if not _caminho_plano_valido(caminho_plano):
+            raise ConfigInvalida("caminho_plano")
+        self.caminho_plano = caminho_plano
+        # vagas globais e trava de orquestrador por repositório; sem os dois, nada do módulo é chamado
+        if (capacidade is None) != (plano_id is None):
+            raise ConfigInvalida("capacidade e plano_id vêm juntos")
+        if capacidade is not None and (not _texto(capacidade) or not _plano_id_valido(plano_id)):
+            raise ConfigInvalida("capacidade")
+        self.capacidade = capacidade
+        self.plano_id = plano_id
+        self._mem_disponivel = mem_disponivel
+        self._capacidade_sincronizada = False
+        self._acordar_recusado = False
         self.motor = motor
         self.forja = forja
         self.raiz = pathlib.Path(raiz)
@@ -690,14 +742,14 @@ class Despachante:
         return isinstance(repo, str) and repo.lower() == self.repo.lower()
 
     def _ler_plano(self, ref: str):
-        """`(plano | None, erros, existe)` do `.fabrica/plano.json` em `ref` (JSON estrito)."""
-        texto = self.forja.arquivo(self.repo, ref, CAMINHO_PLANO)
+        """`(plano | None, erros, existe)` do plano (`caminho_plano`) em `ref` (JSON estrito)."""
+        texto = self.forja.arquivo(self.repo, ref, self.caminho_plano)
         if texto is None:
-            return None, ["%s ausente em %s" % (CAMINHO_PLANO, ref)], False
+            return None, ["%s ausente em %s" % (self.caminho_plano, ref)], False
         try:
             plano = _json_estrito(texto)
         except (ValueError, RecursionError):
-            return None, ["%s em %s não é JSON válido" % (CAMINHO_PLANO, ref)], True
+            return None, ["%s em %s não é JSON válido" % (self.caminho_plano, ref)], True
         return plano, raias.validar_plano(plano), True
 
     def _adotar_plano(self, plano: dict) -> None:
@@ -776,7 +828,12 @@ class Despachante:
         self._enfileirar_acordar("nova_spec", spec, {"spec": spec})
         if executar and not self._drenando():
             acao = self._proposta_de_pendente()
-            if acao is not None and acao["motivo"] == "nova_spec" and acao["alvo"] == spec:
+            if (
+                acao is not None
+                and acao["motivo"] == "nova_spec"
+                and acao["alvo"] == spec
+                and self._liberada_pela_capacidade(acao)
+            ):
                 self._executar(acao)
                 if chave in _lista(self.estado.get("chavesAcordadas")):
                     return "orquestrador acordado com a spec %s" % spec
@@ -805,6 +862,8 @@ class Despachante:
         self._falhas_do_ciclo = []
         self._rede_do_ciclo = set()
         self._ja_cancelados = set()
+        self._capacidade_sincronizada = False
+        self._acordar_recusado = False
         self._recuperar_acao_interrompida()
         self._recuperar_decisoes_pendentes()
         self._recarregar_plano()
@@ -814,6 +873,7 @@ class Despachante:
         self._observar_orquestrador()
         self._sincronizar()
         self._observar_planos()
+        self._sincronizar_capacidade()
         self._observar_prs()
         self._observar_decisoes()
         # Q2: as falhas da busca pelo nonce entram na contabilidade do ciclo, por isso antes de _contabilizar_warren
@@ -821,7 +881,12 @@ class Despachante:
         self._contabilizar_falhas_de_leitura()
         self._contabilizar_warren()
         self._fechar_prs()
+        # a acordada que terminou neste ciclo solta a trava antes de _agir: quem espera passa na frente
+        self._cuidar_da_trava()
         executadas = self._agir()
+        self._sincronizar_capacidade()
+        self._cuidar_da_trava()
+        self._desistir_sem_demanda()
         self._garantir_decisao_de_bloqueio()
         self._garantir_decisao_de_pausa()
         return executadas
@@ -881,7 +946,35 @@ class Despachante:
         return feitos % CICLOS_PREPARAR_WARREN == 0 and not self._warren_preparado()
 
     def _drenando(self) -> bool:
-        return self._preparar_ligado() and _texto(_dict(self.estado.get("drenagemWarren")).get("desde"))
+        if self._preparar_ligado() and _texto(_dict(self.estado.get("drenagemWarren")).get("desde")):
+            return True
+        return self._drenagem_do_coordenador()
+
+    def _drenagem_do_coordenador(self) -> bool:
+        """Com capacidade global, o coordenador da fila prepara o Warren e marca a drenagem no capacidade.json.
+
+        Arquivo ilegível não drena: a reserva e a trava já recusam com ele, e o erro vai para o log. Uma drenagem
+        mais velha que `DRENAGEM_MAXIMA` (ou com instante ilegível) é de um coordenador que morreu: é ignorada,
+        com um aviso por `desde`.
+        """
+        if self.capacidade is None:
+            return False
+        try:
+            desde = capacidade.ler(self.capacidade).get("drenagem")
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_etapa("drenagem_do_coordenador", self.plano_id, exc)
+            return False
+        if not _texto(desde):
+            return False
+        try:
+            inicio = datetime.datetime.strptime(desde, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            self._aviso("drenagem global ilegível (%s), ignorada" % _cortar(desde, 60))
+            return False
+        if self._agora().astimezone(datetime.timezone.utc) - inicio >= DRENAGEM_MAXIMA:
+            self._aviso("drenagem global vencida desde %s" % desde)
+            return False
+        return True
 
     def _preparar_o_warren(self) -> None:
         """Prepara o Warren (`preparar_warren.preparar`: --model, drop-in e automerge), se a config deixar.
@@ -1273,6 +1366,8 @@ class Despachante:
                         cota=cota,
                     )
                 )
+                if run.get("motivoFalha") == est.OOM:
+                    self._notar_oom()
                 self._log(
                     {
                         "evento": "fim_de_run",
@@ -1406,6 +1501,8 @@ class Despachante:
                 cota=prompts.eh_falha_de_cota(run.get("motivoFalha"), texto),
             )
         )
+        if run.get("motivoFalha") == est.OOM:
+            self._notar_oom()
         self._esquecer_nonces(run_id)
         if not run.get("_sintetico"):
             self._conferir_modelo(run_id, "orquestrador")
@@ -1516,6 +1613,11 @@ class Despachante:
             self._esquecer("observar_plano:%s" % raia_id)
             self._zerar_falha_de_leitura(plan_run_id)
             filhos = observado.get("filhos")
+            for filho in _lista(filhos):
+                filho = _dict(filho)
+                if filho.get("falha") == est.OOM:
+                    # com ou sem runId, e qualquer que seja o limite local: a chave do filho evita repetir
+                    self._notar_oom("%s:%s:%s:%s" % (raia_id, plan_run_id, filho.get("seedId"), filho.get("runId") or ""))
             seeds = _dict(self.estado.get("seeds"))
             for filho in _lista(filhos):
                 filho = _dict(filho)
@@ -1802,8 +1904,9 @@ class Despachante:
                 self._fechar_depois(decisao["url"], "A config voltou a ser válida; issue fechada pelo despachante.", decisao=True)
                 continue
             if decisao.get("tipo") == "automerge":
-                # F8: fecha sozinha quando o preparo informa o automerge desligado ou ausente
-                if self._merges_suspensos():
+                # F8: fecha sozinha quando o preparo informa o automerge desligado ou ausente; sem preparo
+                # (FABRICA_PREPARAR_WARREN=0) o dono do preparo é o coordenador: a decisão fica como está
+                if self._preparar_warren is None or self._merges_suspensos():
                     restantes.append(decisao)
                     continue
                 mudou = True
@@ -2124,7 +2227,7 @@ class Despachante:
             return {"r": "neutro"}
 
         motivos = []
-        fora = [a for a in arquivos if not _permitido_ao_orquestrador(a)]
+        fora = [a for a in arquivos if not _permitido_ao_orquestrador(a, self.caminho_plano)]
         if fora:
             motivos.append("PR fora de .fabrica: " + ", ".join(_cortar(a, 200) for a in fora[:20]))
         # lido no sha do head, que é o que o merge leva (nunca no branch, que pode andar)
@@ -2724,9 +2827,166 @@ class Despachante:
         for acao in acoes:
             if self.estado.get("pausado"):
                 break
+            if not self._liberada_pela_capacidade(acao):
+                continue  # sem vaga ou sem a trava: fica para o próximo ciclo, antes de gravar a intenção
             self._executar(acao)
             executadas.append(acao)
         return executadas
+
+    # ------------------------------------------------------------ capacidade global
+
+    def _erro_de_capacidade(self, etapa: str, alvo, exc: BaseException) -> None:
+        self._erro_de_etapa("capacidade_" + etapa, alvo, exc)
+        self._aviso(AVISO_CAPACIDADE)
+
+    def _capacidade_ok(self) -> None:
+        self._retirar_aviso(AVISO_CAPACIDADE)
+
+    def _liberada_pela_capacidade(self, acao: dict) -> bool:
+        """Raia nova precisa de vaga; `acordar` precisa da trava do repositório. Sem `capacidade`, tudo passa."""
+        if self.capacidade is None:
+            return True
+        tipo = acao.get("tipo")
+        if tipo == "despachar_raia":
+            return self._reservar_vaga(acao.get("raia"))
+        if tipo == "acordar":
+            return self._tomar_orquestrador()
+        return True
+
+    def _reservar_vaga(self, raia_id) -> bool:
+        if not self._capacidade_sincronizada:
+            # as reservas do plano são refeitas pelo 1º sincronizar do ciclo; sem ele, nada de vaga nova
+            return False
+        try:
+            reservada = capacidade.reservar(
+                self.capacidade, self.plano_id, raia_id, mem_disponivel_mb=self._mem_disponivel()
+            )
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("reservar", raia_id, exc)
+            return False
+        self._capacidade_ok()
+        if not reservada:
+            # uma linha por raia enquanto ela espera
+            self._log_repetivel("sem_vaga:%s" % raia_id, {"evento": "sem_vaga", "raia": raia_id})
+            return False
+        self._esquecer("sem_vaga:%s" % raia_id)
+        return True
+
+    def _tomar_orquestrador(self) -> bool:
+        try:
+            tomada = capacidade.tomar_orquestrador(self.capacidade, self.repo, self.plano_id)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("tomar_orquestrador", self.repo, exc)
+            return False
+        self._capacidade_ok()
+        if not tomada:
+            self._acordar_recusado = True
+            self._log_repetivel("orquestrador_ocupado", {"evento": "orquestrador_ocupado", "repo": self.repo})
+            return False
+        self._esquecer("orquestrador_ocupado")
+        return True
+
+    def _raias_ocupadas(self) -> set:
+        """As raias que seguram vaga (`estado.raias_ocupadas`, a mesma regra do coordenador)."""
+        return est.raias_ocupadas(self.estado)
+
+    def _sincronizar_capacidade(self) -> None:
+        if self.capacidade is None:
+            return
+        self._enviar_oom()
+        try:
+            capacidade.sincronizar(self.capacidade, self.plano_id, self._raias_ocupadas())
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("sincronizar", self.plano_id, exc)
+            return
+        self._capacidade_sincronizada = True
+        self._capacidade_ok()
+
+    def _registro_de_oom(self) -> dict:
+        registro = self.estado.get("oomCapacidade")
+        if isinstance(registro, str):  # formato antigo: só o instante pendente
+            registro = {"pendente": registro}
+        if not isinstance(registro, dict):
+            registro = {}
+        registro = {
+            "pendente": registro.get("pendente") if _texto(registro.get("pendente")) else None,
+            "filhos": [c for c in _lista(registro.get("filhos")) if _texto(c)],
+        }
+        self.estado["oomCapacidade"] = registro
+        return registro
+
+    def _notar_oom(self, chave: str | None = None) -> None:
+        """O OOM fica anotado no estado até chegar ao arquivo de capacidade (que pode estar ilegível agora).
+
+        `chave` identifica o filho do Plan Run: o mesmo filho visto de novo não registra outro OOM.
+        """
+        if self.capacidade is None:
+            return
+        registro = self._registro_de_oom()
+        if chave is not None:
+            if chave in registro["filhos"]:
+                return
+            registro["filhos"] = (registro["filhos"] + [chave])[-LIMITE_OOM_FILHOS:]
+        registro["pendente"] = self._agora_utc()
+        self._salvar()
+        self._enviar_oom()
+
+    def _enviar_oom(self) -> None:
+        if self.estado.get("oomCapacidade") is None:
+            return
+        registro = self._registro_de_oom()
+        pendente = registro["pendente"]
+        if pendente is None:
+            return
+        try:
+            capacidade.registrar_oom(self.capacidade, pendente)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("registrar_oom", self.plano_id, exc)
+            return
+        registro["pendente"] = None
+        self._salvar()
+        self._log({"evento": "oom_registrado_na_capacidade", "oomEm": pendente})
+
+    def _orquestrador_em_curso(self) -> bool:
+        """Run, acordar incerto ou em curso, ou PR do orquestrador esperando gates ou o Paulo.
+
+        As acordadas na fila não contam: a trava é solta ao fim de cada acordada, mesmo com o
+        plano pausado ou bloqueado, e quem espera na fila do repositório passa na frente.
+        """
+        self._orq()  # normaliza o `orquestrador` do estado, como antes
+        return est.orquestrador_em_curso(self.estado)
+
+    def _cuidar_da_trava(self) -> None:
+        """Sem orquestrador em curso, solta a trava; com ele, reafirma (um arquivo recriado a esqueceu)."""
+        if self.capacidade is None:
+            return
+        try:
+            if not self._orquestrador_em_curso():
+                capacidade.soltar_orquestrador(self.capacidade, self.repo, self.plano_id)
+                return
+            # quem tem run ou PR em curso é o dono de fato: toma a trava livre fora da ordem da espera
+            dono = None
+            for _ in range(2):  # a trava pode ter sido solta entre a recusa e a leitura do dono
+                if capacidade.tomar_orquestrador(self.capacidade, self.repo, self.plano_id, em_curso=True):
+                    self._esquecer("trava_em_conflito")
+                    return
+                dono = capacidade.ler(self.capacidade)["orquestrador"].get(self.repo.lower())
+                if dono is not None:
+                    break
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("trava_do_orquestrador", self.repo, exc)
+            return
+        # não há como desfazer o run em curso: registra o conflito; nada novo acorda sem a trava
+        self._log_repetivel("trava_em_conflito", {"evento": "trava_em_conflito", "dono": dono})
+
+    def _desistir_sem_demanda(self) -> None:
+        """A espera reflete a demanda atual: sem um `acordar` pronto e recusado pela trava neste ciclo, sai dela."""
+        if self.capacidade is None or self._acordar_recusado:
+            return
+        try:
+            capacidade.desistir_orquestrador(self.capacidade, self.repo, self.plano_id)
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_capacidade("desistir_orquestrador", self.repo, exc)
 
     def _executar(self, acao: dict) -> None:
         tipo = acao.get("tipo")
@@ -3187,7 +3447,10 @@ class Despachante:
         if tipo == "acordar":
             modelo = self._modelo("orquestrador")
             prompt = prompts.prompt_orquestrador(
-                motivo=acao.get("motivo"), estado_compacto=compactar(self.estado, self.plano), contexto=_dict(acao.get("contexto"))
+                motivo=acao.get("motivo"),
+                estado_compacto=compactar(self.estado, self.plano),
+                contexto=_dict(acao.get("contexto")),
+                caminho_plano=self.caminho_plano,
             )
             run_id = self.motor.despachar_run(
                 projeto=self.projeto,
@@ -3234,11 +3497,13 @@ def status(raiz) -> str:
     estado = _ler_estado(raiz)
     if not isinstance(estado, dict):
         raise ErroDeEntrada(["sem estado.json em %s: rode iniciar" % raiz])
-    c = compactar(estado, _dict(_ler_json(raiz / ARQ_PLANO)))
+    plano = _dict(_ler_json(raiz / ARQ_PLANO))
+    c = compactar(estado, plano)
     orquestrador = _dict(estado.get("orquestrador"))
     linhas = [
         "pausado: %s" % (c["pausado"] or "não"),
         "fase atual: %s" % c["faseAtual"],
+        "concluído: %s" % ("sim" if est.plano_concluido(estado, plano) else "não"),
         "orquestrador: %s%s"
         % (orquestrador.get("runId") or "livre", " (bloqueado até a resposta do Paulo)" if orquestrador.get("bloqueio") else ""),
         "raias:",
@@ -3286,6 +3551,30 @@ def construir(ambiente) -> Despachante:
     repo_dir = _exigir(ambiente, "FABRICA_REPO_DIR")
     projeto = _exigir(ambiente, "FABRICA_PROJETO")
     repo = _exigir(ambiente, "FABRICA_REPO")
+    caminho_plano = ambiente.get("FABRICA_PLANO")
+    if caminho_plano is None:
+        caminho_plano = CAMINHO_PLANO
+    elif not _caminho_plano_valido(caminho_plano):
+        raise ErroDeEntrada(
+            [
+                "FABRICA_PLANO inválido: %r; use .fabrica/plano.json ou .fabrica/planos/<feature>.json "
+                "(feature de até 41 caracteres, a-z e 0-9 em partes separadas por um só -, e nunca `plano`)"
+                % _cortar(caminho_plano, 200)
+            ]
+        )
+    caminho_capacidade = ambiente.get("FABRICA_CAPACIDADE")
+    plano_id = ambiente.get("FABRICA_PLANO_ID")
+    if (caminho_capacidade is None) != (plano_id is None):
+        raise ErroDeEntrada(["defina FABRICA_CAPACIDADE e FABRICA_PLANO_ID juntos (ou nenhum dos dois)"])
+    if caminho_capacidade is not None:
+        if not _texto(caminho_capacidade):
+            raise ErroDeEntrada(["FABRICA_CAPACIDADE vazio"])
+        if not _plano_id_valido(plano_id):
+            raise ErroDeEntrada(
+                ["FABRICA_PLANO_ID inválido: %r; use <dono>--<repo>--<feature>, só a-z, 0-9 e -" % _cortar(str(plano_id), 200)]
+            )
+    # o coordenador da fila prepara o Warren; os despachantes de plano rodam com FABRICA_PREPARAR_WARREN=0
+    sem_preparo = ambiente.get("FABRICA_PREPARAR_WARREN") == "0"
     token_warren = _ler_token(ambiente.get("WARREN_TOKEN_FILE") or WARREN_TOKEN_PADRAO)
     token_gh = _ler_token(ambiente.get("GH_TOKEN_FILE") or GH_TOKEN_PADRAO)
     caminho_config = pathlib.Path(repo_dir) / CAMINHO_CONFIG
@@ -3304,7 +3593,12 @@ def construir(ambiente) -> Despachante:
         projeto=projeto,
         repo=repo,
         segredos=(token_warren, token_gh),
-        preparar_warren=functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
+        preparar_warren=None
+        if sem_preparo
+        else functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
+        caminho_plano=caminho_plano,
+        capacidade=caminho_capacidade,
+        plano_id=plano_id,
     )
 
 

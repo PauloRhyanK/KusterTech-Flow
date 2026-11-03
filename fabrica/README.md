@@ -39,7 +39,7 @@ Na máquina de agentes: clone este repositório em `~/fabrica/kit`, clone o repo
 - O usuário do despachante no grupo `docker` (a verificação roda em contêiner).
 - `loginctl enable-linger <usuário>`, para o serviço de usuário rodar sem sessão aberta.
 
-Sem o sudo, o `preparar_warren` devolve `erro` e nada é aplicado: nem o `--model`, nem o drop-in do merge timeout, nem o desligamento do `warren-automerge.service`. Com um adaptador que não é o esperado (`versao_desconhecida`), só o `--model` deixa de ser aplicado; o drop-in e o desligamento do automerge seguem. Sem o `--model`, todos os papéis rodam no modelo padrão da conta, com um aviso. Enquanto o `warren-automerge.service` não for desligado, o despachante segura os merges (os despachos seguem) e abre uma issue de decisão, que fecha sozinha quando o automerge sai. Sem o grupo `docker`, a verificação não executa e o despachante pausa com uma issue; sem o linger, o serviço para quando a sessão fecha.
+Sem o sudo, o `preparar_warren` devolve `erro` e nada é aplicado: nem o `--model`, nem o drop-in do merge timeout, nem o desligamento do `warren-automerge.service` e do `warren-auto.service`. Com um adaptador que não é o esperado (`versao_desconhecida`), só o `--model` deixa de ser aplicado; o drop-in e o desligamento do automerge e do auto seguem. Sem o `--model`, todos os papéis rodam no modelo padrão da conta, com um aviso. Enquanto o `warren-automerge.service` não for desligado, o despachante segura os merges (os despachos seguem) e abre uma issue de decisão, que fecha sozinha quando o automerge sai. Sem o grupo `docker`, a verificação não executa e o despachante pausa com uma issue; sem o linger, o serviço para quando a sessão fecha.
 
 ## Iniciar
 
@@ -64,7 +64,7 @@ journalctl --user -u fabrica-despachante -f
 
 O despachante faz sozinho:
 
-- **Prepara o Warren** (`scripts/preparar_warren.py`, com `"warren": {"prepararAutomatico": true}`): aplica o `--model` no adaptador `claude-code`, instala o drop-in com `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS=10800000` (3 h) e desliga o `warren-automerge.service`. Reinicia o Warren só sem runs em curso e reverte se ele não voltar.
+- **Prepara o Warren** (`scripts/preparar_warren.py`, com `"warren": {"prepararAutomatico": true}`): aplica o `--model` no adaptador `claude-code`, instala o drop-in com `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS=10800000` (3 h) e desliga o `warren-automerge.service` e o `warren-auto.service`. Reinicia o Warren só sem runs em curso e reverte se ele não voltar.
 - **Cria o label** `fabrica:decisao` no repositório do cliente.
 - **Toda decisão do Paulo vira uma issue** com esse label. Fechar a issue com um comentário é a resposta, e ela volta ao orquestrador. Uma pausa (cota, falhas seguidas do orquestrador, ação interrompida) também abre uma issue, e fechá-la retoma.
 - **Fecha os PRs substituídos:** os PRs de uma tentativa antiga de raia e os PRs antigos do orquestrador.
@@ -80,6 +80,84 @@ O despachante faz sozinho:
 - `estado.json` corrompido (JSON inválido ou que não é um objeto): sai **sem** abrir issue e **sem** recriar o arquivo. Restaure-o de um backup ou corrija-o à mão; apagá-lo recomeça a fábrica do zero.
 
 Em todos os casos, `systemctl --user status fabrica-despachante` mostra o serviço `failed` com `status=2`, e `journalctl --user -u fabrica-despachante` mostra a causa (`config inválida: ...`, `defina FABRICA_RAIZ`, `não foi possível ler o token em ...`, `sem estado.json em ...`, `estado.json ilegível em ...`). Corrija e rode `systemctl --user restart fabrica-despachante`.
+
+## Fila por plano
+
+Com vários planos e repositórios, um coordenador (`scripts/coordenador.py`, serviço `fabrica-fila`, ciclo de 60 s) admite os planos que não colidem em arquivos e liga um despachante por plano (`fabrica-plano@<id>`). Os despachantes dividem as vagas e a RAM da máquina pelo `capacidade.json`. O fluxo de cada plano é o de sempre (despachante, gates, orquestrador, homologação).
+
+**Ids.** Cada plano tem o id `<dono>--<repo>--<feature>--<h6>` (só `[a-z0-9-]`; o `h6` evita choque entre nomes parecidos). É esse id que aparece em `status`, nas units (`fabrica-plano@<id>`) e na pasta do plano.
+
+**Como um plano entra.** O plano entra na fila quando `.fabrica/planos/<feature>.json` é mergeado no branch padrão do repositório registrado. O plano legado `.fabrica/plano.json` vale como a feature `plano`. Um arquivo inválido não entra: vira um aviso no `status`. Um plano que colide em arquivos com um ativo do mesmo repositório espera, e entra quando o outro concluir.
+
+**Estados da fila:** `aguardando`, `admitindo`, `ativo`, `pausado`, `concluido`, `removido`. Um plano só vira `concluido` depois que o Paulo mergeia o PR de `fase_concluida` da última fase; até lá a unit continua ligada.
+
+### Instalar a máquina
+
+```bash
+git clone -b <branch> <url deste repositório> ~/fabrica/kit   # só na primeira vez
+python3 -I ~/fabrica/kit/fabrica/scripts/instalar_maquina.py --branch <branch>
+```
+
+Até o merge no `main`, o branch é `feat/fabrica-fila-por-plano`: o `main` ainda não tem o instalador nem as units. Use o mesmo branch no clone e no `--branch`.
+
+O instalador é idempotente: atualiza o kit no branch pedido, cria `~/fabrica/planos`, `fila.json` e `capacidade.json` (só se faltarem), liga o linger, instala as units de usuário, confere os requisitos e liga o `fabrica-fila`. Depois confere que ele ficou `active` (3 tentativas, de 2 em 2 s); se não ficar, sai com 1 e manda ver o `journalctl --user -u fabrica-fila`. Os requisitos são:
+
+- grupo `docker`, também nas units (veja abaixo);
+- `sudo -n`;
+- Warren 0.19.3 respondendo;
+- tokens legíveis;
+- o `fabrica-despachante.service` legado desligado. Com ele habilitado ou ativo, o mesmo plano poderia rodar em dois despachantes. Desligue-o com `systemctl --user disable --now fabrica-despachante`.
+
+Faltando requisito, sai com 2 e lista o que falta.
+
+Os caminhos dos tokens e a URL do Warren vêm de `~/fabrica/coordenador.env` (opcional, `WARREN_API`, `WARREN_TOKEN_FILE` e `GH_TOKEN_FILE`, uma `CHAVE=VALOR` por linha, sem expansão), o mesmo arquivo da unit `fabrica-fila`. O instalador e os comandos `registrar`, `status` e `vagas` também o leem; uma variável do ambiente vale mais que o arquivo.
+
+**Grupo `docker` nas units.** Com o linger, o `user@` sobe no boot com os grupos daquele momento. Se você entrar no grupo `docker` depois, rode `sudo systemctl restart user@$(id -u)` (ou reinicie a máquina) para as units herdarem o grupo. O instalador confere com `systemd-run --user --wait --pipe id -nG`; sem o `systemd-run`, só avisa.
+
+**Fora de uma sessão de login** (por exemplo, `sudo -iu devops`), o instalador liga o linger primeiro e usa `XDG_RUNTIME_DIR=/run/user/<uid>` quando a variável falta, para o `systemctl --user` achar o barramento.
+
+### Operar
+
+```bash
+python3 -I ~/fabrica/kit/fabrica/scripts/coordenador.py registrar <dono/repo>   # o projeto do Warren é achado pelo gitUrl
+python3 -I ~/fabrica/kit/fabrica/scripts/coordenador.py status                  # fila, vagas, reservas, travas e avisos
+python3 -I ~/fabrica/kit/fabrica/scripts/coordenador.py vagas <n> [--ram-minima-mb N]
+journalctl --user -u fabrica-fila -f
+```
+
+- `registrar` grava o repositório em `~/fabrica/fila.json`. O repositório precisa ter projeto no Warren e o token do GitHub precisa de acesso a ele.
+- `vagas <n>` define as vagas e limpa o OOM. Use para subir as vagas de novo depois de um OOM (que baixa para 2).
+
+### Onde fica a memória de cada plano
+
+Em `~/fabrica/planos/<id>/`:
+
+- `estado.json` e `plano.json`: o estado do despachante daquele plano;
+- logs (`log.jsonl`, `acordadas.jsonl`);
+- `repo/`: o clone do repositório do cliente, só desse plano;
+- `plano.env`: as variáveis do serviço, **só caminhos e nomes**, nunca um token.
+
+Repositórios privados autenticam por um helper de credencial local que lê `GH_TOKEN_FILE`, registrado só para `https://github.com`: o clone guarda só o caminho do arquivo.
+
+**Unit parada ou `failed`.** O plano vira `pausado`, mas os Plan Runs e o PR do orquestrador dele continuam vivos no Warren e no GitHub. Por isso o coordenador não solta nada: refaz as vagas pelo `estado.json` do plano (raias `executando`, despacho em curso e incertos) e mantém a trava do repositório enquanto houver orquestrador em curso. Com o `estado.json` ilegível, as vagas e a trava ficam como estão, com um aviso. As vagas e a trava só saem quando o plano conclui ou some da fila.
+
+### Capacidade
+
+A máquina tem `vagas` raias ao mesmo tempo (padrão 3) e só despacha uma raia nova com pelo menos `ramMinimaMb` de RAM livre (padrão 2048). Quem espera não grava nada nem gasta nada. Depois de um OOM, as vagas caem para 2 até o Paulo rodar `coordenador.py vagas <n>`. Revisor, fixer e orquestrador não ocupam vaga. Um repositório só tem um orquestrador acordado por vez, para dois planos não abrirem PRs de orquestrador juntos.
+
+> **Nunca apague nem edite à mão o `~/fabrica/capacidade.json` com planos rodando.** Por um ciclo isso pode permitir dois orquestradores no mesmo repositório ou mais raias que vagas. Se ele estiver corrompido, conserte com `coordenador.py vagas <n>`.
+
+### Warren e drenagem
+
+O coordenador prepara o Warren (no lugar de cada despachante) e desliga o `warren-automerge.service` e o `warren-auto.service`. Para voltar atrás no `warren-auto`: `systemctl enable --now warren-auto`.
+
+Enquanto o coordenador prepara o Warren, ele marca uma **drenagem**: todos os planos seguram os despachos até os runs acabarem. Uma drenagem com mais de 45 min é ignorada.
+
+### Riscos conhecidos
+
+- Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
+- Conflitos em `.seeds/` entre planos do mesmo repositório caem no caminho de "merge recusado" (a seed vai para o Paulo depois de 3 recusas).
+- Quando o preparo vê o Warren sem runs ativos, ele o reinicia sem marcar drenagem. Um despachante de plano pode criar um run entre a consulta e o restart, e esse run morre logo no começo. É raro: só acontece quando o drop-in ou o patch mudam, isto é, na 1ª instalação ou numa atualização do Warren. O caminho de infra perdida redespacha a raia.
 
 ## O que ainda é do Paulo
 

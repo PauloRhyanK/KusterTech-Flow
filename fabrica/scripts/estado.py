@@ -607,6 +607,70 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None)
     return final
 
 
+def _vazia(valor) -> bool:
+    """Lista vazia ou ausente; qualquer outro valor (inclusive um tipo errado) conta como não vazia."""
+    return valor is None or valor == []
+
+
+def plano_concluido(estado: dict, plano: dict) -> bool:
+    """O plano terminou: última fase com as raias concluídas, homologada, e nada em curso nem aberto.
+
+    "Homologada" é a acordada `fase_concluida:<faseAtual>` já em `chavesAcordadas`; o orquestrador
+    precisa estar livre (`runId` None), sem acordadas na fila, decisões abertas, intenções de decisão
+    (`decisoesPendentes`) nem PR ou issue esperando o fechamento (`prsParaFechar`, que o despachante
+    esvazia mesmo quando desiste depois de `MAX_TENTATIVAS_DE_FECHAR`). Entrada malformada é `False`.
+    """
+    if not isinstance(estado, dict) or not isinstance(plano, dict):
+        return False
+    fases = _lista(plano.get("fases"))
+    ultima = fases[-1] if fases else None
+    fase_id = plano.get("faseAtual")
+    if not isinstance(ultima, dict) or not _texto(fase_id) or ultima.get("id") != fase_id:
+        return False
+    membros = [i for i in _lista(ultima.get("raias")) if isinstance(i, str)]
+    raias_do_estado = estado.get("raias")
+    if not membros or not isinstance(raias_do_estado, dict):
+        return False
+    if not all(_dict(raias_do_estado.get(m)).get("estado") == "concluida" for m in membros):
+        return False
+    if _chave("fase_concluida", fase_id) not in _lista(estado.get("chavesAcordadas")):
+        return False
+    orquestrador = estado.get("orquestrador")
+    if not isinstance(orquestrador, dict) or orquestrador.get("runId") is not None:
+        return False
+    return all(_vazia(estado.get(c)) for c in ("acordarPendentes", "decisoes", "decisoesPendentes", "prsParaFechar"))
+
+
+def raias_ocupadas(estado: dict) -> set:
+    """As raias que seguram vaga: `executando`, a de um `despachar_raia` em curso e as de um incerto.
+
+    Função pura (o despachante e o coordenador usam a mesma regra); entrada malformada dá o que for legível.
+    """
+    estado = _dict(estado)
+    ocupadas = {raia_id for raia_id, raia in _dict(estado.get("raias")).items() if _dict(raia).get("estado") == "executando"}
+    acoes = [_dict(estado.get("acaoEmCurso"))]
+    acoes += [_dict(_dict(item).get("acao")) for item in _lista(estado.get("despachosIncertos"))]
+    for acao in acoes:
+        if acao.get("tipo") == "despachar_raia" and _texto(acao.get("raia")):
+            ocupadas.add(acao["raia"])
+    return ocupadas
+
+
+def orquestrador_em_curso(estado: dict) -> bool:
+    """Run do orquestrador, acordar incerto ou em curso, ou PR do orquestrador esperando gates ou o Paulo.
+
+    As acordadas na fila não contam: a trava é solta ao fim de cada acordada. Função pura.
+    """
+    estado = _dict(estado)
+    incertos = {_dict(item).get("chave") for item in _lista(estado.get("despachosIncertos"))}
+    return (
+        _dict(estado.get("orquestrador")).get("runId") is not None
+        or any(str(c).startswith("acordar:") for c in incertos)
+        or _dict(estado.get("acaoEmCurso")).get("tipo") == "acordar"
+        or bool(_lista(estado.get("prsOrquestrador")))
+    )
+
+
 # ---------------------------------------------------------------- aplicação
 
 
@@ -648,7 +712,9 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
             raia["estado"] = "executando"
             raia["planRunId"] = resultado["planRunId"]
         else:
-            # o despacho pode ter acontecido: falhar e acordar é melhor que despachar de novo
+            # o despacho pode ter acontecido: falhar e acordar é melhor que despachar de novo.
+            # Com a capacidade global, a vaga segue esta regra: a raia sai de `executando` e a vaga é
+            # solta, mesmo que o Plan Run exista (vale também para o cancelamento que falhou de vez).
             raia["estado"] = "falhou"
             raia["falha"] = "despacho sem planRunId"
             _avisar(estado, f"raia {acao['raia']!r}: despacho sem planRunId")

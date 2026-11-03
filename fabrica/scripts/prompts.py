@@ -100,14 +100,18 @@ def prompt_fixer(
     )
 
 
-def prompt_orquestrador(*, motivo: str, estado_compacto: dict, contexto: dict) -> str:
-    """Prompt do orquestrador, acordado pelo despachante por um motivo."""
+def prompt_orquestrador(
+    *, motivo: str, estado_compacto: dict, contexto: dict, caminho_plano: str = ".fabrica/plano.json"
+) -> str:
+    """Prompt do orquestrador, acordado pelo despachante por um motivo, para um plano."""
     estado = json.dumps(estado_compacto, indent=2, ensure_ascii=False, default=str)
     ctx = json.dumps(contexto, indent=2, ensure_ascii=False, default=str)
     return (
         "Você é o orquestrador da fábrica de agentes e foi acordado pelo despachante.\n"
         "\n"
         "Leia `.fabrica/orquestrador.md` e siga o roteiro.\n"
+        "\n"
+        f"Seu plano: `{caminho_plano}`. Só ele, `.fabrica/pergunta.md`, `.fabrica/planejamento/**` e `.seeds/**` podem mudar.\n"
         "\n"
         f"Motivo: {motivo}\n"
         "\n"
