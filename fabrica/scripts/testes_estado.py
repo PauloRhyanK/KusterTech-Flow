@@ -1635,6 +1635,8 @@ class TestMutantesSobreviventes(unittest.TestCase):
         e["raias"]["a"].update(retomadas=3, retomar=True)
         e = est.registrar_plano(e, "a", estado_plano="failed", falha="child_pr_merge_timeout", filhos=[])
         self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["retomadas"]), ("falhou", 3))
+        e = est.aplicar(e, {"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, {"runId": "orq1"})
+        e = est.concluir_orquestrador(e)
         p = plano()
         p["raias"][1]["planoSeeds"] = "pl-NEW"
         e = est.sincronizar_plano(e, p)
@@ -1642,6 +1644,71 @@ class TestMutantesSobreviventes(unittest.TestCase):
             e["raias"]["a"],
             {"estado": "planejada", "planRunId": None, "retomar": False, "retomadas": 0, "falha": None, "planoSeeds": "pl-NEW"},
         )
+
+
+class TestReplanejamentoNoMeioDaExecucao(unittest.TestCase):
+    """O: o reinício de H só vale depois de o orquestrador ter visto a falha e terminado o run."""
+
+    def plano_novo(self, plano_seeds="pl-NEW"):
+        p = plano()
+        p["raias"][1]["planoSeeds"] = plano_seeds
+        return p
+
+    def falhou_depois_de_replanejada(self):
+        e = tudo_verde()
+        p = self.plano_novo()
+        e = est.sincronizar_plano(e, p)  # replanejada enquanto executava: fica com pl-000a
+        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["planoSeeds"]), ("executando", "pl-000a"))
+        e = est.registrar_plano(e, "a", estado_plano="failed", falha="run_failed", filhos=[])
+        return e, p
+
+    def test_falha_depois_de_replanejar_acorda_e_nao_reinicia(self):
+        e, p = self.falhou_depois_de_replanejada()
+        e = est.sincronizar_plano(e, p)
+        self.assertEqual((e["raias"]["a"]["estado"], e["seeds"]["s1"]["estado"]), ("falhou", "aguardando_gates"))
+        self.assertFalse(any("obsoleto" in a for a in e["avisos"]))
+        e, feitas = ciclo(e, executor(), p)
+        self.assertIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, feitas)
+        self.assertNotIn({"tipo": "despachar_raia", "raia": "a"}, feitas)
+        self.assertNotIn("mergear", [a["tipo"] for a in da_seed(feitas)])
+        # com o run do orquestrador em curso, o plano ainda não vale
+        e = est.sincronizar_plano(e, p)
+        self.assertEqual(e["raias"]["a"]["estado"], "falhou")
+        self.assertEqual(e["chavesAcordadas"], ["raia_falhou:a"])
+
+    def test_depois_do_acordar_concluido_um_plano_novo_reinicia(self):
+        e, p = self.falhou_depois_de_replanejada()
+        e = est.sincronizar_plano(e, p)
+        e, feitas = ciclo(e, executor(), p)
+        self.assertIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, feitas)
+        for r in ["b", "c", "d"]:  # o mesmo ciclo despachou as outras raias; liberar as vagas
+            e["raias"][r]["estado"] = "concluida"
+        e = est.concluir_orquestrador(e)
+        for plano_seeds in ["pl-NEW", "pl-NEW2"]:
+            p2 = self.plano_novo(plano_seeds)
+            novo = est.sincronizar_plano(e, p2)
+            self.assertEqual((novo["raias"]["a"]["estado"], novo["raias"]["a"]["planoSeeds"]), ("planejada", plano_seeds))
+            self.assertEqual((novo["seeds"]["s1"]["estado"], novo["chavesAcordadas"]), ("obsoleta", []))
+            novo, feitas = ciclo(novo, executor(), p2)
+            self.assertIn({"tipo": "despachar_raia", "raia": "a"}, feitas)
+            self.assertEqual(da_seed(feitas), [])
+
+    def test_chave_de_outra_raia_ou_orquestrador_ocupado_nao_libera(self):
+        e, p = self.falhou_depois_de_replanejada()
+        e["chavesAcordadas"] = ["raia_falhou:b", "gate_falhou_apos_fixer:a"]
+        self.assertEqual(est.sincronizar_plano(e, p)["raias"]["a"]["estado"], "falhou")
+        e["chavesAcordadas"] = ["raia_falhou:a"]
+        e["orquestrador"] = {"runId": "orq9", "motivo": "fase_concluida"}
+        self.assertEqual(est.sincronizar_plano(e, p)["raias"]["a"]["estado"], "falhou")
+        e["orquestrador"] = {"runId": None, "motivo": None}
+        self.assertEqual(est.sincronizar_plano(e, p)["raias"]["a"]["estado"], "planejada")
+        e["chavesAcordadas"] = None
+        self.assertEqual(est.sincronizar_plano(e, p)["raias"]["a"]["estado"], "falhou")
+
+    def test_caminho_original_de_h_continua(self):
+        e, p = replanejar(tudo_verde())
+        self.assertEqual((e["raias"]["a"]["estado"], e["seeds"]["s1"]["estado"]), ("planejada", "obsoleta"))
+        self.assertIn({"tipo": "despachar_raia", "raia": "a"}, acoes(e, p))
 
 
 if __name__ == "__main__":

@@ -160,7 +160,9 @@ def sincronizar_plano(estado: dict, plano: dict) -> dict:
     """Acrescenta as raias novas como `planejada` e preserva as existentes.
 
     Exceção: uma raia `falhou` cujo `planoSeeds` mudou volta a `planejada` (é a nova tentativa
-    que o orquestrador planejou), e a chave `raia_falhou:<id>` sai de `chavesAcordadas`.
+    que o orquestrador planejou), e a chave `raia_falhou:<id>` sai de `chavesAcordadas`. Isso só
+    vale depois de o orquestrador ter sido acordado por essa falha e sem run dele em curso; senão
+    a raia fica `falhou` e o fluxo normal emite `acordar raia_falhou`.
     """
     estado = copy.deepcopy(estado)
     raias_do_estado = _raias(estado)
@@ -176,6 +178,9 @@ def sincronizar_plano(estado: dict, plano: dict) -> dict:
             # sem o planoSeeds antigo não dá para saber se é outro plano: fica falhou
             and _texto(raia.get("planoSeeds"))
             and plano_seeds != raia["planoSeeds"]
+            # só depois de o orquestrador ter visto esta falha e terminado o run (replanejou depois dela)
+            and _chave("raia_falhou", id_) in _lista(estado.get("chavesAcordadas"))
+            and _dict(estado.get("orquestrador")).get("runId") is None
         ):
             raias_do_estado[id_] = _raia_nova(plano_seeds)
             chave = _chave("raia_falhou", id_)
