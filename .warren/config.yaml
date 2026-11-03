@@ -2,6 +2,6 @@
 # O merge dos PRs é do despachante da Fábrica, nunca do Warren: não existe bloco `pr`
 # aqui, então o auto-merge do Warren (`pr.autoMerge`) fica desligado. Não o ligue.
 defaultBranch: main
-maxCostUsd: 20
+maxCostUsd: 1000
 admission:
   maxConcurrentRuns: 3
