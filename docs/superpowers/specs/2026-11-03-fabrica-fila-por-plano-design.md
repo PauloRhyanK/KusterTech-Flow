@@ -92,7 +92,7 @@ Os dados ficam no arquivo `~/fabrica/capacidade.json`, protegido por `flock`:
   
   Vale **só para despachar uma raia nova**. Revisor, fixer e orquestrador não ocupam vaga: o `admission` do Warren, com `maxConcurrentRuns`, continua o teto final de runs.
 - **`sincronizar(plano, executando)`:** a cada ciclo, o despachante grava o conjunto real de raias executando dele, e as reservas de raias que terminaram são liberadas.
-- **OOM:** quando um despachante vê `oom_killed`, grava `oomEm` e `vagas = min(vagas, 2)`. Só o Paulo sobe de volta, editando `~/fabrica/fila.json`.
+- **OOM:** quando um despachante vê `oom_killed`, grava `oomEm` e `vagas = min(vagas, 2)`. Só o Paulo sobe de volta, com `coordenador.py vagas <n>`.
 - **Trava de orquestrador por repositório:** um plano só acorda o orquestrador se `orquestrador[repo]` estiver livre ou for dele. A trava é liberada quando o run e o PR daquele acordar terminam. Assim, dois planos do mesmo repositório nunca têm PRs de orquestrador abertos juntos, o que evita conflito em `.seeds/`.
 - **Reservas órfãs:** o coordenador apaga as reservas e a trava de um plano cujo serviço não está ativo.
 
