@@ -10,7 +10,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from motor import MotorOcupado  # noqa: E402
+from motor import FalhaDeRede, MotorOcupado  # noqa: E402
 
 TIMEOUT_REQUISICAO_S = 30
 TIMEOUT_EVENTOS_S = 180
@@ -51,7 +51,7 @@ def _transporte_urllib(metodo, url, headers, corpo):
             finally:
                 erro.close()
     except (http.client.HTTPException, OSError) as erro:
-        raise RuntimeError("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from erro
+        raise FalhaDeRede("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from erro
 
 
 def _id(valor) -> str:
@@ -131,7 +131,7 @@ class MotorWarren:
         try:
             status, resp_headers, resp_corpo = self._transporte(metodo, self._base + caminho, headers, dados)
         except (urllib.error.URLError, OSError) as erro:
-            raise RuntimeError("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
+            raise FalhaDeRede("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
         if status == 429:
             raise MotorOcupado(_retry_after(resp_headers))
         if not 200 <= status < 300:

@@ -11,6 +11,7 @@ import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+from motor import FalhaDeRede  # noqa: E402
 from motor_warren import _transporte_urllib  # noqa: E402
 
 BASE = "https://api.github.com"
@@ -25,6 +26,8 @@ _URL = re.compile(r"https://github\.com/(%s)/(%s)/(pull|issues)/([0-9]+)" % (_NO
 _TIPOS_DE_URL = ("pull", "issues")
 _REPO = re.compile(r"(%s)/(%s)" % (_NOME, _NOME))
 _SHA_COMPLETO = re.compile(r"[0-9a-f]{40}")
+_NONCE = re.compile(r"[0-9a-f]{32}")
+MARCADOR_NONCE = "<!-- fabrica:nonce=%s -->"
 # Só estas conclusões contam como sucesso; qualquer outra (inclusive vazia ou nova) é vermelho.
 _CONCLUSOES_VERDES = frozenset({"success", "neutral", "skipped"})
 
@@ -110,7 +113,7 @@ class ForjaGitHub:
         try:
             resposta = self._transporte(metodo, BASE + caminho, headers, dados)
         except (http.client.HTTPException, OSError) as erro:
-            raise RuntimeError("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
+            raise FalhaDeRede("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
         if not isinstance(resposta, tuple) or len(resposta) != 3:
             raise RuntimeError("%s %s: resposta do transporte inválida" % (metodo, caminho))
         status, _, resp_corpo = resposta
@@ -278,6 +281,49 @@ class ForjaGitHub:
         self._objeto("POST", raiz + "/comments", {"body": comentario}, (201,))
         self._objeto("PATCH", raiz, {"state": "closed"})
 
+    def _comentar_e_mudar(self, url: str, comentario: str, estado: str) -> None:
+        dono, nome, numero = _analisar_url(url, "issues")
+        _texto_nao_vazio(comentario, "comentário")
+        raiz = "/repos/%s/%s/issues/%d" % (dono, nome, numero)
+        self._objeto("POST", raiz + "/comments", {"body": comentario}, (201,))
+        self._objeto("PATCH", raiz, {"state": estado})
+
+    def reabrir_decisao(self, url: str, comentario: str) -> None:
+        self._comentar_e_mudar(url, comentario, "open")
+
+    def fechar_decisao(self, url: str, comentario: str) -> None:
+        self._comentar_e_mudar(url, comentario, "closed")
+
+    def procurar_decisao(self, repo: str, nonce: str) -> str | None:
+        """URL da issue de decisão cujo corpo tem o marcador do `nonce`, ou None."""
+        dono, nome = _analisar_repo(repo)
+        if not isinstance(nonce, str) or _NONCE.fullmatch(nonce) is None:
+            raise ValueError("nonce inválido")
+        marcador = MARCADOR_NONCE % nonce
+        base = "/repos/%s/%s/issues?labels=%s&state=all&per_page=%d" % (
+            dono,
+            nome,
+            urllib.parse.quote(LABEL_DECISAO, safe=""),
+            POR_PAGINA,
+        )
+        for pagina in range(1, MAX_PAGINAS + 1):
+            caminho = "%s&page=%d" % (base, pagina)
+            itens = self._lista(caminho, "issues")
+            for item in itens:
+                if not isinstance(item, dict) or "pull_request" in item:
+                    continue
+                corpo = item.get("body")
+                if isinstance(corpo, str) and marcador in corpo:
+                    html_url = self._texto(item, "issues[].", "html_url", "GET", caminho)
+                    try:
+                        _analisar_url(html_url, "issues")
+                    except ValueError:
+                        raise RuntimeError("GET %s: campo 'html_url' não é uma URL de issue" % caminho) from None
+                    return html_url
+            if len(itens) < POR_PAGINA:
+                return None
+        raise RuntimeError("GET %s: issues demais para paginar" % base)
+
     def abrir_decisao(self, repo: str, titulo: str, corpo: str) -> str:
         dono, nome = _analisar_repo(repo)
         _texto_nao_vazio(titulo, "título")
@@ -333,6 +379,7 @@ class ForjaFalsa:
         self._ci: dict[tuple[str, str], str] = {}
         self._arquivos: dict[tuple[str, str, str], str] = {}
         self._decisoes: dict[str, dict] = {}
+        self._corpos: dict[str, str] = {}
         self._contador = 0
 
     def _registrar(self, nome: str, **argumentos) -> None:
@@ -431,7 +478,33 @@ class ForjaFalsa:
         url = "https://github.com/%s/issues/%d" % (repo, self._contador)
         self.decisoes.append((titulo, corpo))
         self._decisoes[url] = {"fechada": False, "ultimoComentario": ""}
+        self._corpos[url] = corpo
         return url
+
+    def _mudar_decisao(self, nome: str, url: str, comentario: str, fechada: bool) -> None:
+        self._registrar(nome, url=url, comentario=comentario)
+        _analisar_url(url, "issues")
+        _texto_nao_vazio(comentario, "comentário")
+        if url not in self._decisoes:
+            raise KeyError("decisão desconhecida: %r" % (url,))
+        self._decisoes[url] = {"fechada": fechada, "ultimoComentario": comentario}
+
+    def reabrir_decisao(self, url: str, comentario: str) -> None:
+        self._mudar_decisao("reabrir_decisao", url, comentario, False)
+
+    def fechar_decisao(self, url: str, comentario: str) -> None:
+        self._mudar_decisao("fechar_decisao", url, comentario, True)
+
+    def procurar_decisao(self, repo: str, nonce: str) -> str | None:
+        self._registrar("procurar_decisao", repo=repo, nonce=nonce)
+        _analisar_repo(repo)
+        if not isinstance(nonce, str) or _NONCE.fullmatch(nonce) is None:
+            raise ValueError("nonce inválido")
+        marcador = MARCADOR_NONCE % nonce
+        for url, corpo in self._corpos.items():
+            if marcador in corpo:
+                return url
+        return None
 
     def decisao(self, url: str) -> dict:
         self._registrar("decisao", url=url)

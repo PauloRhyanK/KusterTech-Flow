@@ -1280,7 +1280,15 @@ class TestReplanejarRaiaFalha(unittest.TestCase):
         e = est.sincronizar_plano(self.falhou(), self.plano_trocado())
         self.assertEqual(
             e["raias"]["a"],
-            {"estado": "planejada", "planRunId": None, "retomar": False, "retomadas": 0, "falha": None, "planoSeeds": "pl-00aa"},
+            {
+                "estado": "planejada",
+                "planRunId": None,
+                "retomar": False,
+                "retomadas": 0,
+                "falha": None,
+                "planoSeeds": "pl-00aa",
+                "seedsSubstituidas": [],
+            },
         )
         self.assertEqual(e["chavesAcordadas"], ["fase_concluida:fundacao"])
         self.assertIn({"tipo": "despachar_raia", "raia": "a"}, acoes(e, self.plano_trocado()))
@@ -1425,7 +1433,9 @@ def replanejar(e, raia="a", plano_seeds="pl-NEW"):
 
 
 class TestSeedsObsoletas(unittest.TestCase):
-    """K: replanejar uma raia falha torna obsoletas as seeds da tentativa anterior."""
+    """K (revisto na rodada 2 da Task 7, I5): replanejar uma raia falha tira do estado as seeds não
+    mergeadas da tentativa anterior; fora do estado elas nunca mais recebem ação, e um id
+    reaproveitado pelo plano novo começa limpo."""
 
     AVISO = f"PR {PR_URL} da tentativa anterior da raia a ficou obsoleto; feche-o"
 
@@ -1434,7 +1444,8 @@ class TestSeedsObsoletas(unittest.TestCase):
         self.assertIn({"tipo": "mergear", "seed": "s1", "sha": "bbb"}, acoes(e))
         e, p = replanejar(e)
         self.assertEqual(e["raias"]["a"]["estado"], "planejada")
-        self.assertEqual(e["seeds"]["s1"]["estado"], "obsoleta")
+        self.assertNotIn("s1", e["seeds"])
+        self.assertEqual(e["raias"]["a"]["seedsSubstituidas"], ["s1"])
         self.assertIn(self.AVISO, e["avisos"])
         lista = acoes(e, p)
         self.assertNotIn("mergear", [a["tipo"] for a in lista])
@@ -1443,14 +1454,17 @@ class TestSeedsObsoletas(unittest.TestCase):
         e, feitas = ciclo(e, executor(), p)
         self.assertEqual(da_seed(feitas), [])
         self.assertEqual(e["raias"]["a"]["estado"], "executando")
-        # o Warren ainda fala da seed antiga: nada muda
-        for obs in [filho("s1", "pr_open", pr=PR2), filho("s1", "running", run="r9"), filho("s1", "merged"), filho("s1", "failed")]:
-            novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[obs])
-            self.assertEqual(novo["seeds"]["s1"], e["seeds"]["s1"], obs)
         for _ in range(2):
             e, feitas = ciclo(e, executor(), p)
             self.assertEqual(da_seed(feitas), [])
-        self.assertEqual(e["seeds"]["s1"]["estado"], "obsoleta")
+        # o plano novo reaproveita o id s1: a seed recomeça limpa, sem nada da tentativa antiga
+        for obs, esperado in [(filho("s1", "pr_open", pr=PR2), "em_revisao"), (filho("s1", "merged"), "mergeada"), (filho("s1", "failed"), "falhou")]:
+            novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[obs])
+            s = novo["seeds"]["s1"]
+            self.assertEqual(s["estado"], esperado, obs)
+            self.assertEqual((s["veredito"], s["verificacao"], s["headSha"], s["fixerUsado"]), (None, None, None, False))
+        novo = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[filho("s1", "pr_open", pr=PR2)])
+        self.assertEqual(da_seed(acoes(novo, p)), [])  # sem head lido nenhuma ação, nem com o SHA velho
 
     def test_idempotente(self):
         e, p = replanejar(tudo_verde())
@@ -1458,13 +1472,13 @@ class TestSeedsObsoletas(unittest.TestCase):
         self.assertEqual(e["avisos"].count(self.AVISO), 1)
         self.assertEqual(acoes(e, p), acoes(e, p))
 
-    def test_todo_estado_nao_mergeado_vira_obsoleta(self):
-        for estado in ["executando", "em_revisao", "aguardando_gates", "corrigindo", "bloqueada_humano", "falhou"]:
+    def test_todo_estado_nao_mergeado_sai_do_estado(self):
+        for estado in ["executando", "em_revisao", "aguardando_gates", "corrigindo", "bloqueada_humano", "falhou", "obsoleta"]:
             e = tudo_verde()
             e["seeds"]["s1"]["estado"] = estado
             e["seeds"]["s1"]["pendenteHumano"] = "x"
             e, p = replanejar(e)
-            self.assertEqual(e["seeds"]["s1"]["estado"], "obsoleta", estado)
+            self.assertNotIn("s1", e["seeds"], estado)
             self.assertEqual(da_seed(acoes(e, p)), [], estado)
 
     def test_mergeada_fica_e_outras_raias_nao_mudam(self):
@@ -1474,16 +1488,17 @@ class TestSeedsObsoletas(unittest.TestCase):
         e = est.registrar_plano(e, "b", estado_plano="running", falha=None, filhos=[filho("s2", "pr_open", pr=PR2)])
         e["seeds"]["s3"] = dict(est._seed_nova("a"), estado="em_revisao")  # sem PR: sem aviso
         e, _ = replanejar(e)
-        self.assertEqual({s: e["seeds"][s]["estado"] for s in e["seeds"]}, {"s1": "mergeada", "s2": "em_revisao", "s3": "obsoleta"})
+        self.assertEqual({s: e["seeds"][s]["estado"] for s in e["seeds"]}, {"s1": "mergeada", "s2": "em_revisao"})
+        self.assertEqual(e["raias"]["a"]["seedsSubstituidas"], ["s3"])
         self.assertFalse(any("obsoleto" in a for a in e["avisos"]))
 
-    def test_fim_de_run_nao_ressuscita_obsoleta(self):
+    def test_fim_de_run_nao_ressuscita_a_seed_removida(self):
         e = tudo_verde(ci="vermelho")
         e = est.aplicar(e, da_seed(acoes(e))[0], {"runId": "fx1"})
         e, _ = replanejar(e)
         for estado_run, motivo in [("failed", "run_failed"), ("succeeded", None), ("failed", "oom_killed")]:
             novo = est.registrar_fim_de_run(e, "fx1", estado_run=estado_run, motivo_falha=motivo, veredito=None, cota=False)
-            self.assertEqual(novo["seeds"]["s1"]["estado"], "obsoleta", estado_run)
+            self.assertNotIn("s1", novo["seeds"], estado_run)
             self.assertEqual(da_seed(acoes(novo)), [])
 
     def test_mesmo_plano_seeds_nao_torna_obsoleta(self):
@@ -1642,7 +1657,15 @@ class TestMutantesSobreviventes(unittest.TestCase):
         e = est.sincronizar_plano(e, p)
         self.assertEqual(
             e["raias"]["a"],
-            {"estado": "planejada", "planRunId": None, "retomar": False, "retomadas": 0, "falha": None, "planoSeeds": "pl-NEW"},
+            {
+                "estado": "planejada",
+                "planRunId": None,
+                "retomar": False,
+                "retomadas": 0,
+                "falha": None,
+                "planoSeeds": "pl-NEW",
+                "seedsSubstituidas": [],
+            },
         )
 
 
@@ -1688,7 +1711,8 @@ class TestReplanejamentoNoMeioDaExecucao(unittest.TestCase):
             p2 = self.plano_novo(plano_seeds)
             novo = est.sincronizar_plano(e, p2)
             self.assertEqual((novo["raias"]["a"]["estado"], novo["raias"]["a"]["planoSeeds"]), ("planejada", plano_seeds))
-            self.assertEqual((novo["seeds"]["s1"]["estado"], novo["chavesAcordadas"]), ("obsoleta", []))
+            self.assertEqual(("s1" in novo["seeds"], novo["chavesAcordadas"]), (False, []))
+            self.assertEqual(novo["raias"]["a"]["seedsSubstituidas"], ["s1"])
             novo, feitas = ciclo(novo, executor(), p2)
             self.assertIn({"tipo": "despachar_raia", "raia": "a"}, feitas)
             self.assertEqual(da_seed(feitas), [])
@@ -1707,7 +1731,7 @@ class TestReplanejamentoNoMeioDaExecucao(unittest.TestCase):
 
     def test_caminho_original_de_h_continua(self):
         e, p = replanejar(tudo_verde())
-        self.assertEqual((e["raias"]["a"]["estado"], e["seeds"]["s1"]["estado"]), ("planejada", "obsoleta"))
+        self.assertEqual((e["raias"]["a"]["estado"], "s1" in e["seeds"]), ("planejada", False))
         self.assertIn({"tipo": "despachar_raia", "raia": "a"}, acoes(e, p))
 
 
@@ -1721,16 +1745,22 @@ class TestSubstituirRaia(unittest.TestCase):
         e["seeds"]["sb"] = dict(est._seed_nova("b"), estado="em_revisao", pr=PR2)
         return e
 
-    def test_volta_a_planejada_com_o_plano_novo_e_torna_as_seeds_obsoletas(self):
+    def test_volta_a_planejada_com_o_plano_novo_e_remove_as_seeds_nao_mergeadas(self):
         e = self.com_seeds()
         e["raias"]["a"].update(retomadas=2, retomar=True, falha="x")
         antes = copy.deepcopy(e)
         novo = est.substituir_raia(e, "a", "pl-00aa")
         self.assertEqual(e, antes)
-        self.assertEqual(novo["raias"]["a"], est._raia_nova("pl-00aa"))
-        self.assertEqual(novo["seeds"]["s1"]["estado"], "obsoleta")
-        self.assertEqual(novo["seeds"]["s2"]["estado"], "obsoleta")
+        self.assertEqual(novo["raias"]["a"], dict(est._raia_nova("pl-00aa"), seedsSubstituidas=["s1", "s2"]))
+        self.assertNotIn("s1", novo["seeds"])
+        self.assertNotIn("s2", novo["seeds"])
         self.assertEqual(novo["seeds"]["s0"]["estado"], "mergeada")
+        # um id reaproveitado pelo plano novo começa limpo
+        reaproveitado = copy.deepcopy(novo)
+        reaproveitado["raias"]["a"].update(estado="executando", planRunId="p2")
+        depois = est.registrar_plano(reaproveitado, "a", estado_plano="running", falha=None, filhos=[filho("s1", "pr_open", run="r7", pr=PR2)])
+        self.assertEqual(depois["seeds"]["s1"]["estado"], "em_revisao")
+        self.assertEqual(depois["seeds"]["s1"]["pr"], PR2)
         self.assertEqual(novo["seeds"]["sb"], e["seeds"]["sb"])
         self.assertEqual(novo["raias"]["b"], e["raias"]["b"])
         # nenhuma ação para as seeds obsoletas; a raia volta a ser despachável

@@ -145,7 +145,7 @@ class Base(_AjudasDoOrquestrador, unittest.TestCase):
             forja=forja_ or self.forja,
             raiz=self.raiz,
             repo_dir=self.repo_dir,
-            config=copy.deepcopy(config if config is not None else CONFIG),
+            config=copy.deepcopy(config if config is not None else getattr(self, "config_padrao", CONFIG)),
             verificar=self.verificar_falso,
             agora=lambda: self.instante,
             projeto=PROJETO,
@@ -451,7 +451,7 @@ class TestesJornada(Base):
         self.assertIn("Motivo: resposta_paulo", segundo["prompt"])
         self.assertEqual(self.estado()["acordarPendentes"], [])
 
-    def test_decisao_fechada_sem_comentario_sai_da_lista_com_aviso(self):
+    def test_decisao_fechada_sem_comentario_e_reaberta_e_continua_acompanhada(self):
         d = self.preparar_raia()
         self.abrir_pr(H1, arquivos=("db/migrations/002.sql",))
         d.ciclo()
@@ -460,9 +460,20 @@ class TestesJornada(Base):
         (decisao,) = self.estado()["decisoes"]
         self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="")
         d.ciclo()
-        self.assertEqual(self.estado()["decisoes"], [])
+        self.assertEqual(self.estado()["decisoes"], [decisao])
         self.assertEqual(self.runs(FABLE), [])
-        self.assertTrue(any("sem comentário" in a for a in self.estado()["avisos"]))
+        info = self.forja.decisao(decisao["url"])
+        self.assertFalse(info["fechada"])
+        self.assertIn("Feche com um comentário dizendo a decisão", info["ultimoComentario"])
+        # o comentário do próprio despachante nunca vale como resposta
+        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario=info["ultimoComentario"])
+        d.ciclo()
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertFalse(self.forja.decisao(decisao["url"])["fechada"])
+        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="Pode mergear.")
+        d.ciclo()
+        self.assertEqual(self.estado()["decisoes"], [])
+        self.assertIn("Pode mergear.", self.runs(FABLE)[-1]["prompt"])
 
     def test_retomar_do_despachante_zera_falhas_de_acordar(self):
         d = self.preparar_raia()
@@ -694,7 +705,7 @@ class TestesPersistencia(Base):
         class MotorQueFalha(motor.MotorFalso):
             def despachar_plano(self, **argumentos):
                 super().despachar_plano(**argumentos)
-                raise RuntimeError("POST /plan-runs: falha de rede (TimeoutError)")
+                raise RuntimeError("POST /plan-runs: HTTP 502")
 
         self.motor = MotorQueFalha()
         self.publicar(plano(raia("a")))
@@ -874,7 +885,7 @@ class TestesPrDoOrquestrador(Base):
         self.assertEqual(len(orqs), 2)
         self.assertIn("Motivo: plano_invalido", orqs[-1]["prompt"])
         self.assertIn("papel inválido", orqs[-1]["prompt"])
-        self.assertIn(f"plano_invalido:{rid}", self.estado()["chavesAcordadas"])
+        self.assertIn("plano_invalido:orquestrador", self.estado()["chavesAcordadas"])
         d.ciclo()
         self.assertEqual(len(self.runs(FABLE)), 2)
 
@@ -1096,7 +1107,7 @@ class TestesConfig(Base):
                 with self.assertRaises(despachante.ConfigInvalida):
                     self.novo(config=config)
 
-    def test_f_partida_recusa_papel_do_plano_sem_modelo(self):
+    def test_f_iniciar_recusa_papel_do_plano_sem_modelo(self):
         config = dict(CONFIG, modelos={k: v for k, v in CONFIG["modelos"].items() if k != "qa"})
         self.publicar(plano(raia("a", papel="qa")))
         d = self.novo(config=config)
@@ -1104,16 +1115,28 @@ class TestesConfig(Base):
             d.iniciar()
         self.assertIn("qa", str(ctx.exception))
         self.assertFalse((self.raiz / "estado.json").exists())
-        # e um plano já adotado na raiz também barra a partida
-        despachante.gravar_json_atomico(self.raiz / "plano.json", plano(raia("a", papel="qa")))
-        with self.assertRaises(despachante.ConfigInvalida):
-            self.novo(config=config)
-        saida, erro = io.StringIO(), io.StringIO()
-        codigo = despachante.main(
-            ["rodar"], ambiente={"FABRICA_RAIZ": str(self.raiz)}, construir=lambda amb: self.novo(config=config), saida=saida, erro=erro
-        )
-        self.assertEqual(codigo, 2)
-        self.assertIn("qa", erro.getvalue())
+
+    def test_n1_plano_adotado_com_papel_sem_modelo_nao_derruba_o_reinicio(self):
+        """Sonda p_f_crashloop: com Restart=always, uma exceção na partida seria um loop eterno."""
+        config = dict(CONFIG, modelos={k: v for k, v in CONFIG["modelos"].items() if k != "qa"})
+        self.config_padrao = config
+        d, rid = self.acordar_por_falha()
+        novo_plano = plano(raia("a", plano_seeds="pl-000b"), raia("q", papel="qa", plano_seeds="pl-000c", arquivos=["e2e/"]))
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo_plano)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])  # o PR com papel sem modelo vai para o Paulo
+        self.assertTrue(any("papéis sem modelo" in c and "qa" in c for _, c in self.forja.decisoes))
+        self.publicar(novo_plano)  # o Paulo mergeou assim mesmo
+        d.ciclo()
+        d.ciclo()
+        self.assertIn("q", [x["alvo"] for x in self.estado()["decisoes"]])
+        outro = self.novo()  # reinício: não lança
+        with mock.patch.object(despachante.Despachante, "ciclo", side_effect=KeyboardInterrupt):
+            codigo = despachante.main(
+                ["rodar"], ambiente={"FABRICA_RAIZ": str(self.raiz)}, construir=lambda amb: self.novo(), saida=io.StringIO(), erro=io.StringIO()
+            )
+        self.assertEqual(codigo, 0)
+        self.assertIsNotNone(outro.estado)
 
     def test_f_raia_nao_despachavel_nao_segura_a_vaga_e_abre_uma_decisao(self):
         config = dict(CONFIG, limiteParalelo=1, modelos={k: v for k, v in CONFIG["modelos"].items() if k != "qa"})
@@ -1130,6 +1153,11 @@ class TestesConfig(Base):
         self.assertIn("modelos.qa", self.forja.decisoes[0][1])
         self.assertEqual(self.estado()["raias"]["q"]["estado"], "planejada")
         self.assertEqual(self.estado()["decisoes"][-1]["alvo"], "q")
+        # o Paulo responde; enquanto a raia continuar sem modelo, nenhuma issue nova é aberta
+        self.forja.definir_decisao(self.estado()["decisoes"][-1]["url"], fechada=True, ultimo_comentario="vou ajustar a config")
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(len(self.forja.decisoes), 1)
 
     def test_ux_engineer_usa_o_modelo_de_ux_ui(self):
         config = copy.deepcopy(CONFIG)
@@ -1574,8 +1602,32 @@ class TestesA_CadeiaDoOrquestrador(Base):
         self.assertIn("RESPOSTA-ANTIGA", self.runs(FABLE)[-1]["prompt"])
         self.assertTrue(self.orquestrador()["bloqueio"])  # o bloqueio continua até a issue dele
         # o run da resposta também termina sem PR: nada de plano_invalido enquanto bloqueado
+        url = self.orquestrador()["bloqueio"]["url"]
         self.terminar_sem_pr(d, 3)
         self.assertEqual(len(self.runs(FABLE)), n + 1)
+        self.assertEqual(self.orquestrador()["bloqueio"]["url"], url)  # a issue do bloqueio continua ligada
+        self.assertFalse(any("3 vezes seguidas" in a for a in self.estado()["avisos"]))
+        self.assertEqual([t for t, _ in self.forja.decisoes].count(TITULO_SEM_PLANO), 1)
+
+    def test_duas_respostas_sem_resultado_durante_o_bloqueio_mantem_a_issue_ligada(self):
+        """c07: as duas respostas passam pelo bloqueio e os dois runs ficam sem PR."""
+        d, _ = self.acordar_por_falha()
+        outras = [self.forja.abrir_decisao(REPO, "t%d" % i, "c") for i in range(2)]
+        for i, u in enumerate(outras):
+            d.estado["decisoes"].append({"url": u, "motivo": "pergunta %d" % i, "alvo": "x"})
+        d._salvar()
+        self.terminar_sem_pr(d, 3)
+        url = self.orquestrador()["bloqueio"]["url"]
+        for u in outras:
+            self.forja.definir_decisao(u, fechada=True, ultimo_comentario="resposta")
+        for _ in range(6):
+            rid = self.orquestrador()["runId"]
+            if rid:
+                self.motor.definir_run(rid, estado="succeeded")
+            d.ciclo()
+            self.assertEqual(self.orquestrador()["bloqueio"]["url"], url)
+        self.assertEqual([t for t, _ in self.forja.decisoes].count(TITULO_SEM_PLANO), 1)
+        self.assertEqual(sum("Motivo: resposta_paulo" in r["prompt"] for r in self.runs(FABLE)), 2)
 
     def test_plano_invalido_leva_a_acordada_anterior(self):
         d = self.preparar_raia()
@@ -1690,10 +1742,11 @@ class TestesC_CiDoPrDoOrquestrador(Base):
         self.assertIn("CI pendente", corpo)
         self.assertIsNone(self.orquestrador()["runId"])
 
-    def test_vermelho_e_ausente_abrem_decisao_e_contam(self):
-        for ci in ("vermelho", "ausente"):
+    def test_vermelho_e_ausente_obrigatorio_abrem_decisao_e_contam(self):
+        for ci, config in (("vermelho", CONFIG), ("ausente", dict(CONFIG, ciObrigatorioNoPlano=True))):
             with self.subTest(ci=ci):
                 self.setUp()
+                self.config_padrao = config
                 d, rid = self.acordar_por_falha()
                 self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")), ci=ci)
                 d.ciclo()
@@ -1724,7 +1777,7 @@ class TestesC2_FalhaAoTratarOPr(Base):
 class TestesD2_AvisoDePlanRunIlegivel(Base):
     def test_plan_run_ilegivel_avisa_uma_vez(self):
         self.motor = MotorLeituraFalha()
-        d = self.preparar_raia()
+        d = self.preparar_raia(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
         self.motor.falhando.add("plano-1")
         for _ in range(12):
             d.ciclo()
@@ -1756,23 +1809,23 @@ class TestesD_WarrenInstavel(Base):
         self.assertEqual(len(self.runs(FABLE)), 2)
         self.assertIn("Motivo: raia_falhou", self.runs(FABLE)[-1]["prompt"])
 
-    def test_warren_inacessivel_por_10_ciclos_abre_uma_decisao_que_fecha_sozinha(self):
+    def test_warren_inacessivel_por_5_ciclos_abre_uma_decisao_que_fecha_sozinha(self):
         self.motor = MotorLeituraFalha()
         d = self.preparar_raia()
         self.motor.todos = True
-        for _ in range(9):
+        for _ in range(4):
             d.ciclo()
         self.assertEqual(self.forja.decisoes, [])
         for _ in range(5):
             d.ciclo()
         titulos = [t for t, _ in self.forja.decisoes]
         self.assertEqual(titulos, ["[fábrica] Warren inacessível"])
+        url = self.estado()["warrenFora"]["url"]
         self.motor.todos = False
         d.ciclo()
         d.ciclo()
-        url = self.estado()["warrenFora"]["url"] if self.estado()["warrenFora"].get("url") else None
-        self.assertIsNone(url)
-        self.assertEqual(len(self.forja.fechados), 1)
+        self.assertIsNone(self.estado()["warrenFora"].get("url"))
+        self.assertTrue(self.forja.decisao(url)["fechada"])
         self.assertTrue(any("Warren voltou" in a for a in self.estado()["avisos"]))
 
 
@@ -1805,7 +1858,8 @@ class TestesE_OperacaoZeroManual(Base):
         url = self.estado()["decisaoPausa"]["url"]
         d.retomar()
         d.ciclo()
-        self.assertIn(url, [u for u, _ in self.forja.fechados])
+        self.assertTrue(self.forja.decisao(url)["fechada"])
+        self.assertIn(("fechar_decisao", url), [(n, a.get("url")) for n, a in self.forja.chamadas])
         self.assertIsNone(self.estado().get("decisaoPausa"))
 
     def test_e2_com_a_trava_tomada_iniciar_spec_e_retomar_viram_pedidos(self):
@@ -1905,7 +1959,8 @@ class TestesH_ReplanejamentoDeRaiaEmExecucao(Base):
         acoes = d.ciclo()
         self.assertIn(("cancelar_plano", {"plan_run_id": "plano-1"}), self.motor.chamadas)
         self.assertEqual(acoes[0], {"tipo": "cancelar_raia", "raia": "a", "planoSeeds": "pl-00a2"})
-        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "obsoleta")
+        self.assertNotIn("s-1", self.estado()["seeds"])
+        self.assertEqual(self.estado()["raias"]["a"]["seedsSubstituidas"], ["s-1"])
         self.assertEqual([x["plano_seeds"] for x in self.planos_despachados()], ["pl-000a", "pl-00a2"])
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
         self.assertNotEqual(self.estado()["raias"]["a"]["planRunId"], "plano-1")
@@ -1970,7 +2025,8 @@ class TestesI_Robustez(Base):
         outro.ciclo()
         self.assertEqual(len([t for t, _ in self.forja.decisoes if "s-1" in t]), 1)
         self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
-        self.assertTrue(any("aguardar_humano" in a for a in self.estado()["avisos"]))
+        self.assertEqual([x["alvo"] for x in self.estado()["decisoes"]], ["s-1"])
+        self.assertEqual(self.estado()["decisoesPendentes"], [])
 
     def test_i3_queda_depois_do_merge_do_orquestrador_nao_abre_decisao(self):
         d, rid = self.acordar_por_falha()
@@ -2106,6 +2162,541 @@ class TestesI_Robustez(Base):
         self.assertNotIn("spec já iniciada", saidas[0])
         self.assertIn("spec já iniciada", saidas[1])
         self.assertEqual(len(self.runs(FABLE)), 1)
+
+
+# ---------------------------------------------------------------- rodada 2 (N1, I1–I5, J, K, L1–L9)
+
+
+class MotorForaDoAr(motor.MotorFalso):
+    """Com `fora`, toda chamada falha na camada de rede (o Warren caiu)."""
+
+    fora = False
+
+    def _talvez(self, nome, **argumentos):
+        if self.fora:
+            self._registrar(nome, **argumentos)
+            raise motor.FalhaDeRede("GET /x: falha de rede (ConnectionRefusedError)")
+
+    def run(self, run_id):
+        self._talvez("run", run_id=run_id)
+        return super().run(run_id)
+
+    def plano(self, plan_run_id):
+        self._talvez("plano", plan_run_id=plan_run_id)
+        return super().plano(plan_run_id)
+
+    def despachar_run(self, **argumentos):
+        self._talvez("despachar_run", **argumentos)
+        return super().despachar_run(**argumentos)
+
+    def despachar_plano(self, **argumentos):
+        self._talvez("despachar_plano", **argumentos)
+        return super().despachar_plano(**argumentos)
+
+    def ultimo_texto(self, run_id):
+        self._talvez("ultimo_texto", run_id=run_id)
+        return super().ultimo_texto(run_id)
+
+    def modelo_efetivo(self, run_id):
+        self._talvez("modelo_efetivo", run_id=run_id)
+        return super().modelo_efetivo(run_id)
+
+
+class TestesRodada2(Base):
+    # ------------------------------------------------ I1
+    def test_i1_queda_curta_do_warren_nao_escala_a_seed(self):
+        self.motor = MotorForaDoAr()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.fora = True
+        for _ in range(5):
+            d.ciclo()
+        self.motor.fora = False
+        d.ciclo()
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual((seed["estado"], seed["revisaoRunId"], seed["pendenteHumano"]), ("em_revisao", rid, None))
+        abertas = [t for u, t in zip(self.forja._decisoes, [t for t, _ in self.forja.decisoes]) if not self.forja._decisoes[u]["fechada"]]
+        self.assertEqual(abertas, [])
+        self.assertEqual([t for t, _ in self.forja.decisoes], ["[fábrica] Warren inacessível"])
+        self.terminar_revisao(H1)  # o run original termina bem e ainda é observado
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H1)])
+        self.assertEqual(len(self.runs(OPUS)), 1)
+
+    def test_i1_queda_longa_mantem_orquestrador_e_fixer_originais(self):
+        self.motor = MotorForaDoAr()
+        d, orq = self.acordar_por_falha(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        self.motor.definir_plano("plano-2", "running", [{"seedId": "s-b", "estado": "pr_open", "runId": "rb", "prUrl": PR}])
+        self.forja.definir_pr(PR, head_sha=H1, branch="warren/s-b", arquivos=["src/b/x.ts"])
+        self.forja.definir_ci(REPO, H1, "vermelho")
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-b"]["revisaoRunId"]
+        self.motor.definir_run(rid, estado="succeeded")
+        self.motor.definir_texto(rid, veredito_texto(H1))
+        d.ciclo()
+        fixer = self.estado()["seeds"]["s-b"]["fixerRunId"]
+        self.assertTrue(fixer)
+        self.motor.fora = True
+        for _ in range(12):
+            d.ciclo()
+        e = self.estado()
+        self.assertEqual((e["orquestrador"]["runId"], e["seeds"]["s-b"]["fixerRunId"]), (orq, fixer))
+        self.assertIsNone(e["pausado"])
+        self.assertNotIn(e["seeds"]["s-b"]["estado"], ("falhou", "bloqueada_humano"))
+        self.motor.fora = False
+        self.motor.definir_run(orq, estado="succeeded")  # termina sem PR: segue o fluxo normal
+        self.motor.definir_run(fixer, estado="succeeded")
+        d.ciclo()
+        d.ciclo()
+        self.assertNotEqual(self.estado()["orquestrador"]["runId"], orq)
+        self.assertIsNone(self.estado()["seeds"]["s-b"]["fixerRunId"])
+        self.assertIsNone(self.estado()["warrenFora"]["url"])
+
+    def test_i1_despacho_com_falha_de_rede_e_adiado(self):
+        class MotorRedeInstavel(motor.MotorFalso):
+            falhas = 1
+
+            def despachar_plano(self, **argumentos):
+                if self.falhas:
+                    self.falhas -= 1
+                    self._registrar("despachar_plano", **argumentos)
+                    raise motor.FalhaDeRede("POST /plan-runs: falha de rede (TimeoutError)")
+                return super().despachar_plano(**argumentos)
+
+        self.motor = MotorRedeInstavel()
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+        linha = [x for x in self.log() if x.get("evento") == "acao"][0]
+        self.assertEqual(linha["resultado"], {"adiado": True, "rede": True})
+
+    # ------------------------------------------------ I2: queda em cada gravação
+    def _queda_em_cada_gravacao(self, preparar, agir, verificar, maximo=14):
+        original = despachante.gravar_json_atomico
+        for modo in ("antes", "depois"):
+            for k in range(1, maximo + 1):
+                with self.subTest(modo=modo, k=k):
+                    self.setUp()
+                    ctx = preparar()
+                    contagem = {"n": 0}
+
+                    def gravar(caminho, dados, _k=k, _modo=modo):
+                        if pathlib.Path(caminho).name == "estado.json":
+                            contagem["n"] += 1
+                            if contagem["n"] == _k:
+                                if _modo == "depois":
+                                    original(caminho, dados)
+                                raise KeyboardInterrupt
+                        return original(caminho, dados)
+
+                    with mock.patch.object(despachante, "gravar_json_atomico", side_effect=gravar):
+                        try:
+                            agir(ctx)
+                        except KeyboardInterrupt:
+                            pass
+                    outro = self.novo()
+                    for _ in range(3):
+                        outro.ciclo()
+                    verificar(ctx)
+
+    def _abertas(self, trecho):
+        return [u for u, (t, _) in zip(self.forja._decisoes, self.forja.decisoes) if trecho in t and not self.forja._decisoes[u]["fechada"]]
+
+    def test_i2_aguardar_humano_sem_perda_nem_duplicata(self):
+        def preparar():
+            d = self.preparar_raia()
+            self.abrir_pr(H1, arquivos=("db/migrations/1.sql",))
+            d.ciclo()
+            self.terminar_revisao(H1)
+            return d
+
+        def verificar(_):
+            abertas = self._abertas("s-1: decisão")
+            self.assertEqual(len(abertas), 1)
+            self.assertEqual([x["url"] for x in self.estado()["decisoes"] if x["alvo"] == "s-1"], abertas)
+            self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+            self.assertEqual(self.estado()["decisoesPendentes"], [])
+
+        self._queda_em_cada_gravacao(preparar, lambda d: d.ciclo(), verificar)
+
+    def test_i2_issue_de_pausa_sem_perda_nem_duplicata(self):
+        def preparar():
+            d = self.preparar_raia()
+            self.abrir_pr(H1)
+            d.ciclo()
+            rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+            self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+            self.motor.definir_texto(rid, "quota reached")
+            return d
+
+        def verificar(_):
+            abertas = self._abertas("despachante pausado")
+            self.assertEqual(len(abertas), 1)
+            self.assertEqual(self.estado()["decisaoPausa"]["url"], abertas[0])
+
+        self._queda_em_cada_gravacao(preparar, lambda d: d.ciclo(), verificar)
+
+    def test_i2_issue_de_bloqueio_sem_perda_nem_duplicata(self):
+        def preparar():
+            d, rid = self.acordar_por_falha()
+            self.motor.definir_run(rid, estado="succeeded")
+            d.ciclo()
+            self.motor.definir_run(self.orquestrador()["runId"], estado="succeeded")
+            return d
+
+        def verificar(_):
+            abertas = self._abertas("sem plano válido")
+            self.assertEqual(len(abertas), 1)
+            self.assertEqual(self.orquestrador()["bloqueio"]["url"], abertas[0])
+            self.assertIn(abertas[0], [x["url"] for x in self.estado()["decisoes"]])
+            self.assertEqual(len(self.runs(FABLE)), 2)
+
+        self._queda_em_cada_gravacao(preparar, lambda d: d.ciclo(), verificar)
+
+
+    def test_i1_falha_de_rede_de_um_run_nunca_conta_para_ele(self):
+        class MotorRedeNoRun(motor.MotorFalso):
+            alvo = None
+
+            def run(self, run_id):
+                if run_id == self.alvo:
+                    self._registrar("run", run_id=run_id)
+                    raise motor.FalhaDeRede("GET /runs/x: falha de rede (TimeoutError)")
+                return super().run(run_id)
+
+        self.motor = MotorRedeNoRun()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.alvo = rid
+        for _ in range(8):
+            d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], rid)
+        self.assertEqual(len(self.runs(OPUS)), 1)
+
+    def test_i1_sem_nenhuma_leitura_boa_nada_vira_failed(self):
+        self.motor = MotorLeituraFalha()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.todos = True  # HTTP 500 em tudo: nenhuma leitura deu certo
+        for _ in range(8):
+            d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], rid)
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        self.assertEqual([t for t, _ in self.forja.decisoes], ["[fábrica] Warren inacessível"])
+
+    def test_i2_intencao_de_pausa_obsoleta_fecha_a_issue_achada(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+        self.motor.definir_texto(rid, "quota reached")
+        original = d._registrar_intencao
+
+        def cair(*a, **k):
+            raise KeyboardInterrupt
+
+        d._registrar_intencao = cair
+        with self.assertRaises(KeyboardInterrupt):
+            d.ciclo()  # a issue de pausa foi aberta; o registro, não
+        (url,) = self._abertas("despachante pausado")
+        despachante.retomar(self.raiz)  # a pausa acabou por outro caminho antes do reinício
+        outro = self.novo()
+        outro.ciclo()
+        self.assertTrue(self.forja.decisao(url)["fechada"])
+        self.assertEqual(self.estado()["decisoesPendentes"], [])
+        self.assertIsNone(self.estado().get("decisaoPausa"))
+        del original
+
+    def test_i5_prs_das_seeds_tiradas_pelo_replanejamento_de_raia_falha_sao_fechados(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.motor.definir_plano("plano-1", "failed", [{"seedId": "s-1", "estado": "pr_open", "runId": "run-filho", "prUrl": PR}], falha="run_failed")
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+        self.motor.definir_run(self.orquestrador()["runId"], estado="succeeded", prUrl=PR_ORQ)
+        self.forja.definir_pr(PR_ORQ, head_sha=H3, branch="warren/orq", arquivos=[".fabrica/plano.json"])
+        self.forja.definir_ci(REPO, H3, "verde")
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")), ref=H3)
+        d.ciclo()
+        d.ciclo()
+        self.assertNotIn("s-1", self.estado()["seeds"])
+        self.assertIn(PR, [u for u, _ in self.forja.fechados])
+
+    # ------------------------------------------------ I3
+    def test_i3_substituicao_pendente_segura_gates_e_retomar_da_tentativa_antiga(self):
+        class MotorCancelaLotado(motor.MotorFalso):
+            recusas = 4
+
+            def cancelar_plano(self, plan_run_id):
+                if self.recusas:
+                    self.recusas -= 1
+                    self._registrar("cancelar_plano", plan_run_id=plan_run_id)
+                    raise motor.MotorOcupado(30)
+                return super().cancelar_plano(plan_run_id)
+
+        self.motor = MotorCancelaLotado()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+        self.terminar_revisao(H1)
+        d.estado["raias"]["a"]["retomar"] = True
+        d._salvar()
+        revisoes = len(self.runs(OPUS))
+        for _ in range(4):
+            acoes = d.ciclo()
+            self.assertFalse([a for a in acoes if a["tipo"] in ("mergear", "revisar", "verificar", "corrigir", "retomar_raia")])
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(len(self.runs(OPUS)), revisoes)
+        self.assertNotIn("retomar_plano", [n for n, _ in self.motor.chamadas])
+        self.assertEqual(len([n for n, _ in self.motor.chamadas if n == "cancelar_plano"]), 4)
+        d.ciclo()
+        self.assertEqual(self.planos_despachados()[-1]["plano_seeds"], "pl-00b2")
+        self.assertEqual(self.forja.merges, [])
+
+    # ------------------------------------------------ I4
+    def test_i4_bloqueio_fechado_sem_comentario_acorda_com_resposta_vazia(self):
+        d, _ = self.acordar_por_falha()
+        for _ in range(3):
+            rid = self.orquestrador()["runId"]
+            if rid:
+                self.motor.definir_run(rid, estado="succeeded")
+            d.ciclo()
+        url = self.orquestrador()["bloqueio"]["url"]
+        n = len(self.runs(FABLE))
+        self.forja.definir_decisao(url, fechada=True)
+        d.ciclo()
+        self.assertIsNone(self.orquestrador()["bloqueio"])
+        self.assertEqual(len(self.runs(FABLE)), n + 1)
+        ultimo = self.runs(FABLE)[-1]["prompt"]
+        self.assertIn("Motivo: resposta_paulo", ultimo)
+        self.assertIn('"resposta": ""', ultimo)
+
+    # ------------------------------------------------ I5
+    def test_i5_seed_reaproveitada_pelo_plano_novo_e_revisada(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+        d.ciclo()
+        novo_plan_run = self.estado()["raias"]["a"]["planRunId"]
+        pr7 = "https://github.com/dono/cliente/pull/77"
+        self.motor.definir_plano(novo_plan_run, "running", [{"seedId": "s-1", "estado": "pr_open", "runId": "ra2", "prUrl": pr7}])
+        self.forja.definir_pr(pr7, head_sha=H2, branch="warren/s-1-2", arquivos=["src/a/x.ts"])
+        self.forja.definir_ci(REPO, H2, "verde")
+        d.ciclo()
+        self.assertEqual(self.runs(OPUS)[-1]["branch_existente"], "warren/s-1-2")
+        self.assertEqual(self.estado()["seeds"]["s-1"]["pr"], pr7)
+
+    # ------------------------------------------------ J
+    def test_j_cota_num_filho_pausa_e_a_raia_continua_depois_do_retomar(self):
+        d = self.preparar_raia()
+        self.motor.definir_plano(
+            "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
+        )
+        self.motor.definir_texto("rf", "API Error: usage limit reached")
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(e["pausado"], "cota")
+        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["retomar"]), ("executando", True))
+        self.assertEqual(self.runs(FABLE), [])
+        d.ciclo()
+        self.forja.definir_decisao(self.estado()["decisaoPausa"]["url"], fechada=True)
+        d.ciclo()
+        self.assertIn(("retomar_plano", {"plan_run_id": "plano-1"}), self.motor.chamadas)
+        self.assertEqual(self.estado()["raias"]["a"]["retomadas"], 0)
+        self.assertEqual(self.runs(FABLE), [])
+
+    def test_j_falha_de_provedor_que_nao_e_cota_segue_o_caminho_normal(self):
+        d = self.preparar_raia()
+        self.motor.definir_plano(
+            "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
+        )
+        self.motor.definir_texto("rf", "Internal server error")
+        d.ciclo()
+        self.assertIsNone(self.estado()["pausado"])
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
+
+    # ------------------------------------------------ K
+    def test_k_ci_ausente_no_pr_do_orquestrador_mergeia(self):
+        d, rid = self.acordar_por_falha()
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")), ci="ausente")
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+
+    # ------------------------------------------------ L1, L2
+    def test_l1_queda_depois_do_cancelamento_nao_acorda_o_orquestrador(self):
+        class MotorQueCaiNoCancelar(motor.MotorFalso):
+            cair = True
+
+            def cancelar_plano(self, plan_run_id):
+                super().cancelar_plano(plan_run_id)
+                if self.cair:
+                    self.cair = False
+                    raise KeyboardInterrupt
+
+        self.motor = MotorQueCaiNoCancelar()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+        with self.assertRaises(KeyboardInterrupt):
+            d.ciclo()
+        outro = self.novo()
+        outro.ciclo()
+        outro.ciclo()
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertEqual(self.planos_despachados()[-1]["plano_seeds"], "pl-00b2")
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+        self.assertEqual(len([c for c in self.motor.chamadas if c[0] == "cancelar_plano"]), 1)
+
+    def test_l2_seed_com_pr_ja_mergeado_fica_mergeada_na_substituicao(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.forja.definir_pr(PR, head_sha=H1, branch="warren/s-1", arquivos=["src/a/x.ts"], aberto=False, mergeado=True)
+        self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "mergeada")
+        self.assertEqual(self.forja.fechados, [])
+        self.assertEqual(self.estado()["raias"]["a"]["seedsSubstituidas"], [])
+
+    # ------------------------------------------------ L3, L4
+    def test_l3_plano_invalido_com_alvo_estavel_e_resposta_na_frente(self):
+        d, rid = self.acordar_por_falha()
+        outra = self.forja.abrir_decisao(REPO, "t", "c")
+        d.estado["decisoes"].append({"url": outra, "motivo": "pergunta", "alvo": "x"})
+        d._salvar()
+        self.motor.definir_run(rid, estado="succeeded")
+        self.forja.definir_decisao(outra, fechada=True, ultimo_comentario="RESPOSTA")
+        d.ciclo()
+        self.assertIn("Motivo: resposta_paulo", self.runs(FABLE)[-1]["prompt"])
+        (pendente,) = self.estado()["acordarPendentes"]
+        self.assertEqual((pendente["motivo"], pendente["alvo"]), ("plano_invalido", "orquestrador"))
+
+    def test_l3_bloqueio_tira_o_plano_invalido_da_fila(self):
+        d, rid = self.acordar_por_falha(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        # o run termina sem PR no mesmo ciclo em que a raia b falha: raia_falhou:b passa na frente
+        self.motor.definir_run(rid, estado="succeeded")
+        self.motor.definir_plano("plano-2", "failed", [], falha="cancelado")
+        d.ciclo()
+        self.assertIn("Motivo: raia_falhou", self.runs(FABLE)[-1]["prompt"])
+        self.assertEqual([p["motivo"] for p in self.estado()["acordarPendentes"]], ["plano_invalido"])
+        self.motor.definir_run(self.orquestrador()["runId"], estado="succeeded")
+        d.ciclo()
+        self.assertTrue(self.orquestrador()["bloqueio"])
+        self.assertEqual(self.estado()["acordarPendentes"], [])
+
+    def test_l4_queda_depois_de_contar_nao_conta_o_mesmo_run_de_novo(self):
+        d, rid = self.acordar_por_falha()
+        self.motor.definir_run(rid, estado="succeeded")
+        with mock.patch.object(despachante.est, "concluir_orquestrador", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                d.ciclo()
+        outro = self.novo()
+        outro.ciclo()
+        self.assertEqual(self.orquestrador()["semResultadoSeguidos"], 1)
+        self.assertFalse(self.orquestrador().get("bloqueio"))
+        self.assertEqual(len(self.runs(FABLE)), 2)
+
+    # ------------------------------------------------ L5, L6
+    def test_l5_issue_de_pausa_sumida_e_aberta_de_novo(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+        self.motor.definir_texto(rid, "quota reached")
+        d.ciclo()
+        velha = self.estado()["decisaoPausa"]["url"]
+        del self.forja._decisoes[velha]
+        d.ciclo()
+        nova = self.estado()["decisaoPausa"]["url"]
+        self.assertNotEqual(nova, velha)
+        self.assertFalse(self.forja.decisao(nova)["fechada"])
+
+    def test_l6_pedido_que_nao_pode_ser_apagado_nao_e_reaplicado(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        despachante.enfileirar_pedido(self.raiz, {"comando": "retomar"})
+        os.chmod(self.raiz / "entrada", 0o500)
+        try:
+            d.ciclo()
+            rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+            self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+            self.motor.definir_texto(rid, "quota reached")
+            for _ in range(4):
+                d.ciclo()
+            self.assertEqual(self.estado()["pausado"], "cota")
+            self.assertEqual(len(self.runs(OPUS)), 1)
+            self.assertEqual(len([a for a in self.estado()["avisos"] if "não foi possível apagar o pedido" in a]), 1)
+        finally:
+            os.chmod(self.raiz / "entrada", 0o700)
+
+    # ------------------------------------------------ L7, L8, L9, fuso
+    def test_l7_ci_pendente_loga_o_pr_do_orquestrador_uma_vez(self):
+        d, rid = self.acordar_por_falha()
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")), ci="pendente")
+        for minuto in range(0, 100, 15):
+            self.instante = datetime.datetime(2026, 11, 3, 12, 0) + datetime.timedelta(minutes=minuto)
+            d.ciclo()
+        self.assertEqual(len([x for x in self.log() if x.get("evento") == "pr_do_orquestrador"]), 1)
+
+    def test_ci_pendente_com_data_de_fuso_misturado_nao_quebra(self):
+        d, rid = self.acordar_por_falha()
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")), ci="pendente")
+        d.ciclo()
+        d.estado["orquestrador"]["ciPendenteDesde"] = "2026-11-03T12:00:00+00:00"
+        d._salvar()
+        d.ciclo()
+        self.assertEqual(self.orquestrador()["runId"], rid)
+        self.assertNotIn("falhasTratar", self.orquestrador())
+        self.assertEqual(self.forja.decisoes, [])
+
+    def test_l8_rodar_recarrega_o_estado_depois_de_tomar_a_trava(self):
+        self.publicar(plano(raia("a")))
+        primeiro = self.novo()
+        primeiro.iniciar()
+        segundo = self.novo()  # construído antes do ciclo do primeiro
+        primeiro.ciclo()
+        segundo.rodar(intervalo=1, ciclos=1, dormir=lambda s: None)
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    def test_l9_decisao_do_pr_substituido_e_fechada(self):
+        d, rid = self.acordar_por_falha(plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json", "README.md"], plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        d.ciclo()
+        (decisao,) = [x for x in self.estado()["decisoes"] if x["alvo"] == PR_ORQ]
+        self.motor.definir_plano("plano-2", "failed", [], falha="cancelado")
+        d.ciclo()
+        novo = "https://github.com/dono/cliente/pull/91"
+        self.pr_do_orquestrador(
+            self.orquestrador()["runId"], [".fabrica/plano.json"], plano(raia("a"), raia("b", plano_seeds="pl-00bb")), head=H2, url=novo
+        )
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(novo, H2)])
+        self.assertTrue(self.forja.decisao(decisao["url"])["fechada"])
+        self.assertNotIn(decisao["url"], [x["url"] for x in self.estado()["decisoes"]])
+        n = len(self.runs(FABLE))
+        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="pode mergear o 90")
+        d.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), n)
 
 
 # ---------------------------------------------------------------- estado compacto

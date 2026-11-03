@@ -6,6 +6,10 @@ import typing
 _CAMPOS_RUN = ("estado", "motivoFalha", "prUrl", "custoUsd")
 
 
+class FalhaDeRede(RuntimeError):
+    """O pedido não chegou ao serviço (conexão recusada, timeout, DNS): distinto de um HTTP >= 400."""
+
+
 class MotorOcupado(Exception):
     """O motor recusou o despacho por falta de cota ou de vaga (HTTP 429)."""
 

@@ -160,7 +160,8 @@ def sincronizar_plano(estado: dict, plano: dict) -> dict:
     """Acrescenta as raias novas como `planejada` e preserva as existentes.
 
     Exceção: uma raia `falhou` cujo `planoSeeds` mudou volta a `planejada` (é a nova tentativa
-    que o orquestrador planejou), e a chave `raia_falhou:<id>` sai de `chavesAcordadas`. Isso só
+    que o orquestrador planejou), a chave `raia_falhou:<id>` sai de `chavesAcordadas` e as seeds não
+    mergeadas da tentativa anterior saem do estado (ids em `seedsSubstituidas`). Isso só
     vale depois de o orquestrador ter sido acordado por essa falha e sem run dele em curso; senão
     a raia fica `falhou` e o fluxo normal emite `acordar raia_falhou`.
     """
@@ -185,27 +186,33 @@ def sincronizar_plano(estado: dict, plano: dict) -> dict:
             raias_do_estado[id_] = _raia_nova(plano_seeds)
             chave = _chave("raia_falhou", id_)
             estado["chavesAcordadas"] = [c for c in _lista(estado.get("chavesAcordadas")) if c != chave]
-            _tornar_obsoletas(estado, id_)
+            raias_do_estado[id_]["seedsSubstituidas"] = _remover_tentativa(estado, id_, avisar=True)
     return estado
 
 
-def _tornar_obsoletas(estado: dict, raia_id: str) -> None:
-    """As seeds da tentativa anterior da raia nunca mais recebem ação (nem merge)."""
-    for seed in _seeds(estado).values():
-        if not isinstance(seed, dict) or seed.get("raia") != raia_id or seed.get("estado") in TERMINAIS:
+def _remover_tentativa(estado: dict, raia_id: str, *, avisar: bool) -> list[str]:
+    """Tira do estado as seeds não mergeadas da tentativa anterior da raia e devolve os ids.
+
+    Fora do estado elas nunca mais recebem ação (nem merge), e um id reaproveitado pelo plano novo
+    começa limpo. As mergeadas ficam, para a contabilidade.
+    """
+    seeds = _seeds(estado)
+    removidas = []
+    for seed_id in list(seeds):
+        seed = seeds[seed_id]
+        if not isinstance(seed, dict) or seed.get("raia") != raia_id or seed.get("estado") == "mergeada":
             continue
-        seed["estado"] = "obsoleta"
-        if _texto(seed.get("pr")):
-            _avisar(
-                estado,
-                f"PR {seed['pr']} da tentativa anterior da raia {raia_id} ficou obsoleto; feche-o",
-            )
+        if avisar and _texto(seed.get("pr")) and seed.get("estado") != "obsoleta":
+            _avisar(estado, f"PR {seed['pr']} da tentativa anterior da raia {raia_id} ficou obsoleto; feche-o")
+        del seeds[seed_id]
+        removidas.append(seed_id)
+    return removidas
 
 
 def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
     """Replanejamento de uma raia `executando`: ela volta a `planejada` com o `planoSeeds` novo.
 
-    As seeds não terminais da tentativa anterior viram `obsoleta` (nunca mais recebem ação). Quem
+    As seeds não mergeadas da tentativa anterior saem do estado (ids em `seedsSubstituidas`). Quem
     chama cancela o Plan Run antigo e fecha os PRs dessas seeds antes.
     """
     estado = copy.deepcopy(estado)
@@ -219,9 +226,7 @@ def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
         _avisar(estado, f"substituir_raia: raia {raia_id!r} não está executando")
         return estado
     _raias(estado)[raia_id] = _raia_nova(plano_seeds)
-    for seed in _seeds(estado).values():
-        if isinstance(seed, dict) and seed.get("raia") == raia_id and seed.get("estado") not in TERMINAIS:
-            seed["estado"] = "obsoleta"
+    _raias(estado)[raia_id]["seedsSubstituidas"] = _remover_tentativa(estado, raia_id, avisar=False)
     return estado
 
 

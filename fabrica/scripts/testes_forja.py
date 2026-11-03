@@ -19,6 +19,7 @@ RAIZ = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ))
 
 import forja  # noqa: E402
+import motor  # noqa: E402
 import motor_warren  # noqa: E402
 import verificacao  # noqa: E402
 
@@ -890,6 +891,103 @@ class TestesMergeadoEFechar(unittest.TestCase):
         with self.assertRaises(ValueError):
             f.fechar_pr(PR_URL, "")
         self.assertEqual([n for n, _ in f.chamadas].count("fechar_pr"), 4)
+
+
+class TestesDecisoesRastreadas(unittest.TestCase):
+    """Rodada 2, I2/I4/L9: procurar pelo nonce, reabrir e fechar decisões."""
+
+    NONCE = "0123456789abcdef0123456789abcdef"
+
+    def issue(self, n, corpo, **extra):
+        item = {"html_url": "https://github.com/acme/app/issues/%d" % n, "body": corpo}
+        item.update(extra)
+        return item
+
+    def test_procurar_decisao_acha_pelo_marcador_e_pagina(self):
+        marcador = "<!-- fabrica:nonce=%s -->" % self.NONCE
+        pagina1 = [self.issue(i, "outra") for i in range(100)]
+        pagina2 = [
+            self.issue(500, "x " + marcador, pull_request={"url": "x"}),
+            self.issue(501, None),
+            self.issue(502, "texto\n\n" + marcador),
+        ]
+        f, t = novo(ok(pagina1), ok(pagina2))
+        self.assertEqual(f.procurar_decisao("acme/app", self.NONCE), "https://github.com/acme/app/issues/502")
+        t.exigir(self, 2)
+        self.assertEqual(
+            t.urls(),
+            [
+                API + "/repos/acme/app/issues?labels=fabrica%3Adecisao&state=all&per_page=100&page=1",
+                API + "/repos/acme/app/issues?labels=fabrica%3Adecisao&state=all&per_page=100&page=2",
+            ],
+        )
+
+    def test_procurar_decisao_sem_achado_devolve_none(self):
+        f, t = novo(ok([self.issue(1, "nada")]))
+        self.assertIsNone(f.procurar_decisao("acme/app", self.NONCE))
+        t.exigir(self, 1)
+
+    def test_procurar_decisao_entradas_e_respostas_invalidas(self):
+        for nonce in ("", "xyz", "0" * 31, None, self.NONCE.upper()):
+            f, t = novo()
+            with self.assertRaises(ValueError):
+                f.procurar_decisao("acme/app", nonce)
+            t.exigir(self, 0)
+        marcador = "<!-- fabrica:nonce=%s -->" % self.NONCE
+        for respostas, trecho in (
+            ([ok({"x": 1})], "lista"),
+            ([ok({"message": SEGREDO}, 500)], "HTTP 500"),
+            ([ok([{"html_url": "https://github.com/acme/app/pull/3", "body": marcador}])], "html_url"),
+        ):
+            f, t = novo(*respostas)
+            with self.assertRaises(RuntimeError) as ctx:
+                f.procurar_decisao("acme/app", self.NONCE)
+            self.assertIn(trecho, str(ctx.exception))
+            self.assertNotIn(SEGREDO, str(ctx.exception))
+
+    def test_reabrir_e_fechar_decisao(self):
+        for metodo, estado in (("reabrir_decisao", "open"), ("fechar_decisao", "closed")):
+            f, t = novo(ok({"id": 1}, 201), ok({"state": estado}))
+            self.assertIsNone(getattr(f, metodo)(ISSUE_URL, "comentário"))
+            t.exigir(self, 2)
+            self.assertEqual(t.requisicoes[0][0:2], ("POST", API + "/repos/acme/app/issues/7/comments"))
+            self.assertEqual(t.corpo_json(0), {"body": "comentário"})
+            self.assertEqual(t.requisicoes[1][0:2], ("PATCH", API + "/repos/acme/app/issues/7"))
+            self.assertEqual(t.corpo_json(1), {"state": estado})
+            for url, comentario in ((PR_URL, "c"), (ISSUE_URL, ""), ("x", "c")):
+                f, t = novo()
+                with self.assertRaises(ValueError):
+                    getattr(f, metodo)(url, comentario)
+                t.exigir(self, 0)
+            f, t = novo(ok({"message": SEGREDO}, 403))
+            with self.assertRaises(RuntimeError) as ctx:
+                getattr(f, metodo)(ISSUE_URL, "c")
+            self.assertNotIn(SEGREDO, str(ctx.exception))
+
+    def test_falha_de_rede_da_forja_e_falha_de_rede(self):
+        def transporte(metodo, url, headers, corpo):
+            raise ConnectionRefusedError("x")
+
+        f = forja.ForjaGitHub(TOKEN, transporte)
+        with self.assertRaises(motor.FalhaDeRede):
+            f.mergear(PR_URL, SHA)
+
+    def test_falsa_procura_reabre_e_fecha(self):
+        f = forja.ForjaFalsa()
+        url = f.abrir_decisao("acme/app", "t", "corpo <!-- fabrica:nonce=%s -->" % self.NONCE)
+        self.assertEqual(f.procurar_decisao("acme/app", self.NONCE), url)
+        self.assertIsNone(f.procurar_decisao("acme/app", "f" * 32))
+        f.fechar_decisao(url, "fechada")
+        self.assertEqual(f.decisao(url), {"fechada": True, "ultimoComentario": "fechada"})
+        f.reabrir_decisao(url, "reaberta")
+        self.assertEqual(f.decisao(url), {"fechada": False, "ultimoComentario": "reaberta"})
+        with self.assertRaises(KeyError):
+            f.fechar_decisao("https://github.com/acme/app/issues/99", "x")
+        with self.assertRaises(ValueError):
+            f.reabrir_decisao(PR_URL, "x")
+        nomes = [n for n, _ in f.chamadas]
+        for nome in ("procurar_decisao", "fechar_decisao", "reabrir_decisao"):
+            self.assertIn(nome, nomes)
 
 
 class TestesForjaFalsa(unittest.TestCase):

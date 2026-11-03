@@ -1018,6 +1018,31 @@ class TestesModeloEfetivo(unittest.TestCase):
         self.assertTrue(hasattr(motor.Motor, "modelo_efetivo"))
 
 
+class TestesFalhaDeRede(unittest.TestCase):
+    """Rodada 2, I1: falha na camada de rede é distinguível de um HTTP >= 400."""
+
+    def test_transporte_padrao_levanta_falha_de_rede(self):
+        for erro in (urllib.error.URLError("x"), TimeoutError("x"), ConnectionRefusedError("x"), OSError("x")):
+            with mock.patch.object(motor_warren, "_abrir", side_effect=erro):
+                with self.assertRaises(motor.FalhaDeRede) as ctx:
+                    motor_warren._transporte_urllib("POST", BASE + "/runs", {}, b"{}")
+            self.assertIsInstance(ctx.exception, RuntimeError)
+
+    def test_transporte_injetado_com_erro_de_socket_vira_falha_de_rede(self):
+        def transporte(metodo, url, headers, corpo):
+            raise ConnectionRefusedError("recusado")
+
+        m = motor_warren.MotorWarren(BASE, TOKEN, transporte)
+        with self.assertRaises(motor.FalhaDeRede):
+            m.despachar_run(**ARGS_RUN)
+
+    def test_http_500_nao_e_falha_de_rede(self):
+        m, _ = novo((500, {}, b""))
+        with self.assertRaises(RuntimeError) as ctx:
+            m.despachar_run(**ARGS_RUN)
+        self.assertNotIsInstance(ctx.exception, motor.FalhaDeRede)
+
+
 class TestesCancelarPlano(unittest.TestCase):
     def test_warren_cancela_com_post_e_corpo_vazio(self):
         m, t = novo(ok({"planRun": {"id": "p/1", "state": "cancelled"}}))
