@@ -1576,6 +1576,7 @@ class TestesVisaoGeralEVersao(unittest.TestCase):
     def test_motor_falso_conta_os_runs_nao_terminais(self):
         m = motor.MotorFalso()
         self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 0)
+        self.assertIs(m.visao_geral()["services"]["dbReachable"], True)
         a = m.despachar_run(**ARGS_RUN)
         b = m.despachar_run(**dict(ARGS_RUN, prompt="outro"))
         self.assertEqual(m.visao_geral()["runs"]["nonTerminal"], 2)

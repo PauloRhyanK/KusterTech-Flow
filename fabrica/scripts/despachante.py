@@ -129,11 +129,21 @@ MAX_FECHAMENTOS_SEM_COMENTARIO = 3
 CICLOS_PARA_ACHAR_RETRY = 3
 LIMITE_NONCES_DE_RUNS = 100
 OBSERVACAO_FECHADA_SEM_COMENTARIO = "decisão fechada %d vezes sem comentário" % MAX_FECHAMENTOS_SEM_COMENTARIO
-# Task 7b: o preparar_warren roda na partida e, enquanto o --model não estiver no adaptador, a cada 20 ciclos
+# Task 7b: o preparar_warren roda na partida e, enquanto o Warren não estiver preparado, a cada 20 ciclos (a cada
+# ciclo enquanto espera runs); depois de 2 esperas seguidas, a drenagem segura as ações que criam runs ou mergeiam
 CICLOS_PREPARAR_WARREN = 20
-ESTADOS_DO_PREPARAR = ("ja_aplicado", "versao_desconhecida", "aguardando_runs", "aplicado", "erro")
+ESTADOS_DO_PREPARAR = ("ja_aplicado", "versao_desconhecida", "aguardando_runs", "aplicado", "revertido", "erro")
 WARREN_PREPARADO = ("ja_aplicado", "aplicado")
+ESTADOS_SEM_MODELO = ("versao_desconhecida", "erro", "revertido")
 AVISO_WARREN_SEM_MODELO = "o Warren não aplica modelo por papel; a conferência de modelo efetivo vai acusar a divergência"
+AVISO_WARREN_FORA_APOS_ROLLBACK = "Warren fora do ar após rollback"
+TITULO_WARREN_ROLLBACK = "[fábrica] Warren fora do ar após rollback"
+AVISO_AUTOMERGE = "não foi possível desligar o warren-automerge.service (ele mergeia PRs com check falhando); nova tentativa em 20 ciclos"
+AVISO_DROPIN = "não foi possível gravar o drop-in do systemd com WARREN_PLAN_RUN_MERGE_TIMEOUT_MS; nova tentativa em 20 ciclos"
+ESPERAS_PARA_DRENAR = 2
+DRENAGEM_MAXIMA = datetime.timedelta(minutes=45)
+PAUSA_ENTRE_DRENAGENS = datetime.timedelta(hours=6)
+ACOES_SEGURAS_NA_DRENAGEM = ("despachar_raia", "revisar", "corrigir", "acordar", "mergear")
 
 class OutroDespachante(Exception):
     """A trava da raiz já está com outro processo."""
@@ -479,6 +489,8 @@ class Despachante:
         self._limpar = limpar_residuos
         # sem preparar injetado (testes, ou outro motor) nada é tocado no Warren; o `construir` liga o real
         self._preparar_warren = preparar_warren
+        # E: o sha do adaptador depois de um rollback; só em memória (um reinício do despachante libera nova tentativa)
+        self._sha_revertido = None
         conhecidos = {s for s in segredos if isinstance(s, str)} | {s.strip() for s in segredos if isinstance(s, str)}
         # os mais longos primeiro, para um segredo que contém outro ser trocado inteiro
         self._segredos = tuple(sorted((s for s in conhecidos if len(s) >= TAMANHO_MINIMO_SEGREDO), key=len, reverse=True))
@@ -713,7 +725,7 @@ class Despachante:
         self._validar_spec(spec)
         self._log({"evento": "iniciar", "spec": spec})
         self._enfileirar_acordar("nova_spec", spec, {"spec": spec})
-        if executar:
+        if executar and not self._drenando():
             acao = self._proposta_de_pendente()
             if acao is not None and acao["motivo"] == "nova_spec" and acao["alvo"] == spec:
                 self._executar(acao)
@@ -782,7 +794,7 @@ class Despachante:
             self._log(dict({"evento": "limpar_residuos"}, **registro))
             feitos = 0
             while ciclos is None or feitos < ciclos:
-                if feitos == 0 or (feitos % CICLOS_PREPARAR_WARREN == 0 and not self._warren_preparado()):
+                if feitos == 0 or self._preparar_agora(feitos):
                     self._preparar_o_warren()
                 feitos += 1
                 try:
@@ -795,31 +807,128 @@ class Despachante:
 
     # ------------------------------------------------------------ preparar_warren (Task 7b)
 
+    def _preparar_ligado(self) -> bool:
+        return self._preparar_warren is not None and bool(_dict(self.config.get("warren")).get("prepararAutomatico", True))
+
     def _warren_preparado(self) -> bool:
-        return _dict(self.estado.get("warrenPreparado")).get("estado") in WARREN_PREPARADO
+        preparado = _dict(self.estado.get("warrenPreparado"))
+        return (
+            preparado.get("estado") in WARREN_PREPARADO and preparado.get("dropin") != "erro" and preparado.get("automerge") != "erro"
+        )
+
+    def _preparar_agora(self, feitos: int) -> bool:
+        """D: a cada ciclo enquanto espera runs; senão, a cada 20 ciclos enquanto não estiver preparado."""
+        if _dict(self.estado.get("warrenPreparado")).get("estado") == "aguardando_runs":
+            return True
+        return feitos % CICLOS_PREPARAR_WARREN == 0 and not self._warren_preparado()
+
+    def _drenando(self) -> bool:
+        return self._preparar_ligado() and _texto(_dict(self.estado.get("drenagemWarren")).get("desde"))
 
     def _preparar_o_warren(self) -> None:
-        """Aplica o --model no adaptador claude-code do Warren (`preparar_warren.preparar`), se a config deixar.
+        """Prepara o Warren (`preparar_warren.preparar`: --model, drop-in e automerge), se a config deixar.
 
-        "versao_desconhecida" e "erro" geram um aviso único; "aguardando_runs" fica para daqui a 20 ciclos.
+        "versao_desconhecida", "erro" e "revertido" geram um aviso único; "aguardando_runs" volta no próximo ciclo e,
+        repetido, liga a drenagem; "revertido" com o Warren fora gera um aviso a cada vez e uma decisão rastreada.
         """
-        if self._preparar_warren is None or not _dict(self.config.get("warren")).get("prepararAutomatico", True):
+        if not self._preparar_ligado():
             return
         try:
             try:
-                resultado = self._preparar_warren()
+                resultado = self._preparar_warren(sha_revertido=self._sha_revertido)
             except Exception as exc:  # noqa: BLE001 - o preparar não lança, mas o laço não pode cair por ele
                 resultado = {"estado": "erro", "detalhe": self._erro(exc)}
             if not isinstance(resultado, dict) or resultado.get("estado") not in ESTADOS_DO_PREPARAR:
                 resultado = {"estado": "erro", "detalhe": "resultado inválido do preparar_warren"}
-            registro = {"estado": resultado["estado"], "detalhe": self._seguro(resultado.get("detalhe") or "")}
-            self.estado["warrenPreparado"] = dict(registro, em=self._agora().isoformat())
+            estado = resultado["estado"]
+            registro = {"estado": estado, "detalhe": self._seguro(resultado.get("detalhe") or "")}
+            for chave in ("dropin", "automerge"):
+                if _texto(resultado.get(chave)):
+                    registro[chave] = self._seguro(resultado[chave], 40)
+            if estado == "revertido":
+                if _texto(resultado.get("sha")):
+                    self._sha_revertido = resultado["sha"]
+            else:
+                self._sha_revertido = None
+            anterior = _dict(self.estado.get("warrenPreparado"))
+            seguidas = (anterior.get("esperasSeguidas") if _inteiro(anterior.get("esperasSeguidas")) else 0) + 1 if estado == "aguardando_runs" else 0
+            self.estado["warrenPreparado"] = dict(registro, em=self._agora().isoformat(), esperasSeguidas=seguidas)
             self._salvar()
             self._log(dict({"evento": "preparar_warren"}, **registro))
-            if registro["estado"] in ("versao_desconhecida", "erro"):
+            self._atualizar_drenagem(estado, seguidas)
+            if estado in ESTADOS_SEM_MODELO:
                 self._aviso(AVISO_WARREN_SEM_MODELO)
-        except Exception as exc:  # noqa: BLE001 - tenta de novo daqui a 20 ciclos
+            elif estado in WARREN_PREPARADO:
+                self._retirar_aviso(AVISO_WARREN_SEM_MODELO)
+            if registro.get("automerge") == "erro":
+                self._aviso(AVISO_AUTOMERGE)
+            if registro.get("dropin") == "erro":
+                self._aviso(AVISO_DROPIN)
+            if estado == "revertido" and resultado.get("warrenVoltou") is False:
+                self._warren_fora_apos_rollback(registro["detalhe"])
+        except Exception as exc:  # noqa: BLE001 - tenta de novo depois
             self._erro_de_etapa("preparar_warren", "warren", exc)
+
+    def _retirar_aviso(self, mensagem: str) -> None:
+        avisos = self.estado.get("avisos")
+        if isinstance(avisos, list) and mensagem in avisos:
+            self.estado["avisos"] = [a for a in avisos if a != mensagem]
+            self._salvar()
+
+    def _warren_fora_apos_rollback(self, detalhe: str) -> None:
+        """E: aviso a cada ocorrência (não deduplicado) e uma decisão rastreada, que fecha quando o Warren volta."""
+        avisos = self.estado.setdefault("avisos", [])
+        if not isinstance(avisos, list):
+            avisos = self.estado["avisos"] = []
+        avisos.append(AVISO_WARREN_FORA_APOS_ROLLBACK)
+        self._salvar()
+        self._log({"evento": "aviso", "mensagem": AVISO_WARREN_FORA_APOS_ROLLBACK})
+        corpo = (
+            "O despachante aplicou a preparação do Warren (o --model no adaptador claude-code e o drop-in do systemd), "
+            "o Warren não voltou depois do restart, a mudança foi revertida e ele continua fora do ar: %s. Novas tentativas "
+            "automáticas ficam suspensas até o despachante reiniciar ou o arquivo do adaptador mudar. Esta issue é fechada "
+            "sozinha quando o Warren voltar a responder." % detalhe
+        )
+        try:
+            url = self._abrir_decisao_rastreada(AVISO_WARREN_FORA_APOS_ROLLBACK, "warren", TITULO_WARREN_ROLLBACK, corpo, tipo="warren_rollback")
+            self._log({"evento": "warren_fora_apos_rollback", "url": url})
+        except Exception as exc:  # noqa: BLE001 - a intenção fica gravada e é recuperada no próximo ciclo
+            self._erro_de_etapa("warren_rollback", self.repo, exc)
+
+    @staticmethod
+    def _instante(valor):
+        try:
+            return datetime.datetime.fromisoformat(valor) if _texto(valor) else None
+        except ValueError:
+            return None
+
+    def _atualizar_drenagem(self, estado: str, seguidas: int) -> None:
+        """D: drenagem limitada a 45 min; depois do teto, só de novo depois de 6 h. Tudo persistido."""
+        agora = self._agora()
+        drenagem = _dict(self.estado.get("drenagemWarren"))
+        desde = self._instante(drenagem.get("desde"))
+        proxima = self._instante(drenagem.get("proxima"))
+        if estado != "aguardando_runs":
+            if desde is not None:
+                self.estado["drenagemWarren"] = {"desde": None, "proxima": drenagem.get("proxima")}
+                self._salvar()
+                self._log({"evento": "drenagem_warren", "acao": "fim", "estado": estado})
+            return
+        if desde is not None:
+            if agora - desde >= DRENAGEM_MAXIMA:
+                volta = agora + PAUSA_ENTRE_DRENAGENS
+                self.estado["drenagemWarren"] = {"desde": None, "proxima": volta.isoformat()}
+                self._salvar()
+                self._log({"evento": "drenagem_warren", "acao": "teto", "desde": drenagem.get("desde")})
+                self._aviso(
+                    "drenagem do Warren para o restart do preparo expirou depois de 45 min com runs ativos (desde %s); "
+                    "despachos retomados, nova drenagem a partir de %s" % (drenagem.get("desde"), volta.isoformat())
+                )
+            return
+        if seguidas >= ESPERAS_PARA_DRENAR and (proxima is None or agora >= proxima):
+            self.estado["drenagemWarren"] = {"desde": agora.isoformat(), "proxima": None}
+            self._salvar()
+            self._log({"evento": "drenagem_warren", "acao": "inicio"})
 
     # ------------------------------------------------------------ entrada e pausa
 
@@ -1580,6 +1689,16 @@ class Despachante:
             if not isinstance(decisao, dict) or not _texto(decisao.get("url")):
                 mudou = True
                 continue
+            if decisao.get("tipo") == "warren_rollback":
+                # E: fecha sozinha quando o Warren volta a responder
+                try:
+                    self.motor.versao()
+                except Exception:  # noqa: BLE001 - ainda fora: a decisão fica
+                    restantes.append(decisao)
+                    continue
+                mudou = True
+                self._fechar_depois(decisao["url"], "O Warren voltou a responder; issue fechada pelo despachante.", decisao=True)
+                continue
             if decisao.get("tipo") == "config":
                 # P10: se o despachante está rodando, a config voltou a valer
                 mudou = True
@@ -1824,8 +1943,8 @@ class Despachante:
             return
         vistos.append(chave)
         self._aviso(
-            "papel %s rodou em %s, configurado %s: o Warren não aplicou o modelo (rode preparar-warren)"
-            % (papel, efetivo, configurado)
+            "papel %s rodou em %s, configurado %s: o patch de modelo no Warren é aplicado automaticamente; estado atual: %s"
+            % (papel, efetivo, configurado, _dict(self.estado.get("warrenPreparado")).get("estado") or "não verificado")
         )
 
     # ------------------------------------------------------------ PR do orquestrador
@@ -2393,6 +2512,9 @@ class Despachante:
             pendente = self._proposta_de_pendente()
             if pendente is not None:
                 acoes.append(pendente)
+        if self._drenando():
+            # D: o Warren drena para o restart do preparo; o merge também sai (dispararia o próximo filho do plan run)
+            acoes = [a for a in acoes if a.get("tipo") not in ACOES_SEGURAS_NA_DRENAGEM]
         for acao in acoes:
             if self.estado.get("pausado"):
                 break

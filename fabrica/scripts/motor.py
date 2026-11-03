@@ -514,7 +514,7 @@ class MotorFalso:
     def visao_geral(self) -> dict:
         self._registrar("visao_geral")
         ativos = sum(1 for run in self._runs.values() if run.get("estado") in _NAO_TERMINAIS_DE_RUN)
-        return {"runs": {"nonTerminal": ativos, "total": len(self._runs)}}
+        return {"runs": {"nonTerminal": ativos, "total": len(self._runs)}, "services": {"dbReachable": True}}
 
     def versao(self) -> str:
         self._registrar("versao")
