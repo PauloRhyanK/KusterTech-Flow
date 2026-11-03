@@ -44,6 +44,7 @@ model Usuario {
   alertasReconhecidos      Alerta[]                @relation("AlertaReconhecidoPor")
   alertasResolvidos        Alerta[]                @relation("AlertaResolvidoPor")
   eventosDeAlerta          EventoDeAlerta[]
+  fontesDaFabricaCriadas   FonteDaFabrica[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -791,6 +792,28 @@ model FonteDeAlertas {
   ultimoUsoEm DateTime?
   criadaPor   Usuario   @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
   alertas     Alerta[]
+}
+
+// O token (prefixo ff_) é mostrado uma única vez; no banco só o hash.
+model FonteDaFabrica {
+  id          String            @id @default(uuid())
+  nome        String
+  tokenHash   String            @unique
+  criadoEm    DateTime          @default(now())
+  revogadaEm  DateTime?
+  criadaPorId String
+  ultimoUsoEm DateTime?
+  criadaPor   Usuario           @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
+  retrato     RetratoDaFabrica?
+}
+
+// Só o último retrato de cada fonte; `conteudo` é o JSON validado pelo contrato v1.
+model RetratoDaFabrica {
+  fonteId    String         @id
+  geradoEm   DateTime
+  recebidoEm DateTime
+  conteudo   Json
+  fonte      FonteDaFabrica @relation(fields: [fonteId], references: [id], onDelete: Cascade)
 }
 
 model Alerta {
