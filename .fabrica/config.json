@@ -22,67 +22,67 @@
       "agente": "claude-code",
       "modelo": "claude-fable-5-1",
       "esforco": "high",
-      "maxCustoUsd": 20
+      "maxCustoUsd": 1000
     },
     "arquiteto": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 15
+      "maxCustoUsd": 1000
     },
     "produto": {
       "agente": "claude-code",
       "modelo": "claude-haiku-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 5
+      "maxCustoUsd": 1000
     },
     "ux-ui": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 1000
     },
     "frontend": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 1000
     },
     "backend": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 1000
     },
     "qa": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 1000
     },
     "revisor": {
       "agente": "claude-code",
       "modelo": "claude-opus-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 5
+      "maxCustoUsd": 1000
     },
     "devops": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 1000
     },
     "seguranca": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 1000
     },
     "fixer": {
       "agente": "claude-code",
       "modelo": "claude-haiku-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 5
+      "maxCustoUsd": 1000
     }
   },
   "verificacao": {
