@@ -1,0 +1,36 @@
+{
+  "feature": "painel-fabrica",
+  "revisao": 3,
+  "base": "04f1f8ecd77f33736ffcd593cf039aa87321b024",
+  "hash": "8b2c5c55ebe45695bd15feb05fc7ecc732fb989889cf8f3bf5d02729fcf95530",
+  "raias": {
+    "contrato-retrato": {
+      "epico": "FLOW-0c74",
+      "plano": "pl-1c88",
+      "seeds": [
+        "FLOW-4945"
+      ]
+    },
+    "back-painel": {
+      "epico": "FLOW-0067",
+      "plano": "pl-3ac6",
+      "seeds": [
+        "FLOW-6bee"
+      ]
+    },
+    "front-painel": {
+      "epico": "FLOW-bddd",
+      "plano": "pl-e4dd",
+      "seeds": [
+        "FLOW-c9b8"
+      ]
+    },
+    "kit-envio": {
+      "epico": "FLOW-e47d",
+      "plano": "pl-0f6f",
+      "seeds": [
+        "FLOW-640f"
+      ]
+    }
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "versao": 1,
+  "faseAtual": "painel",
+  "fases": [
+    {
+      "id": "painel",
+      "raias": [
+        "contrato-retrato",
+        "back-painel",
+        "front-painel",
+        "kit-envio"
+      ]
+    }
+  ],
+  "raias": [
+    {
+      "id": "contrato-retrato",
+      "papel": "arquiteto",
+      "planoSeeds": "pl-1c88",
+      "dependeDe": [],
+      "arquivos": [
+        "src/modules/fabrica/contrato.ts",
+        "src/modules/fabrica/contrato.spec.ts",
+        "src/modules/fabrica/retrato-exemplo.json",
+        ".prettierignore"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "criteriosAceite": [
+        "`contrato.ts` exporta um esquema Zod estrito do retrato v1 (campos desconhecidos são recusados) e o tipo inferido",
+        "O retrato tem: versao, geradoEm, vagas (efetivas, configuradas, ocupadas, ramMinimaMb, memDisponivelMb ou nulo, oomEm ou nulo), drenagem (instante ou nulo), warren (preparo e em, ambos anuláveis), planos (id, repo, feature, estado da fila, entrouEm, faseAtual ou nulo, fases com raias e estado, pausado como texto ou nulo, decisoes com titulo e url, orquestradorAtivo) e avisos (em e mensagem)",
+        "Os estados são uniões fechadas e iguais às do kit: fila `aguardando`, `admitindo`, `ativo`, `pausado`, `concluido`, `removido`; raia `planejada`, `executando`, `concluida`, `falhou`. Todo instante é UTC no formato `AAAA-MM-DDTHH:MM:SSZ`",
+        "Os limites estão fixados no esquema: no máximo 50 planos, 50 avisos, 50 decisões, 20 fases e 50 raias por plano; textos de título, aviso e `pausado` com no máximo 300 caracteres e os demais textos com no máximo 200; `url` de decisão só `https://github.com/`",
+        "`retrato-exemplo.json` passa no esquema e tem ao menos um plano `ativo` com fase, raia e decisão e um plano `aguardando` com `faseAtual` nulo e `fases` vazia; testes mostram a recusa de campo desconhecido, estado fora da lista, URL de outro host (inclusive `https://github.com.exemplo.com/`) e versão diferente de 1",
+        "O esquema não tem campo de corpo de PR, prompt, caminho de arquivo nem segredo",
+        "`.prettierignore` lista `.fabrica/`, e `format:check` passa com o pacote e o plano gerados no repositório"
+      ]
+    },
+    {
+      "id": "back-painel",
+      "papel": "backend",
+      "planoSeeds": "pl-3ac6",
+      "dependeDe": [
+        "contrato-retrato"
+      ],
+      "arquivos": [
+        "prisma/schema.prisma",
+        "prisma/migrations/**",
+        "src/modules/fabrica/model.ts",
+        "src/modules/fabrica/model.spec.ts",
+        "src/modules/fabrica/service.ts",
+        "src/modules/fabrica/service.spec.ts",
+        "src/modules/fabrica/recepcao.ts",
+        "src/modules/fabrica/recepcao.spec.ts",
+        "src/modules/fabrica/queries.ts",
+        "src/modules/fabrica/queries.spec.ts",
+        "src/app/api/fabrica/**",
+        "tests/integration/fabrica.spec.ts"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "criteriosAceite": [
+        "`POST /api/fabrica/estado` com token válido e retrato válido grava o retrato e responde 200; token ausente, inválido ou revogado responde 401; corpo inválido responde 400 sem ecoar o conteúdo; corpo acima de 256 KB responde 413; tipo de conteúdo errado responde 415",
+        "Só o último retrato de cada fonte fica guardado, com `geradoEm` e `recebidoEm`; um retrato com `geradoEm` mais antigo que o guardado é descartado e responde 200, sem mudar `recebidoEm`; um `geradoEm` mais de 5 min no futuro responde 400 e não grava",
+        "O token é gerado com o prefixo `ff_`, aparece uma única vez e no banco fica só o hash SHA-256; criar e revogar exigem `configuracoes.gerenciar` no servidor",
+        "A consulta do retrato mais recente exige `desenvolvimento.ler` no servidor, devolve também `recebidoEm` e ignora o retrato de fonte revogada",
+        "As regras puras estão em `model.ts`, com teste unitário, e há teste de integração da recepção em `tests/integration/fabrica.spec.ts`",
+        "A migration é aditiva: só cria as tabelas novas e a relação com `Usuario`"
+      ]
+    },
+    {
+      "id": "front-painel",
+      "papel": "frontend",
+      "planoSeeds": "pl-e4dd",
+      "dependeDe": [
+        "back-painel"
+      ],
+      "arquivos": [
+        "src/app/(app)/desenvolvimento/fabrica/**",
+        "src/app/(app)/desenvolvimento/page.tsx",
+        "src/app/(app)/configuracoes/fabrica/**",
+        "src/app/(app)/configuracoes/page.tsx",
+        "e2e/fabrica.spec.ts",
+        "e2e/support/fabrica.ts",
+        "e2e/support/global-setup.ts"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "criteriosAceite": [
+        "`/desenvolvimento/fabrica` mostra vagas ocupadas e efetivas, RAM, os planos com estado, fase atual e raias, as decisões abertas com link para a issue, os avisos e a idade dos dados, calculada de `recebidoEm`",
+        "Sem retrato, a página mostra um estado vazio dizendo como ligar o envio; com `recebidoEm` há mais de 5 min, mostra um aviso visível de que a máquina parou de enviar",
+        "Nenhum indicador usa o tom de sucesso, só URLs `https://github.com/` viram link, e a página é só leitura",
+        "Quem não tem `desenvolvimento.ler` vê \"Sem permissão para esta área.\"",
+        "`/desenvolvimento` tem um link para a página da Fábrica",
+        "`/configuracoes/fabrica` cria e revoga tokens (o token aparece uma única vez), só para quem tem `configuracoes.gerenciar`, e há um cartão em Configurações para ela",
+        "Só tokens semânticos de cor; há teste de componente para cada estado (com retrato, sem retrato, dados com mais de 5 min e sem permissão), e `e2e/fabrica.spec.ts` envia um retrato por `POST /api/fabrica/estado` e confere a página nos projetos `desktop` e `mobile` do Playwright",
+        "`e2e/support/global-setup.ts` apaga as fontes da Fábrica criadas pelo E2E antes de apagar os usuários, para o E2E repetir no mesmo banco (a fonte aponta para o usuário com FK RESTRICT)"
+      ]
+    },
+    {
+      "id": "kit-envio",
+      "papel": "devops",
+      "planoSeeds": "pl-0f6f",
+      "dependeDe": [
+        "contrato-retrato"
+      ],
+      "arquivos": [
+        "fabrica/scripts/retrato.py",
+        "fabrica/scripts/testes_retrato.py",
+        "fabrica/scripts/coordenador.py",
+        "fabrica/scripts/testes_coordenador.py",
+        "fabrica/scripts/testes_contratos.py",
+        "fabrica/servico/fabrica-fila.service",
+        "fabrica/README.md"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm format:check && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "`retrato.py` separa a leitura de `fila-estado.json`, `capacidade.json` e dos `estado.json` e `plano.json` de cada plano de uma função pura que recebe esses dados e monta o retrato, sem caminho da máquina, corpo de PR ou segredo",
+        "O retrato tem uma entrada por id (a vigente, como `coordenador._atuais`); plano sem `estado.json` ou `plano.json`, ou com um deles ilegível, vai com `faseAtual` nulo e `fases` vazia, sem exceção; `vagas.ocupadas` é o total de `reservas`; com `capacidade.json` inválido, o ciclo não envia e gera um aviso",
+        "As decisões de um plano vêm de `decisoes`, `decisaoPausa`, `warrenFora` e `warrenParcial` do `estado.json`, só as que têm URL `https://github.com/`",
+        "Os avisos do retrato são os de `fila-estado.json`, com caminhos absolutos da máquina removidos e cada texto cortado no limite do contrato, contado em unidades UTF-16 como no Zod (título com emoji não pode passar do limite)",
+        "Um teste compara os campos do retrato gerado com `src/modules/fabrica/retrato-exemplo.json`, para os dois lados ficarem presos ao contrato",
+        "Com `FABRICA_CENTRAL_URL` e `FABRICA_CENTRAL_TOKEN_FILE` em `coordenador.env`, cada ciclo envia o retrato por POST com Bearer e timeout de 10 s, mesmo quando um passo do ciclo falhou; sem URL, o envio fica desligado e o `status` diz isso, inclusive na CLI, que roda sem o ambiente da unit",
+        "As duas variáveis novas têm leitura própria: não entram em `VARIAVEIS_REPASSADAS` nem no `plano.env`, e `ler_coordenador_env` continua devolvendo só as três de hoje",
+        "A URL precisa ser `https://` (ou `http://` com host exatamente `localhost` ou `127.0.0.1`, para teste; `http://localhost.exemplo.com` é recusada); outra URL é recusada com um aviso, sem enviar. O envio não segue redirecionamento: 3xx conta como falha e o token não vai para outro host",
+        "Central fora do ar, 401, timeout, arquivo de token ausente ou ilegível e qualquer exceção do envio (inclusive `ErroDeEntrada`, que hoje encerra o serviço com saída 2) não mudam a fila, não param o ciclo e geram um aviso só por mudança de erro; o token é lido a cada envio e nunca aparece em log, argv, erro ou aviso",
+        "Antes de enviar, o retrato é cortado para caber nos limites do contrato e em 256 KB de UTF-8: primeiro saem os planos `removido` e `concluido` mais antigos, depois os avisos mais antigos, nunca um plano ocupando vaga; se ainda não couber, não envia e gera um aviso. O `status` mostra o último envio e o resultado",
+        "O README explica como ligar o envio e lista as variáveis novas junto das de `coordenador.env`"
+      ]
+    }
+  ]
+}
