@@ -10,7 +10,7 @@ FIM_VEREDITO = "FABRICA_VEREDITO_FIM"
 
 LIMITE_SAIDA_VERIFICACAO = 4000
 _RESULTADOS = ("aprovado", "correcoes")
-_COTA = re.compile(r"(?i)(\b429\b|\bquota\b|rate.?limit|usage limit|limit reached)")
+_COTA = re.compile(r"(?i)(\b429\b|quota(?!tion)|rate.?limit|usage limit|(?:hour|weekly|daily) limit reached)")
 
 
 def prompt_template_raia(papel: str) -> str:
@@ -32,7 +32,14 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
     """Prompt do revisor independente do PR da seed, no commit `sha`."""
     criterios = raia.get("criteriosAceite") or []
     lista = "\n".join(f"- {c}" for c in criterios) or "- (nenhum critério listado)"
-    exemplo = json.dumps({"sha": sha, "resultado": "aprovado", "achados": []}, ensure_ascii=False)
+    exemplo = json.dumps(
+        {
+            "sha": sha,
+            "resultado": "correcoes",
+            "achados": [{"arquivo": "caminho/do/arquivo.ts", "motivo": "descreva o problema"}],
+        },
+        ensure_ascii=False,
+    )
     return (
         f"Você revisa o PR da seed {seed_id} no commit {sha}.\n"
         "\n"
@@ -44,12 +51,13 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
         "\n"
         "Termine a sua mensagem final com o bloco abaixo, como a última coisa escrita.\n"
         "Escreva o JSON cru, sem bloco de código nem formatação (sem ``` e sem negrito),\n"
-        "e deixe cada marcador sozinho na sua linha. Sem problemas, use exatamente:\n"
+        "e deixe cada marcador sozinho na sua linha. Formato (este exemplo aponta um problema):\n"
         f"{INICIO_VEREDITO}\n"
         f"{exemplo}\n"
         f"{FIM_VEREDITO}\n"
-        'Com problemas, troque por "resultado": "correcoes" e liste um achado por problema\n'
-        'em "achados", cada um como {"arquivo": "...", "motivo": "..."}.'
+        'Com problemas, mantenha "resultado": "correcoes" e liste um achado por problema,\n'
+        'cada um como {"arquivo": "...", "motivo": "..."}.\n'
+        'Se tudo estiver certo, escreva "resultado": "aprovado" e "achados": [].'
     )
 
 

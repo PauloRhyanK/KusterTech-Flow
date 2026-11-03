@@ -102,6 +102,7 @@ class PromptRevisorTest(unittest.TestCase):
         self.assertIn(f'"sha": "{SHA}"', self.texto)
         self.assertNotIn("<sha>", self.texto)
         self.assertNotIn("aprovado ou correcoes", self.texto)
+        self.assertNotIn('"resultado": "aprovado"', self.texto.split(FIM_VEREDITO)[0])
 
     def test_lista_cada_criterio(self):
         self.assertIn("Cliente é criado com CNPJ válido", self.texto)
@@ -319,11 +320,29 @@ class ExtrairVereditoTest(unittest.TestCase):
         with mock.patch("prompts.json.loads", side_effect=RecursionError):
             self.assertIsNone(extrair_veredito(bloco(veredito_valido())))
 
-    def test_exemplo_do_prompt_do_revisor_e_um_veredito_valido(self):
+    def test_exemplo_do_prompt_do_revisor_e_valido_mas_nunca_aprova(self):
         texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
         self.assertEqual(
-            extrair_veredito(texto), {"sha": SHA, "resultado": "aprovado", "achados": []}
+            extrair_veredito(texto),
+            {
+                "sha": SHA,
+                "resultado": "correcoes",
+                "achados": [{"arquivo": "caminho/do/arquivo.ts", "motivo": "descreva o problema"}],
+            },
         )
+
+    def test_eco_do_prompt_seguido_de_resposta_sem_bloco_nao_aprova(self):
+        prompt = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
+        for resposta in ("desculpe, falhei", "", "aprovado", '"resultado": "aprovado"'):
+            with self.subTest(resposta=resposta):
+                veredito = extrair_veredito(f"{prompt}\n\n{resposta}")
+                self.assertTrue(veredito is None or veredito["resultado"] != "aprovado")
+
+    def test_prompt_explica_a_aprovacao(self):
+        texto = prompt_revisor(seed_id="sd-1", raia=raia_referencia(), sha=SHA)
+        self.assertIn('Se tudo estiver certo, escreva "resultado": "aprovado" e "achados": [].', texto)
+        self.assertEqual(texto.count(INICIO_VEREDITO), 1)
+        self.assertEqual(texto.count(FIM_VEREDITO), 1)
 
     def test_json_em_bloco_de_codigo_dentro_dos_marcadores(self):
         v = veredito_valido()
@@ -398,21 +417,33 @@ class FalhaDeCotaTest(unittest.TestCase):
 
     def test_mensagens_de_limite_do_claude_code(self):
         casos = [
+            "insufficient_quota",
+            "QuotaExceeded",
+            "quota_exceeded",
             "Claude AI usage limit reached|1730000000",
             "5-hour limit reached ∙ resets 3pm",
+            "Weekly limit reached",
+            "daily limit reached",
             "Individual quota reached",
             "Usage Limit Reached",
             "usage limit exceeded for this account",
+            "HTTP 429",
         ]
         for texto in casos:
             with self.subTest(texto=texto):
                 self.assertTrue(eh_falha_de_cota("provider_error", texto))
                 self.assertFalse(eh_falha_de_cota("timed_out", texto))
 
-    def test_quotation_nao_e_cota(self):
-        self.assertFalse(eh_falha_de_cota("provider_error", "quotation marks"))
-        self.assertFalse(eh_falha_de_cota("provider_error", "unquoted"))
-        self.assertTrue(eh_falha_de_cota("provider_error", "(quota)"))
+    def test_limites_que_nao_sao_cota(self):
+        for texto in (
+            "context window limit reached",
+            "max turns limit reached",
+            "limit reached",
+            "quotation marks",
+            "Quotation",
+        ):
+            with self.subTest(texto=texto):
+                self.assertFalse(eh_falha_de_cota("provider_error", texto))
 
     def test_429_precisa_ser_palavra(self):
         self.assertFalse(eh_falha_de_cota("provider_error", "erro 14290 no stack"))
