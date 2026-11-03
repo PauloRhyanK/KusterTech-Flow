@@ -80,7 +80,7 @@ Reaproveitado de `.agents/`: a política de negação com auditoria (`politica-e
 
 **Nunca faz:** ler diff, escrever código, revisar PR, fazer polling, mergear, trocar modelo ou executor, editar `.seeds/*.jsonl` à mão.
 
-**Como roda (decidido pelo Paulo depois do Spike 0):** como **run do Warren**. Usa o agente `claude-code` com `modelOverride: claude-fable-5-1` e `maxCostUsd` por acordada, e é disparado pelo despachante via `POST /runs`. Roda no sandbox e não tem acesso à API do Warren, ao `gh` nem ao Docker do host. O prompt manda ler `.fabrica/orquestrador.md` (o contrato), o `estado.json` compacto, o motivo da acordada e os relatórios envolvidos. A saída é **um PR** com os artefatos: plano de fases e raias (`.fabrica/plano.yaml`), comandos `sd` para criar os planos Seeds e os BRIEFINGs, ou um arquivo `.fabrica/pergunta.md` para o Paulo. O despachante lê esse PR e age, e o orquestrador nunca age diretamente. Toda acordada fica registrada em `.orquestracao/acordadas.jsonl`, com motivo, run, duração e custo informado pelo Warren.
+**Como roda (decidido pelo Paulo depois do Spike 0):** como **run do Warren**. Usa o agente `claude-code` com `modelOverride: claude-fable-5-1` e `maxCostUsd` por acordada, e é disparado pelo despachante via `POST /runs`. Roda no sandbox e não tem acesso à API do Warren, ao `gh` nem ao Docker do host. O prompt manda ler `.fabrica/orquestrador.md` (o contrato), o `estado.json` compacto, o motivo da acordada e os relatórios envolvidos. A saída é **um PR** com os artefatos: plano de fases e raias (`.fabrica/plano.json`), comandos `sd` para criar os planos Seeds e os BRIEFINGs, ou um arquivo `.fabrica/pergunta.md` para o Paulo. O despachante lê esse PR e age, e o orquestrador nunca age diretamente. Toda acordada fica registrada em `.orquestracao/acordadas.jsonl`, com motivo, run, duração e custo informado pelo Warren.
 
 **Quando acorda:** uma nova spec, o fim de uma fase, um gate que falhou depois do fixer, uma raia sem sinal além da janela configurada ou uma resposta do Paulo. Nada além disso.
 
@@ -94,7 +94,7 @@ Reaproveitado de `.agents/`: a política de negação com auditoria (`politica-e
 2. O **revisor cego** roda num run separado sobre o branch do PR. Ele recebe a spec da raia e os critérios de aceite, mas não o BRIEFING nem a conversa do implementador, e devolve o veredito em JSON (`aprovado | correcoes`, achados com arquivo e motivo).
 3. Com `correcoes` ou gate vermelho, o **fixer** roda **uma vez** no mesmo branch, só com os achados. Depois dele, o revisor roda de novo sobre o novo head. Se ainda houver `correcoes` ou gate vermelho, o orquestrador acorda.
 4. **Gates, todos obrigatórios para o merge:** CI verde no head do PR; script de verificação da raia com saída zero; veredito `aprovado` do revisor no mesmo head SHA; `judge` sem reprovação, quando estiver instalado.
-5. Com tudo verde: `gh pr merge --merge --match-head-commit <sha>`. Um PR que toca `protectedPaths` vai para `bloqueada_humano` e espera o Paulo.
+5. Com tudo verde, o despachante faz o merge pela API do GitHub, com o `sha` do head (equivale a `gh pr merge --merge --match-head-commit <sha>`). Um PR que toca `protectedPaths` vai para `bloqueada_humano` e espera o Paulo.
 
 **Proteções herdadas das lições do MVP:**
 
@@ -121,11 +121,11 @@ Cada pacote de papel fica em `fabrica/equipes/<papel>.md`, com as mesmas seçõe
 
 O papel chega ao executor pelo prompt do run: `promptTemplate` no Plan Run, `prompt` no run avulso, ambos sobre o agente `claude-code`, com `modelOverride` por papel. O instalador copia os pacotes para `.fabrica/equipes/` no repositório do cliente. Nenhum agente é registrado no banco do Warren (§10).
 
-O modelo padrão de cada papel fica numa tabela por projeto (`.fabrica/modelos.yaml` no repositório do cliente), aprovada pelo Paulo. A sugestão inicial é Sonnet para os implementadores, um modelo de outra família para o revisor (para a revisão ser de fato independente) e Fable só para o orquestrador.
+O modelo padrão de cada papel fica numa tabela por projeto (`.fabrica/config.json` no repositório do cliente, junto com os `protegidos` e o limite de paralelismo; é JSON porque o kit usa só a biblioteca padrão do Python), aprovada pelo Paulo. A sugestão inicial é Sonnet para os implementadores, um modelo de outra família para o revisor (para a revisão ser de fato independente) e Fable só para o orquestrador.
 
 ## 7. Ciclo de um projeto de cliente
 
-1. **Intake.** A spec aprovada entra no repositório do cliente. `instalar.py` cria `AGENTS.md`, `.warren/config.yaml` (auto-merge desligado, `protectedPaths`, `maxCostUsd`), `.fabrica/modelos.yaml` e `.seeds/`, e confere que o CI existe.
+1. **Intake.** A spec aprovada entra no repositório do cliente. `instalar.py` cria `AGENTS.md`, `.warren/config.yaml` (sem auto-merge, com `admission` e `maxCostUsd`), `.fabrica/config.json` e `.seeds/`, e confere que o CI existe.
 2. **Fundação** (serial: arquiteto e depois ux-engineer). Esqueleto, contratos, guia de telas e plano de raias. **Gate do Paulo:** ele aprova o plano de raias antes de qualquer execução paralela.
 3. **Raias** (paralelas). Cada uma vira um plano Seeds com um Plan Run, e o despachante conduz até o merge.
 4. **Integração.** Seed de QA com E2E da jornada e relatório de homologação em `docs/homologacao/`.
