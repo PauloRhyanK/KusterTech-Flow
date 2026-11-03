@@ -1,0 +1,54 @@
+{
+  "versao": 1,
+  "geradoEm": "2026-11-03T21:40:00Z",
+  "vagas": {
+    "efetivas": 2,
+    "configuradas": 3,
+    "ocupadas": 1,
+    "ramMinimaMb": 2048,
+    "memDisponivelMb": 5120,
+    "oomEm": null
+  },
+  "drenagem": null,
+  "warren": { "preparo": "pronto", "em": "2026-11-03T21:35:00Z" },
+  "planos": [
+    {
+      "id": "painel-fabrica",
+      "repo": "PauloRhyanK/kustertech-flow",
+      "feature": "Painel da Fábrica na Central",
+      "estado": "ativo",
+      "entrouEm": "2026-11-03T20:00:00Z",
+      "faseAtual": "fase-1",
+      "fases": [
+        {
+          "id": "fase-1",
+          "raias": [
+            { "id": "contrato-retrato", "estado": "executando" },
+            { "id": "back-painel", "estado": "planejada" }
+          ]
+        }
+      ],
+      "pausado": null,
+      "decisoes": [
+        {
+          "titulo": "Homologar o painel da Fábrica",
+          "url": "https://github.com/PauloRhyanK/kustertech-flow/issues/147"
+        }
+      ],
+      "orquestradorAtivo": true
+    },
+    {
+      "id": "outro-plano",
+      "repo": "PauloRhyanK/kustertech-flow",
+      "feature": "Outra feature",
+      "estado": "aguardando",
+      "entrouEm": "2026-11-03T21:00:00Z",
+      "faseAtual": null,
+      "fases": [],
+      "pausado": null,
+      "decisoes": [],
+      "orquestradorAtivo": false
+    }
+  ],
+  "avisos": [{ "em": "2026-11-03T21:30:00Z", "mensagem": "Vagas reduzidas por falta de memória" }]
+}
