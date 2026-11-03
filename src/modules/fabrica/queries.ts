@@ -23,3 +23,12 @@ export async function obterRetratoMaisRecente(sujeito: Sujeito): Promise<Retrato
   if (!lido.success) return null
   return { retrato: lido.data, geradoEm: linha.geradoEm, recebidoEm: linha.recebidoEm }
 }
+
+export async function listarFontesDaFabrica(sujeito: Sujeito) {
+  exigirPermissao(sujeito, 'configuracoes.gerenciar')
+
+  return db.fonteDaFabrica.findMany({
+    orderBy: { criadoEm: 'desc' },
+    select: { id: true, nome: true, criadoEm: true, ultimoUsoEm: true, revogadaEm: true },
+  })
+}

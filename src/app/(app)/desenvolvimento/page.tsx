@@ -60,11 +60,23 @@ export default async function PaginaDesenvolvimento({ searchParams }: PaginaDese
     redirect('/entrar')
   }
 
+  const podeLer = autorizar(sessao.sujeito, 'desenvolvimento.ler')
   const cabecalho = (
-    <CabecalhoDePagina trilhas={TRILHAS} titulo="Central de Desenvolvimento" contexto={CONTEXTO} />
+    <CabecalhoDePagina
+      trilhas={TRILHAS}
+      titulo="Central de Desenvolvimento"
+      contexto={CONTEXTO}
+      acoes={
+        podeLer ? (
+          <Link href="/desenvolvimento/fabrica" className="text-sm text-text-link hover:underline">
+            Fábrica de agentes
+          </Link>
+        ) : undefined
+      }
+    />
   )
 
-  if (!autorizar(sessao.sujeito, 'desenvolvimento.ler')) {
+  if (!podeLer) {
     return (
       <div className="space-y-6">
         {cabecalho}

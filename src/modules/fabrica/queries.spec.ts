@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const { mockDb } = vi.hoisted(() => ({
-  mockDb: { retratoDaFabrica: { findFirst: vi.fn() } },
+  mockDb: { retratoDaFabrica: { findFirst: vi.fn() }, fonteDaFabrica: { findMany: vi.fn() } },
 }))
 
 vi.mock('@/lib/db', () => ({ db: mockDb }))
 
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import exemplo from './retrato-exemplo.json'
-import { obterRetratoMaisRecente } from './queries'
+import { listarFontesDaFabrica, obterRetratoMaisRecente } from './queries'
 
 const admin: Sujeito = { usuarioId: 'u-admin', papeis: [{ papel: 'ADMIN', clienteId: null }] }
 const semPermissao: Sujeito = { usuarioId: 'u-x', papeis: [] }
@@ -48,5 +48,22 @@ describe('fabrica / queries (db simulado)', () => {
       conteudo: { versao: 9 },
     })
     expect(await obterRetratoMaisRecente(admin)).toBeNull()
+  })
+
+  test('listar fontes exige configuracoes.gerenciar e nunca expõe o hash do token', async () => {
+    await expect(listarFontesDaFabrica(semPermissao)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    expect(mockDb.fonteDaFabrica.findMany).not.toHaveBeenCalled()
+
+    mockDb.fonteDaFabrica.findMany.mockResolvedValue([])
+    expect(await listarFontesDaFabrica(admin)).toEqual([])
+    const arg = mockDb.fonteDaFabrica.findMany.mock.calls[0]?.[0]
+    expect(arg.orderBy).toEqual({ criadoEm: 'desc' })
+    expect(arg.select).toEqual({
+      id: true,
+      nome: true,
+      criadoEm: true,
+      ultimoUsoEm: true,
+      revogadaEm: true,
+    })
   })
 })

@@ -4,7 +4,9 @@ import {
   extrairTokenDaFabrica,
   hashDoTokenDaFabrica,
   LIMITE_DO_CORPO_DO_RETRATO,
+  minutosDeAtraso,
   PREFIXO_DO_TOKEN_DA_FABRICA,
+  retratoDesatualizado,
   validarNomeDaFonteDaFabrica,
 } from './model'
 
@@ -66,5 +68,17 @@ describe('fabrica / model', () => {
     expect(validarNomeDaFonteDaFabrica('   ').ok).toBe(false)
     expect(validarNomeDaFonteDaFabrica('x'.repeat(81)).ok).toBe(false)
     expect(validarNomeDaFonteDaFabrica('x'.repeat(80)).ok).toBe(true)
+  })
+
+  test('o retrato fica desatualizado só depois de 5 min desde o recebimento', () => {
+    expect(retratoDesatualizado(em('2026-11-03T11:56:00Z'), AGORA)).toBe(false)
+    expect(retratoDesatualizado(em('2026-11-03T11:55:00Z'), AGORA)).toBe(false)
+    expect(retratoDesatualizado(em('2026-11-03T11:54:59Z'), AGORA)).toBe(true)
+  })
+
+  test('a idade do retrato é contada em minutos inteiros e nunca fica negativa', () => {
+    expect(minutosDeAtraso(em('2026-11-03T11:58:30Z'), AGORA)).toBe(1)
+    expect(minutosDeAtraso(em('2026-11-03T11:53:00Z'), AGORA)).toBe(7)
+    expect(minutosDeAtraso(em('2026-11-03T12:01:00Z'), AGORA)).toBe(0)
   })
 })
