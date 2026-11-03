@@ -1147,6 +1147,13 @@ class TestesServicosDesligar(BasePreparar):
         self.assertNotIn(LOADSTATE, self.executor.chamadas)
         self.assertNotIn(LOADSTATE_AUTO, self.executor.chamadas)
 
+    def test_servicos_desligar_invalido_nunca_lanca(self):
+        for valor in (None, 5, ("ok.service", None), ("",)):
+            resultado = self.preparar(servicos_desligar=valor)
+            self.assertEqual(resultado["estado"], "erro", repr(valor))
+            self.assertEqual(resultado["automerge"], "erro")
+        self.assertEqual(self.executor.chamadas, [])
+
     def test_resultado_de_erro_antecipado_traz_desligados_vazio(self):
         self.executor.levantar["cat"] = OSError("sudo sumiu")
         resultado = self.preparar()

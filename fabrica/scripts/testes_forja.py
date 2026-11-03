@@ -636,6 +636,12 @@ class TestesListar(unittest.TestCase):
         f, t = novo(ok(self.item(".fabrica/plano.json")))
         self.assertIsNone(f.listar("acme/app", "main", ".fabrica/plano.json"))
 
+    def test_objeto_que_nao_e_arquivo_levanta(self):
+        for corpo in ({}, {"type": "dir"}, {"message": "x"}, {"type": "submodule", "path": "a"}):
+            f, t = novo(ok(corpo))
+            with self.assertRaises(RuntimeError, msg=repr(corpo)):
+                f.listar("acme/app", "main", ".fabrica/planos")
+
     def test_outros_erros_levantam_sem_vazar(self):
         for codigo in (301, 403, 500):
             f, t = novo((codigo, {}, SEGREDO.encode()))

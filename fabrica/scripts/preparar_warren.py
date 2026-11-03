@@ -162,6 +162,12 @@ def preparar(
     `desligados` mapeia cada serviço de `servicos_desligar` para "desligado", "ja_desligado", "ausente" ou "erro";
     `automerge` repete o resultado do primeiro (o despachante só lê essa chave).
     """
+    try:
+        servicos = tuple(servicos_desligar)
+    except TypeError:
+        servicos = None
+    if servicos is None or not all(isinstance(s, str) and s for s in servicos):
+        return {"estado": "erro", "detalhe": "servicos_desligar inválido", "dropin": "erro", "automerge": "erro", "desligados": {}, "sha": None}
     preparo = _Preparo(
         executar=executar,
         visao_geral=visao_geral,
@@ -172,7 +178,7 @@ def preparar(
         servico=servico,
         dormir=dormir,
         sha_esperado=sha_esperado,
-        servicos_desligar=tuple(servicos_desligar),
+        servicos_desligar=servicos,
         sha_revertido=sha_revertido,
     )
     try:

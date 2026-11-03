@@ -314,7 +314,9 @@ class ForjaGitHub:
         except (UnicodeDecodeError, ValueError, RecursionError):
             raise RuntimeError("GET %s: resposta não é JSON" % alvo) from None
         if isinstance(itens, dict):
-            return None  # o caminho é um arquivo, não um diretório
+            if itens.get("type") == "file":
+                return None  # o caminho é um arquivo, não um diretório
+            raise RuntimeError("GET %s: resposta inesperada para um diretório" % alvo)
         if not isinstance(itens, list):
             raise RuntimeError("GET %s: resposta sem a lista de arquivos" % alvo)
         caminhos = []
