@@ -192,7 +192,7 @@ O retrato é cortado para caber no contrato e em 256 KB: saem primeiro os planos
 
 ## O que ainda é do Paulo
 
-- Dar ao token de `~/.warren-gh-token` as permissões **Contents** (read/write), **Pull requests** (read/write), **Issues** (read/write), **Checks** (read) e **Commit statuses** (read) no repositório do cliente.
+- Dar ao token de `~/.warren-gh-token` as permissões **Contents** (read/write), **Pull requests** (read/write), **Issues** (read/write), **Checks** (read, quando o token oferecer) e **Commit statuses** (read) no repositório do cliente.
 - Criar o repositório do cliente, o CI dele e o projeto correspondente no Warren.
 - Responder às issues de decisão (`fabrica:decisao`).
 - Homologar cada fase: mergear o PR de `fase_concluida` do orquestrador.

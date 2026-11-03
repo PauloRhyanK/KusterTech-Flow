@@ -230,7 +230,10 @@ class ForjaGitHub:
         runs: list[dict] = []
         for pagina in range(1, MAX_PAGINAS + 1):
             caminho = "%s/check-runs?per_page=%d&page=%d" % (base, POR_PAGINA, pagina)
-            dados = self._objeto("GET", caminho)
+            dados = self._objeto("GET", caminho, aceitos=(200, 403))
+            if str(dados.get("message", "")).startswith("Resource not accessible"):
+                # Token sem a permissão Checks: valem só os statuses. Sem CI obrigatório o merge segue; com ele, vai ao Paulo.
+                return []
             total = dados.get("total_count")
             itens = dados.get("check_runs")
             if not _inteiro(total) or total < 0:

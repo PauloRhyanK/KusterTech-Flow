@@ -351,6 +351,24 @@ class TestesCi(unittest.TestCase):
     def test_status_pending_com_total_zero_nao_e_pendente_quando_ha_check_run(self):
         self.assertEqual(self.resultado(checks(run()), status("pending", 0)), "verde")
 
+    def sem_checks(self, *estado):
+        corpo = json.dumps({"message": "Resource not accessible by personal access token"}).encode()
+        return novo((403, {}, corpo), *estado)
+
+    def test_token_sem_checks_le_so_os_statuses(self):
+        f, t = self.sem_checks(ok(status("pending", 0)))
+        self.assertEqual(f.ci("acme/app", SHA), "ausente")
+        f, t = self.sem_checks(ok(status("failure", 1)))
+        self.assertEqual(f.ci("acme/app", SHA), "vermelho")
+        f, t = self.sem_checks(ok(status("success", 1)))
+        self.assertEqual(f.ci("acme/app", SHA), "verde")
+
+    def test_outro_403_nos_checks_continua_erro(self):
+        corpo = json.dumps({"message": "API rate limit exceeded"}).encode()
+        f, t = novo((403, {}, corpo))
+        with self.assertRaises(RuntimeError):
+            f.ci("acme/app", SHA)
+
     def test_so_check_runs_verdes_e_verde(self):
         self.assertEqual(self.resultado(checks(run(), run()), status("pending", 0)), "verde")
 
