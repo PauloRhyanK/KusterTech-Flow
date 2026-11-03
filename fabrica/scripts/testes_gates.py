@@ -50,8 +50,9 @@ class TocaProtegidosTest(unittest.TestCase):
             ["a/migrations/1.sql"],
         )
 
-    def test_entrada_que_nao_e_texto_e_ignorada(self):
+    def test_entrada_que_nao_e_texto_e_ignorada_aqui_e_avaliar_merge_valida_antes(self):
         self.assertEqual(gates.toca_protegidos([None, 3, "a/migrations/1.sql"], ["**/migrations/**"]), ["a/migrations/1.sql"])
+        self.assertEqual(avaliar(arquivos=[None, 3, "a/migrations/1.sql"])["decisao"], "humano")
 
 
 class AvaliarMergeTest(unittest.TestCase):
@@ -162,9 +163,82 @@ class AvaliarMergeTest(unittest.TestCase):
         self.assertEqual(avaliar(arquivos=[], protegidos=[])["decisao"], "mergear")
 
     def test_ci_desconhecido_nunca_mergeia(self):
-        for ci in ("quebrado", None, 3, ""):
+        for ci in ("quebrado", 3, "", [], {}):
             with self.subTest(ci=ci):
                 self.assertEqual(avaliar(ci=ci)["decisao"], "humano")
+
+    def test_ci_none_ainda_nao_lido_aguarda(self):
+        r = avaliar(ci=None)
+        self.assertEqual(r["decisao"], "aguardar")
+        self.assertEqual(r["motivos"], ["CI ainda não lido"])
+        self.assertEqual(r["faltando"], [])
+
+    def test_ci_none_nao_vira_humano_nem_mergeia_mesmo_com_tudo_o_mais_ok(self):
+        r = avaliar(ci=None, arquivos=["a/migrations/1.sql"])
+        self.assertEqual(r["decisao"], "aguardar")
+
+    def test_verificacao_com_codigo_negativo_corrige(self):
+        for codigo in (-9, -1, 137):
+            with self.subTest(codigo=codigo):
+                r = avaliar(verificacao=verificacao_ok(codigo=codigo))
+                self.assertEqual(r["decisao"], "corrigir")
+                self.assertEqual(len(r["motivos"]), 1)
+
+    def test_head_sha_invalido_nunca_mergeia(self):
+        for head in (None, "", 0, 123, [], b"abc"):
+            for item_sha in (None, "", head, 0):
+                with self.subTest(head=head, item_sha=item_sha):
+                    v = {"sha": item_sha, "resultado": "aprovado", "achados": []}
+                    c = {"sha": item_sha, "codigo": 0, "saida": ""}
+                    r = avaliar(head_sha=head, veredito=v, verificacao=c)
+                    self.assertEqual(r["decisao"], "aguardar")
+                    self.assertEqual(sorted(r["faltando"]), ["revisao", "verificacao"])
+
+    def test_head_sha_invalido_com_itens_sem_chave_sha_nao_mergeia(self):
+        for head in (None, ""):
+            with self.subTest(head=head):
+                r = avaliar(
+                    head_sha=head,
+                    veredito={"resultado": "aprovado"},
+                    verificacao={"codigo": 0},
+                )
+                self.assertEqual(r["decisao"], "aguardar")
+                self.assertEqual(sorted(r["faltando"]), ["revisao", "verificacao"])
+
+    def test_sha_do_item_que_nao_e_texto_conta_como_faltando(self):
+        for sha in (None, "", 0, 123, [HEAD], {"x": HEAD}):
+            with self.subTest(sha=sha):
+                self.assertEqual(avaliar(veredito=veredito_ok(sha=sha))["faltando"], ["revisao"])
+                self.assertEqual(avaliar(verificacao=verificacao_ok(sha=sha))["faltando"], ["verificacao"])
+
+    def test_listas_malformadas_vao_para_humano(self):
+        malformadas = [
+            {"arquivos": "prisma/migrations/1/m.sql"},
+            {"protegidos": "**/migrations/**"},
+            {"arquivos": None},
+            {"protegidos": None},
+            {"arquivos": ["src/a.ts", None]},
+            {"arquivos": ["src/a.ts", 3]},
+            {"arquivos": [{"filename": "prisma/migrations/1/m.sql"}]},
+            {"protegidos": ["**/migrations/**", None]},
+            {"protegidos": [["**/migrations/**"]]},
+            {"arquivos": ("src/a.ts",)},
+            {"protegidos": ("**/migrations/**",)},
+        ]
+        for entrada in malformadas:
+            with self.subTest(entrada=entrada):
+                r = avaliar(**entrada)
+                self.assertEqual(r["decisao"], "humano")
+                self.assertEqual(r["motivos"], ["lista de arquivos/protegidos inválida"])
+
+    def test_listas_malformadas_nao_antecipam_as_regras_1_a_3(self):
+        ruins = {"arquivos": "x", "protegidos": None}
+        self.assertEqual(avaliar(ci="ausente", **ruins)["decisao"], "humano")
+        self.assertEqual(avaliar(ci="ausente", **ruins)["motivos"], ["repositório sem CI"])
+        self.assertEqual(avaliar(ci="pendente", **ruins)["decisao"], "aguardar")
+        self.assertEqual(avaliar(veredito=None, **ruins)["decisao"], "aguardar")
+        self.assertEqual(avaliar(ci="vermelho", **ruins)["decisao"], "corrigir")
+        self.assertEqual(avaliar(verificacao=verificacao_ok(codigo=1), **ruins)["decisao"], "corrigir")
 
     def test_veredito_malformado_conta_como_faltando(self):
         malformados = [

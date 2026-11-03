@@ -15,10 +15,24 @@ def toca_protegidos(arquivos: list[str], protegidos: list[str]) -> list[str]:
     ]
 
 
+def _sha_valido(item, head_sha):
+    """O item só vale para o head se ambos os SHAs forem texto não vazio e iguais."""
+    return (
+        isinstance(head_sha, str)
+        and head_sha != ""
+        and isinstance(item.get("sha"), str)
+        and item["sha"] == head_sha
+    )
+
+
+def _lista_de_textos(valor):
+    return isinstance(valor, list) and all(isinstance(v, str) for v in valor)
+
+
 def _verificacao_valida(verificacao, head_sha):
     return (
         isinstance(verificacao, dict)
-        and verificacao.get("sha") == head_sha
+        and _sha_valido(verificacao, head_sha)
         and isinstance(verificacao.get("codigo"), int)
         and not isinstance(verificacao.get("codigo"), bool)
     )
@@ -27,7 +41,7 @@ def _verificacao_valida(verificacao, head_sha):
 def _veredito_valido(veredito, head_sha):
     return (
         isinstance(veredito, dict)
-        and veredito.get("sha") == head_sha
+        and _sha_valido(veredito, head_sha)
         and isinstance(veredito.get("resultado"), str)
         and veredito["resultado"] in RESULTADOS
     )
@@ -58,6 +72,8 @@ def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos) 
     # 1. sem CI
     if ci == "ausente":
         return resultado("humano", ["repositório sem CI"])
+    if ci is None:
+        return resultado("aguardar", ["CI ainda não lido"])
     if ci not in CI_VALIDOS:
         return resultado("humano", [f"estado de CI desconhecido: {ci!r}"])
 
@@ -84,7 +100,9 @@ def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos) 
     if motivos:
         return resultado("corrigir", motivos)
 
-    # 4. arquivos protegidos exigem humano
+    # 4. arquivos protegidos exigem humano; listas malformadas nunca passam
+    if not _lista_de_textos(arquivos) or not _lista_de_textos(protegidos):
+        return resultado("humano", ["lista de arquivos/protegidos inválida"])
     tocados = toca_protegidos(arquivos, protegidos)
     if tocados:
         return resultado("humano", ["toca arquivos protegidos: " + ", ".join(tocados)])
