@@ -1251,10 +1251,11 @@ class TestesRodada4(unittest.TestCase):
         m, t = novo(ok({"runs": self._runs("a", 5, "2026-11-03T11:00:00.000Z")}), ok({"runs": fila}), ok({"runs": fila[:50] + self._runs("v", 50, "2026-11-03T12:30:00.000Z")}))
         self.assertIsNone(m.procurar_run("prj x", self.NONCE, self.DESDE))
         self.assertEqual([r[1] for r in t.requisicoes], [self._url("desc", 0), self._url("asc", 0), self._url("asc", 100)])
-        # teto: 20 páginas por direção, mesmo com páginas cheias sem fim
+        # teto: 20 páginas por direção, mesmo com páginas cheias sem fim (R5: no teto sem achar, a busca é falha)
         novos = self._runs("n", 100, "2026-11-03T12:30:00.000Z")
         m, t = novo(*([ok({"runs": novos})] * 20 + [ok({"runs": fila})] * 20))
-        self.assertIsNone(m.procurar_run("prj x", self.NONCE, self.DESDE))
+        with self.assertRaises(motor.BuscaIncompleta):
+            m.procurar_run("prj x", self.NONCE, self.DESDE)
         self.assertEqual(len(t.requisicoes), 40)
 
     def test_warren_busca_valida_entradas_e_respostas(self):
@@ -1334,6 +1335,196 @@ class TestesRodada4(unittest.TestCase):
                 list(inspect.signature(classe.despachar_run).parameters), list(inspect.signature(motor.Motor.despachar_run).parameters)
             )
             self.assertEqual(list(inspect.signature(classe.procurar_run).parameters), list(inspect.signature(motor.Motor.procurar_run).parameters))
+
+
+class TestesRodada5(unittest.TestCase):
+    """Rodada 5: cadeia de nonces (R3), retry automático do Warren por perda de infraestrutura (R2, infra-lost-retry.ts:
+    `sandbox_run_lost` e `preempted` recriam o run com o mesmo prompt e `retryOf` apontando para o original), atraso de
+    visibilidade (R3: `runs.create` vem depois de `refreshProject` em spawn/dispatch.ts) e busca no teto de páginas (R5).
+    """
+
+    NONCE = "0123456789abcdef0123456789abcdef"
+    NONCE2 = "fedcba9876543210fedcba9876543210"
+    MARCA = motor.MARCADOR_NONCE % NONCE
+    MARCA2 = motor.MARCADOR_NONCE % NONCE2
+    DESDE = "2026-11-03T12:00:00Z"
+    PROJETO = "kustertech-flow"
+    INICIO = datetime.datetime(2026, 11, 3, 12, 0, tzinfo=datetime.timezone.utc)
+
+    @staticmethod
+    def _runs(prefixo, n, started_at):
+        return [{"id": "%s-%d" % (prefixo, i), "prompt": "outro", "startedAt": started_at} for i in range(n)]
+
+    def _url(self, direcao, offset):
+        return BASE + "/runs?project=prj%%20x&sort=started&dir=%s&limit=100&offset=%d" % (direcao, offset)
+
+    # ------------------------------------------------ R3: a busca casa qualquer nonce da cadeia
+    def test_procurar_nonce_casa_qualquer_nonce_da_cadeia(self):
+        itens = [{"id": "r-1", "prompt": "p\n" + self.MARCA, "startedAt": "2026-11-03T12:30:00.000Z"}]
+        listar = lambda direcao, limite, offset: itens if offset == 0 else []  # noqa: E731
+        self.assertEqual(motor.procurar_nonce(listar, "prompt", [self.NONCE2, self.NONCE], self.DESDE), "r-1")
+        self.assertEqual(motor.procurar_nonce(listar, "prompt", self.NONCE, self.DESDE), "r-1")  # texto continua aceito
+        self.assertIsNone(motor.procurar_nonce(listar, "prompt", [self.NONCE2], self.DESDE))
+        for ruim in ([], [self.NONCE, "x"], ["x"], 5):
+            with self.assertRaises(ValueError):
+                motor.procurar_nonce(listar, "prompt", ruim, self.DESDE)
+        # MotorWarren e MotorFalso aceitam a lista em procurar_run e procurar_plano
+        m, t = novo(ok({"runs": itens}), ok({"runs": []}))
+        self.assertEqual(m.procurar_run("prj x", [self.NONCE2, self.NONCE], self.DESDE), "r-1")
+        m, t = novo(ok({"planRuns": [{"id": "p-1", "promptTemplate": "{seed_id}\n" + self.MARCA}]}))
+        self.assertEqual(m.procurar_plano("prj x", [self.NONCE2, self.NONCE]), "p-1")
+        m, t = novo()
+        with self.assertRaises(ValueError):
+            m.procurar_run("prj x", [self.NONCE, "x"], self.DESDE)
+        self.assertEqual(t.requisicoes, [])
+        falso = motor.MotorFalso()
+        rid = falso.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+        pid = falso.despachar_plano(**dict(ARGS_PLANO, prompt_template="{seed_id}\n" + self.MARCA))
+        self.assertEqual(falso.procurar_run(self.PROJETO, [self.NONCE2, self.NONCE]), rid)
+        self.assertEqual(falso.procurar_plano(self.PROJETO, [self.NONCE2, self.NONCE]), pid)
+        self.assertIsNone(falso.procurar_run(self.PROJETO, [self.NONCE2]))
+
+    # ------------------------------------------------ R5: o teto de páginas sem achar é busca FALHA
+    def test_procurar_nonce_no_teto_de_paginas_sem_achar_levanta_busca_incompleta(self):
+        self.assertTrue(issubclass(motor.BuscaIncompleta, RuntimeError))
+        self.assertFalse(issubclass(motor.BuscaIncompleta, motor.FalhaDeRede))
+        novos = self._runs("n", 100, "2026-11-03T12:30:00.000Z")
+        fila = [{"id": "q-%d" % i, "prompt": "outro", "startedAt": None} for i in range(100)]
+        # DESC nunca chega a um run anterior a `desde` e ASC nunca sai dos NULL: nem uma direção foi completa
+        m, t = novo(*([ok({"runs": novos})] * 20 + [ok({"runs": fila})] * 20))
+        with self.assertRaises(motor.BuscaIncompleta):
+            m.procurar_run("prj x", self.NONCE, self.DESDE)
+        self.assertEqual(len(t.requisicoes), 40)
+        # só o ASC bateu no teto (DESC completo): ainda assim incompleta, o run pode estar atrás dos NULL
+        m, t = novo(ok({"runs": self._runs("a", 5, "2026-11-03T11:00:00.000Z")}), *([ok({"runs": fila})] * 20))
+        with self.assertRaises(motor.BuscaIncompleta):
+            m.procurar_run("prj x", self.NONCE, self.DESDE)
+        self.assertEqual(len(t.requisicoes), 21)
+        # DESC no teto mas achado no ASC: devolve o id, sem levantar
+        alvo = [{"id": "q-x", "prompt": "revise\n" + self.MARCA, "startedAt": None}]
+        m, t = novo(*([ok({"runs": novos})] * 20 + [ok({"runs": alvo})]))
+        self.assertEqual(m.procurar_run("prj x", self.NONCE, self.DESDE), "q-x")
+        # sem `desde`, uma página DESC e as ASC completas: não encontrado, sem levantar
+        m, t = novo(ok({"runs": novos}), ok({"runs": self._runs("v", 10, "2026-11-01T00:00:00.000Z")}))
+        self.assertIsNone(m.procurar_run("prj x", self.NONCE))
+        # o falso com mais de 2.000 runs na fila (NULL) na frente do nosso também é incompleto
+        falso = motor.MotorFalso()
+        falso.agora = lambda: self.INICIO
+        falso.iniciar_historico(2100, projeto=self.PROJETO, na_fila=True)  # ids `fila-…` vêm antes de `run-…` no id ASC
+        falso.enfileirar(True)
+        rid = falso.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+        self.assertEqual(sum(1 for r in falso._listar_runs(self.PROJETO, "asc", 100, 0) if r["startedAt"] is None), 100)
+        with self.assertRaises(motor.BuscaIncompleta):
+            falso.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z")
+        falso.iniciar_run(rid)
+        self.assertEqual(falso.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z"), rid)
+
+    # ------------------------------------------------ R2: retry automático do Warren e a busca por ele
+    def test_falso_recria_o_run_perdido_por_infraestrutura_como_o_warren(self):
+        for motivo in ("sandbox_run_lost", "preempted"):
+            with self.subTest(motivo=motivo):
+                m = motor.MotorFalso()
+                m.agora = lambda: self.INICIO
+                rid = m.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+                m.definir_run(rid, estado="failed", motivoFalha=motivo)
+                retry = m.retry_de(rid)
+                self.assertIsNotNone(retry)
+                self.assertNotEqual(retry, rid)
+                self.assertEqual(m.run(rid)["estado"], "failed")
+                self.assertEqual(m.run(retry)["estado"], "running")
+                listados = {r["id"]: r for r in m._listar_runs(self.PROJETO, "desc", 100, 0)}
+                self.assertEqual(listados[retry]["retryOf"], rid)
+                self.assertIsNone(listados[rid]["retryOf"])
+                self.assertEqual(listados[retry]["prompt"], "p\n" + self.MARCA)  # o mesmo prompt, com o nonce
+                self.assertEqual(listados[rid]["failureReason"], motivo)
+                self.assertEqual(len([r for r in m._runs if r.startswith("run-")]), 2)
+                # o retry que também se perde NÃO ganha outro (is_retry), e o original já retried não ganha de novo
+                m.definir_run(retry, estado="failed", motivoFalha=motivo)
+                self.assertIsNone(m.retry_de(retry))
+                m.definir_run(rid, estado="failed", motivoFalha=motivo)
+                self.assertEqual(m.retry_de(rid), retry)
+                self.assertEqual(len([r for r in m._runs if r.startswith("run-")]), 2)
+        m = motor.MotorFalso()
+        rid = m.despachar_run(**ARGS_RUN)
+        m.definir_run(rid, estado="failed", motivoFalha="agent_crashed")  # outra causa: nada
+        self.assertIsNone(m.retry_de(rid))
+        m.definir_run("filho-x", estado="failed", motivoFalha="sandbox_run_lost")  # run que não foi despachado por nós (filho)
+        self.assertIsNone(m.retry_de("filho-x"))
+        m.enfileirar(True)
+        rid = m.despachar_run(**ARGS_RUN)
+        m.definir_run(rid, estado="failed", motivoFalha="sandbox_run_lost")
+        self.assertEqual(m.run(m.retry_de(rid))["estado"], "queued")  # com fila, o retry nasce na fila
+        m = motor.MotorFalso()
+        m.retry_infra_perdida = False  # orçamento esgotado ou cancelamento: o Warren não recria
+        rid = m.despachar_run(**ARGS_RUN)
+        m.definir_run(rid, estado="failed", motivoFalha="sandbox_run_lost")
+        self.assertIsNone(m.retry_de(rid))
+
+    def test_procurar_retry_acha_pelo_retry_of_ou_pelo_nonce_e_nunca_devolve_o_original(self):
+        original = {"id": "r-1", "prompt": "p\n" + self.MARCA, "startedAt": "2026-11-03T12:10:00.000Z", "retryOf": None, "state": "failed"}
+        retry = {"id": "r-2", "prompt": "p\n" + self.MARCA, "startedAt": None, "retryOf": "r-1", "state": "queued"}
+        # SQLite: o retry na fila aparece só no ASC; o original (com o mesmo nonce) nunca é a resposta
+        m, t = novo(ok({"runs": [original]}), ok({"runs": [retry, original]}))
+        self.assertEqual(m.procurar_retry("prj x", "r-1", [self.NONCE], self.DESDE), "r-2")
+        self.assertEqual([r[1] for r in t.requisicoes], [self._url("desc", 0), self._url("asc", 0)])
+        # sem nonce conhecido (estado antigo): só o retryOf
+        m, t = novo(ok({"runs": [original]}), ok({"runs": [dict(retry, prompt="outro"), original]}))
+        self.assertEqual(m.procurar_retry("prj x", "r-1", [], self.DESDE), "r-2")
+        # sem retryOf na resposta: o nonce basta, desde que o id não seja o original
+        m, t = novo(ok({"runs": [original, dict(retry, retryOf=None, startedAt="2026-11-03T12:11:00.000Z")]}), ok({"runs": []}))
+        self.assertEqual(m.procurar_retry("prj x", "r-1", [self.NONCE], self.DESDE), "r-2")
+        # nada além do original: None
+        m, t = novo(ok({"runs": [original]}), ok({"runs": [original]}))
+        self.assertIsNone(m.procurar_retry("prj x", "r-1", [self.NONCE], self.DESDE))
+        m, t = novo()
+        with self.assertRaises(ValueError):
+            m.procurar_retry("prj x", "r-1", ["x"], self.DESDE)
+        with self.assertRaises(ValueError):
+            m.procurar_retry("prj x", "", [self.NONCE], self.DESDE)
+        self.assertEqual(t.requisicoes, [])
+        # o falso: o retry automático é achado pela mesma busca
+        falso = motor.MotorFalso()
+        falso.agora = lambda: self.INICIO
+        rid = falso.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+        self.assertIsNone(falso.procurar_retry(self.PROJETO, rid, [self.NONCE], "2026-11-03T11:50:00Z"))
+        falso.definir_run(rid, estado="failed", motivoFalha="preempted")
+        self.assertEqual(falso.procurar_retry(self.PROJETO, rid, [self.NONCE], "2026-11-03T11:50:00Z"), falso.retry_de(rid))
+        self.assertEqual(falso.procurar_retry(self.PROJETO, rid, [], "2026-11-03T11:50:00Z"), falso.retry_de(rid))
+        self.assertEqual(falso.chamadas[-1][0], "procurar_retry")
+
+    # ------------------------------------------------ R3: atraso de visibilidade na listagem
+    def test_falso_esconde_o_run_na_listagem_durante_o_atraso_de_visibilidade(self):
+        relogio = {"t": self.INICIO}
+        m = motor.MotorFalso()
+        m.agora = lambda: relogio["t"]
+        m.atraso_de_visibilidade = datetime.timedelta(seconds=120)
+        rid = m.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+        self.assertEqual(m.run(rid)["estado"], "running")  # GET /runs/:id continua respondendo
+        self.assertNotIn(rid, [r["id"] for r in m._listar_runs(self.PROJETO, "desc", 100, 0)])
+        self.assertIsNone(m.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z"))
+        relogio["t"] += datetime.timedelta(seconds=119)
+        self.assertIsNone(m.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z"))
+        relogio["t"] += datetime.timedelta(seconds=1)
+        self.assertEqual(m.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z"), rid)
+        # o retry automático também passa pelo atraso
+        m.definir_run(rid, estado="failed", motivoFalha="sandbox_run_lost")
+        self.assertIsNone(m.procurar_retry(self.PROJETO, rid, [self.NONCE], "2026-11-03T11:50:00Z"))
+        relogio["t"] += datetime.timedelta(seconds=120)
+        self.assertEqual(m.procurar_retry(self.PROJETO, rid, [self.NONCE], "2026-11-03T11:50:00Z"), m.retry_de(rid))
+        # sem atraso (padrão), o run aparece no ato
+        m = motor.MotorFalso()
+        rid = m.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+        self.assertEqual(m.procurar_run(self.PROJETO, self.NONCE), rid)
+
+    def test_protocolo_tem_procurar_retry(self):
+        import inspect
+
+        self.assertTrue(hasattr(motor.Motor, "procurar_retry"))
+        esperado = list(inspect.signature(motor.Motor.procurar_retry).parameters)
+        self.assertEqual(esperado, ["self", "projeto", "run_id", "nonces", "desde"])
+        for classe in (motor.MotorFalso, motor_warren.MotorWarren):
+            self.assertEqual(list(inspect.signature(classe.procurar_retry).parameters), esperado)
+        self.assertIsInstance(motor.MotorFalso(), motor.Motor)
 
 
 class TestesExecucaoDireta(unittest.TestCase):

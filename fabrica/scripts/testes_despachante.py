@@ -3256,7 +3256,7 @@ class TestesRodada4(Base):
         for _ in range(3):
             d.ciclo()  # 3 buscas sem achar: descartado e redespachado (mesma chave, nonce novo no texto)
         buscas = [a for nome, a in self.motor.chamadas if nome == "procurar_run"]
-        self.assertEqual([(b["nonce"], b["desde"]) for b in buscas], [(raiz, item["desde"])] * 3)  # a hora da ação limita a busca
+        self.assertEqual([(b["nonce"], b["desde"]) for b in buscas], [([raiz], item["desde"])] * 3)  # a hora da ação limita a busca
         revisoes = self.runs(OPUS)
         self.assertEqual(len(revisoes), 2)
         self.assertEqual([r["chave_idempotencia"] for r in revisoes], [raiz, raiz])
@@ -3401,39 +3401,34 @@ class TestesRodada4(Base):
         self.assertEqual(len(self.runs(OPUS)), 1)
         self.assertNotIn(chave, e.get("noncesRaiz") or {})
 
-    def test_q2_resposta_do_paulo_acorda_o_orquestrador_e_solta_o_item(self):
+    def test_q2_resposta_do_paulo_acorda_o_orquestrador_e_mantem_o_item_incerto(self):
+        """R1 (rodada 5): a resposta acorda o orquestrador com o contexto; o item segue incerto (falhasBusca zerado)."""
         for acao in ("revisar", "acordar"):
             with self.subTest(acao=acao):
                 self.setUp()
-                d, chave = self._incerto_com_busca_falha("rede", acao)
+                d, chave = self._incerto_com_busca_falha("http500", acao)
                 for _ in range(10):
                     d.ciclo()
                 url = [x for x in self.estado()["decisoes"] if x.get("tipo") == "incerto"][0]["url"]
                 self.forja.definir_decisao(url, fechada=True, ultimo_comentario="o run existe no Warren, segue")
                 d.ciclo()
                 e = self.estado()
-                self.assertEqual(e["despachosIncertos"], [])
+                self.assertEqual([i["chave"] for i in e["despachosIncertos"]], [chave])
+                self.assertEqual(e["despachosIncertos"][0]["falhasBusca"], 1)  # zerado na resposta; a busca deste ciclo falhou
                 self.assertNotIn(url, [x.get("url") for x in e["decisoes"]])
-                # o item solto é refeito com a MESMA Idempotency-Key: o Warren devolve o run já criado, nada pago a mais
-                self.assertEqual(len(self._runs_criados()), 2 if acao == "revisar" else 1)
-                self.assertNotIn(chave, e.get("noncesRaiz") or {})
+                self.assertEqual(len(self.runs(OPUS if acao == "revisar" else FABLE)), 1)  # nada pago a mais
+                self.assertIn(chave, e.get("noncesRaiz") or {})  # a cadeia segue aberta
                 if acao == "acordar":
-                    rid = e["orquestrador"]["runId"]
-                    self.assertEqual(rid, self._runs_criados()[0])
-                    self.assertEqual([p["motivo"] for p in e["acordarPendentes"]], ["resposta_paulo"])
-                    self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a")))
-                    d.ciclo()
+                    # o orquestrador incerto segura a resposta na fila; o item continua sem redespacho
+                    self.assertEqual([(p["motivo"], p["alvo"]) for p in e["acordarPendentes"]], [("resposta_paulo", url)])
+                    contexto = e["acordarPendentes"][0]["contexto"]
                 else:
-                    self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], self._runs_criados()[0])
-                d.ciclo()
-                e = self.estado()
-                respostas = [a for a in self.acordadas() if a["motivo"] == "resposta_paulo"]
-                self.assertEqual(len(respostas), 1)
-                self.assertEqual(respostas[0]["alvo"], url)
-                contexto = e["orquestrador"]["acordada"]["contexto"]
+                    self.assertEqual([(a["motivo"], a["alvo"]) for a in self.acordadas()], [("resposta_paulo", url)])
+                    contexto = e["orquestrador"]["acordada"]["contexto"]
+                    self.assertIn("o run existe no Warren, segue", self.runs(FABLE)[0]["prompt"])
                 self.assertEqual(contexto["resposta"], "o run existe no Warren, segue")
                 self.assertIn(chave, contexto["pergunta"])
-                self.assertEqual(len(self.runs(FABLE)), 3 if acao == "acordar" else 1)
+                self.assertEqual(contexto["alvo"], chave)
 
     # ------------------------------------------------ Q3: decisão fechada de novo sem comentário
     def _relogio_compartilhado(self):
@@ -3723,6 +3718,475 @@ class TestesCompactar(unittest.TestCase):
         antes = copy.deepcopy(estado_)
         despachante.compactar(estado_, plano(raia("a")))
         self.assertEqual(estado_, antes)
+
+
+class TestesRodada5(Base):
+    """Rodada 5: R1 (resposta não solta o incerto), R2 (retry do Warren por infra perdida), R3 (cadeia de nonces e
+    atraso de visibilidade), R4 (relógio do GitHub contra ele mesmo) e R5 (teto de páginas é busca falha)."""
+
+    UTC = datetime.timezone.utc
+    TITULO_INCERTO = "[fábrica] despacho não confirmado: "
+
+    def _relogio(self):
+        """Um relógio só: o despachante, o Warren falso (janela de idempotência, startedAt) e o GitHub falso."""
+        self.instante = datetime.datetime(2026, 11, 3, 12, 0, 0, tzinfo=self.UTC)
+        self.motor.agora = lambda: self.instante
+        self.forja.agora = lambda: self.instante
+
+    def _avancar(self, segundos=30):
+        self.instante += datetime.timedelta(seconds=segundos)
+
+    def _titulos(self):
+        return [t for t, _ in self.forja.decisoes]
+
+    def _runs_criados(self):
+        """Os runs que o Warren falso criou de fato (pagos), inclusive os retries dele; sem filhos de Plan Run."""
+        return [r for r in self.motor._momentos if r.startswith("run-")]
+
+    def _incerto_com_busca_falha(self, acao):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1)
+        self._relogio()
+
+        def falha(projeto, nonce, desde=None):
+            raise RuntimeError("GET /runs?project=x: HTTP 500")
+
+        self.motor.procurar_run = falha
+        d = self.preparar_raia()
+        if acao == "revisar":
+            self.abrir_pr(H1)
+            chave = "revisar:s-1"
+        else:
+            self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+            chave = "acordar:raia_falhou:a"
+        d.ciclo()
+        self.assertEqual([i["chave"] for i in self.estado()["despachosIncertos"]], [chave])
+        return d, chave
+
+    def _ate_o_run(self, papel):
+        """Um run pago de `papel` em curso (revisor, fixer ou orquestrador): devolve (despachante, campo, run_id)."""
+        d = self.preparar_raia()
+        if papel == "orquestrador":
+            self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+            d.ciclo()
+            return d, "orquestrador", self.estado()["orquestrador"]["runId"]
+        self.abrir_pr(H1, ci="vermelho" if papel == "fixer" else "verde")
+        d.ciclo()
+        if papel == "revisor":
+            return d, "revisaoRunId", self.estado()["seeds"]["s-1"]["revisaoRunId"]
+        self.terminar_revisao(H1)
+        d.ciclo()
+        return d, "fixerRunId", self.estado()["seeds"]["s-1"]["fixerRunId"]
+
+    def _run_de(self, campo):
+        if campo == "orquestrador":
+            return self.estado()["orquestrador"]["runId"]
+        return self.estado()["seeds"]["s-1"][campo]
+
+    # ------------------------------------------------ R1: a resposta do Paulo não solta o item
+    def test_r1_resposta_fora_da_janela_com_a_busca_de_volta_nao_duplica(self):
+        """c33 R2 e c35 R3: 10 buscas falhas, decisão, resposta 15 min depois (janela de idempotência vencida) e a busca
+        volta: o run é achado pelo nonce e adotado; um run pago só."""
+        for acao in ("revisar", "acordar"):
+            with self.subTest(acao=acao):
+                self.setUp()
+                d, chave = self._incerto_com_busca_falha(acao)
+                for _ in range(10):
+                    self._avancar()
+                    d.ciclo()
+                self.assertIn(self.TITULO_INCERTO + chave, self._titulos())
+                self.motor._idempotencia.clear()  # restart do Warren: a janela de 10 min se perde
+                url = [x for x in self.estado()["decisoes"] if x.get("tipo") == "incerto"][0]["url"]
+                self._avancar(15 * 60)
+                self.forja.definir_decisao(url, fechada=True, ultimo_comentario="O run existe no Warren; não refaça.")
+                self._avancar()
+                d.ciclo()
+                e = self.estado()
+                self.assertEqual([(i["chave"], i["ciclos"]) for i in e["despachosIncertos"]], [(chave, 0)])
+                posts = len(self.runs(OPUS if acao == "revisar" else FABLE))
+                self.assertEqual(posts, 1)  # o POST incerto: nenhum redespacho na resposta
+                del self.motor.procurar_run  # a busca volta
+                for _ in range(4):
+                    self._avancar()
+                    d.ciclo()
+                e = self.estado()
+                self.assertEqual(e["despachosIncertos"], [])
+                self.assertEqual(len(self.runs(OPUS if acao == "revisar" else FABLE)), 1)
+                # criados no Warren: o run incerto e, no caso da revisão, o orquestrador acordado pela resposta
+                self.assertEqual(len(self._runs_criados()), 2 if acao == "revisar" else 1)
+                rid = self._runs_criados()[0]
+                self.assertEqual(self._run_de("revisaoRunId" if acao == "revisar" else "orquestrador"), rid)
+                self.assertEqual(self._titulos().count(self.TITULO_INCERTO + chave), 1)
+                self.assertTrue(self.forja._decisoes[url]["fechada"])
+                self.assertIsNone(e["pausado"])
+                respostas = [p for p in e["acordarPendentes"] if p["motivo"] == "resposta_paulo"]
+                if acao == "acordar":
+                    self.assertEqual(len(respostas), 1)  # espera o orquestrador adotado terminar
+                else:
+                    self.assertEqual(respostas, [])
+                    (orq,) = self.runs(FABLE)
+                    self.assertIn("O run existe no Warren; não refaça.", orq["prompt"])
+
+    def test_r1_resposta_com_a_busca_ainda_quebrada_segura_o_item_e_escala_de_novo(self):
+        """c33 R2b: depois da resposta a busca segue falhando: nenhum redespacho; uma nova decisão na 10ª falha seguinte."""
+        d, chave = self._incerto_com_busca_falha("revisar")
+        for _ in range(10):
+            self._avancar()
+            d.ciclo()
+        url = [x for x in self.estado()["decisoes"] if x.get("tipo") == "incerto"][0]["url"]
+        self._avancar(15 * 60)
+        self.forja.definir_decisao(url, fechada=True, ultimo_comentario="O run existe; não refaça.")
+        for k in range(9):
+            self._avancar()
+            d.ciclo()
+            e = self.estado()
+            self.assertEqual([(i["chave"], i["falhasBusca"]) for i in e["despachosIncertos"]], [(chave, k + 1)])
+            self.assertEqual(self._titulos().count(self.TITULO_INCERTO + chave), 1)
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(self._titulos().count(self.TITULO_INCERTO + chave), 2)
+        self.assertEqual(len(self.runs(OPUS)), 1)  # nenhum redespacho da revisão
+        self.assertEqual(len(self._runs_criados()), 2)  # a revisão incerta e o orquestrador acordado pela resposta
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertIsNone(self.estado()["pausado"])
+        self.assertIn(chave, self.estado()["noncesRaiz"])
+
+    # ------------------------------------------------ R2: retry automático do Warren por infra perdida
+    def test_r2_retry_do_warren_e_adotado_como_continuacao(self):
+        """c34 I1 e I2: o run falha `sandbox_run_lost`/`preempted`, o Warren recria; o despachante adota o retry."""
+        for papel in ("revisor", "fixer", "orquestrador"):
+            for motivo in ("sandbox_run_lost", "preempted"):
+                with self.subTest(papel=papel, motivo=motivo):
+                    self.setUp()
+                    self._relogio()
+                    d, campo, original = self._ate_o_run(papel)
+                    posts, antes = len(self.runs()), set(self._runs_criados())
+                    self.motor.definir_run(original, estado="failed", motivoFalha=motivo)
+                    retry = self.motor.retry_de(original)
+                    self.assertIsNotNone(retry)
+                    self._avancar()
+                    d.ciclo()
+                    e = self.estado()
+                    self.assertEqual(self._run_de(campo), retry)
+                    self.assertEqual(len(self.runs()), posts)  # nenhum POST pago a mais
+                    self.assertEqual(set(self._runs_criados()) - antes, {retry})
+                    self.assertNotIn(original, e.get("retriesEsperados") or {})
+                    adocoes = [x for x in self.log() if x.get("evento") == "retry_adotado"]
+                    self.assertEqual([(x["original"], x["runId"], x["papel"]) for x in adocoes], [(original, retry, papel)])
+                    if papel == "orquestrador":
+                        self.assertEqual(e["falhasAcordar"], 0)
+                        self.assertEqual(e["acordarPendentes"], [])
+                        self.assertIsNone(e["orquestrador"].get("contadoRunId"))
+                        self.assertEqual(e["orquestrador"]["acordada"]["motivo"], "raia_falhou")
+                    else:
+                        self.assertEqual(e["seeds"]["s-1"]["estado"], "em_revisao" if papel == "revisor" else "corrigindo")
+                        self.assertEqual(self.acordadas(), [])
+                    # o retry termina bem e a jornada segue
+                    if papel == "revisor":
+                        self.motor.definir_run(retry, estado="succeeded")
+                        self.motor.definir_texto(retry, veredito_texto(H1))
+                        d.ciclo()
+                        self.assertEqual(self.estado()["seeds"]["s-1"]["veredito"]["sha"], H1)
+                        self.assertEqual(self.forja.merges, [(PR, H1)])
+                    elif papel == "fixer":
+                        self.motor.definir_run(retry, estado="succeeded")
+                        self.mover_head(H2, ci="verde")
+                        acoes = d.ciclo()
+                        self.assertEqual([(a["tipo"], a["sha"]) for a in acoes], [("revisar", H2), ("verificar", H2)])
+                        self.assertEqual(len(self.runs(HAIKU)), 1)
+                    else:
+                        self.pr_do_orquestrador(retry, [".fabrica/plano.json"], plano(raia("a")))
+                        d.ciclo()
+                        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+                        self.assertEqual(self.estado()["orquestrador"]["semResultadoSeguidos"], 0)
+                        self.assertEqual(len(self.runs(FABLE)), 1)
+
+    def test_r2_retry_que_tambem_se_perde_nao_espera_e_segue_o_caminho_de_hoje(self):
+        """Um retry não ganha outro retry no Warren (is_retry): o despachante não procura por 3 ciclos."""
+        self._relogio()
+        d, campo, original = self._ate_o_run("revisor")
+        self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
+        retry = self.motor.retry_de(original)
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(self._run_de(campo), retry)
+        self.motor.definir_run(retry, estado="failed", motivoFalha="sandbox_run_lost")
+        self.assertIsNone(self.motor.retry_de(retry))
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(len(self.runs(OPUS)), 2)  # revisão refeita no mesmo ciclo (caminho de hoje)
+        self.assertNotIn(retry, self.estado().get("retriesEsperados") or {})
+
+    def test_r2_sem_retry_em_3_leituras_boas_segue_o_caminho_de_hoje(self):
+        """Orçamento esgotado ou cancelamento: o Warren não recria; depois de 3 buscas boas sem achar, o caminho de hoje."""
+        for papel in ("revisor", "orquestrador"):
+            with self.subTest(papel=papel):
+                self.setUp()
+                self._relogio()
+                self.motor.retry_infra_perdida = False
+                d, campo, original = self._ate_o_run(papel)
+                posts = len(self.runs())
+                self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
+                for k in (1, 2):
+                    self._avancar()
+                    d.ciclo()
+                    e = self.estado()
+                    self.assertEqual(self._run_de(campo), original)  # ainda esperando o retry
+                    self.assertEqual(len(self.runs()), posts)
+                    self.assertEqual(e["retriesEsperados"][original]["buscas"], k)
+                    self.assertEqual(e["retriesEsperados"][original]["papel"], papel)
+                self._avancar()
+                d.ciclo()
+                e = self.estado()
+                self.assertNotIn(original, e.get("retriesEsperados") or {})
+                self.assertEqual(len(self.runs()), posts + 1)  # caminho de hoje: redespacho
+                if papel == "orquestrador":
+                    self.assertEqual(e["falhasAcordar"], 1)
+                    self.assertNotEqual(self._run_de(campo), original)
+                else:
+                    self.assertNotEqual(self._run_de(campo), original)
+                    self.assertEqual(e["seeds"]["s-1"]["estado"], "em_revisao")
+                buscas = [a for n, a in self.motor.chamadas if n == "procurar_retry"]
+                self.assertEqual(len(buscas), 3)
+                self.assertEqual(buscas[0]["run_id"], original)
+                self.assertEqual(len(buscas[0]["nonces"]), 1)  # o nonce do despacho, guardado por run
+                self.assertTrue(buscas[0]["desde"])
+
+    def test_r2_busca_do_retry_que_falha_nao_conta_como_leitura_boa_e_escala_na_10a(self):
+        """A busca pelo retry que falha (HTTP 500 ou teto de páginas) não gasta os 3 ciclos; na 10ª abre decisão."""
+        self._relogio()
+        d, campo, original = self._ate_o_run("revisor")
+        self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
+        retry = self.motor.retry_de(original)
+        boa = self.motor.procurar_retry
+
+        def falha(projeto, run_id, nonces, desde=None):
+            self.motor._registrar("procurar_retry", projeto=projeto, run_id=run_id, nonces=nonces, desde=desde)
+            raise RuntimeError("GET /runs?project=x: HTTP 500")
+
+        self.motor.procurar_retry = falha
+        titulo = self.TITULO_INCERTO + "retry:" + original
+        for k in range(9):
+            self._avancar()
+            d.ciclo()
+            e = self.estado()
+            self.assertEqual(self._run_de(campo), original)
+            self.assertEqual(e["retriesEsperados"][original]["buscas"], 0)
+            self.assertEqual(e["retriesEsperados"][original]["falhasBusca"], k + 1)
+            self.assertNotIn(titulo, self._titulos())
+        self._avancar()
+        d.ciclo()
+        self.assertIn(titulo, self._titulos())
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        # R1 vale também aqui: a resposta do Paulo acorda o orquestrador, zera as falhas e NÃO redespacha
+        url = [x for x in self.estado()["decisoes"] if x.get("tipo") == "incerto"][0]["url"]
+        self.forja.definir_decisao(url, fechada=True, ultimo_comentario="o retry existe, espere")
+        for k in range(10):
+            # a busca do retry corre antes das decisões no ciclo: no ciclo da resposta ela falha e depois é zerada
+            self._avancar()
+            d.ciclo()
+            e = self.estado()
+            self.assertEqual(e["retriesEsperados"][original]["falhasBusca"], k)
+            self.assertEqual(self._titulos().count(titulo), 1)
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(self._titulos().count(titulo), 2)
+        self.assertEqual(self._run_de(campo), original)
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        self.assertIn("o retry existe, espere", self.runs(FABLE)[0]["prompt"])
+        self.motor.procurar_retry = boa  # a busca volta e acha o retry
+        self._avancar()
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(self._run_de(campo), retry)
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        self.assertFalse([x for x in e["decisoes"] if x.get("tipo") == "incerto"])
+        d.ciclo()
+        self.assertTrue(all(i["fechada"] for i in self.forja._decisoes.values()))
+
+    # ------------------------------------------------ R3: cadeia de nonces e atraso de visibilidade
+    def test_r3_run_invisivel_por_4_ciclos_com_toda_resposta_perdida_paga_um_run_so(self):
+        """c33 CH e c37 CH2 (20, 40 e 60 min): o Warren cria o run mas só o lista 4 ciclos depois (refreshProject antes do
+        insert) e toda resposta de POST se perde; a chave devolve o run da 1ª tentativa, cujo nonce é o 1º da cadeia."""
+        for minutos in (20, 40, 60):
+            with self.subTest(minutos=minutos):
+                self.setUp()
+                self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 10**6)
+                self._relogio()
+                self.motor.atraso_de_visibilidade = datetime.timedelta(seconds=120)
+                self.motor.iniciar_historico(60, projeto=PROJETO, ha=datetime.timedelta(hours=1))
+                d = self.preparar_raia()
+                self.abrir_pr(H1)
+                for _ in range(minutos * 2):
+                    self._avancar()
+                    d.ciclo()
+                e = self.estado()
+                self.assertEqual(len(self._runs_criados()), 1)
+                (rid,) = self._runs_criados()
+                self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], rid)
+                self.assertEqual(e["despachosIncertos"], [])
+                self.assertIsNone(e["pausado"])
+                self.assertEqual(self._titulos(), [])
+                self.assertNotIn("revisar:s-1", e.get("noncesRaiz") or {})
+                self.assertNotIn("revisar:s-1", e.get("cadeias") or {})
+                achados = [x for x in self.log() if x.get("evento") == "despacho_incerto_achado"]
+                self.assertEqual(len(achados), 1)
+                # o item incerto levava a cadeia inteira, e a busca casou o nonce da 1ª tentativa (o do prompt do run)
+                buscas = [a for n, a in self.motor.chamadas if n == "procurar_run"]
+                self.assertGreaterEqual(len(buscas[-1]["nonce"]), 2)
+                primeiro = buscas[0]["nonce"][0] if isinstance(buscas[0]["nonce"], list) else buscas[0]["nonce"]
+                self.assertIn(motor.MARCADOR_NONCE % primeiro, self.motor._textos_enviados[rid][1])
+                self.assertEqual(buscas[-1]["nonce"][0], primeiro)
+
+    def test_r3_o_item_incerto_guarda_todos_os_nonces_da_cadeia(self):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 10**6, criar=False)
+        self._relogio()
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        nonces = []
+        for _ in range(8):
+            self._avancar()
+            d.ciclo()
+            for item in self.estado()["despachosIncertos"]:
+                self.assertEqual(item["nonces"][-1], item["nonce"])
+                self.assertEqual(item["nonces"][0], self.estado()["noncesRaiz"]["revisar:s-1"])
+                nonces = item["nonces"]
+        # 8 ciclos: 1º POST (c1); 3 buscas, descarte e 2º POST (c4); 3 buscas, descarte e 3º POST (c7); 1 busca (c8)
+        self.assertEqual(len(nonces), 3)
+        self.assertEqual(len(set(nonces)), 3)
+        self.assertEqual(len(self.runs(OPUS)), 3)
+        self.assertEqual(self.estado()["cadeias"]["revisar:s-1"]["nonces"], nonces)
+
+    # ------------------------------------------------ R4: o relógio do GitHub contra ele mesmo
+    def _decisao_de_seed(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("src/auth/x.ts",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        url = self.estado()["decisoes"][-1]["url"]
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        return d, url
+
+    def _reaberturas(self):
+        return [a for n, a in self.forja.chamadas if n == "reabrir_decisao"]
+
+    def _fechar_sem_comentario(self, url):
+        atual = self.forja._decisoes[url]
+        self._avancar(60)
+        self.forja.definir_decisao(url, fechada=True, ultimo_comentario=atual.get("ultimoComentario", ""))
+
+    def test_r4_relogio_do_github_adiantado_nao_perde_a_escalada(self):
+        """c36 Q3b: GitHub 120 s (e 1 h) à frente do nosso relógio, leituras velhas com o mesmo closed_at depois da
+        reabertura: um comentário só, a decisão continua acompanhada e o orquestrador não é acordado."""
+        for adianto in (0, 120, 3600):
+            with self.subTest(adianto=adianto):
+                self.setUp()
+                self._relogio()
+                self.forja.agora = lambda: self.instante + datetime.timedelta(seconds=adianto)
+                d, url = self._decisao_de_seed()
+                self._fechar_sem_comentario(url)
+                velha = dict(self.forja._decisoes[url])
+                self._avancar(60)
+                d.ciclo()
+                self.assertEqual(len(self._reaberturas()), 1)
+                decisao = [x for x in self.estado()["decisoes"] if x["url"] == url][0]
+                self.assertEqual(decisao["fechadaEmVista"], velha["fechadaEm"])
+                original = self.forja.decisao
+                atraso = {"n": 3}
+
+                def decisao_atrasada(u, _o=original):
+                    if u == url and atraso["n"] > 0:
+                        atraso["n"] -= 1
+                        return dict(velha)
+                    return _o(u)
+
+                self.forja.decisao = decisao_atrasada
+                for _ in range(4):
+                    self._avancar(60)
+                    d.ciclo()
+                e = self.estado()
+                self.assertEqual(len(self._reaberturas()), 1)
+                self.assertIn(url, [x["url"] for x in e["decisoes"]])
+                self.assertEqual(self.runs(FABLE), [])
+                self.assertFalse(self.forja._decisoes[url]["fechada"])
+                # um fechamento novo de verdade (closed_at posterior ao visto) ainda é reconhecido
+                self._fechar_sem_comentario(url)
+                self._avancar(60)
+                d.ciclo()
+                self.assertEqual(len(self._reaberturas()), 2)
+                self.assertIn(url, [x["url"] for x in self.estado()["decisoes"]])
+
+    def test_r4_sem_closed_at_visto_vale_a_hora_da_reabertura(self):
+        """`reabertaEm` fica só como fallback, quando a reabertura não viu closed_at."""
+        self._relogio()
+        self.forja.agora = lambda: self.instante + datetime.timedelta(seconds=120)
+        d, url = self._decisao_de_seed()
+        original = self.forja.decisao
+        self.forja.definir_decisao(url, fechada=True)
+        self.forja.decisao = lambda u: {"fechada": True, "ultimoComentario": ""}
+        self._avancar(60)
+        d.ciclo()
+        self.forja.decisao = original
+        decisao = [x for x in self.estado()["decisoes"] if x["url"] == url][0]
+        self.assertIsNone(decisao["fechadaEmVista"])
+        self.assertEqual(len(self._reaberturas()), 1)
+        self._fechar_sem_comentario(url)  # closed_at (GitHub adiantado) posterior à reabertura: fechamento novo
+        self._avancar(60)
+        d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 2)
+        # leitura velha com o nosso relógio atrás do GitHub e sem closed_at visto: só o fallback decide
+        self.assertEqual(despachante.Despachante._leitura_velha({"reabertaEm": "2026-11-03T12:10:00Z"}, "2026-11-03T12:09:00Z", ""), True)
+        self.assertEqual(despachante.Despachante._leitura_velha({"reabertaEm": "2026-11-03T12:10:00Z"}, "2026-11-03T12:11:00Z", ""), False)
+        # com closed_at visto, só ele conta: nem um reabertaEm posterior ao closed_at torna a leitura nova
+        vista = {"reabertaEm": "2026-11-03T12:10:00Z", "fechadaEmVista": "2026-11-03T12:12:00Z"}
+        self.assertEqual(despachante.Despachante._leitura_velha(vista, "2026-11-03T12:12:00Z", ""), True)
+        self.assertEqual(despachante.Despachante._leitura_velha(vista, "2026-11-03T12:11:00Z", ""), True)
+        self.assertEqual(despachante.Despachante._leitura_velha(vista, "2026-11-03T12:12:01Z", ""), False)
+
+    # ------------------------------------------------ R5: o teto de páginas é busca falha
+    def test_r5_busca_no_teto_de_paginas_e_falha_e_nunca_redespacha(self):
+        """c33 Q2: 2.100 runs alheios na fila (NULL) na frente do nosso, que fica na fila 30 ciclos, e restart do Warren:
+        a busca bate no teto de 20 páginas; isso conta como busca falha (decisão na 10ª), nunca como "não encontrado"."""
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 0)
+        self._relogio()
+        self.motor.iniciar_historico(60, projeto=PROJETO, ha=datetime.timedelta(hours=1))
+        self.motor.iniciar_historico(2100, projeto=PROJETO, na_fila=True)  # na fila (NULL), na frente do nosso no id ASC
+        self.motor.enfileirar(True)
+        self.motor.vezes = 1
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        self._avancar()
+        d.ciclo()  # o POST fica incerto; o run entra na fila atrás dos 2.100
+        (rid,) = self._runs_criados()
+        self.motor._idempotencia.clear()  # restart do Warren
+        titulo = self.TITULO_INCERTO + "revisar:s-1"
+        for k in range(9):
+            self._avancar()
+            d.ciclo()
+            e = self.estado()
+            self.assertEqual([(i["chave"], i["ciclos"], i["falhasBusca"]) for i in e["despachosIncertos"]], [("revisar:s-1", 0, k + 1)])
+            self.assertNotIn(titulo, self._titulos())
+        self._avancar()
+        d.ciclo()
+        self.assertIn(titulo, self._titulos())
+        for _ in range(20):
+            self._avancar()
+            d.ciclo()
+        e = self.estado()
+        self.assertEqual([(i["chave"], i["ciclos"]) for i in e["despachosIncertos"]], [("revisar:s-1", 0)])
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        self.assertIsNone(e["pausado"])
+        self.assertNotIn(despachante.TITULO_WARREN, self._titulos())  # as leituras dos planos seguem boas
+        erros = [x for x in self.log() if x.get("etapa") == "procurar_despacho"]
+        self.assertTrue(erros and all("BuscaIncompleta" in (x.get("erro") or "") for x in erros))
+        self.motor.iniciar_run(rid)  # o run sai da fila: a busca DESC o acha
+        self._avancar()
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(e["despachosIncertos"], [])
+        self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], rid)
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        self.assertEqual(self._titulos().count(titulo), 1)
 
 
 if __name__ == "__main__":

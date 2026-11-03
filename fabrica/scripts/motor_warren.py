@@ -12,7 +12,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, instante, procurar_nonce, validar_nonce  # noqa: E402
+from motor import FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, instante, marcas_de_nonce, procurar_nonce, validar_nonce  # noqa: E402
 
 # Falhas em que a requisição nunca foi escrita: o servidor não pode ter aceitado nada.
 _ERRNOS_ANTES = {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EADDRNOTAVAIL}
@@ -322,8 +322,8 @@ class MotorWarren:
                 return modelo
         return None
 
-    def _procurar(self, caminho: str, chave: str, campo: str, nonce: str) -> str | None:
-        marca = MARCADOR_NONCE % validar_nonce(nonce)
+    def _procurar(self, caminho: str, chave: str, campo: str, nonce) -> str | None:
+        marcas = marcas_de_nonce(nonce)
         dados = self._json("GET", caminho)
         itens = dados.get(chave)
         if not isinstance(itens, list):
@@ -332,7 +332,7 @@ class MotorWarren:
             if not isinstance(item, dict):
                 raise RuntimeError("GET %s: %r tem item que não é objeto" % (caminho, chave))
             texto = item.get(campo)
-            if isinstance(texto, str) and marca in texto:
+            if isinstance(texto, str) and any(m in texto for m in marcas):
                 return self._texto(item, chave + "[]", "id", "GET", caminho)
         return None
 
@@ -349,17 +349,36 @@ class MotorWarren:
         """Q1: o Warren ordena por started_at DESC, id ASC e um run queued tem started_at NULL; sem filtro de estado.
 
         A busca lê DESC (paginando até os runs iniciados antes de `desde`) e ASC (os NULL, no SQLite), ver `procurar_nonce`.
+        `nonce` pode ser a lista de nonces da cadeia (R3); o teto de páginas sem achar levanta `BuscaIncompleta` (R5).
         """
-        validar_nonce(nonce)
+        marcas_de_nonce(nonce)
         if desde is not None:
             instante(desde)
         return procurar_nonce(lambda direcao, limite, offset: self._listar_runs(projeto, direcao, limite, offset), "prompt", nonce, desde)
 
     def procurar_plano(self, projeto: str, nonce: str) -> str | None:
         """GET /plan-runs?project= devolve TODOS os Plan Runs do projeto, por createdAt ASC e sem limite (plan-runs.ts)."""
-        validar_nonce(nonce)
+        marcas_de_nonce(nonce)
         caminho = "/plan-runs?project=%s" % urllib.parse.quote(projeto, safe="")
         return self._procurar(caminho, "planRuns", "promptTemplate", nonce)
+
+    def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
+        """R2 (infra-lost-retry.ts): o retry automático tem `retryOf` = original e o MESMO prompt (logo, o mesmo nonce).
+
+        GET /runs devolve o `RunRow` inteiro ao operador, com `retryOf` (lifecycle.ts). O original nunca é a resposta.
+        """
+        _id(run_id)
+        marcas_de_nonce(list(nonces) or ["0" * 32])
+        if desde is not None:
+            instante(desde)
+        return procurar_nonce(
+            lambda direcao, limite, offset: self._listar_runs(projeto, direcao, limite, offset),
+            "prompt",
+            list(nonces) or ["0" * 32],
+            desde,
+            retry_of=run_id,
+            excluir=(run_id,),
+        )
 
     def cancelar_plano(self, plan_run_id: str) -> None:
         self._requisitar("POST", "/plan-runs/%s/cancel" % _id(plan_run_id), {})

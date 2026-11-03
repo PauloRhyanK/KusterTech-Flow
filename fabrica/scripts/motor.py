@@ -17,6 +17,9 @@ MAX_PAGINAS_DA_BUSCA = 20
 # Janela de deduplicação do `Idempotency-Key` em POST /runs (idempotency.ts): 10 min por (projeto, chave).
 JANELA_IDEMPOTENCIA = datetime.timedelta(minutes=10)
 _DIALETOS = ("sqlite", "postgres")
+# R2: causas de falha que o Warren refaz sozinho, UMA vez, num run novo com o mesmo prompt e `retryOf` apontando para
+# o original (runs/retry/infra-lost-retry.ts, INFRA_LOST_RUN_FAILURE_REASONS); filhos de Plan Run ficam de fora.
+MOTIVOS_INFRA_PERDIDA = ("sandbox_run_lost", "preempted")
 
 
 def validar_nonce(nonce) -> str:
@@ -52,26 +55,49 @@ def instante_de_run(valor):
         return None
 
 
-def procurar_nonce(listar, campo: str, nonce: str, desde=None):
-    """Acha o id do run cujo `campo` leva o marcador do nonce, enxergando os runs ainda na fila.
+def marcas_de_nonce(nonces) -> list[str]:
+    """Os marcadores de um nonce ou de uma cadeia de nonces (lista não vazia de hex de 32); `ValueError` se inválido."""
+    if isinstance(nonces, str):
+        nonces = [nonces]
+    if not isinstance(nonces, list) or not nonces:
+        raise ValueError("nonce inválido")
+    return [MARCADOR_NONCE % validar_nonce(n) for n in nonces]
+
+
+class BuscaIncompleta(RuntimeError):
+    """R5: a busca bateu no teto de páginas sem achar o nonce: é uma busca FALHA, não um "não encontrado"."""
+
+
+def procurar_nonce(listar, campo: str, nonce, desde=None, *, retry_of=None, excluir=()):
+    """Acha o id do run cujo `campo` leva o marcador de um dos nonces da cadeia, enxergando os runs ainda na fila.
 
     `listar(direcao, limite, offset)` devolve uma página de GET /runs na ordem do Warren. DESC traz os iniciados
     mais recentes (e, no Postgres, os queued na frente); a paginação para na primeira página com um run iniciado
     antes de `desde` (a hora da ação, com margem), ou numa única página sem `desde`. ASC traz, no SQLite, os
-    queued (NULL) primeiro: para na primeira página que já mostra um run iniciado. Há um teto de páginas.
+    queued (NULL) primeiro: para na primeira página que já mostra um run iniciado. Há um teto de páginas: se ele
+    for atingido numa direção sem achar nada, a busca é incompleta e levanta `BuscaIncompleta` (R5).
+
+    `nonce` é um texto ou a lista de nonces da cadeia (R3). Com `retry_of`, um run cujo `retryOf` é esse id também
+    casa (R2). Ids em `excluir` nunca são a resposta (o run original de um retry leva o mesmo nonce).
     """
-    marca = MARCADOR_NONCE % validar_nonce(nonce)
+    marcas = marcas_de_nonce(nonce)
     corte = instante(desde) if desde is not None else None
+    excluidos = set(excluir)
+    incompleta = False
     for direcao in ("desc", "asc"):
+        completa = False
         for pagina in range(MAX_PAGINAS_DA_BUSCA):
             itens = listar(direcao, PAGINA_DA_BUSCA, pagina * PAGINA_DA_BUSCA)
             parar = len(itens) < PAGINA_DA_BUSCA
             for item in itens:
                 if not isinstance(item, dict):
                     raise RuntimeError("GET /runs: 'runs' tem item que não é objeto")
+                ident = item.get("id")
                 texto = item.get(campo)
-                if isinstance(texto, str) and marca in texto:
-                    ident = item.get("id")
+                casa = (isinstance(texto, str) and any(m in texto for m in marcas)) or (
+                    retry_of is not None and item.get("retryOf") == retry_of
+                )
+                if casa and ident not in excluidos:
                     if not isinstance(ident, str) or not ident:
                         raise RuntimeError("GET /runs: resposta sem o campo 'runs[].id'")
                     return ident
@@ -81,7 +107,11 @@ def procurar_nonce(listar, campo: str, nonce: str, desde=None):
                 if direcao == "asc" or (corte is not None and inicio < corte):
                     parar = True
             if parar or (direcao == "desc" and corte is None):
+                completa = True
                 break
+        incompleta = incompleta or not completa
+    if incompleta:
+        raise BuscaIncompleta("GET /runs: limite de %d páginas atingido sem achar o nonce" % MAX_PAGINAS_DA_BUSCA)
     return None
 
 
@@ -155,11 +185,17 @@ class Motor(typing.Protocol):
         ...
 
     def procurar_run(self, projeto: str, nonce: str, desde: str | None = None) -> str | None:
-        """O `runId` cujo prompt tem o marcador do nonce, inclusive na fila; `desde` (ISO) limita a paginação."""
+        """O `runId` cujo prompt tem o marcador do nonce (ou de um nonce da lista, R3), inclusive na fila; `desde`
+        (ISO) limita a paginação. `BuscaIncompleta` se o teto de páginas for atingido sem achar (R5)."""
         ...
 
     def procurar_plano(self, projeto: str, nonce: str) -> str | None:
-        """O `planRunId` cujo promptTemplate tem o marcador do nonce, entre os Plan Runs do projeto."""
+        """O `planRunId` cujo promptTemplate tem o marcador do nonce (ou de um da lista), entre os Plan Runs do projeto."""
+        ...
+
+    def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
+        """R2: o run que o Warren criou sozinho para substituir `run_id` (perda de infraestrutura): `retryOf == run_id`
+        ou um run DIFERENTE do original com um dos nonces no prompt. `nonces` pode ser vazia (estado antigo)."""
         ...
 
 
@@ -182,6 +218,12 @@ class MotorFalso:
         self._momentos: dict[str, dict] = {}
         self._fila = False
         self._idempotencia: dict[tuple[str, str], tuple[datetime.datetime, str]] = {}
+        # R2: como o Warren, um run direto que falha por infra perdida ganha UM retry automático (desligável, como
+        # quando o orçamento acabou ou houve cancel). R3: o run só aparece na listagem depois do atraso
+        # (spawn/dispatch.ts: `runs.create` vem depois de `refreshProject`).
+        self.retry_infra_perdida = True
+        self.atraso_de_visibilidade = datetime.timedelta(0)
+        self._retries: dict[str, str] = {}
 
     def _registrar(self, nome: str, **argumentos) -> None:
         self.chamadas.append((nome, argumentos))
@@ -233,14 +275,21 @@ class MotorFalso:
         if self._runs.get(run_id, {}).get("estado") == "queued":
             self._runs[run_id]["estado"] = "running"
 
-    def iniciar_historico(self, quantidade: int, *, projeto: str, ha=datetime.timedelta(0)) -> None:
-        """`quantidade` runs alheios do projeto já iniciados há `ha` (antes dos nossos na ordem DESC)."""
+    def iniciar_historico(self, quantidade: int, *, projeto: str, ha=datetime.timedelta(0), na_fila: bool = False) -> None:
+        """`quantidade` runs alheios do projeto já iniciados há `ha` (antes dos nossos na ordem DESC); com `na_fila`,
+        runs alheios ainda `queued` (started_at NULL), com ids `fila-…`, que vêm antes dos nossos `run-…` no id ASC."""
         base = self.agora() - ha
         for i in range(quantidade):
             momento = base + datetime.timedelta(milliseconds=i)
-            ident = "hist-%04d" % (len(self._momentos) + 1)
-            self._momentos[ident] = {"projeto": projeto, "prompt": "run alheio %d" % i, "criadoEm": momento, "iniciadoEm": momento}
-            self._runs[ident] = {"estado": "running", "motivoFalha": None, "prUrl": None, "custoUsd": 0.0}
+            ident = ("fila-%04d" if na_fila else "hist-%04d") % (len(self._momentos) + 1)
+            self._momentos[ident] = {
+                "projeto": projeto,
+                "prompt": "run alheio %d" % i,
+                "criadoEm": base,
+                "iniciadoEm": None if na_fila else momento,
+                "retryOf": None,
+            }
+            self._runs[ident] = {"estado": "queued" if na_fila else "running", "motivoFalha": None, "prUrl": None, "custoUsd": 0.0}
 
     def _listar_runs(self, projeto: str, direcao: str, limite: int, offset: int) -> list[dict]:
         """Uma página de GET /runs?project=&sort=started&dir=: ORDER BY started_at <dir>, id ASC, NULL por dialeto."""
@@ -257,16 +306,56 @@ class MotorFalso:
             tempo = inicio.timestamp() if inicio is not None else 0.0
             return (grupo, -tempo if desc else tempo, ident)
 
-        pares = sorted((p for p in self._momentos.items() if p[1]["projeto"] == projeto), key=chave)
+        agora = self.agora()
+        pares = sorted(
+            (
+                p
+                for p in self._momentos.items()
+                if p[1]["projeto"] == projeto and p[1]["criadoEm"] + self.atraso_de_visibilidade <= agora
+            ),
+            key=chave,
+        )
         return [
             {
                 "id": ident,
                 "prompt": momento["prompt"],
                 "startedAt": momento["iniciadoEm"].strftime("%Y-%m-%dT%H:%M:%S.%fZ") if momento["iniciadoEm"] else None,
                 "state": self._runs.get(ident, {}).get("estado"),
+                "failureReason": self._runs.get(ident, {}).get("motivoFalha"),
+                "retryOf": momento.get("retryOf"),
             }
             for ident, momento in pares[offset : offset + limite]
         ]
+
+    def retry_de(self, run_id: str) -> str | None:
+        """O id do retry automático que o Warren falso criou para `run_id`, se houver."""
+        return self._retries.get(run_id)
+
+    def _retry_automatico(self, run_id: str) -> None:
+        """infra-lost-retry.ts: run direto, failed por infra perdida, que não é retry nem já tem um: ganha UM retry."""
+        run = self._runs.get(run_id) or {}
+        momento = self._momentos.get(run_id)
+        if (
+            not self.retry_infra_perdida
+            or momento is None
+            or run.get("estado") != "failed"
+            or run.get("motivoFalha") not in MOTIVOS_INFRA_PERDIDA
+            or momento.get("retryOf") is not None
+            or run_id in self._retries
+        ):
+            return
+        novo = self._novo_id("run")
+        agora = self.agora()
+        self._runs[novo] = {"estado": "queued" if self._fila else "running", "motivoFalha": None, "prUrl": None, "custoUsd": 0.0}
+        self._textos_enviados[novo] = (momento["projeto"], momento["prompt"])
+        self._momentos[novo] = {
+            "projeto": momento["projeto"],
+            "prompt": momento["prompt"],
+            "criadoEm": agora,
+            "iniciadoEm": None if self._fila else agora,
+            "retryOf": run_id,
+        }
+        self._retries[run_id] = novo
 
     def definir_plano(self, plan_run_id: str, estado: str, filhos: list[dict], falha: str | None = None) -> None:
         self._planos[plan_run_id] = {
@@ -292,6 +381,7 @@ class MotorFalso:
             run_id, {"estado": "running", "motivoFalha": None, "prUrl": None, "custoUsd": 0.0}
         )
         atual.update(campos)
+        self._retry_automatico(run_id)
 
     def definir_texto(self, run_id: str, texto: str) -> None:
         self._textos[run_id] = texto
@@ -362,7 +452,7 @@ class MotorFalso:
             run_id = self._novo_id("run")
             self.definir_run(run_id, estado="queued" if self._fila else "running")
             self._textos_enviados[run_id] = (projeto, prompt)
-            self._momentos[run_id] = {"projeto": projeto, "prompt": prompt, "criadoEm": agora, "iniciadoEm": None if self._fila else agora}
+            self._momentos[run_id] = {"projeto": projeto, "prompt": prompt, "criadoEm": agora, "iniciadoEm": None if self._fila else agora, "retryOf": None}
             if chave_idempotencia:
                 self._idempotencia[(projeto, chave_idempotencia)] = (agora + JANELA_IDEMPOTENCIA, run_id)
         self._falhar_depois()
@@ -397,11 +487,11 @@ class MotorFalso:
             raise KeyError("plano desconhecido: %r" % plan_run_id)
         self._planos[plan_run_id]["estado"] = "cancelled"
 
-    def _procurar(self, nome: str, projeto: str, nonce: str, prefixo: str) -> str | None:
+    def _procurar(self, nome: str, projeto: str, nonce, prefixo: str) -> str | None:
         self._registrar(nome, projeto=projeto, nonce=nonce)
-        marca = MARCADOR_NONCE % validar_nonce(nonce)
+        marcas = marcas_de_nonce(nonce)
         for ident, (proj, texto) in self._textos_enviados.items():
-            if ident.startswith(prefixo) and proj == projeto and marca in texto:
+            if ident.startswith(prefixo) and proj == projeto and any(m in texto for m in marcas):
                 return ident
         return None
 
@@ -411,3 +501,16 @@ class MotorFalso:
 
     def procurar_plano(self, projeto: str, nonce: str) -> str | None:
         return self._procurar("procurar_plano", projeto, nonce, "plano-")
+
+    def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
+        self._registrar("procurar_retry", projeto=projeto, run_id=run_id, nonces=nonces, desde=desde)
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id inválido")
+        return procurar_nonce(
+            lambda direcao, limite, offset: self._listar_runs(projeto, direcao, limite, offset),
+            "prompt",
+            list(nonces) or ["0" * 32],
+            desde,
+            retry_of=run_id,
+            excluir=(run_id,),
+        )

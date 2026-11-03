@@ -47,7 +47,7 @@ import globs  # noqa: E402
 import prompts  # noqa: E402
 import raias  # noqa: E402
 import verificacao  # noqa: E402
-from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado, instante  # noqa: E402
+from motor import MARCADOR_NONCE, MOTIVOS_INFRA_PERDIDA, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado, instante  # noqa: E402
 
 ARQ_ESTADO = "estado.json"
 ARQ_PLANO = "plano.json"
@@ -125,6 +125,9 @@ MAX_FALHAS_DE_BUSCA_INCERTA = 10
 TITULO_DESPACHO_NAO_CONFIRMADO = "[fábrica] despacho não confirmado"
 # Q3: fechamentos sem comentário (depois de reabrir) até entregar a decisão ao orquestrador
 MAX_FECHAMENTOS_SEM_COMENTARIO = 3
+# R2: ciclos com leitura boa em que o retry automático do Warren (infra-lost-retry.ts) é procurado antes do caminho normal
+CICLOS_PARA_ACHAR_RETRY = 3
+LIMITE_NONCES_DE_RUNS = 100
 OBSERVACAO_FECHADA_SEM_COMENTARIO = "decisão fechada %d vezes sem comentário" % MAX_FECHAMENTOS_SEM_COMENTARIO
 
 class OutroDespachante(Exception):
@@ -1010,6 +1013,14 @@ class Despachante:
                 run = self._ler_run(run_id, somente=somente)
                 if run is None or run.get("estado") not in TERMINAIS_DE_RUN:
                     continue
+                if self._infra_perdida(run_id, run):
+                    situacao, novo = self._retry_do_warren(run_id, papel, seed_id)
+                    if situacao == "adotado":
+                        _dict(self.estado["seeds"][seed_id])[campo] = novo
+                        self._salvar()
+                        continue
+                    if situacao == "esperar":
+                        continue
                 revisao = campo == "revisaoRunId"
                 texto = self._texto_do_run(run_id, run, obrigatorio=revisao)
                 if texto is None:
@@ -1040,8 +1051,77 @@ class Despachante:
                         "cota": cota,
                     }
                 )
+                self._esquecer_nonces(run_id)
                 if not run.get("_sintetico"):
                     self._conferir_modelo(run_id, papel)
+
+    def _infra_perdida(self, run_id: str, run: dict) -> bool:
+        """R2: run `failed` por perda de infraestrutura, que o Warren refaz sozinho; um retry adotado não ganha outro."""
+        return (
+            run.get("estado") == "failed"
+            and run.get("motivoFalha") in MOTIVOS_INFRA_PERDIDA
+            and not run.get("_sintetico")
+            and not _texto(self._nonces_do_run(run_id).get("retryDe"))
+        )
+
+    def _retry_do_warren(self, run_id: str, papel: str, alvo) -> tuple:
+        """R2: procura o retry automático do Warren (`retryOf` ou o nonce) por até 3 leituras boas.
+
+        Devolve ("adotado", id), ("esperar", None) ou ("desistir", None): no último caso vale o caminho de hoje.
+        A busca que falha não gasta leitura boa; na 10ª falha seguida abre uma decisão rastreada (como Q2).
+        """
+        esperados = self.estado.get("retriesEsperados")
+        if not isinstance(esperados, dict):
+            esperados = self.estado["retriesEsperados"] = {}
+        item = esperados.get(run_id)
+        if not isinstance(item, dict):
+            desde = (datetime.datetime.now(datetime.timezone.utc) - MARGEM_DESDE).strftime("%Y-%m-%dT%H:%M:%SZ")
+            item = esperados[run_id] = {
+                "papel": papel,
+                "alvo": alvo,
+                "buscas": 0,
+                "falhasBusca": 0,
+                "desde": desde,
+                "nonces": [n for n in _lista(self._nonces_do_run(run_id).get("nonces")) if _texto(n)],
+            }
+            self._salvar()
+            self._aviso("run %s (%s) falhou por infra perdida: procurando o retry automático do Warren" % (run_id, papel))
+        chave = "retry:%s" % run_id
+        try:
+            achado = self.motor.procurar_retry(self.projeto, run_id, list(item["nonces"]), item.get("desde") if _texto(item.get("desde")) else None)
+        except Exception as exc:  # noqa: BLE001 - sem leitura boa, nada conta para o item; a falha conta para o ciclo
+            self._erro_de_etapa("procurar_retry", run_id, exc)
+            self._leituras["falhas"] += 1
+            if _eh_falha_de_rede(exc):
+                self._rede_do_ciclo.add(run_id)
+            falhas = (item.get("falhasBusca") if _inteiro(item.get("falhasBusca")) else 0) + 1
+            item["falhasBusca"] = falhas
+            self._salvar()
+            if falhas >= MAX_FALHAS_DE_BUSCA_INCERTA:
+                self._garantir_decisao_de_incerto(
+                    chave, falhas, "O run %s (%s, %s) falhou por infra perdida e o Warren deve tê-lo refeito sozinho" % (run_id, papel, alvo)
+                )
+            return ("esperar", None)
+        self._leituras["ok"] += 1
+        item["falhasBusca"] = 0
+        if _texto(achado) and achado != run_id:
+            esperados.pop(run_id, None)
+            self._lembrar_nonces(achado, item["nonces"], retry_de=run_id)
+            self._esquecer_nonces(run_id)
+            self._salvar()
+            self._log({"evento": "retry_adotado", "original": run_id, "runId": achado, "papel": papel, "alvo": alvo})
+            self._aviso("run %s (%s) foi refeito pelo Warren como %s: adotado como continuação" % (run_id, papel, achado))
+            self._fechar_decisao_de_incerto(chave, "O retry %s do run %s foi achado no Warren; issue fechada pelo despachante." % (achado, run_id))
+            return ("adotado", achado)
+        item["buscas"] = (item.get("buscas") if _inteiro(item.get("buscas")) else 0) + 1
+        if item["buscas"] < CICLOS_PARA_ACHAR_RETRY:
+            self._salvar()
+            return ("esperar", None)
+        esperados.pop(run_id, None)
+        self._salvar()
+        self._log({"evento": "retry_nao_encontrado", "runId": run_id, "papel": papel, "alvo": alvo})
+        self._fechar_decisao_de_incerto(chave, "O Warren não refez o run %s; o despachante segue o caminho normal." % run_id)
+        return ("desistir", None)
 
     def _observar_orquestrador(self, somente=None) -> None:
         orquestrador = self._orq()
@@ -1051,6 +1131,14 @@ class Despachante:
         run = self._ler_run(run_id, somente=somente)
         if run is None or run.get("estado") not in TERMINAIS_DE_RUN:
             return
+        if self._infra_perdida(run_id, run):
+            situacao, novo = self._retry_do_warren(run_id, "orquestrador", orquestrador.get("motivo"))
+            if situacao == "adotado":
+                self._orq()["runId"] = novo
+                self._salvar()
+                return
+            if situacao == "esperar":
+                return
         if run["estado"] == "succeeded":
             try:
                 resultado = self._tratar_pr_orquestrador(run_id, run, orquestrador.get("motivo"))
@@ -1075,6 +1163,7 @@ class Despachante:
                 cota=prompts.eh_falha_de_cota(run.get("motivoFalha"), texto),
             )
         )
+        self._esquecer_nonces(run_id)
         if not run.get("_sintetico"):
             self._conferir_modelo(run_id, "orquestrador")
         self._concluir_orquestrador()
@@ -1517,7 +1606,7 @@ class Despachante:
             self._enfileirar_acordar("resposta_paulo", decisao["url"], contexto, salvar=False)
             self._log({"evento": "decisao_respondida", "url": decisao["url"], "comComentario": bool(respondida), "observacao": observacao})
             if decisao.get("tipo") == "incerto":
-                self._soltar_incerto(decisao.get("alvo"))
+                self._manter_incerto_apos_resposta(decisao.get("alvo"))
             alvo = decisao.get("alvo")
             acompanhados = _lista(self.estado.get("prsOrquestrador"))
             if alvo in acompanhados:
@@ -1537,25 +1626,24 @@ class Despachante:
 
     @staticmethod
     def _leitura_velha(decisao: dict, fechada_em, comentario) -> bool:
-        """Q3: depois da nossa reabertura, closed_at <= reabertaEm (e não posterior ao closed_at que vimos) é a
-        leitura velha, ignorada; closed_at maior é o Paulo fechando de novo. Sem closed_at vale P8 (último comentário nosso)."""
+        """Q3/R4: depois da nossa reabertura, uma leitura com closed_at <= o closed_at que vimos ao reabrir é velha e
+        é ignorada; closed_at maior é o Paulo fechando de novo. Sem closed_at visto, vale `reabertaEm` (o nosso relógio).
+        Sem closed_at na leitura, vale P8 (último comentário nosso)."""
         reaberta = decisao.get("reabertaEm")
         if not _texto(reaberta):
             return False
         regra_do_marcador = bool(_texto(comentario) and MARCADOR_DESPACHANTE in comentario)
-        try:
-            fechada = instante(fechada_em)
-            reaberta = instante(reaberta)
-        except ValueError:
-            return regra_do_marcador
-        nova = fechada > reaberta
         vista = decisao.get("fechadaEmVista")
         if _texto(vista):
+            # R4: com o closed_at visto na reabertura, só o relógio do GitHub contra ele mesmo decide
             try:
-                nova = nova or fechada > instante(vista)
+                return not instante(fechada_em) > instante(vista)
             except ValueError:
-                pass
-        return not nova
+                return regra_do_marcador
+        try:
+            return not instante(fechada_em) > instante(reaberta)  # fallback: a hora da nossa reabertura
+        except ValueError:
+            return regra_do_marcador
 
     def _recriar_decisao(self, decisao: dict, nota: str) -> None:
         tipo, alvo = decisao.get("tipo", "seed"), decisao.get("alvo")
@@ -2285,6 +2373,7 @@ class Despachante:
             nonce = uuid.uuid4().hex
             raiz = self._nonce_raiz(acao, nonce)
             desde = (datetime.datetime.now(datetime.timezone.utc) - MARGEM_DESDE).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._anexar_a_cadeia(_chave_acao(acao), nonce, desde)  # R3: gravado junto com acaoEmCurso
             self.estado["acaoEmCurso"] = dict(copy.deepcopy(acao), nonce=nonce, nonceRaiz=raiz, desde=desde)
             self._salvar()
         erro = None
@@ -2314,10 +2403,13 @@ class Despachante:
                     self._contar_adiamento(_chave_acao(acao))
             else:
                 resultado = {"ok": False} if tipo == "mergear" else ({} if tipo != "aguardar_humano" else None)
+        nonces = self._cadeia(_chave_acao(acao), nonce, desde)[0] if nonce else []
         if resultado is not None and resultado.get("adiado") is not True and tipo in ACOES_PAGAS:
             self._encerrar_cadeia(_chave_acao(acao))
         if resultado is not None:
             self._aplicar(acao, resultado)
+            if nonce and _texto(resultado.get("runId")):
+                self._lembrar_nonces(resultado["runId"], nonces)
         self.estado.pop("acaoEmCurso", None)
         self._salvar()
         registro = {"evento": "acao", "acao": self._resumo_da_acao(acao), "resultado": self._resumo(resultado)}
@@ -2334,8 +2426,10 @@ class Despachante:
         incertos = self.estado.get("despachosIncertos")
         if not isinstance(incertos, list):
             incertos = self.estado["despachosIncertos"] = []
+        chave = _chave_acao(acao)
+        nonces, desde = self._cadeia(chave, nonce, desde)  # R3: a busca casa qualquer nonce da cadeia
         incertos.append(
-            {"acao": copy.deepcopy(acao), "nonce": nonce, "chave": _chave_acao(acao), "ciclos": 0, "desde": desde, "falhasBusca": 0}
+            {"acao": copy.deepcopy(acao), "nonce": nonce, "nonces": nonces, "chave": chave, "ciclos": 0, "desde": desde, "falhasBusca": 0}
         )
         self._salvar()
         self._aviso("despacho %s incerto (falha de rede depois do envio): procurando pelo nonce" % _chave_acao(acao))
@@ -2350,20 +2444,61 @@ class Despachante:
             raizes[chave] = nonce
         return raizes[chave]
 
+    def _anexar_a_cadeia(self, chave: str, nonce: str, desde: str | None) -> dict:
+        """R3: a cadeia guarda TODOS os nonces dos POSTs da ação (a chave repetida devolve o run do 1º) e o `desde` do 1º."""
+        cadeias = self.estado.get("cadeias")
+        if not isinstance(cadeias, dict):
+            cadeias = self.estado["cadeias"] = {}
+        cadeia = cadeias.get(chave)
+        if not isinstance(cadeia, dict) or not isinstance(cadeia.get("nonces"), list):
+            cadeia = cadeias[chave] = {"nonces": [], "desde": desde}
+        if nonce not in cadeia["nonces"]:
+            cadeia["nonces"].append(nonce)
+        if not _texto(cadeia.get("desde")):
+            cadeia["desde"] = desde
+        return cadeia
+
+    def _cadeia(self, chave: str, nonce: str, desde: str | None) -> tuple[list, str | None]:
+        """Os nonces da cadeia da chave (o atual incluído) e o `desde` do primeiro POST."""
+        cadeia = _dict(_dict(self.estado.get("cadeias")).get(chave))
+        nonces = [n for n in _lista(cadeia.get("nonces")) if _texto(n)]
+        if _texto(nonce) and nonce not in nonces:
+            nonces.append(nonce)
+        return nonces, (cadeia.get("desde") if _texto(cadeia.get("desde")) else desde)
+
     def _encerrar_cadeia(self, chave: str) -> None:
         """A ação ganhou um id (ou um resultado final): a próxima vez é outra cadeia, com outra chave."""
         _dict(self.estado.get("adiamentosRede")).pop(chave, None)
         _dict(self.estado.get("noncesRaiz")).pop(chave, None)
+        _dict(self.estado.get("cadeias")).pop(chave, None)
 
-    def _garantir_decisao_de_incerto(self, chave: str, falhas: int) -> None:
+    def _lembrar_nonces(self, run_id, nonces: list, retry_de: str | None = None) -> None:
+        """R2: os nonces do run pago ficam guardados por id, para achar o retry automático do Warren pelo prompt."""
+        if not _texto(run_id):
+            return
+        registro = self.estado.get("noncesDosRuns")
+        if not isinstance(registro, dict):
+            registro = self.estado["noncesDosRuns"] = {}
+        registro[run_id] = {"nonces": [n for n in nonces if _texto(n)], "retryDe": retry_de}
+        while len(registro) > LIMITE_NONCES_DE_RUNS:
+            del registro[next(iter(registro))]
+
+    def _nonces_do_run(self, run_id) -> dict:
+        return _dict(_dict(self.estado.get("noncesDosRuns")).get(run_id))
+
+    def _esquecer_nonces(self, run_id) -> None:
+        _dict(self.estado.get("noncesDosRuns")).pop(run_id, None)
+
+    def _garantir_decisao_de_incerto(self, chave: str, falhas: int, situacao: str | None = None) -> None:
         if self._decisao_aberta("incerto", chave):
             return
         motivo = "não foi possível confirmar o despacho de %s" % chave
+        situacao = situacao or "O despacho %s ficou incerto (a resposta do Warren se perdeu depois do envio)" % chave
         corpo = (
-            "O despacho %s ficou incerto (a resposta do Warren se perdeu depois do envio) e a busca pelo nonce "
-            "falhou %d vezes seguidas. O despachante não o refaz enquanto a busca não voltar. Confira no Warren se "
-            "o run existe e feche esta issue com um comentário dizendo o que fazer; a resposta acorda o orquestrador.\n\n%s"
-            % (chave, falhas, RODAPE_DECISAO)
+            "%s e a busca pelo nonce falhou %d vezes seguidas. O despachante não refaz o despacho enquanto a busca "
+            "não voltar. Confira no Warren se o run existe e feche esta issue com um comentário dizendo o que fazer; "
+            "a resposta acorda o orquestrador com o contexto (o despacho continua sem ser refeito até a busca voltar).\n\n%s"
+            % (situacao, falhas, RODAPE_DECISAO)
         )
         try:
             url = self._abrir_decisao_rastreada(motivo, chave, "%s: %s" % (TITULO_DESPACHO_NAO_CONFIRMADO, chave), corpo, tipo="incerto")
@@ -2380,13 +2515,17 @@ class Despachante:
         ]
         self._fechar_depois(url, comentario, decisao=True)
 
-    def _soltar_incerto(self, chave) -> None:
-        """Q2: o Paulo respondeu pela decisão do despacho não confirmado: o item sai e a ação volta a ser despachável.
-
-        A cadeia continua: o redespacho leva a mesma Idempotency-Key, e o Warren devolve o run se ele existir.
-        """
-        self.estado["despachosIncertos"] = [i for i in _lista(self.estado.get("despachosIncertos")) if _dict(i).get("chave") != chave]
-        self._log({"evento": "despacho_incerto_entregue_ao_paulo", "chave": chave})
+    def _manter_incerto_apos_resposta(self, chave) -> None:
+        """R1 (regra Q2): a resposta do Paulo acorda o orquestrador com o contexto, mas NÃO solta o item: ele segue
+        incerto, com as falhas de busca zeradas, e só é refeito depois de 3 buscas boas que não o acharem (P1)."""
+        for item in _lista(self.estado.get("despachosIncertos")):
+            if isinstance(item, dict) and item.get("chave") == chave:
+                item["falhasBusca"] = 0
+                item["ciclos"] = 0
+        for run_id, item in _dict(self.estado.get("retriesEsperados")).items():
+            if isinstance(item, dict) and "retry:%s" % run_id == chave:
+                item["falhasBusca"] = 0
+        self._log({"evento": "despacho_incerto_respondido", "chave": chave})
 
     def _contar_adiamento(self, chave: str) -> None:
         contadores = self.estado.get("adiamentosRede")
@@ -2421,11 +2560,12 @@ class Despachante:
             item = _dict(item)
             acao, nonce, chave = _dict(item.get("acao")), item.get("nonce"), item.get("chave")
             tipo = acao.get("tipo")
+            nonces = [n for n in _lista(item.get("nonces")) if _texto(n)] or [nonce]
             try:
                 if tipo == "despachar_raia":
-                    achado = self.motor.procurar_plano(self.projeto, nonce)
+                    achado = self.motor.procurar_plano(self.projeto, nonces)
                 else:
-                    achado = self.motor.procurar_run(self.projeto, nonce, item.get("desde") if _texto(item.get("desde")) else None)
+                    achado = self.motor.procurar_run(self.projeto, nonces, item.get("desde") if _texto(item.get("desde")) else None)
             except Exception as exc:  # noqa: BLE001 - sem leitura, nada conta para o item; a falha conta para o ciclo
                 self._erro_de_etapa("procurar_despacho", chave, exc)
                 self._leituras["falhas"] += 1
@@ -2443,6 +2583,8 @@ class Despachante:
                 campo = "planRunId" if tipo == "despachar_raia" else "runId"
                 self._encerrar_cadeia(chave)
                 self._aplicar(acao, {campo: achado})
+                if campo == "runId":
+                    self._lembrar_nonces(achado, nonces)
                 self._log({"evento": "despacho_incerto_achado", "acao": self._resumo_da_acao(acao), campo: achado})
                 self._fechar_decisao_de_incerto(chave, "O despacho %s foi confirmado no Warren (%s); issue fechada pelo despachante." % (chave, achado))
                 continue
