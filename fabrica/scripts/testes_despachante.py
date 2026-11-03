@@ -5927,6 +5927,56 @@ class TestesCapacidadeGlobal(Base):
             self.assertEqual(self.log_de(d, "sem_vaga"), [])
         self.assertEqual(self.estado_de(a)["limiteParalelo"], 2)
 
+    # ------------------------------------------------ drenagem pedida pelo coordenador (ruling da Task 6)
+
+    def test_drenagem_do_coordenador_segura_runs_e_merges_e_depois_libera(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1")])
+        despachante.capacidade.definir_drenagem(self.cap, "2026-11-03T12:00:00Z")
+        self.assertTrue(a._drenando())
+        a.ciclo()
+        self.assertEqual(self.planos_despachados(), [])
+        despachante.capacidade.definir_drenagem(self.cap, None)
+        self.assertFalse(a._drenando())
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    def test_drenagem_do_coordenador_filtra_as_mesmas_acoes_da_local(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1")])
+        despachante.capacidade.definir_drenagem(self.cap, "2026-11-03T12:00:00Z")
+        acoes = [
+            {"tipo": "despachar_raia", "raia": "a1"},
+            {"tipo": "revisar", "seed": "s-1"},
+            {"tipo": "corrigir", "seed": "s-2"},
+            {"tipo": "verificar", "seed": "s-3"},
+            {"tipo": "mergear", "seed": "s-4"},
+            {"tipo": "aguardar_humano", "seed": "s-5", "motivo": "x"},
+            {"tipo": "retomar_raia", "raia": "b"},
+            {"tipo": "acordar", "motivo": "raia_falhou", "alvo": "c"},
+        ]
+        a._observadas = {"s-1", "s-2", "s-3", "s-4", "s-5"}
+        feitas = []
+        a._executar = lambda acao: feitas.append(acao["tipo"])
+        a._liberada_pela_capacidade = lambda acao: True
+        a._proposta_de_pendente = lambda: None
+        with mock.patch.object(despachante.est, "proximas_acoes", return_value=copy.deepcopy(acoes)):
+            a._agir()
+        self.assertEqual(feitas, ["verificar", "aguardar_humano", "retomar_raia"])
+
+    def test_capacidade_ilegivel_nao_drena_nem_derruba(self):
+        a = self.de("a", [raia("a1")])
+        self.cap.parent.mkdir(parents=True, exist_ok=True)
+        self.cap.write_text("{ruim", encoding="utf-8")
+        self.assertFalse(a._drenando())
+
+    def test_sem_capacidade_a_drenagem_do_arquivo_nao_vale(self):
+        despachante.capacidade.definir_drenagem(self.cap, "2026-11-03T12:00:00Z")
+        a = self.de("a", [raia("a1")], com_capacidade=False)
+        self.assertFalse(a._drenando())
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+
     # ------------------------------------------------ rodada 1
 
     def trava(self):

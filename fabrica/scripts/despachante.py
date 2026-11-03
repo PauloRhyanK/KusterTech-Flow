@@ -939,7 +939,22 @@ class Despachante:
         return feitos % CICLOS_PREPARAR_WARREN == 0 and not self._warren_preparado()
 
     def _drenando(self) -> bool:
-        return self._preparar_ligado() and _texto(_dict(self.estado.get("drenagemWarren")).get("desde"))
+        if self._preparar_ligado() and _texto(_dict(self.estado.get("drenagemWarren")).get("desde")):
+            return True
+        return self._drenagem_do_coordenador()
+
+    def _drenagem_do_coordenador(self) -> bool:
+        """Com capacidade global, o coordenador da fila prepara o Warren e marca a drenagem no capacidade.json.
+
+        Arquivo ilegível não drena: a reserva e a trava já recusam com ele, e o erro vai para o log.
+        """
+        if self.capacidade is None:
+            return False
+        try:
+            return _texto(capacidade.ler(self.capacidade).get("drenagem"))
+        except (capacidade.CapacidadeInvalida, OSError) as exc:
+            self._erro_de_etapa("drenagem_do_coordenador", self.plano_id, exc)
+            return False
 
     def _preparar_o_warren(self) -> None:
         """Prepara o Warren (`preparar_warren.preparar`: --model, drop-in e automerge), se a config deixar.

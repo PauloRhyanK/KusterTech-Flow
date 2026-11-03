@@ -31,11 +31,16 @@ def _padrao() -> dict:
         "reservas": {},
         "orquestrador": {},
         "esperando": {},
+        "drenagem": None,
     }
 
 
 def _inteiro(valor) -> bool:
     return isinstance(valor, int) and not isinstance(valor, bool)
+
+
+def _drenagem_valida(valor) -> bool:
+    return valor is None or (isinstance(valor, str) and bool(valor))
 
 
 def _validar(dados, caminho) -> dict:
@@ -69,6 +74,8 @@ def _validar(dados, caminho) -> dict:
         for planos in esperando.values()
     ):
         problemas.append("esperando deve mapear repositório para lista de planos")
+    if not _drenagem_valida(resultado["drenagem"]):
+        problemas.append("drenagem deve ser texto não vazio ou nulo")
     if problemas:
         raise CapacidadeInvalida("%s: %s." % (caminho, "; ".join(problemas)))
     resultado["reservas"] = {plano: sorted(set(raias)) for plano, raias in reservas.items()}
@@ -169,6 +176,18 @@ def configurar(caminho, *, vagas: int, ram_minima_mb: int) -> None:
         dados["vagasConfig"] = vagas
         dados["ramMinimaMb"] = ram_minima_mb
         dados["oomEm"] = None
+
+
+def definir_drenagem(caminho, desde: str | None) -> None:
+    """Marca (instante) ou limpa (`None`) a drenagem do Warren pedida pelo coordenador.
+
+    Enquanto ela está marcada, os despachantes de plano não criam runs nem mergeiam: o coordenador
+    espera os runs ativos acabarem para reiniciar o Warren sem matar trabalho pago.
+    """
+    if not _drenagem_valida(desde):
+        raise ValueError("desde deve ser texto não vazio ou None.")
+    with _transacao(caminho) as dados:
+        dados["drenagem"] = desde
 
 
 def vagas_efetivas(dados: dict) -> int:

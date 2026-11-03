@@ -16,6 +16,7 @@ PADRAO = {
     "reservas": {},
     "orquestrador": {},
     "esperando": {},
+    "drenagem": None,
 }
 
 
@@ -70,6 +71,9 @@ class TestesLeitura(Base):
             {"esperando": {"r": "A"}},
             {"esperando": {"r": [1]}},
             {"esperando": {"Dono/Repo": ["A"], "dono/repo": ["B"]}},
+            {"drenagem": 5},
+            {"drenagem": ""},
+            {"drenagem": {"desde": "x"}},
         ):
             with self.subTest(ruim=ruim):
                 self.caminho.write_text(json.dumps(ruim), encoding="utf-8")
@@ -442,6 +446,46 @@ class TestesOrfaos(Base):
         cap.reservar(self.caminho, "vivo", "a", mem_disponivel_mb=None)
         self.assertEqual(cap.limpar_orfaos(self.caminho, {"vivo"}), [])
         self.assertEqual(cap.limpar_orfaos(self.caminho, {"vivo", "outro"}), [])
+
+
+class TestesDrenagem(Base):
+    """Ruling da Task 6: o coordenador avisa os despachantes de plano que o Warren está drenando."""
+
+    def test_padrao_e_sem_drenagem(self):
+        self.assertIsNone(cap.ler(self.caminho)["drenagem"])
+
+    def test_definir_e_limpar(self):
+        cap.definir_drenagem(self.caminho, "2026-11-03T12:00:00Z")
+        self.assertEqual(cap.ler(self.caminho)["drenagem"], "2026-11-03T12:00:00Z")
+        cap.definir_drenagem(self.caminho, None)
+        self.assertIsNone(cap.ler(self.caminho)["drenagem"])
+
+    def test_nao_mexe_no_resto(self):
+        cap.reservar(self.caminho, "p", "a", mem_disponivel_mb=None)
+        cap.tomar_orquestrador(self.caminho, "dono/r", "p")
+        cap.definir_drenagem(self.caminho, "2026-11-03T12:00:00Z")
+        dados = cap.ler(self.caminho)
+        self.assertEqual(dados["reservas"], {"p": ["a"]})
+        self.assertEqual(dados["orquestrador"], {"dono/r": "p"})
+
+    def test_valor_invalido_levanta_value_error_e_nao_grava(self):
+        for ruim in ("", 5, {"desde": "x"}):
+            with self.subTest(ruim=ruim):
+                with self.assertRaises(ValueError):
+                    cap.definir_drenagem(self.caminho, ruim)
+        self.assertFalse(self.caminho.exists())
+
+    def test_arquivo_corrompido_levanta_e_nao_e_recriado(self):
+        self.caminho.write_text("{ruim", encoding="utf-8")
+        with self.assertRaises(cap.CapacidadeInvalida):
+            cap.definir_drenagem(self.caminho, None)
+        self.assertEqual(self.caminho.read_text(encoding="utf-8"), "{ruim")
+
+    def test_configurar_e_limpar_orfaos_preservam_a_drenagem(self):
+        cap.definir_drenagem(self.caminho, "2026-11-03T12:00:00Z")
+        cap.configurar(self.caminho, vagas=3, ram_minima_mb=2048)
+        cap.limpar_orfaos(self.caminho, set())
+        self.assertEqual(cap.ler(self.caminho)["drenagem"], "2026-11-03T12:00:00Z")
 
 
 class TestesConcorrencia(Base):
