@@ -1,3 +1,4 @@
+import datetime
 import errno
 import http.client
 import io
@@ -777,7 +778,7 @@ class TestesMotorFalso(unittest.TestCase):
             m.chamadas,
             [
                 ("despachar_plano", ARGS_PLANO),
-                ("despachar_run", dict(ARGS_RUN, branch_existente="feat/x")),
+                ("despachar_run", dict(ARGS_RUN, branch_existente="feat/x", chave_idempotencia=None)),
                 ("plano", {"plan_run_id": plano_id}),
                 ("run", {"run_id": run_id}),
                 ("ultimo_texto", {"run_id": run_id}),
@@ -1090,10 +1091,10 @@ class TestesProcurarPorNonce(unittest.TestCase):
 
     def test_procurar_run_varre_o_prompt(self):
         runs = [{"id": "r-1", "prompt": "outro"}, {"id": "r-2", "prompt": "revise\n" + self.MARCA}]
-        m, t = novo(ok({"runs": runs, "total": 2, "limit": 50, "offset": 0}))
+        m, t = novo(ok({"runs": runs, "total": 2, "limit": 100, "offset": 0}))
         self.assertEqual(m.procurar_run("prj x", self.NONCE), "r-2")
-        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs?project=prj%20x&limit=50"))
-        m, _ = novo(ok({"runs": runs[:1]}))
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs?project=prj%20x&sort=started&dir=desc&limit=100&offset=0"))
+        m, _ = novo(ok({"runs": runs[:1]}), ok({"runs": []}))
         self.assertIsNone(m.procurar_run("prj", self.NONCE))
 
     def test_procurar_plano_varre_o_prompt_template(self):
@@ -1169,6 +1170,170 @@ class TestesCancelarPlano(unittest.TestCase):
         self.assertTrue(hasattr(motor.Motor, "cancelar_plano"))
         self.assertIsInstance(motor.MotorFalso(), motor.Motor)
         self.assertIsInstance(motor_warren.MotorWarren(BASE, TOKEN, TransporteFalso()), motor.Motor)
+
+
+class TestesRodada4(unittest.TestCase):
+    """Q1: `Idempotency-Key` no POST /runs e busca pelo nonce que enxerga os runs ainda na fila.
+
+    Conferido na fonte do Warren 0.19.3: GET /runs aceita só project|agent, sort=started|cost, dir, limit (<= 500)
+    e offset, ordena por started_at DESC, id ASC (runs-queries.ts); um run queued tem started_at NULL (runs.ts),
+    que no SQLite (padrão) fica por último em DESC e primeiro em ASC; no Postgres é o contrário. Uma chave repetida
+    em POST /runs devolve o mesmo 201 com o run já criado (idempotency.ts, janela de 10 min por projeto).
+    """
+
+    NONCE = "0123456789abcdef0123456789abcdef"
+    MARCA = motor.MARCADOR_NONCE % NONCE
+    CHAVE = "fedcba9876543210fedcba9876543210"
+    DESDE = "2026-11-03T12:00:00Z"
+    PROJETO = "kustertech-flow"
+
+    @staticmethod
+    def _runs(prefixo, n, started_at):
+        return [{"id": "%s-%d" % (prefixo, i), "prompt": "outro", "startedAt": started_at} for i in range(n)]
+
+    def _url(self, direcao, offset):
+        return BASE + "/runs?project=prj%%20x&sort=started&dir=%s&limit=100&offset=%d" % (direcao, offset)
+
+    def test_warren_manda_idempotency_key_so_no_post_runs_com_chave(self):
+        m, t = novo(ok({"run": {"id": "r-1"}}, 201), ok({"run": {"id": "r-1"}}, 201))
+        self.assertEqual(m.despachar_run(**ARGS_RUN, chave_idempotencia=self.CHAVE), "r-1")
+        self.assertEqual(t.ultima[2].get("Idempotency-Key"), self.CHAVE)
+        self.assertEqual(t.ultima[0:2], ("POST", BASE + "/runs"))
+        self.assertEqual(m.despachar_run(**ARGS_RUN), "r-1")
+        self.assertNotIn("Idempotency-Key", t.ultima[2])
+        # chave repetida: o Warren responde o MESMO 201 com o run já criado; é sucesso com o id existente
+        m, t = novo(ok({"run": {"id": "r-9", "state": "queued"}}, 201))
+        self.assertEqual(m.despachar_run(**ARGS_RUN, chave_idempotencia=self.CHAVE), "r-9")
+        # POST /plan-runs não aceita a chave no Warren: nunca a manda
+        m, t = novo(ok({"planRun": {"id": "p-1"}}, 201))
+        m.despachar_plano(**ARGS_PLANO)
+        self.assertNotIn("Idempotency-Key", t.ultima[2])
+        # a chave é um nonce (hex de 32): nada de texto livre num cabeçalho
+        for chave in ("x", "", self.CHAVE.upper(), 5):
+            m, t = novo()
+            with self.assertRaises(ValueError):
+                m.despachar_run(**ARGS_RUN, chave_idempotencia=chave)
+            self.assertEqual(t.requisicoes, [])
+
+    def test_warren_procura_nas_duas_direcoes_e_para_nos_runs_anteriores_a_acao(self):
+        # SQLite: em DESC os queued (NULL) ficam depois de TODOS os iniciados; só o ASC os mostra primeiro
+        novos = self._runs("n", 100, "2026-11-03T12:30:00.000Z")
+        antigos = self._runs("a", 100, "2026-11-03T11:00:00.000Z")
+        fila = [{"id": "q-1", "prompt": "revise\n" + self.MARCA, "startedAt": None}]
+        m, t = novo(ok({"runs": novos}), ok({"runs": antigos}), ok({"runs": fila + antigos[:99]}))
+        self.assertEqual(m.procurar_run("prj x", self.NONCE, self.DESDE), "q-1")
+        self.assertEqual([r[1] for r in t.requisicoes], [self._url("desc", 0), self._url("desc", 100), self._url("asc", 0)])
+        # Postgres: em DESC os NULL vêm primeiro; achado na primeira página
+        m, t = novo(ok({"runs": fila + novos[:99]}))
+        self.assertEqual(m.procurar_run("prj x", self.NONCE, self.DESDE), "q-1")
+        self.assertEqual(len(t.requisicoes), 1)
+
+    def test_warren_pagina_desc_ate_achar_um_run_iniciado_depois_da_acao(self):
+        alvo = {"id": "r-x", "prompt": "revise\n" + self.MARCA, "startedAt": "2026-11-03T12:05:00.000Z"}
+        novos = self._runs("n", 100, "2026-11-03T12:30:00.000Z")
+        m, t = novo(ok({"runs": novos}), ok({"runs": novos[:60] + [alvo]}))
+        self.assertEqual(m.procurar_run("prj x", self.NONCE, self.DESDE), "r-x")
+        self.assertEqual(len(t.requisicoes), 2)
+        # página curta (menos de 100) encerra a direção; startedAt em milissegundos também vale
+        alvo_ms = dict(alvo, startedAt=1762171500000)
+        m, t = novo(ok({"runs": novos}), ok({"runs": [alvo_ms]}))
+        self.assertEqual(m.procurar_run("prj x", self.NONCE, self.DESDE), "r-x")
+
+    def test_warren_busca_sem_desde_le_uma_pagina_desc_e_a_asc(self):
+        novos = self._runs("n", 100, "2026-11-03T12:30:00.000Z")
+        m, t = novo(ok({"runs": novos}), ok({"runs": self._runs("v", 10, "2026-11-01T00:00:00.000Z")}))
+        self.assertIsNone(m.procurar_run("prj x", self.NONCE))
+        self.assertEqual([r[1] for r in t.requisicoes], [self._url("desc", 0), self._url("asc", 0)])
+
+    def test_warren_asc_para_na_primeira_pagina_com_run_iniciado_e_ha_teto_de_paginas(self):
+        # ASC: só o prefixo de NULL interessa (SQLite); uma página que já traz iniciados encerra, mesmo recentes
+        fila = [{"id": "q-%d" % i, "prompt": "outro", "startedAt": None} for i in range(100)]
+        m, t = novo(ok({"runs": self._runs("a", 5, "2026-11-03T11:00:00.000Z")}), ok({"runs": fila}), ok({"runs": fila[:50] + self._runs("v", 50, "2026-11-03T12:30:00.000Z")}))
+        self.assertIsNone(m.procurar_run("prj x", self.NONCE, self.DESDE))
+        self.assertEqual([r[1] for r in t.requisicoes], [self._url("desc", 0), self._url("asc", 0), self._url("asc", 100)])
+        # teto: 20 páginas por direção, mesmo com páginas cheias sem fim
+        novos = self._runs("n", 100, "2026-11-03T12:30:00.000Z")
+        m, t = novo(*([ok({"runs": novos})] * 20 + [ok({"runs": fila})] * 20))
+        self.assertIsNone(m.procurar_run("prj x", self.NONCE, self.DESDE))
+        self.assertEqual(len(t.requisicoes), 40)
+
+    def test_warren_busca_valida_entradas_e_respostas(self):
+        m, t = novo()
+        with self.assertRaises(ValueError):
+            m.procurar_run("prj", self.NONCE, "ontem")
+        self.assertEqual(t.requisicoes, [])
+        m, _ = novo(ok({"runs": [{"id": "r", "prompt": "x", "startedAt": "ontem"}]}), ok({"runs": []}))
+        self.assertIsNone(m.procurar_run("prj", self.NONCE, self.DESDE))  # startedAt ilegível: nem corta nem quebra
+
+    def test_falso_ordena_como_o_warren_e_a_busca_acha_o_run_na_fila(self):
+        inicio = datetime.datetime(2026, 11, 3, 12, 0, tzinfo=datetime.timezone.utc)
+        for dialeto in ("sqlite", "postgres"):
+            with self.subTest(dialeto=dialeto):
+                m = motor.MotorFalso()
+                m.agora = lambda: inicio
+                m.dialeto = dialeto
+                m.iniciar_historico(150, projeto=self.PROJETO, ha=datetime.timedelta(hours=1))
+                m.enfileirar(True)
+                rid = m.despachar_run(**dict(ARGS_RUN, prompt="p\n" + self.MARCA))
+                self.assertEqual(m.run(rid)["estado"], "queued")
+                ids = [r["id"] for r in m._listar_runs(self.PROJETO, "desc", 100, 0)]
+                self.assertEqual(ids[0] == rid, dialeto == "postgres")  # NULL por último no SQLite, primeiro no Postgres
+                self.assertEqual(ids[0] == rid, m._listar_runs(self.PROJETO, "asc", 100, 0)[0]["id"] != rid)
+                self.assertEqual(m.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z"), rid)
+                self.assertIsNone(m.procurar_run("outro", self.NONCE, "2026-11-03T11:50:00Z"))
+                m.iniciar_run(rid)
+                self.assertEqual(m.run(rid)["estado"], "running")
+                self.assertEqual(m._listar_runs(self.PROJETO, "desc", 1, 0)[0]["id"], rid)  # o mais recente iniciado
+                self.assertEqual(m.procurar_run(self.PROJETO, self.NONCE, "2026-11-03T11:50:00Z"), rid)
+        m = motor.MotorFalso()
+        m.enfileirar(True)
+        rid = m.despachar_run(**ARGS_RUN)
+        m.enfileirar(False)
+        self.assertEqual(m.run(m.despachar_run(**ARGS_RUN))["estado"], "running")
+        with self.assertRaises(ValueError):
+            m.dialeto = "oracle"
+            m._listar_runs(self.PROJETO, "desc", 1, 0)
+
+    def test_falso_dedupe_por_chave_e_projeto_dentro_da_janela(self):
+        relogio = {"t": datetime.datetime(2026, 11, 3, 12, 0, tzinfo=datetime.timezone.utc)}
+        m = motor.MotorFalso()
+        m.agora = lambda: relogio["t"]
+        a = m.despachar_run(**ARGS_RUN, chave_idempotencia=self.CHAVE)
+        self.assertEqual(m.despachar_run(**ARGS_RUN, chave_idempotencia=self.CHAVE), a)
+        self.assertEqual(len(m._runs), 1)
+        self.assertEqual(m.chamadas[-1][1]["chave_idempotencia"], self.CHAVE)
+        self.assertNotEqual(m.despachar_run(**dict(ARGS_RUN, projeto="outro"), chave_idempotencia=self.CHAVE), a)
+        self.assertNotEqual(m.despachar_run(**ARGS_RUN), a)  # sem chave: sempre cria
+        relogio["t"] += datetime.timedelta(minutes=10, seconds=1)
+        self.assertNotEqual(m.despachar_run(**ARGS_RUN, chave_idempotencia=self.CHAVE), a)  # janela vencida
+        # 429 e falha antes do envio não ocupam a chave; a falha incerta ocupa (o Warren criou)
+        m.lotar()
+        with self.assertRaises(motor.MotorOcupado):
+            m.despachar_run(**ARGS_RUN, chave_idempotencia=self.NONCE)
+        m.falhar_despacho("antes", 1)
+        with self.assertRaises(motor.FalhaAntesDoEnvio):
+            m.despachar_run(**ARGS_RUN, chave_idempotencia=self.NONCE)
+        antes = len(m._runs)
+        m.falhar_despacho("incerta", 1)
+        with self.assertRaises(motor.FalhaIncerta):
+            m.despachar_run(**ARGS_RUN, chave_idempotencia=self.NONCE)
+        self.assertEqual(len(m._runs), antes + 1)
+        criado = m.despachar_run(**ARGS_RUN, chave_idempotencia=self.NONCE)
+        self.assertEqual(len(m._runs), antes + 1)
+        self.assertIn(criado, m._runs)
+        with self.assertRaises(ValueError):
+            m.despachar_run(**ARGS_RUN, chave_idempotencia="x")
+
+    def test_protocolo_tem_chave_de_idempotencia_e_desde(self):
+        import inspect
+
+        self.assertIn("chave_idempotencia", inspect.signature(motor.Motor.despachar_run).parameters)
+        self.assertIn("desde", inspect.signature(motor.Motor.procurar_run).parameters)
+        for classe in (motor.MotorFalso, motor_warren.MotorWarren):
+            self.assertEqual(
+                list(inspect.signature(classe.despachar_run).parameters), list(inspect.signature(motor.Motor.despachar_run).parameters)
+            )
+            self.assertEqual(list(inspect.signature(classe.procurar_run).parameters), list(inspect.signature(motor.Motor.procurar_run).parameters))
 
 
 class TestesExecucaoDireta(unittest.TestCase):

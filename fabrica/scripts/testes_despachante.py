@@ -462,18 +462,25 @@ class TestesJornada(Base):
         (decisao,) = self.estado()["decisoes"]
         self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="")
         d.ciclo()
-        self.assertEqual(self.estado()["decisoes"], [decisao])
+        (acompanhada,) = self.estado()["decisoes"]
+        # Q3: a reabertura registra a hora e o closed_at visto, para distinguir um fechamento novo de uma leitura velha
+        self.assertEqual(acompanhada["fechamentosSemComentario"], 1)
+        self.assertTrue(acompanhada["reabertaEm"] and acompanhada["fechadaEmVista"])
+        self.assertEqual({k: v for k, v in acompanhada.items() if k not in ("reabertaEm", "fechadaEmVista", "fechamentosSemComentario")}, decisao)
         self.assertEqual(self.runs(FABLE), [])
         info = self.forja.decisao(decisao["url"])
         self.assertFalse(info["fechada"])
         self.assertIn("Feche com um comentário dizendo a decisão", info["ultimoComentario"])
-        # o comentário do próprio despachante nunca vale como resposta, e não reabre de novo (P8)
+        # Q3: a leitura velha do mesmo fechamento (closed_at igual ao visto) não reabre de novo, e o comentário do
+        # próprio despachante nunca vale como resposta
         reaberturas = len([n for n, _ in self.forja.chamadas if n == "reabrir_decisao"])
-        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario=info["ultimoComentario"])
+        self.forja.definir_decisao(
+            decisao["url"], fechada=True, ultimo_comentario=info["ultimoComentario"], fechada_em=acompanhada["fechadaEmVista"]
+        )
         d.ciclo()
         self.assertEqual(self.runs(FABLE), [])
         self.assertEqual(len([n for n, _ in self.forja.chamadas if n == "reabrir_decisao"]), reaberturas)
-        self.assertEqual(self.estado()["decisoes"], [decisao])
+        self.assertEqual([x["url"] for x in self.estado()["decisoes"]], [decisao["url"]])
         self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="Pode mergear.")
         d.ciclo()
         self.assertEqual(self.estado()["decisoes"], [])
@@ -671,8 +678,12 @@ class TestesPersistencia(Base):
             d.ciclo()
         disco = self.estado()
         self.assertEqual(disco["raias"]["a"]["planRunId"], "plano-1")
-        self.assertEqual({k: v for k, v in disco["acaoEmCurso"].items() if k != "nonce"}, {"tipo": "despachar_raia", "raia": "b"})
+        self.assertEqual(
+            {k: v for k, v in disco["acaoEmCurso"].items() if k not in ("nonce", "nonceRaiz", "desde")}, {"tipo": "despachar_raia", "raia": "b"}
+        )
         self.assertRegex(disco["acaoEmCurso"]["nonce"], r"^[0-9a-f]{32}$")
+        self.assertEqual(disco["acaoEmCurso"]["nonceRaiz"], disco["acaoEmCurso"]["nonce"])
+        self.assertRegex(disco["acaoEmCurso"]["desde"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.motor.cair = False
         outro = self.novo()
         outro.ciclo()
@@ -3139,6 +3150,552 @@ class TestesRodada3(Base):
 
 
 # ---------------------------------------------------------------- estado compacto
+
+
+class Morte(BaseException):
+    """Queda do processo no meio de uma gravação (não é `Exception`: o despachante não a engole)."""
+
+
+class TestesRodada4(Base):
+    """Rodada 4: Q1 (duplicata paga com run na fila), Q2 (busca que falha), Q3 (fechada de novo), Q4–Q6."""
+
+    UTC = datetime.timezone.utc
+    TITULO_PAUSA = "[fábrica] despachante pausado: " + despachante.PAUSA_DESPACHOS_REJEITADOS
+
+    def _tique(self, fila, visto):
+        """Um ciclo do Warren lotado: um run na fila há `fila` ciclos começa a rodar."""
+        for rid, run in list(self.motor._runs.items()):
+            if run["estado"] == "queued":
+                visto[rid] = visto.get(rid, 0) + 1
+                if visto[rid] >= fila:
+                    self.motor.iniciar_run(rid)
+
+    def _warren_lento(self, vezes, *, historico=60, dialeto="sqlite", criar=True):
+        """Todo POST /runs (até `vezes`) cria o run e perde a resposta; `historico` runs alheios iniciados há 1 h."""
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", vezes, criar)
+        self.motor.dialeto = dialeto
+        if historico:
+            self.motor.iniciar_historico(historico, projeto=PROJETO, ha=datetime.timedelta(hours=1))
+        self.motor.enfileirar(True)
+
+    def _titulos(self):
+        return [t for t, _ in self.forja.decisoes]
+
+    def _runs_criados(self):
+        return [r for r in self.motor._runs if r.startswith("run-")]
+
+    # ------------------------------------------------ Q1 (Critical): duplicata paga com o run ainda na fila
+    def test_q1_run_na_fila_atras_do_historico_nao_e_redespachado(self):
+        """c29 b2: 60 runs iniciados no projeto; o run incerto fica queued (started_at NULL) por 2 e 5 ciclos."""
+        for dialeto in ("sqlite", "postgres"):
+            for fila in (2, 5):
+                with self.subTest(dialeto=dialeto, fila=fila):
+                    self.setUp()
+                    self._warren_lento(1, dialeto=dialeto)
+                    d = self.preparar_raia()
+                    self.abrir_pr(H1)
+                    visto = {}
+                    for _ in range(9):
+                        self._tique(fila, visto)
+                        d.ciclo()
+                    criados = self._runs_criados()
+                    self.assertEqual(len(criados), 1)
+                    self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], criados[0])
+                    self.assertEqual(self.estado()["despachosIncertos"], [])
+                    self.assertEqual(len(self.runs(OPUS)), 1)
+
+    def test_q1_warren_lento_em_todo_post_nao_duplica_nem_pausa(self):
+        """c29 b3: todo POST perde a resposta, runs ficam 6 ciclos na fila, 60 ciclos: 1 revisão paga e nenhuma pausa."""
+        self._warren_lento(10**6)
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        visto = {}
+        for _ in range(60):
+            self._tique(6, visto)
+            d.ciclo()
+        e = self.estado()
+        self.assertEqual(len(self._runs_criados()), 1)
+        self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], self._runs_criados()[0])
+        self.assertIsNone(e["pausado"])
+        self.assertFalse(e.get("adiamentosRede"))
+        self.assertEqual([t for t in self._titulos() if "pausado" in t or "parcialmente" in t], [])
+
+    def test_q1_orquestrador_com_warren_lento_paga_um_run_so(self):
+        """c32 q1: acordar com todo POST incerto e run 5 ciclos na fila; 60 ciclos, retomar, mais 40."""
+        self._warren_lento(10**6)
+        d = self.preparar_raia()
+        self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+        visto = {}
+        for _ in range(60):
+            self._tique(5, visto)
+            d.ciclo()
+        e = self.estado()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(len(self._runs_criados()), 1)
+        self.assertEqual(e["orquestrador"]["runId"], self._runs_criados()[0])
+        self.assertIsNone(e["pausado"])
+        url = (e.get("decisaoPausa") or {}).get("url")
+        if url:
+            self.forja.definir_decisao(url, fechada=True)
+        for _ in range(40):
+            self._tique(5, visto)
+            d.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertEqual(len(self.acordadas()), 1)
+
+    def test_q1_chave_de_idempotencia_e_o_nonce_raiz_reusado_na_cadeia(self):
+        """O primeiro nonce da cadeia vai em `Idempotency-Key` e volta no redespacho; a cadeia nova ganha outra chave."""
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1, criar=False)  # o POST não chegou a criar
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        raiz = self.estado()["noncesRaiz"]["revisar:s-1"]
+        item = self.estado()["despachosIncertos"][0]
+        self.assertEqual(item["nonce"], raiz)
+        self.assertRegex(item["desde"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        for _ in range(3):
+            d.ciclo()  # 3 buscas sem achar: descartado e redespachado (mesma chave, nonce novo no texto)
+        buscas = [a for nome, a in self.motor.chamadas if nome == "procurar_run"]
+        self.assertEqual([(b["nonce"], b["desde"]) for b in buscas], [(raiz, item["desde"])] * 3)  # a hora da ação limita a busca
+        revisoes = self.runs(OPUS)
+        self.assertEqual(len(revisoes), 2)
+        self.assertEqual([r["chave_idempotencia"] for r in revisoes], [raiz, raiz])
+        nonces = [r["prompt"].rsplit("nonce=", 1)[1][:32] for r in revisoes]
+        self.assertEqual(nonces[0], raiz)
+        self.assertNotEqual(nonces[0], nonces[1])
+        self.assertNotIn("revisar:s-1", self.estado().get("noncesRaiz") or {})  # cadeia encerrada com o id
+        # uma revisão nova do mesmo seed (head novo) é outra cadeia: chave diferente
+        self.terminar_revisao(H1)
+        self.mover_head(H2)
+        d.ciclo()
+        revisoes = self.runs(OPUS)
+        self.assertEqual(len(revisoes), 3)
+        self.assertNotEqual(revisoes[2]["chave_idempotencia"], raiz)
+        self.assertEqual(revisoes[2]["chave_idempotencia"], revisoes[2]["prompt"].rsplit("nonce=", 1)[1][:32])
+        # o orquestrador também manda a chave; o Plan Run não (o Warren não a aceita em POST /plan-runs)
+        self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+        d.ciclo()
+        self.assertTrue(self.runs(FABLE)[-1]["chave_idempotencia"])
+        self.assertNotIn("chave_idempotencia", self.planos_despachados()[0])
+
+    def test_q1_chave_segura_a_duplicata_quando_a_busca_nao_enxerga(self):
+        """Segunda trava: com a busca cega, o redespacho com a mesma chave recebe do Warren o run já criado."""
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1)
+        self.motor.procurar_run = lambda projeto, nonce, desde=None: None
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        for _ in range(5):
+            d.ciclo()
+        criados = self._runs_criados()
+        self.assertEqual(len(criados), 1)
+        self.assertEqual(len(self.runs(OPUS)), 2)  # dois POSTs, um run pago
+        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoRunId"], criados[0])
+
+    def test_q1_incerto_nunca_achado_nao_conta_como_rejeicao(self):
+        """Q1(c): só a FalhaAntesDoEnvio conta para a pausa "Warren rejeitando despachos"."""
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 10**6, criar=False)
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        for _ in range(45):
+            d.ciclo()
+        e = self.estado()
+        self.assertIsNone(e["pausado"])
+        self.assertFalse(e.get("adiamentosRede"))
+        descartes = [linha for linha in self.log() if linha.get("evento") == "despacho_incerto_descartado"]
+        self.assertGreaterEqual(len(descartes), 10)
+        self.assertEqual(self._titulos(), [])
+        self.assertEqual(self._runs_criados(), [])
+
+    # ------------------------------------------------ Q2: busca pelo nonce que falha sempre
+    def _incerto_com_busca_falha(self, modo, acao):
+        self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1)
+
+        def falha(projeto, nonce, desde=None, _m=modo):
+            if _m == "rede":
+                raise motor.FalhaIncerta("GET /runs: falha de rede (TimeoutError)")
+            raise RuntimeError("GET /runs?project=x: HTTP 500")
+
+        self.motor.procurar_run = falha
+        d = self.preparar_raia()
+        if acao == "revisar":
+            self.abrir_pr(H1)
+            chave = "revisar:s-1"
+        else:
+            self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+            chave = "acordar:raia_falhou:a"
+        d.ciclo()  # o POST fica incerto
+        self.assertEqual([i["chave"] for i in self.estado()["despachosIncertos"]], [chave])
+        return d, chave
+
+    def test_q2_busca_que_falha_sempre_abre_decisao_e_segura_o_item(self):
+        """c29 c1: HTTP 500 ou rede na busca, com o resto do Warren ok, por 40 ciclos."""
+        for modo in ("http500", "rede"):
+            for acao in ("revisar", "acordar"):
+                with self.subTest(modo=modo, acao=acao):
+                    self.setUp()
+                    d, chave = self._incerto_com_busca_falha(modo, acao)
+                    titulo = "[fábrica] despacho não confirmado: " + chave
+                    for _ in range(9):
+                        d.ciclo()
+                    self.assertNotIn(titulo, self._titulos())  # 9 falhas seguidas: ainda não
+                    d.ciclo()  # 10ª
+                    self.assertIn(titulo, self._titulos())
+                    for _ in range(30):
+                        d.ciclo()
+                    e = self.estado()
+                    self.assertEqual([i["chave"] for i in e["despachosIncertos"]], [chave])
+                    self.assertGreaterEqual(e["despachosIncertos"][0]["falhasBusca"], 40)
+                    self.assertEqual(len(self.runs(OPUS if acao == "revisar" else FABLE)), 1)  # sem redespacho
+                    self.assertIsNone(e["pausado"])
+                    self.assertEqual(self._titulos().count(titulo), 1)
+                    rastreadas = [x for x in e["decisoes"] if x.get("tipo") == "incerto"]
+                    self.assertEqual([x["alvo"] for x in rastreadas], [chave])
+                    self.assertEqual(rastreadas[0]["motivo"], "não foi possível confirmar o despacho de " + chave)
+                    if modo == "rede" and acao == "revisar":
+                        # as falhas de rede da busca entram na contabilidade do ciclo (P4: parcialmente inacessível)
+                        self.assertGreaterEqual(e["falhasDeRede"].get(chave, 0), 10)
+                        self.assertTrue(any("parcialmente" in t and chave in t for t in self._titulos()))
+                    elif acao == "acordar":
+                        # com a busca como única leitura do Warren no ciclo, o ciclo inteiro conta como Warren fora
+                        self.assertIn(despachante.TITULO_WARREN, self._titulos())
+                    else:
+                        self.assertNotIn(chave, e.get("falhasDeRede") or {})
+                        self.assertNotIn(despachante.TITULO_WARREN, self._titulos())
+
+    def test_q2_queda_ao_abrir_a_decisao_e_recuperada_pelo_nonce(self):
+        d, chave = self._incerto_com_busca_falha("http500", "revisar")
+        for _ in range(9):
+            d.ciclo()
+        original = self.forja.abrir_decisao
+
+        def cair(repo, titulo, corpo):
+            url = original(repo, titulo, corpo)
+            raise Morte()  # a issue existe no GitHub, o estado ainda não a registrou
+
+        self.forja.abrir_decisao = cair
+        with self.assertRaises(Morte):
+            d.ciclo()  # 10ª falha: abre a decisão e cai
+        self.forja.abrir_decisao = original
+        self.assertEqual([i["tipo"] for i in self.estado()["decisoesPendentes"]], ["incerto"])
+        d2 = self.novo()
+        d2.ciclo()
+        e = self.estado()
+        self.assertEqual(e["decisoesPendentes"], [])
+        self.assertEqual([x["alvo"] for x in e["decisoes"] if x.get("tipo") == "incerto"], [chave])
+        self.assertEqual(self._titulos().count("[fábrica] despacho não confirmado: " + chave), 1)
+        self.assertEqual([i["chave"] for i in e["despachosIncertos"]], [chave])
+
+    def test_q2_busca_que_volta_resolve_o_item_e_fecha_a_decisao(self):
+        d, chave = self._incerto_com_busca_falha("http500", "revisar")
+        for _ in range(10):
+            d.ciclo()
+        url = [x for x in self.estado()["decisoes"] if x.get("tipo") == "incerto"][0]["url"]
+        del self.motor.procurar_run  # a busca volta
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(e["despachosIncertos"], [])
+        self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], self._runs_criados()[0])
+        self.assertTrue(self.forja._decisoes[url]["fechada"])
+        self.assertIn(("fechar_decisao", url), [(n, a.get("url")) for n, a in self.forja.chamadas])
+        self.assertEqual([x for x in e["decisoes"] if x.get("tipo") == "incerto"], [])
+        self.assertEqual(len(self.runs(OPUS)), 1)
+        self.assertNotIn(chave, e.get("noncesRaiz") or {})
+
+    def test_q2_resposta_do_paulo_acorda_o_orquestrador_e_solta_o_item(self):
+        for acao in ("revisar", "acordar"):
+            with self.subTest(acao=acao):
+                self.setUp()
+                d, chave = self._incerto_com_busca_falha("rede", acao)
+                for _ in range(10):
+                    d.ciclo()
+                url = [x for x in self.estado()["decisoes"] if x.get("tipo") == "incerto"][0]["url"]
+                self.forja.definir_decisao(url, fechada=True, ultimo_comentario="o run existe no Warren, segue")
+                d.ciclo()
+                e = self.estado()
+                self.assertEqual(e["despachosIncertos"], [])
+                self.assertNotIn(url, [x.get("url") for x in e["decisoes"]])
+                # o item solto é refeito com a MESMA Idempotency-Key: o Warren devolve o run já criado, nada pago a mais
+                self.assertEqual(len(self._runs_criados()), 2 if acao == "revisar" else 1)
+                self.assertNotIn(chave, e.get("noncesRaiz") or {})
+                if acao == "acordar":
+                    rid = e["orquestrador"]["runId"]
+                    self.assertEqual(rid, self._runs_criados()[0])
+                    self.assertEqual([p["motivo"] for p in e["acordarPendentes"]], ["resposta_paulo"])
+                    self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a")))
+                    d.ciclo()
+                else:
+                    self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], self._runs_criados()[0])
+                d.ciclo()
+                e = self.estado()
+                respostas = [a for a in self.acordadas() if a["motivo"] == "resposta_paulo"]
+                self.assertEqual(len(respostas), 1)
+                self.assertEqual(respostas[0]["alvo"], url)
+                contexto = e["orquestrador"]["acordada"]["contexto"]
+                self.assertEqual(contexto["resposta"], "o run existe no Warren, segue")
+                self.assertIn(chave, contexto["pergunta"])
+                self.assertEqual(len(self.runs(FABLE)), 3 if acao == "acordar" else 1)
+
+    # ------------------------------------------------ Q3: decisão fechada de novo sem comentário
+    def _relogio_compartilhado(self):
+        self.instante = datetime.datetime(2026, 11, 3, 12, 0, 0)
+        self.forja.agora = lambda: self.instante.astimezone(self.UTC)
+
+    def _avancar(self, minutos=1):
+        self.instante += datetime.timedelta(minutes=minutos)
+
+    def _decisao_de_seed(self):
+        self._relogio_compartilhado()
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("src/auth/x.ts",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        url = self.estado()["decisoes"][-1]["url"]
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        return d, url
+
+    def _reaberturas(self):
+        return [a for n, a in self.forja.chamadas if n == "reabrir_decisao"]
+
+    def _fechar_sem_comentario(self, url):
+        atual = self.forja._decisoes[url]
+        self._avancar()
+        self.forja.definir_decisao(url, fechada=True, ultimo_comentario=atual.get("ultimoComentario", ""))
+
+    def test_q3_fechada_de_novo_sem_comentario_e_reaberta_de_novo(self):
+        """c31 f12: o último comentário é o do despachante, mas closed_at é posterior à reabertura."""
+        for atraso_do_github in (datetime.timedelta(0), datetime.timedelta(hours=1)):
+            with self.subTest(atraso_do_github=atraso_do_github):
+                self.setUp()
+                self._f12(atraso_do_github)
+
+    def _f12(self, atraso_do_github):
+        d, url = self._decisao_de_seed()
+        if atraso_do_github:
+            # relógio do GitHub atrasado em relação ao nosso: closed_at <= reabertaEm mesmo num fechamento novo;
+            # o que decide é ser posterior ao closed_at que vimos ao reabrir
+            self.forja.agora = lambda: (self.instante - atraso_do_github).astimezone(self.UTC)
+        self._fechar_sem_comentario(url)
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 1)
+        decisao = [x for x in self.estado()["decisoes"] if x["url"] == url][0]
+        self.assertEqual(decisao["reabertaEm"], self.instante.astimezone(self.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.assertEqual(decisao["fechamentosSemComentario"], 1)
+        self._fechar_sem_comentario(url)  # o Paulo fecha de novo, sem comentário
+        for _ in range(20):
+            self._avancar()
+            d.ciclo()
+        e = self.estado()
+        self.assertEqual(len(self._reaberturas()), 2)
+        self.assertFalse(self.forja._decisoes[url]["fechada"])
+        self.assertIn(url, [x["url"] for x in e["decisoes"]])
+        self.assertEqual([x for x in e["decisoes"] if x["url"] == url][0]["fechamentosSemComentario"], 2)
+        self.assertEqual(self.runs(FABLE), [])
+
+    def test_q3_reabertura_sem_closed_at_visto_usa_a_hora_da_reabertura(self):
+        """Reaberta a partir de uma leitura sem closed_at (fechadaEmVista vazio): um closed_at posterior à reabertura conta."""
+        d, url = self._decisao_de_seed()
+        original = self.forja.decisao
+        self.forja.definir_decisao(url, fechada=True)
+        self.forja.decisao = lambda u: {"fechada": True, "ultimoComentario": ""}  # sem closed_at
+        self._avancar()
+        d.ciclo()
+        self.forja.decisao = original
+        decisao = [x for x in self.estado()["decisoes"] if x["url"] == url][0]
+        self.assertEqual(len(self._reaberturas()), 1)
+        self.assertIsNone(decisao["fechadaEmVista"])
+        self.assertTrue(decisao["reabertaEm"])
+        self._fechar_sem_comentario(url)  # closed_at novo, posterior à reabertura
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 2)
+        self.assertIn(url, [x["url"] for x in self.estado()["decisoes"]])
+
+    def test_q3_terceiro_fechamento_sem_comentario_acorda_com_resposta_vazia(self):
+        """c24 f6: no 3º fechamento sem comentário a decisão sai da lista e o orquestrador é acordado."""
+        d, url = self._decisao_de_seed()
+        for _ in range(2):
+            self._fechar_sem_comentario(url)
+            self._avancar()
+            d.ciclo()
+            self.assertIn(url, [x["url"] for x in self.estado()["decisoes"]])
+        self.assertEqual(len(self._reaberturas()), 2)
+        self._fechar_sem_comentario(url)
+        self._avancar()
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(len(self._reaberturas()), 2)
+        self.assertTrue(self.forja._decisoes[url]["fechada"])
+        self.assertNotIn(url, [x["url"] for x in e["decisoes"]])
+        self.assertEqual([a["motivo"] for a in self.acordadas()], ["resposta_paulo"])
+        contexto = e["orquestrador"]["acordada"]["contexto"]
+        self.assertEqual(contexto["resposta"], "")
+        self.assertEqual(contexto["alvo"], "s-1")
+        self.assertEqual(contexto["observacao"], "decisão fechada 3 vezes sem comentário")
+        self.assertIn("fechada 3 vezes sem comentário", self.runs(FABLE)[0]["prompt"])
+        for _ in range(7):  # fechamentos seguintes não fazem mais nada
+            self._fechar_sem_comentario(url)
+            self._avancar()
+            d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 2)
+        self.assertEqual(len(self.runs(FABLE)), 1)
+
+    def test_q3_leitura_velha_depois_da_reabertura_nao_repete_o_comentario(self):
+        """c24 f7: o GET ainda devolve o fechamento antigo (closed_at <= reabertaEm) por 3 ciclos."""
+        d, url = self._decisao_de_seed()
+        self._fechar_sem_comentario(url)
+        velha = dict(self.forja._decisoes[url])
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 1)
+        self.assertEqual(velha["ultimoComentario"], "")
+        original = self.forja.decisao
+        atraso = {"n": 3}
+
+        def decisao(u):
+            if u == url and atraso["n"] > 0:
+                atraso["n"] -= 1
+                return dict(velha)
+            return original(u)
+
+        self.forja.decisao = decisao
+        for _ in range(4):
+            self._avancar()
+            d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 1)
+        self.assertIn(url, [x["url"] for x in self.estado()["decisoes"]])
+        self.assertFalse(self.forja._decisoes[url]["fechada"])
+        # sem closed_at na leitura, vale a regra do marcador (P8): o último comentário é nosso, nada de reabrir
+        self.forja.decisao = lambda u: {"fechada": True, "ultimoComentario": despachante.MARCADOR_DESPACHANTE}
+        d.ciclo()
+        self.assertEqual(len(self._reaberturas()), 1)
+        self.assertIn(url, [x["url"] for x in self.estado()["decisoes"]])
+
+    # ------------------------------------------------ Q4: queda em cada gravação do cancelamento
+    def test_q4_queda_em_cada_gravacao_do_cancelamento_fecha_o_pr_antigo(self):
+        """c19 G4: em qualquer queda (antes ou depois de cada save), o PR da tentativa antiga acaba fechado."""
+        original = despachante.gravar_json_atomico
+        for modo in ("antes", "depois"):
+            for k in range(1, 15):
+                with self.subTest(modo=modo, k=k):
+                    self.setUp()
+                    d = self.preparar_raia()
+                    self.abrir_pr(H1)
+                    d.ciclo()
+                    self.publicar(plano(raia("a", plano_seeds="pl-00b2")))
+                    contador = {"n": 0}
+
+                    def gravar(caminho, dados, _k=k, _modo=modo):
+                        if pathlib.Path(caminho).name == "estado.json":
+                            contador["n"] += 1
+                            if contador["n"] == _k:
+                                if _modo == "antes":
+                                    raise Morte()
+                                original(caminho, dados)
+                                raise Morte()
+                        return original(caminho, dados)
+
+                    morreu = False
+                    with mock.patch.object(despachante, "gravar_json_atomico", gravar):
+                        try:
+                            d.ciclo()
+                        except Morte:
+                            morreu = True
+                    if not morreu:
+                        break  # o ciclo tem menos de k gravações
+                    d2 = self.novo()
+                    for _ in range(8):
+                        rid = self.estado()["orquestrador"].get("runId")
+                        if rid and self.motor._runs.get(rid, {}).get("estado") == "running":
+                            self.motor.definir_run(rid, estado="succeeded", prUrl=None)
+                        d2.ciclo()
+                    despachados = [p["plano_seeds"] for p in self.planos_despachados()]
+                    self.assertEqual(despachados.count("pl-00b2"), 1)
+                    self.assertFalse(self.forja._prs[PR]["aberto"], "PR da tentativa antiga ficou aberto")
+                    self.assertEqual(self.forja.merges, [])
+                    self.assertEqual(self.runs(FABLE), [])
+                    self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+
+    # ------------------------------------------------ Q5: acordadas.jsonl sem runId repetido
+    def test_q5_acordadas_nao_grava_duas_vezes_o_mesmo_run_id(self):
+        """c19 G7: queda logo depois de o orquestrador novo ser aceito; a recuperação acha o run pelo nonce."""
+        d, rid = self.acordar_por_falha()
+        self.motor.definir_run(rid, estado="failed", motivoFalha="agent_crashed")
+        original = despachante.gravar_json_atomico
+
+        def gravar(caminho, dados):
+            if pathlib.Path(caminho).name == "estado.json" and dados.get("acaoEmCurso") is None:
+                if (dados.get("orquestrador") or {}).get("runId") not in (None, rid):
+                    raise Morte()
+            return original(caminho, dados)
+
+        with mock.patch.object(despachante, "gravar_json_atomico", gravar):
+            with self.assertRaises(Morte):
+                d.ciclo()
+        self.assertTrue(self.estado().get("acaoEmCurso"))
+        d2 = self.novo()
+        for _ in range(4):
+            d2.ciclo()
+        linhas = self.acordadas()
+        ids = [linha["runId"] for linha in linhas]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual([linha["motivo"] for linha in linhas], ["raia_falhou", "raia_falhou"])
+        novo = self.estado()["orquestrador"]["runId"]
+        self.assertEqual(ids.count(novo), 1)
+        self.assertEqual(len(self.runs(FABLE)), 2)
+
+    # ------------------------------------------------ Q6: config.json ilegível no rodar
+    def test_q6_config_json_ilegivel_no_rodar_abre_decisao_e_sai_com_2(self):
+        """c31 v2c: JSON quebrado (e arquivo ausente) é ConfigInvalida: decisão best-effort e saída 2."""
+        self.publicar(plano(raia("a")))
+        self.novo().iniciar()
+        (self.repo_dir / ".fabrica").mkdir()
+        caminho = self.repo_dir / ".fabrica" / "config.json"
+        caminho.write_text('{"modelos": ', encoding="utf-8")
+        (self.tmp / "tw").write_text(TOKEN, encoding="utf-8")
+        (self.tmp / "tg").write_text(TOKEN_GH, encoding="utf-8")
+        ambiente = {
+            "FABRICA_RAIZ": str(self.raiz),
+            "FABRICA_REPO_DIR": str(self.repo_dir),
+            "FABRICA_PROJETO": PROJETO,
+            "FABRICA_REPO": REPO,
+            "WARREN_TOKEN_FILE": str(self.tmp / "tw"),
+            "GH_TOKEN_FILE": str(self.tmp / "tg"),
+        }
+
+        def rodar():
+            erro = io.StringIO()
+            codigo = despachante.main(
+                ["rodar"], ambiente=ambiente, construir=despachante.construir, saida=io.StringIO(), erro=erro, abrir_forja=lambda amb: self.forja
+            )
+            return codigo, erro.getvalue()
+
+        codigos = [rodar() for _ in range(2)]
+        self.assertEqual([c for c, _ in codigos], [2, 2])
+        self.assertIn("config inválida: config.json ilegível (JSONDecodeError)", codigos[0][1])
+        self.assertNotIn(str(caminho), codigos[0][1])
+        titulo = "[fábrica] config inválida: config.json ilegível (JSONDecodeError)"
+        self.assertEqual(self._titulos(), [titulo])
+        decisoes = self.estado()["decisoes"]
+        self.assertEqual([(x["tipo"], x["alvo"]) for x in decisoes], [("config", "config:config.json ilegível (JSONDecodeError)")])
+        caminho.unlink()
+        codigo, erro = rodar()
+        self.assertEqual(codigo, 2)
+        self.assertIn("config.json ilegível (FileNotFoundError)", erro)
+        self.assertEqual(len(self._titulos()), 2)
+        # `iniciar` com a config ilegível sai com 2 sem abrir decisão (a decisão é do `rodar`)
+        erro = io.StringIO()
+        codigo = despachante.main(["iniciar"], ambiente=ambiente, construir=despachante.construir, saida=io.StringIO(), erro=erro)
+        self.assertEqual(codigo, 2)
+        self.assertIn("config.json ilegível", erro.getvalue())
+        self.assertEqual(len(self._titulos()), 2)
+        # com a config válida de volta, o despachante fecha as issues de config no primeiro ciclo
+        caminho.write_text(json.dumps(CONFIG), encoding="utf-8")
+        d = self.novo()
+        d.ciclo()
+        self.assertTrue(all(info["fechada"] for info in self.forja._decisoes.values()))
+        self.assertEqual(self.estado()["decisoes"], [])
 
 
 class TestesCompactar(unittest.TestCase):

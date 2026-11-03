@@ -1,3 +1,4 @@
+import datetime
 import http.client
 import inspect
 import io
@@ -651,16 +652,24 @@ class TestesDecisao(unittest.TestCase):
         self.assertEqual(t.corpo_json()["body"], "")
 
     def test_decisao_aberta_sem_comentarios(self):
-        f, t = novo(ok({"state": "open"}), ok([]))
-        self.assertEqual(f.decisao(ISSUE_URL), {"fechada": False, "ultimoComentario": ""})
+        f, t = novo(ok({"state": "open", "closed_at": None}), ok([]))
+        self.assertEqual(f.decisao(ISSUE_URL), {"fechada": False, "ultimoComentario": "", "fechadaEm": None})
         t.exigir(self, 2)
         self.assertEqual(t.urls()[0], API + "/repos/acme/app/issues/7")
         self.assertEqual(t.urls()[1], API + "/repos/acme/app/issues/7/comments?per_page=100&page=1")
 
     def test_decisao_fechada_devolve_o_ultimo_comentario(self):
-        f, t = novo(ok({"state": "closed"}), ok([{"body": "primeiro"}, {"body": "aprovado, pode seguir"}]))
-        self.assertEqual(f.decisao(ISSUE_URL), {"fechada": True, "ultimoComentario": "aprovado, pode seguir"})
+        f, t = novo(
+            ok({"state": "closed", "closed_at": "2026-11-03T10:00:00Z"}), ok([{"body": "primeiro"}, {"body": "aprovado, pode seguir"}])
+        )
+        self.assertEqual(
+            f.decisao(ISSUE_URL), {"fechada": True, "ultimoComentario": "aprovado, pode seguir", "fechadaEm": "2026-11-03T10:00:00Z"}
+        )
         t.exigir(self, 2)
+        # Q3: `closed_at` ausente ou que não é texto vira None (o despachante cai na regra do marcador)
+        for closed_at in ({}, {"closed_at": 5}):
+            f, t = novo(ok(dict({"state": "closed"}, **closed_at)), ok([]))
+            self.assertIsNone(f.decisao(ISSUE_URL)["fechadaEm"])
 
     def test_decisao_pagina_ate_uma_pagina_curta(self):
         cheia = [{"body": "c%d" % i} for i in range(100)]
@@ -702,7 +711,7 @@ class TestesDecisao(unittest.TestCase):
 
     def test_decisao_corpo_vazio_de_comentario_e_string_vazia(self):
         f, t = novo(ok({"state": "closed"}), ok([{"body": ""}]))
-        self.assertEqual(f.decisao(ISSUE_URL), {"fechada": True, "ultimoComentario": ""})
+        self.assertEqual(f.decisao(ISSUE_URL), {"fechada": True, "ultimoComentario": "", "fechadaEm": None})
         t.exigir(self, 2)
 
 
@@ -879,7 +888,9 @@ class TestesMergeadoEFechar(unittest.TestCase):
         self.assertEqual(f.fechados, [(PR_URL, "x")])
         url = f.abrir_decisao("acme/app", "t", "c")
         f.fechar_pr(url, "y")
-        self.assertEqual(f.decisao(url), {"fechada": True, "ultimoComentario": "y"})
+        lida = f.decisao(url)
+        self.assertEqual((lida["fechada"], lida["ultimoComentario"]), (True, "y"))
+        self.assertTrue(lida["fechadaEm"])
         outro = "https://github.com/acme/app/pull/99"
         f.definir_pr(outro, head_sha=SHA, branch="b")
         self.assertTrue(f.mergear(outro, SHA))
@@ -1003,9 +1014,11 @@ class TestesDecisoesRastreadas(unittest.TestCase):
         self.assertEqual(f.procurar_decisao("acme/app", self.NONCE), url)
         self.assertIsNone(f.procurar_decisao("acme/app", "f" * 32))
         f.fechar_decisao(url, "fechada")
-        self.assertEqual(f.decisao(url), {"fechada": True, "ultimoComentario": "fechada"})
+        lida = f.decisao(url)
+        self.assertEqual((lida["fechada"], lida["ultimoComentario"]), (True, "fechada"))
+        self.assertTrue(lida["fechadaEm"])
         f.reabrir_decisao(url, "reaberta")
-        self.assertEqual(f.decisao(url), {"fechada": False, "ultimoComentario": "reaberta"})
+        self.assertEqual(f.decisao(url), {"fechada": False, "ultimoComentario": "reaberta", "fechadaEm": None})
         with self.assertRaises(KeyError):
             f.fechar_decisao("https://github.com/acme/app/issues/99", "x")
         with self.assertRaises(ValueError):
@@ -1013,6 +1026,33 @@ class TestesDecisoesRastreadas(unittest.TestCase):
         nomes = [n for n, _ in f.chamadas]
         for nome in ("procurar_decisao", "fechar_decisao", "reabrir_decisao"):
             self.assertIn(nome, nomes)
+
+
+class TestesRodada4Forja(unittest.TestCase):
+    """Q3: a decisão lida traz `fechadaEm` (closed_at); a falsa carimba com o seu relógio injetável."""
+
+    def test_falsa_carimba_fechada_em_com_o_relogio_e_limpa_ao_reabrir(self):
+        relogio = {"t": datetime.datetime(2026, 11, 3, 12, 0, tzinfo=datetime.timezone.utc)}
+        f = forja.ForjaFalsa()
+        f.agora = lambda: relogio["t"]
+        f.definir_decisao(ISSUE_URL, fechada=True)
+        self.assertEqual(f.decisao(ISSUE_URL)["fechadaEm"], "2026-11-03T12:00:00.000000Z")
+        f.definir_decisao(ISSUE_URL, fechada=False)
+        self.assertIsNone(f.decisao(ISSUE_URL)["fechadaEm"])
+        f.definir_decisao(ISSUE_URL, fechada=True, fechada_em="2026-11-03T12:05:00Z")
+        self.assertEqual(f.decisao(ISSUE_URL)["fechadaEm"], "2026-11-03T12:05:00Z")
+        relogio["t"] += datetime.timedelta(minutes=1)
+        f.reabrir_decisao(ISSUE_URL, "reaberta")
+        self.assertIsNone(f.decisao(ISSUE_URL)["fechadaEm"])
+        f.fechar_decisao(ISSUE_URL, "fechada")
+        self.assertEqual(f.decisao(ISSUE_URL)["fechadaEm"], "2026-11-03T12:01:00.000000Z")
+        # fechada por fora (dict manipulado) sem carimbo: ganha o carimbo na leitura, como o GitHub sempre tem closed_at
+        f._decisoes[ISSUE_URL] = {"fechada": True, "ultimoComentario": ""}
+        self.assertEqual(f.decisao(ISSUE_URL)["fechadaEm"], "2026-11-03T12:01:00.000000Z")
+        self.assertEqual(f._decisoes[ISSUE_URL]["fechadaEm"], "2026-11-03T12:01:00.000000Z")
+        f.definir_pr(PR_URL, head_sha=SHA, branch="x")
+        with self.assertRaises(ValueError):
+            f.definir_decisao(ISSUE_URL, fechada=True, fechada_em="ontem")
 
 
 class TestesForjaFalsa(unittest.TestCase):
@@ -1141,10 +1181,10 @@ class TestesForjaFalsa(unittest.TestCase):
         u2 = f.abrir_decisao("acme/app", "titulo 2", "corpo 2")
         self.assertNotEqual(u1, u2)
         self.assertEqual(f.decisoes, [("titulo 1", "corpo 1"), ("titulo 2", "corpo 2")])
-        self.assertEqual(f.decisao(u1), {"fechada": False, "ultimoComentario": ""})
-        f.definir_decisao(u1, fechada=True, ultimo_comentario="ok")
-        self.assertEqual(f.decisao(u1), {"fechada": True, "ultimoComentario": "ok"})
-        self.assertEqual(f.decisao(u2), {"fechada": False, "ultimoComentario": ""})
+        self.assertEqual(f.decisao(u1), {"fechada": False, "ultimoComentario": "", "fechadaEm": None})
+        f.definir_decisao(u1, fechada=True, ultimo_comentario="ok", fechada_em="2026-11-03T10:00:00Z")
+        self.assertEqual(f.decisao(u1), {"fechada": True, "ultimoComentario": "ok", "fechadaEm": "2026-11-03T10:00:00Z"})
+        self.assertEqual(f.decisao(u2), {"fechada": False, "ultimoComentario": "", "fechadaEm": None})
 
     def test_decisao_desconhecida_levanta_key_error_para_dois_ids_diferentes(self):
         f = self.falsa()

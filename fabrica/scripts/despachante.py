@@ -47,7 +47,7 @@ import globs  # noqa: E402
 import prompts  # noqa: E402
 import raias  # noqa: E402
 import verificacao  # noqa: E402
-from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado  # noqa: E402
+from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado, instante  # noqa: E402
 
 ARQ_ESTADO = "estado.json"
 ARQ_PLANO = "plano.json"
@@ -120,6 +120,12 @@ MAX_REABERTURAS_FALHAS = 5
 MARGEM_DESDE = datetime.timedelta(minutes=10)
 TITULO_WARREN_PARCIAL = "[fábrica] Warren parcialmente inacessível"
 PAUSA_DESPACHOS_REJEITADOS = "Warren rejeitando despachos"
+# Q2: buscas pelo nonce falhando seguidas (por item) até abrir uma decisão rastreada
+MAX_FALHAS_DE_BUSCA_INCERTA = 10
+TITULO_DESPACHO_NAO_CONFIRMADO = "[fábrica] despacho não confirmado"
+# Q3: fechamentos sem comentário (depois de reabrir) até entregar a decisão ao orquestrador
+MAX_FECHAMENTOS_SEM_COMENTARIO = 3
+OBSERVACAO_FECHADA_SEM_COMENTARIO = "decisão fechada %d vezes sem comentário" % MAX_FECHAMENTOS_SEM_COMENTARIO
 
 class OutroDespachante(Exception):
     """A trava da raiz já está com outro processo."""
@@ -738,9 +744,10 @@ class Despachante:
         self._observar_planos()
         self._observar_prs()
         self._observar_decisoes()
+        # Q2: as falhas da busca pelo nonce entram na contabilidade do ciclo, por isso antes de _contabilizar_warren
+        self._resolver_incertos()
         self._contabilizar_falhas_de_leitura()
         self._contabilizar_warren()
-        self._resolver_incertos()
         self._fechar_prs()
         executadas = self._agir()
         self._garantir_decisao_de_bloqueio()
@@ -904,9 +911,9 @@ class Despachante:
         if tipo in ACOES_PAGAS and _texto(_dict(acao).get("nonce")):
             # P1: o despacho pode ter sido aceito antes da queda: procura pelo nonce em vez de adivinhar
             nonce = acao.get("nonce")
-            sem_nonce = {k: v for k, v in acao.items() if k != "nonce"}
+            sem_nonce = {k: v for k, v in acao.items() if k not in ("nonce", "nonceRaiz", "desde")}
             self.estado.pop("acaoEmCurso", None)
-            self._registrar_incerto(sem_nonce, nonce)
+            self._registrar_incerto(sem_nonce, nonce, acao.get("desde") if _texto(acao.get("desde")) else None)
             return
         if tipo == "acordar":
             self.estado["pausado"] = "acordar interrompido"
@@ -1471,37 +1478,46 @@ class Despachante:
             comentario = info.get("ultimoComentario")
             respondida = _texto(comentario) and comentario.strip() and MARCADOR_DESPACHANTE not in comentario
             de_bloqueio = decisao.get("tipo") == "bloqueio" or _dict(orquestrador.get("bloqueio")).get("url") == decisao["url"]
+            observacao = None
             if not respondida and not de_bloqueio:
-                if _texto(comentario) and MARCADOR_DESPACHANTE in comentario:
-                    # P8: já reabrimos e o GET ainda não mostra; reabrir de novo só repetiria o comentário
+                fechada_em = info.get("fechadaEm") if _texto(info.get("fechadaEm")) else None
+                if self._leitura_velha(decisao, fechada_em, comentario):
                     restantes.append(decisao)
                     continue
-                # I4: sem comentário não há decisão; a issue é reaberta e continua acompanhada
-                try:
-                    self.forja.reabrir_decisao(decisao["url"], PEDIR_COMENTARIO + "\n\n" + MARCADOR_DESPACHANTE)
-                    self._log({"evento": "decisao_reaberta", "url": decisao["url"]})
-                except Exception as exc:  # noqa: BLE001 - tenta reabrir de novo no próximo ciclo
-                    self._erro_de_etapa("reabrir_decisao", decisao["url"], exc)
-                    falhas = (decisao.get("falhasReabrir") if _inteiro(decisao.get("falhasReabrir")) else 0) + 1
-                    decisao["falhasReabrir"] = falhas
-                    mudou = True
-                    if falhas >= MAX_REABERTURAS_FALHAS:
-                        recriar.append((decisao, "A issue anterior (%s) não pôde ser reaberta." % decisao["url"]))
-                        continue
-                restantes.append(decisao)
-                continue
+                fechamentos = (decisao.get("fechamentosSemComentario") if _inteiro(decisao.get("fechamentosSemComentario")) else 0) + 1
+                if fechamentos < MAX_FECHAMENTOS_SEM_COMENTARIO:
+                    # I4: sem comentário não há decisão; a issue é reaberta e continua acompanhada
+                    try:
+                        self.forja.reabrir_decisao(decisao["url"], PEDIR_COMENTARIO + "\n\n" + MARCADOR_DESPACHANTE)
+                        # Q3: a hora da nossa reabertura e o closed_at que vimos separam a leitura velha de um fechamento novo
+                        decisao.update(reabertaEm=self._agora_utc(), fechadaEmVista=fechada_em, fechamentosSemComentario=fechamentos)
+                        decisao.pop("falhasReabrir", None)
+                        mudou = True
+                        self._log({"evento": "decisao_reaberta", "url": decisao["url"], "vezes": fechamentos})
+                    except Exception as exc:  # noqa: BLE001 - tenta reabrir de novo no próximo ciclo
+                        self._erro_de_etapa("reabrir_decisao", decisao["url"], exc)
+                        falhas = (decisao.get("falhasReabrir") if _inteiro(decisao.get("falhasReabrir")) else 0) + 1
+                        decisao["falhasReabrir"] = falhas
+                        mudou = True
+                        if falhas >= MAX_REABERTURAS_FALHAS:
+                            recriar.append((decisao, "A issue anterior (%s) não pôde ser reaberta." % decisao["url"]))
+                            continue
+                    restantes.append(decisao)
+                    continue
+                # Q3: fechada pela 3ª vez sem comentário: a decisão sai da lista e o orquestrador decide
+                observacao = OBSERVACAO_FECHADA_SEM_COMENTARIO
             mudou = True
             if de_bloqueio:
                 orquestrador["bloqueio"] = None
                 orquestrador["semResultadoSeguidos"] = 0
             orquestrador["semResultadoSeguidos"] = 0
-            self._enfileirar_acordar(
-                "resposta_paulo",
-                decisao["url"],
-                {"pergunta": decisao.get("motivo"), "resposta": comentario if respondida else "", "alvo": decisao.get("alvo")},
-                salvar=False,
-            )
-            self._log({"evento": "decisao_respondida", "url": decisao["url"], "comComentario": bool(respondida)})
+            contexto = {"pergunta": decisao.get("motivo"), "resposta": comentario if respondida else "", "alvo": decisao.get("alvo")}
+            if observacao is not None:
+                contexto["observacao"] = observacao
+            self._enfileirar_acordar("resposta_paulo", decisao["url"], contexto, salvar=False)
+            self._log({"evento": "decisao_respondida", "url": decisao["url"], "comComentario": bool(respondida), "observacao": observacao})
+            if decisao.get("tipo") == "incerto":
+                self._soltar_incerto(decisao.get("alvo"))
             alvo = decisao.get("alvo")
             acompanhados = _lista(self.estado.get("prsOrquestrador"))
             if alvo in acompanhados:
@@ -1512,6 +1528,34 @@ class Despachante:
             self._salvar()
         for decisao, nota in recriar:
             self._recriar_decisao(decisao, nota)
+
+    def _agora_utc(self) -> str:
+        momento = self._agora()
+        if momento.tzinfo is None:
+            momento = momento.astimezone()  # relógio local (datetime.now): converte para UTC pelo fuso da máquina
+        return momento.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def _leitura_velha(decisao: dict, fechada_em, comentario) -> bool:
+        """Q3: depois da nossa reabertura, closed_at <= reabertaEm (e não posterior ao closed_at que vimos) é a
+        leitura velha, ignorada; closed_at maior é o Paulo fechando de novo. Sem closed_at vale P8 (último comentário nosso)."""
+        reaberta = decisao.get("reabertaEm")
+        if not _texto(reaberta):
+            return False
+        regra_do_marcador = bool(_texto(comentario) and MARCADOR_DESPACHANTE in comentario)
+        try:
+            fechada = instante(fechada_em)
+            reaberta = instante(reaberta)
+        except ValueError:
+            return regra_do_marcador
+        nova = fechada > reaberta
+        vista = decisao.get("fechadaEmVista")
+        if _texto(vista):
+            try:
+                nova = nova or fechada > instante(vista)
+            except ValueError:
+                pass
+        return not nova
 
     def _recriar_decisao(self, decisao: dict, nota: str) -> None:
         tipo, alvo = decisao.get("tipo", "seed"), decisao.get("alvo")
@@ -1926,6 +1970,8 @@ class Despachante:
         if tipo == "seed":
             seed = _dict(self.estado.get("seeds")).get(intencao.get("alvo"))
             return not isinstance(seed, dict) or seed.get("pr") != intencao.get("pr")
+        if tipo == "incerto":
+            return intencao.get("alvo") not in self._chaves_incertas()
         return False
 
     def _recuperar_decisoes_pendentes(self) -> None:
@@ -2147,13 +2193,14 @@ class Despachante:
         for seed_id in mergeadas:
             self.estado["seeds"][seed_id]["estado"] = "mergeada"
         abertos = [s["pr"] for i, s in sementes.items() if i not in mergeadas]
-        self.estado = est.substituir_raia(self.estado, raia_id, acao["planoSeeds"])
-        for seed_id in _lista(_dict(_dict(self.estado.get("raias")).get(raia_id)).get("seedsSubstituidas")):
-            self._esquecer_tentativa(seed_id, "A raia %s foi replanejada" % raia_id)
+        # Q4: os PRs da tentativa antiga entram na fila de fechamento ANTES de qualquer gravação da substituição
         for url in abertos:
             self._fechar_depois(
                 url, "PR fechado pelo despachante: a raia %s foi replanejada (planoSeeds %s)." % (raia_id, acao["planoSeeds"])
             )
+        self.estado = est.substituir_raia(self.estado, raia_id, acao["planoSeeds"])
+        for seed_id in _lista(_dict(_dict(self.estado.get("raias")).get(raia_id)).get("seedsSubstituidas")):
+            self._esquecer_tentativa(seed_id, "A raia %s foi replanejada" % raia_id)
         self.estado.pop("acaoEmCurso", None)
         self._salvar()
         self._log({"evento": "acao", "acao": dict(acao), "resultado": {"cancelado": plan_run_id, "prsFechados": abertos}})
@@ -2231,16 +2278,19 @@ class Despachante:
         tipo = acao.get("tipo")
         if tipo == "acordar" and not isinstance(acao.get("contexto"), dict):
             acao["contexto"] = self._contexto(acao)
-        nonce = None
+        nonce = raiz = desde = None
         if tipo in ACOES_COM_INTENCAO:
-            # P1: o nonce vai para acaoEmCurso antes do envio e na última linha do texto enviado
+            # P1: o nonce vai para acaoEmCurso antes do envio e na última linha do texto enviado.
+            # Q1: o nonce-raiz da cadeia é a Idempotency-Key; `desde` limita a busca pelo nonce (hora da ação, com margem)
             nonce = uuid.uuid4().hex
-            self.estado["acaoEmCurso"] = dict(copy.deepcopy(acao), nonce=nonce)
+            raiz = self._nonce_raiz(acao, nonce)
+            desde = (datetime.datetime.now(datetime.timezone.utc) - MARGEM_DESDE).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.estado["acaoEmCurso"] = dict(copy.deepcopy(acao), nonce=nonce, nonceRaiz=raiz, desde=desde)
             self._salvar()
         erro = None
         repetivel = False
         try:
-            resultado = self._efeito(acao, nonce)
+            resultado = self._efeito(acao, nonce, raiz)
         except MotorOcupado as exc:
             espera = _espera_do_retry_after(exc.retry_after)
             self._retry_after = max(self._retry_after, espera)
@@ -2255,7 +2305,7 @@ class Despachante:
             erro = self._erro(exc)
             if tipo in ACOES_PAGAS and _eh_falha_de_rede(exc) and not _antes_do_envio(exc):
                 # P1: o Warren pode ter aceitado: a ação fica incerta e é procurada pelo nonce
-                self._registrar_incerto(acao, nonce)
+                self._registrar_incerto(acao, nonce, desde)
                 resultado = None
             elif _eh_falha_de_rede(exc) and tipo != "aguardar_humano":
                 # o pedido não chegou ao serviço: tenta de novo, sem marcar falha nem gastar tentativa
@@ -2265,7 +2315,7 @@ class Despachante:
             else:
                 resultado = {"ok": False} if tipo == "mergear" else ({} if tipo != "aguardar_humano" else None)
         if resultado is not None and resultado.get("adiado") is not True and tipo in ACOES_PAGAS:
-            _dict(self.estado.get("adiamentosRede")).pop(_chave_acao(acao), None)
+            self._encerrar_cadeia(_chave_acao(acao))
         if resultado is not None:
             self._aplicar(acao, resultado)
         self.estado.pop("acaoEmCurso", None)
@@ -2280,13 +2330,63 @@ class Despachante:
             self._esquecer(chave)
             self._log(registro)
 
-    def _registrar_incerto(self, acao: dict, nonce: str) -> None:
+    def _registrar_incerto(self, acao: dict, nonce: str, desde: str | None = None) -> None:
         incertos = self.estado.get("despachosIncertos")
         if not isinstance(incertos, list):
             incertos = self.estado["despachosIncertos"] = []
-        incertos.append({"acao": copy.deepcopy(acao), "nonce": nonce, "chave": _chave_acao(acao), "ciclos": 0})
+        incertos.append(
+            {"acao": copy.deepcopy(acao), "nonce": nonce, "chave": _chave_acao(acao), "ciclos": 0, "desde": desde, "falhasBusca": 0}
+        )
         self._salvar()
         self._aviso("despacho %s incerto (falha de rede depois do envio): procurando pelo nonce" % _chave_acao(acao))
+
+    def _nonce_raiz(self, acao: dict, nonce: str) -> str:
+        """Q1: o primeiro nonce da cadeia da ação é a `Idempotency-Key` de todo POST dela, até o Warren dar o id."""
+        raizes = self.estado.get("noncesRaiz")
+        if not isinstance(raizes, dict):
+            raizes = self.estado["noncesRaiz"] = {}
+        chave = _chave_acao(acao)
+        if not _texto(raizes.get(chave)):
+            raizes[chave] = nonce
+        return raizes[chave]
+
+    def _encerrar_cadeia(self, chave: str) -> None:
+        """A ação ganhou um id (ou um resultado final): a próxima vez é outra cadeia, com outra chave."""
+        _dict(self.estado.get("adiamentosRede")).pop(chave, None)
+        _dict(self.estado.get("noncesRaiz")).pop(chave, None)
+
+    def _garantir_decisao_de_incerto(self, chave: str, falhas: int) -> None:
+        if self._decisao_aberta("incerto", chave):
+            return
+        motivo = "não foi possível confirmar o despacho de %s" % chave
+        corpo = (
+            "O despacho %s ficou incerto (a resposta do Warren se perdeu depois do envio) e a busca pelo nonce "
+            "falhou %d vezes seguidas. O despachante não o refaz enquanto a busca não voltar. Confira no Warren se "
+            "o run existe e feche esta issue com um comentário dizendo o que fazer; a resposta acorda o orquestrador.\n\n%s"
+            % (chave, falhas, RODAPE_DECISAO)
+        )
+        try:
+            url = self._abrir_decisao_rastreada(motivo, chave, "%s: %s" % (TITULO_DESPACHO_NAO_CONFIRMADO, chave), corpo, tipo="incerto")
+            self._aviso("%s: issue %s aberta" % (motivo, url))
+        except Exception as exc:  # noqa: BLE001 - a intenção gravada fica para a recuperação
+            self._erro_de_etapa("despacho_nao_confirmado", chave, exc)
+
+    def _fechar_decisao_de_incerto(self, chave: str, comentario: str) -> None:
+        url = self._decisao_aberta("incerto", chave)
+        if not url:
+            return
+        self.estado["decisoes"] = [
+            d for d in _lista(self.estado.get("decisoes")) if not (isinstance(d, dict) and d.get("tipo") == "incerto" and d.get("alvo") == chave)
+        ]
+        self._fechar_depois(url, comentario, decisao=True)
+
+    def _soltar_incerto(self, chave) -> None:
+        """Q2: o Paulo respondeu pela decisão do despacho não confirmado: o item sai e a ação volta a ser despachável.
+
+        A cadeia continua: o redespacho leva a mesma Idempotency-Key, e o Warren devolve o run se ele existir.
+        """
+        self.estado["despachosIncertos"] = [i for i in _lista(self.estado.get("despachosIncertos")) if _dict(i).get("chave") != chave]
+        self._log({"evento": "despacho_incerto_entregue_ao_paulo", "chave": chave})
 
     def _contar_adiamento(self, chave: str) -> None:
         contadores = self.estado.get("adiamentosRede")
@@ -2306,37 +2406,52 @@ class Despachante:
         return any(str(c).startswith("acordar:") for c in self._chaves_incertas())
 
     def _resolver_incertos(self) -> None:
-        """P1: procura cada despacho incerto pelo nonce; achado vira o resultado, sumido vira adiado."""
+        """P1/Q1: procura cada despacho incerto pelo nonce (inclusive na fila do Warren); achado vira o resultado.
+
+        Não achado em 3 leituras boas: o item sai e a ação é refeita com a MESMA Idempotency-Key (nonce-raiz) e um
+        nonce novo no texto; isso não é rejeição, só a FalhaAntesDoEnvio conta para a pausa (Q1c). Q2: as falhas da
+        busca contam por item (as de rede também no ciclo); na 10ª seguida abre uma decisão rastreada e o item fica
+        incerto, sem redespacho, até a busca voltar ou o Paulo responder.
+        """
         incertos = _lista(self.estado.get("despachosIncertos"))
         if not incertos:
             return
         restantes = []
         for item in incertos:
             item = _dict(item)
-            acao, nonce = _dict(item.get("acao")), item.get("nonce")
+            acao, nonce, chave = _dict(item.get("acao")), item.get("nonce"), item.get("chave")
             tipo = acao.get("tipo")
             try:
                 if tipo == "despachar_raia":
                     achado = self.motor.procurar_plano(self.projeto, nonce)
                 else:
-                    achado = self.motor.procurar_run(self.projeto, nonce)
-            except Exception as exc:  # noqa: BLE001 - sem leitura, nada conta
-                self._erro_de_etapa("procurar_despacho", item.get("chave"), exc)
+                    achado = self.motor.procurar_run(self.projeto, nonce, item.get("desde") if _texto(item.get("desde")) else None)
+            except Exception as exc:  # noqa: BLE001 - sem leitura, nada conta para o item; a falha conta para o ciclo
+                self._erro_de_etapa("procurar_despacho", chave, exc)
+                self._leituras["falhas"] += 1
+                if _eh_falha_de_rede(exc):
+                    self._rede_do_ciclo.add(chave)
+                falhas = (item.get("falhasBusca") if _inteiro(item.get("falhasBusca")) else 0) + 1
+                item["falhasBusca"] = falhas
                 restantes.append(item)
+                if falhas >= MAX_FALHAS_DE_BUSCA_INCERTA:
+                    self._garantir_decisao_de_incerto(chave, falhas)
                 continue
+            self._leituras["ok"] += 1
+            item["falhasBusca"] = 0
             if achado:
-                chave = "planRunId" if tipo == "despachar_raia" else "runId"
-                _dict(self.estado.get("adiamentosRede")).pop(item.get("chave"), None)
-                self._aplicar(acao, {chave: achado})
-                self._log({"evento": "despacho_incerto_achado", "acao": self._resumo_da_acao(acao), chave: achado})
+                campo = "planRunId" if tipo == "despachar_raia" else "runId"
+                self._encerrar_cadeia(chave)
+                self._aplicar(acao, {campo: achado})
+                self._log({"evento": "despacho_incerto_achado", "acao": self._resumo_da_acao(acao), campo: achado})
+                self._fechar_decisao_de_incerto(chave, "O despacho %s foi confirmado no Warren (%s); issue fechada pelo despachante." % (chave, achado))
                 continue
             item["ciclos"] = (item.get("ciclos") if _inteiro(item.get("ciclos")) else 0) + 1
             if item["ciclos"] < CICLOS_PARA_DESCARTAR_INCERTO:
                 restantes.append(item)
                 continue
-            # o Warren respondeu 3 vezes sem o nonce: não aceitou; vira adiado e sai com um nonce novo
             self._log({"evento": "despacho_incerto_descartado", "acao": self._resumo_da_acao(acao)})
-            self._contar_adiamento(item.get("chave"))
+            self._fechar_decisao_de_incerto(chave, "O Warren não registrou o despacho %s; ele será refeito pelo despachante." % chave)
         self.estado["despachosIncertos"] = restantes
         self._salvar()
 
@@ -2374,18 +2489,32 @@ class Despachante:
             self.estado["acordarPendentes"] = [
                 p for p in pendentes if not (p.get("motivo") == acao.get("motivo") and p.get("alvo") == acao.get("alvo"))
             ]
-            _anexar_linha(
-                self.raiz / ARQ_ACORDADAS,
-                json.dumps(
-                    {
-                        "ts": self._agora().isoformat(),
-                        "motivo": acao.get("motivo"),
-                        "alvo": acao.get("alvo"),
-                        "runId": resultado["runId"],
-                    },
-                    ensure_ascii=False,
-                ),
-            )
+            if not self._acordada_registrada(resultado["runId"]):  # Q5: a recuperação reaplica; a linha não se repete
+                _anexar_linha(
+                    self.raiz / ARQ_ACORDADAS,
+                    json.dumps(
+                        {
+                            "ts": self._agora().isoformat(),
+                            "motivo": acao.get("motivo"),
+                            "alvo": acao.get("alvo"),
+                            "runId": resultado["runId"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+
+    def _acordada_registrada(self, run_id) -> bool:
+        caminho = self.raiz / ARQ_ACORDADAS
+        if not caminho.exists():
+            return False
+        for linha in caminho.read_text(encoding="utf-8").splitlines():
+            try:
+                registro = json.loads(linha)
+            except ValueError:
+                continue
+            if isinstance(registro, dict) and registro.get("runId") == run_id:
+                return True
+        return False
 
     def _seed_da_acao(self, acao: dict) -> dict:
         seed = _dict(self.estado.get("seeds")).get(acao.get("seed"))
@@ -2393,7 +2522,7 @@ class Despachante:
             raise ValueError("seed desconhecida %r" % (acao.get("seed"),))
         return seed
 
-    def _efeito(self, acao: dict, nonce: str | None = None) -> dict:
+    def _efeito(self, acao: dict, nonce: str | None = None, raiz: str | None = None) -> dict:
         tipo = acao.get("tipo")
         if tipo == "despachar_raia":
             raia = self._raia_do_plano(acao.get("raia"))
@@ -2439,6 +2568,7 @@ class Despachante:
                 prompt=_com_nonce(prompt, nonce) if nonce else prompt,
                 branch_existente=seed["branch"],
                 max_custo_usd=modelo["maxCustoUsd"],
+                chave_idempotencia=raiz,
             )
             return {"runId": run_id}
 
@@ -2493,6 +2623,7 @@ class Despachante:
                 prompt=_com_nonce(prompt, nonce) if nonce else prompt,
                 branch_existente=None,
                 max_custo_usd=modelo["maxCustoUsd"],
+                chave_idempotencia=raiz,
             )
             return {"runId": run_id}
 
@@ -2585,7 +2716,8 @@ def construir(ambiente) -> Despachante:
     try:
         config = _json_estrito(caminho_config.read_text(encoding="utf-8"))
     except (OSError, ValueError) as erro:
-        raise ErroDeEntrada(["não foi possível ler %s (%s)" % (caminho_config, type(erro).__name__)]) from None
+        # Q6: config ilegível é ConfigInvalida: no `rodar`, decisão best-effort e saída 2 (sem parada silenciosa)
+        raise ConfigInvalida("config.json ilegível (%s)" % type(erro).__name__) from None
     return Despachante(
         motor=motor_warren.MotorWarren(ambiente.get("WARREN_API") or WARREN_API_PADRAO, token_warren),
         forja=forja_github.ForjaGitHub(token_gh),

@@ -12,7 +12,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, validar_nonce  # noqa: E402
+from motor import MARCADOR_NONCE, FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, instante, procurar_nonce, validar_nonce  # noqa: E402
 
 # Falhas em que a requisição nunca foi escrita: o servidor não pode ter aceitado nada.
 _ERRNOS_ANTES = {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EADDRNOTAVAIL}
@@ -143,11 +143,13 @@ class MotorWarren:
 
     # Camada HTTP. Nenhuma mensagem de erro carrega token nem corpo de resposta.
 
-    def _requisitar(self, metodo: str, caminho: str, corpo: dict | None = None) -> bytes:
+    def _requisitar(self, metodo: str, caminho: str, corpo: dict | None = None, extras: dict | None = None) -> bytes:
         headers = {
             "Authorization": "Bearer " + self._token,
             "Accept": "application/json",
         }
+        if extras:
+            headers.update(extras)
         dados = None
         if corpo is not None:
             headers["Content-Type"] = "application/json"
@@ -163,8 +165,8 @@ class MotorWarren:
             raise RuntimeError("%s %s: HTTP %s" % (metodo, caminho, status))
         return resp_corpo
 
-    def _json(self, metodo: str, caminho: str, corpo: dict | None = None) -> dict:
-        bruto = self._requisitar(metodo, caminho, corpo)
+    def _json(self, metodo: str, caminho: str, corpo: dict | None = None, extras: dict | None = None) -> dict:
+        bruto = self._requisitar(metodo, caminho, corpo, extras)
         try:
             dados = json.loads(bruto.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -224,6 +226,7 @@ class MotorWarren:
         prompt: str,
         branch_existente: str | None,
         max_custo_usd: float,
+        chave_idempotencia: str | None = None,
     ) -> str:
         caminho = "/runs"
         corpo = {
@@ -235,7 +238,10 @@ class MotorWarren:
         }
         if branch_existente:
             corpo["existingBranch"] = branch_existente
-        dados = self._json("POST", caminho, corpo)
+        # Q1: `Idempotency-Key` (dispatch.ts, idempotency.ts): uma chave repetida em 10 min, no mesmo projeto, devolve
+        # o MESMO 201 com o run já criado, sem criar outro. A resposta é lida como a de um despacho novo.
+        extras = {"Idempotency-Key": validar_nonce(chave_idempotencia)} if chave_idempotencia is not None else None
+        dados = self._json("POST", caminho, corpo, extras)
         run = self._objeto(dados, "run", "run.id", "POST", caminho)
         return self._texto(run, "run", "id", "POST", caminho)
 
@@ -330,12 +336,27 @@ class MotorWarren:
                 return self._texto(item, chave + "[]", "id", "GET", caminho)
         return None
 
-    def procurar_run(self, projeto: str, nonce: str) -> str | None:
+    def _listar_runs(self, projeto: str, direcao: str, limite: int, offset: int) -> list:
+        """GET /runs?project=&sort=started&dir=&limit=&offset= (lifecycle.ts): `{runs, total, limit, offset}`."""
+        caminho = "/runs?project=%s&sort=started&dir=%s&limit=%d&offset=%d" % (urllib.parse.quote(projeto, safe=""), direcao, limite, offset)
+        dados = self._json("GET", caminho)
+        itens = dados.get("runs")
+        if not isinstance(itens, list):
+            raise RuntimeError("GET %s: resposta sem a lista 'runs'" % caminho)
+        return itens
+
+    def procurar_run(self, projeto: str, nonce: str, desde: str | None = None) -> str | None:
+        """Q1: o Warren ordena por started_at DESC, id ASC e um run queued tem started_at NULL; sem filtro de estado.
+
+        A busca lê DESC (paginando até os runs iniciados antes de `desde`) e ASC (os NULL, no SQLite), ver `procurar_nonce`.
+        """
         validar_nonce(nonce)
-        caminho = "/runs?project=%s&limit=50" % urllib.parse.quote(projeto, safe="")
-        return self._procurar(caminho, "runs", "prompt", nonce)
+        if desde is not None:
+            instante(desde)
+        return procurar_nonce(lambda direcao, limite, offset: self._listar_runs(projeto, direcao, limite, offset), "prompt", nonce, desde)
 
     def procurar_plano(self, projeto: str, nonce: str) -> str | None:
+        """GET /plan-runs?project= devolve TODOS os Plan Runs do projeto, por createdAt ASC e sem limite (plan-runs.ts)."""
         validar_nonce(nonce)
         caminho = "/plan-runs?project=%s" % urllib.parse.quote(projeto, safe="")
         return self._procurar(caminho, "planRuns", "promptTemplate", nonce)

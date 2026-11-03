@@ -389,7 +389,9 @@ class ForjaGitHub:
                 break
         else:
             raise RuntimeError("GET %s/comments: comentários demais para paginar" % raiz)
-        return {"fechada": estado == "closed", "ultimoComentario": ultimo}
+        # Q3: `closed_at` da issue (ISO, pelo relógio do GitHub) distingue um fechamento novo de uma leitura velha
+        fechada_em = dados.get("closed_at")
+        return {"fechada": estado == "closed", "ultimoComentario": ultimo, "fechadaEm": fechada_em if isinstance(fechada_em, str) else None}
 
 
 class ForjaFalsa:
@@ -411,6 +413,8 @@ class ForjaFalsa:
         self._decisoes: dict[str, dict] = {}
         self._corpos: dict[str, str] = {}
         self._contador = 0
+        # Q3: relógio do "GitHub" falso, que carimba `fechadaEm` (closed_at) nos fechamentos
+        self.agora = lambda: datetime.datetime.now(datetime.timezone.utc)
 
     def _registrar(self, nome: str, **argumentos) -> None:
         self.chamadas.append((nome, argumentos))
@@ -444,9 +448,19 @@ class ForjaFalsa:
         _caminho_de_arquivo(caminho)
         self._arquivos[(repo, ref, caminho)] = conteudo
 
-    def definir_decisao(self, url: str, *, fechada: bool, ultimo_comentario: str = "") -> None:
+    def _carimbo(self) -> str:
+        # microssegundos: dois fechamentos seguidos nunca empatam (o GitHub tem segundos; o falso é mais fino)
+        return self.agora().astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    def definir_decisao(self, url: str, *, fechada: bool, ultimo_comentario: str = "", fechada_em: str | None = None) -> None:
         _analisar_url(url, "issues")
-        self._decisoes[url] = {"fechada": bool(fechada), "ultimoComentario": ultimo_comentario}
+        if fechada_em is not None:
+            _instante(fechada_em)
+        self._decisoes[url] = {
+            "fechada": bool(fechada),
+            "ultimoComentario": ultimo_comentario,
+            "fechadaEm": (fechada_em or self._carimbo()) if fechada else None,
+        }
 
     # Mesma interface da ForjaGitHub
 
@@ -486,7 +500,7 @@ class ForjaFalsa:
         if url in self._prs:
             self._prs[url]["aberto"] = False
         elif url in self._decisoes:
-            self._decisoes[url] = {"fechada": True, "ultimoComentario": comentario}
+            self._decisoes[url] = {"fechada": True, "ultimoComentario": comentario, "fechadaEm": self._carimbo()}
         else:
             raise KeyError("PR ou decisão desconhecida: %r" % (url,))
         self.fechados.append((url, comentario))
@@ -507,7 +521,7 @@ class ForjaFalsa:
         self._contador += 1
         url = "https://github.com/%s/issues/%d" % (repo, self._contador)
         self.decisoes.append((titulo, corpo))
-        self._decisoes[url] = {"fechada": False, "ultimoComentario": ""}
+        self._decisoes[url] = {"fechada": False, "ultimoComentario": "", "fechadaEm": None}
         self._corpos[url] = corpo
         return url
 
@@ -517,7 +531,7 @@ class ForjaFalsa:
         _texto_nao_vazio(comentario, "comentário")
         if url not in self._decisoes:
             raise KeyError("decisão desconhecida: %r" % (url,))
-        self._decisoes[url] = {"fechada": fechada, "ultimoComentario": comentario}
+        self._decisoes[url] = {"fechada": fechada, "ultimoComentario": comentario, "fechadaEm": self._carimbo() if fechada else None}
 
     def reabrir_decisao(self, url: str, comentario: str) -> None:
         self._mudar_decisao("reabrir_decisao", url, comentario, False)
@@ -543,4 +557,8 @@ class ForjaFalsa:
         _analisar_url(url, "issues")
         if url not in self._decisoes:
             raise KeyError("decisão desconhecida: %r" % (url,))
-        return copy.deepcopy(self._decisoes[url])
+        decisao = self._decisoes[url]
+        if decisao.get("fechada") and not decisao.get("fechadaEm"):
+            decisao["fechadaEm"] = self._carimbo()  # fechada por fora sem carimbo: o GitHub sempre tem closed_at
+        decisao.setdefault("fechadaEm", None)
+        return copy.deepcopy(decisao)
