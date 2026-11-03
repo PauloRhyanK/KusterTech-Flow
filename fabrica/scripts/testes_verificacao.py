@@ -50,11 +50,35 @@ def proc(codigo=0, saida="", erro=""):
     return types.SimpleNamespace(returncode=codigo, stdout=saida, stderr=erro)
 
 
+class PopenFalso:
+    """Faz as vezes de `subprocess.Popen` para `_rodar_limitado`: a saída sai de um arquivo temporário."""
+
+    def __init__(self, codigo, dados: bytes):
+        self.returncode = codigo
+        self.stdout = tempfile.TemporaryFile()
+        self.stdout.write(dados)
+        self.stdout.seek(0)
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        pass
+
+
 class DockerFalso:
-    """Executor falso: classifica cada chamada, grava e responde (sucesso por padrão)."""
+    """Executor falso: classifica cada chamada, grava e responde (sucesso por padrão).
+
+    `popen` é o `subprocess.Popen` falso do docker run principal: grava a chamada na mesma lista
+    (e em `via_popen`) e devolve a resposta configurada como saída combinada.
+    """
 
     def __init__(self, ls=ARVORE_LS, cat=ARVORE_CAT):
         self.chamadas = []
+        self.via_popen = []
         self.respostas = {}
         self.ls = ls
         self.cat = cat
@@ -87,6 +111,12 @@ class DockerFalso:
         if tipo == "cat-file":
             return proc_bytes(self.cat)
         return proc()
+
+    def popen(self, argv, **kwargs):
+        self.via_popen.append(list(argv))
+        resposta = self(argv, **kwargs)
+        dados = (verificacao._texto(resposta.stdout) + verificacao._texto(resposta.stderr)).encode()
+        return PopenFalso(resposta.returncode, dados)
 
     def tipos(self):
         return [self.tipo(argv) for argv, _ in self.chamadas]
@@ -122,6 +152,7 @@ class TestesVerificarComFalso(unittest.TestCase):
 
     def verificar(self, fake=None, comando="make test", conteiner=None, **kw):
         fake = fake or DockerFalso()
+        kw.setdefault("popen", fake.popen)
         r = verificacao.verificar(
             self.dir, SHA, comando, conteiner=CONTEINER if conteiner is None else conteiner, executar=fake, **kw
         )
@@ -159,7 +190,7 @@ class TestesVerificarComFalso(unittest.TestCase):
                 'mkdir -p "$HOME" && pnpm test',
             ],
         )  # fmt: skip
-        self.assertEqual(fake.argv("rm"), ["docker", "rm", "-f", "fabrica-verif-" + ID])
+        self.assertEqual(fake.argv("rm"), ["docker", "rm", "-f", "-v", "fabrica-verif-" + ID])
         self.assertEqual(fake.argv("rede-rm"), ["docker", "network", "rm", "fabrica-verif-" + ID])
         self.assertEqual(src.name, "src")
         self.assertTrue(src.parent.name.startswith("fabrica-verif-"))
@@ -236,12 +267,16 @@ class TestesVerificarComFalso(unittest.TestCase):
                 self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
 
     def test_todo_comando_tem_timeout(self):
-        _, fake = self.verificar(timeout_s=42)
+        # O principal vai pelo `_rodar_limitado`, que recebe o timeout; os outros, pelo `executar`.
+        with mock.patch.object(verificacao, "_rodar_limitado", wraps=verificacao._rodar_limitado) as limitado:
+            _, fake = self.verificar(timeout_s=42)
         for argv, kwargs in fake.chamadas:
-            self.assertIsInstance(kwargs["timeout"], int, argv)
-        self.assertEqual(fake.kwargs("principal")["timeout"], 42)
-        _, fake = self.verificar()
-        self.assertEqual(fake.kwargs("principal")["timeout"], 1800)
+            if argv not in fake.via_popen:
+                self.assertIsInstance(kwargs["timeout"], int, argv)
+        self.assertEqual(limitado.call_args.args[1], 42)
+        with mock.patch.object(verificacao, "_rodar_limitado", wraps=verificacao._rodar_limitado) as limitado:
+            _, fake = self.verificar()
+        self.assertEqual(limitado.call_args.args[1], 1800)
         self.assertNotEqual(fake.kwargs("fetch")["timeout"], 1800)
 
     def test_arquivos_do_commit_chegam_no_src_com_modos_corretos(self):
@@ -315,6 +350,10 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertIn("DATABASE_URL=postgres://db/teste", argv)
         self.assertNotIn("POSTGRES_PASSWORD=teste", argv)
         removidos = [fake.argv("rm", i)[-1] for i in range(3)]
+        for i in range(3):
+            # `-v`: os volumes anônimos de imagens com VOLUME (o Postgres) saem junto com o contêiner.
+            self.assertEqual(fake.argv("rm", i)[:4], ["docker", "rm", "-f", "-v"])
+            self.assertEqual(len(fake.argv("rm", i)), 5)
         self.assertEqual(
             sorted(removidos),
             sorted(["fabrica-verif-" + ID, "fabrica-verif-%s-db" % ID, "fabrica-verif-%s-cache" % ID]),
@@ -712,23 +751,54 @@ class TestesVerificarComFalso(unittest.TestCase):
             r, _ = self.verificar(conteiner=cfg)
             self.assertEqual(r["codigo"] == 0, ok_, chave)
 
-    def test_executor_padrao_manda_o_principal_pelo_streaming_limitado(self):
+    def test_principal_sempre_vai_pelo_streaming_limitado_com_o_popen_injetado(self):
+        # Qualquer `executar` (aqui um wrapper de log, como o da Task 7) não muda o caminho do principal.
         fake = DockerFalso()
+        registro = []
+
+        def executar_com_log(argv, **kw):
+            registro.append(list(argv))
+            return fake(argv, **kw)
+
         chamado = []
+        popen = mock.Mock(name="popen")
 
         def limitado(argv, timeout_s, **kw):
-            chamado.append((list(argv), timeout_s))
+            chamado.append((list(argv), timeout_s, kw))
             return subprocess.CompletedProcess(argv, 7, b"saida em bytes", b"")
 
-        with mock.patch.object(verificacao, "_EXECUTAR_PADRAO", fake), mock.patch.object(verificacao, "_rodar_limitado", limitado):
-            r = verificacao.verificar(self.dir, SHA, "x", conteiner=CONTEINER, executar=fake, timeout_s=33)
+        with mock.patch.object(verificacao, "_rodar_limitado", limitado):
+            r = verificacao.verificar(
+                self.dir, SHA, "x", conteiner=CONTEINER, executar=executar_com_log, popen=popen, timeout_s=33
+            )
         self.assertEqual((r["codigo"], r["saida"]), (7, "saida em bytes"))
         self.assertEqual(len(chamado), 1)
         self.assertEqual(chamado[0][1], 33)
+        self.assertIs(chamado[0][2]["popen"], popen)
         self.assertEqual(chamado[0][0][:3], ["docker", "run", "--rm"])
         self.assertNotIn("principal", fake.tipos())
+        self.assertFalse([a for a in registro if DockerFalso.tipo(a) == "principal"])
         self.assertIn("rede-create", fake.tipos())
         self.assertIn("rm", fake.tipos())
+
+    def test_executar_falso_qualquer_e_o_principal_passa_pelo_popen_falso(self):
+        fake = DockerFalso()
+        fake.respostas["principal"] = proc(5, "do popen\n")
+        pelo_executar = []
+
+        def executar(argv, **kw):
+            pelo_executar.append(list(argv))
+            return fake(argv, **kw)
+
+        r = verificacao.verificar(self.dir, SHA, "x", conteiner=CONTEINER, executar=executar, popen=fake.popen)
+        self.assertEqual((r["codigo"], r["saida"]), (5, "do popen\n"))
+        self.assertEqual(fake.via_popen, [fake.argv("principal")])
+        self.assertEqual([DockerFalso.tipo(a) for a in fake.via_popen], ["principal"])
+        self.assertNotIn("principal", [DockerFalso.tipo(a) for a in pelo_executar])
+        self.assertIn("rede-create", [DockerFalso.tipo(a) for a in pelo_executar])
+        kwargs = fake.kwargs("principal")
+        self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
 
     def test_timeout_do_streaming_limitado_tambem_mata_o_conteiner(self):
         fake = DockerFalso()
@@ -736,8 +806,10 @@ class TestesVerificarComFalso(unittest.TestCase):
         def limitado(argv, timeout_s, **kw):
             raise subprocess.TimeoutExpired(argv, timeout_s, output=b"restinho")
 
-        with mock.patch.object(verificacao, "_EXECUTAR_PADRAO", fake), mock.patch.object(verificacao, "_rodar_limitado", limitado):
-            r = verificacao.verificar(self.dir, SHA, "x", conteiner=CONTEINER, executar=fake, timeout_s=4)
+        with mock.patch.object(verificacao, "_rodar_limitado", limitado):
+            r = verificacao.verificar(
+                self.dir, SHA, "x", conteiner=CONTEINER, executar=fake, popen=fake.popen, timeout_s=4
+            )
         self.assertEqual(r["codigo"], 124)
         self.assertEqual(fake.argv("kill"), ["docker", "kill", "fabrica-verif-" + ID])
         self.assertTrue(r["saida"].endswith("restinho"))
@@ -761,7 +833,9 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(parametros["conteiner"].kind, inspect.Parameter.KEYWORD_ONLY)
         self.assertEqual(parametros["timeout_s"].default, 1800)
         self.assertIs(parametros["executar"].default, subprocess.run)
-        for nome in ("_rodar_em_grupo", "_matar_grupo", "_extrair"):
+        self.assertIs(parametros["popen"].default, subprocess.Popen)
+        self.assertEqual(parametros["popen"].kind, inspect.Parameter.KEYWORD_ONLY)
+        for nome in ("_rodar_em_grupo", "_matar_grupo", "_extrair", "_EXECUTAR_PADRAO"):
             self.assertFalse(hasattr(verificacao, nome), nome)
 
 
@@ -979,6 +1053,340 @@ class TestesLiberarDiretorios(unittest.TestCase):
         self.assertEqual(chamadas, [])
         self.assertEqual(self.modo(raiz / "src" / "a"), 0o700)
 
+    # Y: diretório sem leitura (000) recebe 0700 só pelo descritor, nunca por nome
+
+    O_PATH_SIMULADO = 1 << 40
+
+    def simular_o_path(self, pilha, registro, negar=()):
+        """Simula o ramo Linux (O_PATH + /proc/self/fd) neste host, traduzindo para chamadas reais.
+
+        `negar`: nomes cujo primeiro `open` comum falha com EACCES, como um diretório 000 no Linux.
+        """
+        open_real, chmod_real = os.open, os.chmod
+        negados = set()
+
+        def espiao_open(caminho, flags, modo=0o777, *, dir_fd=None):
+            nome = os.fsdecode(caminho)
+            if flags & self.O_PATH_SIMULADO:
+                registro.append(("open-o_path", nome, flags & ~self.O_PATH_SIMULADO))
+                return open_real(caminho, (flags & ~self.O_PATH_SIMULADO) | os.O_RDONLY, modo, dir_fd=dir_fd)
+            if nome.startswith("/proc/self/fd/"):
+                registro.append(("open-proc", flags))
+                return os.dup(int(nome.rsplit("/", 1)[1]))
+            if nome in negar and nome not in negados:
+                negados.add(nome)
+                raise PermissionError(13, "Permission denied", nome)
+            return open_real(caminho, flags, modo, dir_fd=dir_fd)
+
+        def espiao_chmod(caminho, modo, **k):
+            registro.append(("chmod", os.fsdecode(caminho), k))
+            if os.fsdecode(caminho).startswith("/proc/self/fd/"):
+                return os.fchmod(int(os.fsdecode(caminho).rsplit("/", 1)[1]), modo)
+            return chmod_real(caminho, modo, **k)
+
+        pilha.enter_context(mock.patch.object(verificacao.os, "O_PATH", self.O_PATH_SIMULADO, create=True))
+        pilha.enter_context(mock.patch.object(verificacao.os, "open", espiao_open))
+        pilha.enter_context(mock.patch.object(verificacao.os, "chmod", espiao_chmod))
+
+    def test_ramo_o_path_da_0700_pelo_descritor_e_nunca_pelo_nome(self):
+        import contextlib
+
+        raiz = self.base / "base"
+        (raiz / "src" / "d" / "e").mkdir(parents=True)
+        (raiz / "src" / "d" / "e" / "f").write_text("x")
+        os.chmod(raiz / "src" / "d", 0o500)
+        registro = []
+        with contextlib.ExitStack() as pilha:
+            self.simular_o_path(pilha, registro, negar=("d",))
+            verificacao._liberar_diretorios(str(raiz))
+        self.assertEqual(self.modo(raiz / "src" / "d"), 0o700)
+        self.assertEqual(self.modo(raiz / "src" / "d" / "e"), 0o700)
+        self.assertIn(("open-o_path", "d", os.O_DIRECTORY | os.O_NOFOLLOW), registro)
+        chmods = [r for r in registro if r[0] == "chmod"]
+        self.assertEqual(len(chmods), 1, registro)
+        self.assertTrue(chmods[0][1].startswith("/proc/self/fd/"), chmods)
+        self.assertIn(("open-proc", os.O_RDONLY | os.O_DIRECTORY), registro)
+
+    def test_diretorio_sem_leitura_trocado_por_symlink_nao_tem_o_alvo_alterado(self):
+        import contextlib
+
+        for ramo in ("nativo", "o_path"):
+            for funcao in (verificacao._liberar_diretorios, verificacao._remover_por_fd):
+                caso = "%s/%s" % (ramo, funcao.__name__)
+                base = pathlib.Path(tempfile.mkdtemp(dir=self.base))
+                fora = base / "fora"
+                (fora / "dentro").mkdir(parents=True)
+                os.chmod(fora, 0o500)
+                raiz = base / "base"
+                (raiz / "src" / "d").mkdir(parents=True)
+                (raiz / "src" / "d" / "f").write_text("x")
+                os.chmod(raiz / "src" / "d", 0o000)
+                trocas = []
+                open_atual = os.open
+
+                with contextlib.ExitStack() as pilha:
+                    registro = []
+                    if ramo == "o_path":
+                        self.simular_o_path(pilha, registro)
+                    open_ramo = os.open
+
+                    def open_com_troca(caminho, flags, modo=0o777, *, dir_fd=None):
+                        try:
+                            return open_ramo(caminho, flags, modo, dir_fd=dir_fd)
+                        except PermissionError:
+                            # Corrida: entre o EACCES e o chmod, o 000 vira symlink para fora.
+                            if os.fsdecode(caminho) == "d" and not trocas:
+                                trocas.append(1)
+                                os.rename(raiz / "src" / "d", raiz / "src" / "d-velho")
+                                os.symlink(fora, raiz / "src" / "d")
+                            raise
+
+                    pilha.enter_context(mock.patch.object(verificacao.os, "open", open_com_troca))
+                    funcao(str(raiz))
+                self.assertIs(os.open, open_atual)
+                self.assertEqual(trocas, [1], caso)
+                self.assertEqual(self.modo(fora), 0o500, caso)
+                self.assertTrue((fora / "dentro").is_dir(), caso)
+                self.assertTrue(os.path.islink(raiz / "src" / "d"), caso)
+                os.chmod(fora, 0o700)
+
+
+FLAGS_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def aninhar(raiz, niveis, fora=None):
+    """`niveis` diretórios `a` encadeados sob `raiz`, criados por descritor (sem caminho longo).
+
+    A cada 100 níveis há um arquivo, um diretório `000` com conteúdo e, se `fora` for dado, um
+    symlink para ele. O nível 1000 fica `000` e os demais `0o500` depois de preenchidos, como um
+    comando hostil deixaria.
+    """
+    fd = os.open(raiz, FLAGS_DIR)
+    try:
+        for nivel in range(1, niveis + 1):
+            os.mkdir("a", dir_fd=fd)
+            filho = os.open("a", FLAGS_DIR, dir_fd=fd)
+            if nivel % 100 == 0:
+                arquivo = os.open("f", os.O_WRONLY | os.O_CREAT, 0o644, dir_fd=filho)
+                os.write(arquivo, b"x")
+                os.close(arquivo)
+                os.mkdir("z", dir_fd=filho)
+                interno = os.open("z", FLAGS_DIR, dir_fd=filho)
+                os.mkdir("dentro", dir_fd=interno)
+                os.fchmod(interno, 0o000)
+                os.close(interno)
+                if fora is not None:
+                    os.symlink(str(fora), "l", dir_fd=filho)
+            os.fchmod(fd, 0o000 if nivel == 1000 else 0o500)
+            os.close(fd)
+            fd = filho
+    finally:
+        os.close(fd)
+
+
+def remover_a_forca(caminho):
+    """Limpeza dos próprios testes, independente do código testado (o `rm` do sistema é iterativo)."""
+    subprocess.run(["chmod", "-R", "u+rwx", str(caminho)], capture_output=True)
+    subprocess.run(["rm", "-rf", str(caminho)], capture_output=True)
+
+
+def baixar_limite_de_fds(caso, limite=256):
+    try:
+        import resource
+    except ImportError:
+        caso.skipTest("sem o módulo resource")
+    mole, dura = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (limite, dura))
+    except (ValueError, OSError):
+        caso.skipTest("não foi possível baixar RLIMIT_NOFILE")
+    caso.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (mole, dura))
+
+
+class ContadorDeFds:
+    """Espia `os.open`/`os.close` e guarda o máximo de descritores abertos ao mesmo tempo."""
+
+    def __init__(self):
+        self.abertos = set()
+        self.maximo = 0
+        self.open_original = os.open
+        self.close_original = os.close
+
+    def open(self, *a, **k):
+        fd = self.open_original(*a, **k)
+        self.abertos.add(fd)
+        self.maximo = max(self.maximo, len(self.abertos))
+        return fd
+
+    def close(self, fd):
+        self.abertos.discard(fd)
+        return self.close_original(fd)
+
+
+class TestesLimpezaProfunda(unittest.TestCase):
+    """W: árvores mais fundas que o limite de recursão do Python, criadas pelo comando não confiável."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(remover_a_forca, self.tmp)
+        self.fora = self.tmp / "fora"
+        (self.fora / "dentro").mkdir(parents=True)
+        (self.fora / "dentro" / "segredo").write_text("nao apagar")
+        os.chmod(self.fora, 0o500)
+        self.addCleanup(os.chmod, self.fora, 0o700)
+
+    def base_funda(self, niveis=2000):
+        """`base/src` com `niveis` diretórios encadeados (o padrão é o do ruling W)."""
+        base = pathlib.Path(tempfile.mkdtemp(prefix="fabrica-verif-", dir=self.tmp))
+        (base / "src").mkdir()
+        aninhar(base / "src", niveis, fora=self.fora)
+        return base
+
+    def assertFora_intacto(self):
+        self.assertEqual(os.stat(self.fora).st_mode & 0o777, 0o500)
+        self.assertEqual((self.fora / "dentro" / "segredo").read_text(), "nao apagar")
+
+    def limpar(self, base):
+        avisos = []
+        verificacao._limpar(DockerFalso(), "fabrica-verif-x", {"rede": False, "servicos": []}, "r", str(base), avisos)
+        return avisos
+
+    def test_limpar_remove_2000_niveis_sem_excecao(self):
+        base = self.base_funda()
+        self.assertEqual(self.limpar(base), [])
+        self.assertFalse(os.path.lexists(base))
+        self.assertFora_intacto()
+
+    def test_limpar_remove_2000_niveis_com_limite_de_256_descritores(self):
+        base = self.base_funda()
+        baixar_limite_de_fds(self, 256)
+        self.assertEqual(self.limpar(base), [])
+        self.assertFalse(os.path.lexists(base))
+        self.assertFora_intacto()
+
+    def test_liberacao_e_remocao_iterativas_com_poucos_descritores_abertos(self):
+        for funcao in (verificacao._liberar_diretorios, verificacao._remover_por_fd):
+            base = self.base_funda(300)
+            contador = ContadorDeFds()
+            with mock.patch.object(verificacao.os, "open", contador.open), mock.patch.object(
+                verificacao.os, "close", contador.close
+            ):
+                funcao(str(base))
+            self.assertLessEqual(contador.maximo, 3, funcao.__name__)
+            self.assertEqual(contador.abertos, set(), funcao.__name__)
+            if funcao is verificacao._liberar_diretorios:
+                # tudo liberado: o rm comum consegue apagar sem chmod
+                subprocess.run(["rm", "-rf", str(base)], capture_output=True)
+            self.assertFalse(os.path.lexists(base), funcao.__name__)
+        self.assertFora_intacto()
+
+    def test_remocao_por_fd_sozinha_apaga_1100_niveis_sem_seguir_symlink(self):
+        # 1.100 já passa do limite de recursão (1.000); o macOS fica lento com árvores fundas.
+        base = self.base_funda(1100)
+        baixar_limite_de_fds(self, 256)
+        verificacao._remover_por_fd(str(base))
+        self.assertFalse(os.path.lexists(base))
+        self.assertFora_intacto()
+
+    def test_rmtree_que_lanca_cai_na_remocao_por_fd(self):
+        for erro in (RecursionError("fundo demais"), OSError(24, "Too many open files")):
+            base = self.base_funda(50)
+            with mock.patch.object(verificacao.shutil, "rmtree", side_effect=erro) as rmtree:
+                self.assertEqual(self.limpar(base), [], erro)
+            rmtree.assert_called_once_with(str(base))
+            self.assertFalse(os.path.lexists(base), erro)
+        self.assertFora_intacto()
+
+    def test_rmtree_so_depois_da_liberacao(self):
+        base = self.base_funda(5)
+        ordem = []
+        liberar, rmtree = verificacao._liberar_diretorios, verificacao.shutil.rmtree
+        with mock.patch.object(
+            verificacao, "_liberar_diretorios", lambda b: (ordem.append("liberar"), liberar(b))
+        ), mock.patch.object(verificacao.shutil, "rmtree", lambda b: (ordem.append("rmtree"), rmtree(b))):
+            self.assertEqual(self.limpar(base), [])
+        self.assertEqual(ordem, ["liberar", "rmtree"])
+        self.assertFalse(os.path.lexists(base))
+
+    def test_limpar_nunca_lanca_exception_e_anota(self):
+        base = self.base_funda(3)
+        for erro in (RecursionError("x"), RuntimeError("x"), MemoryError()):
+            with mock.patch.object(verificacao, "_liberar_diretorios", side_effect=erro):
+                avisos = self.limpar(base)
+            self.assertIn("erro na limpeza: diretório temporário (%s)" % type(erro).__name__, avisos)
+            self.assertIn("erro na limpeza: não foi possível apagar o diretório temporário", avisos)
+
+    def test_limpar_nao_engole_base_exception(self):
+        base = self.base_funda(3)
+        with mock.patch.object(verificacao, "_liberar_diretorios", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.limpar(base)
+
+    def test_verificar_nao_lanca_quando_o_comando_deixa_1100_niveis(self):
+        def principal(argv, **kwargs):
+            src = argv[argv.index("-v") + 1].split(":")[0]
+            aninhar(src, 1100, fora=self.fora)
+            return proc(1, "falhou")
+
+        fake = DockerFalso()
+        fake.respostas["principal"] = principal
+        with mock.patch.object(tempfile, "tempdir", str(self.tmp)):
+            r = verificacao.verificar(self.tmp, SHA, "x", conteiner=CONTEINER, executar=fake, popen=fake.popen)
+        self.assertEqual((r["codigo"], r["saida"]), (1, "falhou"))
+        self.assertEqual(list(self.tmp.glob("fabrica-verif-*")), [])
+        self.assertFora_intacto()
+
+    def test_arvore_que_muda_no_meio_para_a_travessia_sem_sair_de_base(self):
+        # O diretório em visita é movido para fora: o `..` dele deixa de ser o pai guardado.
+        for funcao in (verificacao._liberar_diretorios, verificacao._remover_por_fd):
+            base = pathlib.Path(tempfile.mkdtemp(prefix="fabrica-verif-", dir=self.tmp))
+            (base / "src" / "a").mkdir(parents=True)
+            (base / "src" / "z").mkdir()
+            vitima = self.tmp / "vizinho"
+            (vitima / "z").mkdir(parents=True)
+            (vitima / "z" / "segredo").write_text("nao apagar")
+            os.chmod(vitima / "z", 0o500)
+            original = os.scandir
+
+            def scandir_que_move(fd):
+                entradas = list(original(fd))
+                if (base / "src" / "a").exists() and os.path.samestat(os.fstat(fd), os.stat(base / "src" / "a")):
+                    os.rename(base / "src" / "a", vitima / "a")
+                return _Iteravel(entradas)
+
+            with mock.patch.object(verificacao.os, "scandir", scandir_que_move):
+                funcao(str(base))
+            self.assertEqual((vitima / "z" / "segredo").read_text(), "nao apagar", funcao.__name__)
+            self.assertEqual(os.stat(vitima / "z").st_mode & 0o777, 0o500, funcao.__name__)
+            remover_a_forca(vitima)
+            remover_a_forca(base)
+
+    def test_remocao_por_fd_nao_segue_symlinks_nem_trocados_no_meio(self):
+        base = pathlib.Path(tempfile.mkdtemp(prefix="fabrica-verif-", dir=self.tmp))
+        src = base / "src"
+        (src / "alvo").mkdir(parents=True)
+        os.symlink(self.fora, src / "link-abs")
+        os.symlink("../../fora/dentro", src / "link-rel")
+        original = os.scandir
+
+        def scandir_com_troca(fd):
+            entradas = list(original(fd))
+            if os.path.samestat(os.fstat(fd), os.stat(src)) and not os.path.islink(src / "alvo"):
+                (src / "alvo").rmdir()
+                os.symlink(self.fora / "dentro", src / "alvo")
+            return _Iteravel(entradas)
+
+        with mock.patch.object(verificacao.os, "scandir", scandir_com_troca):
+            verificacao._remover_por_fd(str(base))
+        self.assertFora_intacto()
+        self.assertTrue((self.fora / "dentro").is_dir())
+
+    def test_base_symlink_nao_e_seguida_pela_remocao(self):
+        os.symlink(self.fora, self.tmp / "fabrica-verif-link")
+        verificacao._remover_por_fd(str(self.tmp / "fabrica-verif-link"))
+        self.assertTrue(os.path.islink(self.tmp / "fabrica-verif-link"))
+        self.assertFora_intacto()
+
 
 class TestesLimparResiduos(unittest.TestCase):
     def setUp(self):
@@ -1019,7 +1427,7 @@ class TestesLimparResiduos(unittest.TestCase):
             [argv for argv, _ in fake.chamadas],
             [
                 ["docker", "ps", "-aq", "--filter", "label=fabrica.verif=1"],
-                ["docker", "rm", "-f", "c1", "c2", "c3"],
+                ["docker", "rm", "-f", "-v", "c1", "c2", "c3"],
                 ["docker", "network", "ls", "-q", "--filter", "label=fabrica.verif=1"],
                 ["docker", "network", "rm", "n1", "n2"],
             ],
@@ -1056,6 +1464,62 @@ class TestesLimparResiduos(unittest.TestCase):
         self.assertEqual((r["conteineres"], r["redes"]), (0, 0))
         self.assertEqual(len(r["erros"]), 2)
 
+    def test_diretorio_antigo_com_2000_niveis_e_removido_sem_excecao(self):
+        self.addCleanup(remover_a_forca, self.tmp)
+        fora = self.tmp / "fora"
+        fora.mkdir()
+        os.chmod(fora, 0o500)
+        self.addCleanup(os.chmod, fora, 0o700)
+        velho = self.tmp / "fabrica-verif-fundo"
+        velho.mkdir()
+        aninhar(velho, 2000, fora=fora)
+        os.utime(velho, (time.time() - 3 * 3600,) * 2)
+        fake = DockerFalso()
+        fake.respostas["ps"] = proc(0, "")
+        fake.respostas["rede-ls"] = proc(0, "")
+        r = verificacao.limpar_residuos(executar=fake)
+        self.assertEqual(r, {"conteineres": 0, "redes": 0, "diretorios": 1, "erros": []})
+        self.assertFalse(os.path.lexists(velho))
+        self.assertEqual(os.stat(fora).st_mode & 0o777, 0o500)
+
+    def test_nunca_lanca_exception_e_segue_para_o_proximo_diretorio(self):
+        primeiro = self.diretorio("fabrica-verif-a", 3 * 3600)
+        segundo = self.diretorio("fabrica-verif-b", 3 * 3600)
+        real = verificacao._apagar_diretorio
+
+        def apagar(caminho):
+            if os.path.basename(caminho) == "fabrica-verif-a":
+                raise RecursionError("fundo demais")
+            return real(caminho)
+
+        fake = DockerFalso()
+        fake.respostas["ps"] = proc(0, "")
+        fake.respostas["rede-ls"] = proc(0, "")
+        with mock.patch.object(verificacao, "_apagar_diretorio", apagar):
+            r = verificacao.limpar_residuos(executar=fake)
+        self.assertEqual(r["diretorios"], 1)
+        self.assertEqual(r["erros"], ["diretório fabrica-verif-a (RecursionError)"])
+        self.assertTrue(primeiro.exists())
+        self.assertFalse(segundo.exists())
+
+    def test_nunca_lanca_com_tempdir_quebrado_ou_listagem_estranha(self):
+        fake = DockerFalso()
+        fake.respostas["ps"] = types.SimpleNamespace(returncode=0, stdout=12345, stderr="")
+        fake.respostas["rede-ls"] = proc(0, "")
+        with mock.patch.object(verificacao.tempfile, "gettempdir", side_effect=FileNotFoundError("sem tmp")):
+            r = verificacao.limpar_residuos(executar=fake)
+        self.assertEqual((r["conteineres"], r["redes"], r["diretorios"]), (0, 0, 0))
+        self.assertEqual(len(r["erros"]), 2, r["erros"])
+
+    def test_nao_engole_base_exception(self):
+        self.diretorio("fabrica-verif-a", 3 * 3600)
+        fake = DockerFalso()
+        fake.respostas["ps"] = proc(0, "")
+        fake.respostas["rede-ls"] = proc(0, "")
+        with mock.patch.object(verificacao, "_apagar_diretorio", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                verificacao.limpar_residuos(executar=fake)
+
     def test_assinatura_so_com_executar_nomeado(self):
         import inspect
 
@@ -1083,6 +1547,22 @@ def docker_real():
 
 
 IMAGEM_REAL = docker_real()
+
+
+def imagem_local_com_volume(imagem="postgres:16-alpine"):
+    """`imagem` se ela já existir no host e declarar VOLUME; `None` caso contrário (nunca baixa)."""
+    if not IMAGEM_REAL:
+        return None
+    try:
+        achou = subprocess.run(
+            ["docker", "image", "inspect", "-f", "{{len .Config.Volumes}}", imagem], capture_output=True, text=True, timeout=20
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return imagem if achou.returncode == 0 and achou.stdout.strip() not in ("", "0") else None
+
+
+IMAGEM_COM_VOLUME = imagem_local_com_volume()
 
 
 def ids_com_rotulo(tipo, ident):
@@ -1252,6 +1732,41 @@ class TestesVerificarComDockerReal(unittest.TestCase):
         self.assertEqual(r["codigo"], 0, r)
         self.assertEqual(len(r["saida"]), 4000)
         self.assertTrue(r["saida"].endswith("xxx\nFIM\n"))
+
+    @unittest.skipUnless(IMAGEM_COM_VOLUME, "sem imagem local com VOLUME (postgres:16-alpine); nunca baixa")
+    def test_servico_com_volume_nao_deixa_volume_anonimo(self):
+        # X: o Postgres declara VOLUME; `docker rm -f` sem `-v` deixaria um volume anônimo sem rótulo.
+        criados = []
+
+        def executar(argv, **kw):
+            resultado = subprocess.run(argv, **kw)
+            if argv[:3] == ["docker", "run", "-d"] and resultado.returncode == 0:
+                nome = argv[argv.index("--name") + 1]
+                formato = '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}} {{end}}{{end}}'
+                montagens = subprocess.run(["docker", "inspect", "-f", formato, nome], capture_output=True, text=True)
+                criados.extend(montagens.stdout.split())
+            return resultado
+
+        def remover_os_meus():
+            # Só os volumes que este teste criou (pelo id lido do próprio serviço), nunca os alheios.
+            for volume in criados:
+                if subprocess.run(["docker", "volume", "inspect", volume], capture_output=True).returncode == 0:
+                    subprocess.run(["docker", "volume", "rm", "-f", volume], capture_output=True)
+
+        self.addCleanup(remover_os_meus)
+        antes = set(subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split())
+        cfg = dict(
+            self.cfg,
+            servicos=[{"nome": "db", "imagem": IMAGEM_COM_VOLUME, "env": {"POSTGRES_PASSWORD": "teste"}}],
+        )
+        r = self.verificar(self.sha_ok, "sh teste.sh", conteiner=cfg, executar=executar)
+        self.assertEqual(r["codigo"], 0, r)
+        self.assertEqual(len(criados), 1, criados)
+        self.assertNotIn(criados[0], antes)
+        depois = set(subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split())
+        self.assertEqual((depois - antes) & set(criados), set())
+        self.assertNotEqual(subprocess.run(["docker", "volume", "inspect", criados[0]], capture_output=True).returncode, 0)
+        self.assertSemResiduos()
 
     def test_exportacao_ignora_gitattributes_e_replace_do_repositorio(self):
         (self.origem / "tests").mkdir()
