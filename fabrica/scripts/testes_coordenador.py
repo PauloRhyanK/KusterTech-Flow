@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 RAIZ_DOS_SCRIPTS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ_DOS_SCRIPTS))
@@ -18,6 +19,8 @@ import coordenador  # noqa: E402
 import fila  # noqa: E402
 import forja  # noqa: E402
 import motor  # noqa: E402
+import retrato  # noqa: E402
+import testes_retrato  # noqa: E402
 
 REPO = "dono/cliente"
 OUTRO = "dono/outro"
@@ -1015,6 +1018,285 @@ class TestesStatus(Base):
         texto = coordenador.status(self.raiz)
         self.assertIn("fila vazia", texto)
         self.assertIn("vagas efetivas: 3", texto)
+
+
+class EnviarFalso:
+    """`retrato.enviar` em memória: guarda o que recebeu; `falhas` é uma fila de exceções (ou `None` para sucesso)."""
+
+    def __init__(self, *falhas):
+        self.chamadas = []
+        self.falhas = list(falhas)
+
+    def __call__(self, corpo, *, url, token_file):
+        self.chamadas.append({"corpo": json.loads(corpo.decode("utf-8")), "bytes": len(corpo), "url": url, "token_file": token_file})
+        falha = self.falhas.pop(0) if self.falhas else None
+        if falha is not None:
+            raise falha
+
+
+CENTRAL = {"url": "https://central.exemplo.com/api/fabrica/estado", "token_file": "/seg/central"}
+
+
+class TestesCentral(Base):
+    def central(self, *falhas, **extra):
+        self.enviar = EnviarFalso(*falhas)
+        return self.novo(central=CENTRAL, enviar=self.enviar, **extra)
+
+    def avisos_da_central(self):
+        return [a for a in self.avisos() if a.startswith("Central:")]
+
+    def test_sem_central_nada_e_enviado_e_o_status_diz_desligado(self):
+        enviar = EnviarFalso()
+        c = self.novo(enviar=enviar)
+        c.ciclo()
+        self.assertEqual(enviar.chamadas, [])
+        self.assertIn("envio à Central: desligado", c.status())
+        self.assertIn("FABRICA_CENTRAL_URL", c.status())
+        self.assertNotIn("central", self.fila_estado())
+
+    def test_cada_ciclo_envia_o_retrato_com_url_e_arquivo_de_token(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.central()
+        c.ciclo()
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        self.assertEqual(len(self.enviar.chamadas), 2)
+        primeira = self.enviar.chamadas[0]
+        self.assertEqual((primeira["url"], primeira["token_file"]), (CENTRAL["url"], CENTRAL["token_file"]))
+        corpo = primeira["corpo"]
+        self.assertEqual(corpo["versao"], 1)
+        self.assertEqual(corpo["geradoEm"], "2026-11-03T12:00:00Z")
+        self.assertEqual(self.enviar.chamadas[1]["corpo"]["geradoEm"], "2026-11-03T12:01:00Z")
+        self.assertEqual([(p["id"], p["estado"]) for p in corpo["planos"]], [(a, "ativo")])
+        self.assertEqual(corpo["planos"][0]["feature"], "login")
+        self.assertEqual(corpo["planos"][0]["faseAtual"], "unica")
+        self.assertEqual(corpo["vagas"]["configuradas"], 3)
+        self.assertEqual(corpo["warren"]["preparo"], "ja_aplicado")
+        self.assertNotIn(str(self.raiz), json.dumps(corpo))
+
+    def test_o_retrato_reflete_as_reservas_e_uma_entrada_por_id(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.central()
+        c.ciclo()
+        capacidade.reservar(self.raiz / "capacidade.json", a, "raia-0", mem_disponivel_mb=None)
+        dados = self.fila_estado()
+        dados["fila"].append(dict(dados["fila"][0], estado="pausado"))
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        c.ciclo()
+        corpo = self.enviar.chamadas[-1]["corpo"]
+        self.assertEqual(corpo["vagas"]["ocupadas"], 1)
+        self.assertEqual(len(corpo["planos"]), 1)
+
+    def test_envia_mesmo_quando_um_passo_do_ciclo_falha(self):
+        self.publicar("login", ["src/login/**"])
+        c = self.central()
+        c.ciclo()
+        (self.raiz / "fila.json").write_text("{quebrado", encoding="utf-8")
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            c.ciclo()
+        self.assertEqual(len(self.enviar.chamadas), 2)
+
+    def test_falha_do_envio_nao_muda_a_fila_nem_para_o_ciclo(self):
+        a = self.publicar("login", ["src/login/**"])
+        b = self.publicar("cobranca", ["src/cobranca/**"])
+        c = self.central(*[retrato.FalhaDeEnvio("HTTP 401")] * 3)
+        c.ciclo()
+        self.assertEqual(self.estados(), {a: "ativo", b: "ativo"})
+        self.assertEqual(sorted(self.iniciados()), sorted([a, b]))
+        self.assertEqual(self.avisos_da_central(), ["Central: envio do retrato falhou (HTTP 401)"])
+
+    def test_aviso_so_quando_o_erro_muda_e_de_novo_depois_de_um_sucesso(self):
+        sequencia = [
+            retrato.FalhaDeEnvio("HTTP 401"),
+            retrato.FalhaDeEnvio("HTTP 401"),
+            retrato.FalhaDeEnvio("timeout"),
+            None,
+            retrato.FalhaDeEnvio("timeout"),
+        ]
+        c = self.central(*sequencia)
+        for _ in sequencia:
+            c.ciclo()
+        self.assertEqual(
+            self.avisos_da_central(),
+            [
+                "Central: envio do retrato falhou (HTTP 401)",
+                "Central: envio do retrato falhou (timeout)",
+                "Central: envio do retrato falhou (timeout)",
+            ],
+        )
+
+    def test_qualquer_excecao_do_envio_inclusive_erro_de_entrada_vira_aviso_so_com_a_classe(self):
+        c = self.central(coordenador.ErroDeEntrada(["arquivo de token ilegível " + TOKEN]), OSError("disco " + TOKEN), KeyError(TOKEN))
+        for _ in range(3):
+            c.ciclo()
+        avisos = self.avisos_da_central()
+        self.assertEqual(
+            avisos,
+            [
+                "Central: envio do retrato falhou (falha inesperada (ErroDeEntrada))",
+                "Central: envio do retrato falhou (falha inesperada (OSError))",
+                "Central: envio do retrato falhou (falha inesperada (KeyError))",
+            ],
+        )
+
+    def test_rodar_continua_depois_de_erro_de_entrada_no_envio(self):
+        c = self.central(coordenador.ErroDeEntrada(["x"]), coordenador.ErroDeEntrada(["x"]))
+        c.rodar(intervalo=1, ciclos=2, dormir=lambda s: None)
+        self.assertEqual(len(self.enviar.chamadas), 2)
+
+    def test_capacidade_invalida_nao_envia_e_avisa(self):
+        (self.raiz / "capacidade.json").write_text(json.dumps({"vagasConfig": 0}), encoding="utf-8")
+        c = self.central()
+        c.ciclo()
+        self.assertEqual(self.enviar.chamadas, [])
+        self.assertEqual(len(self.avisos_da_central()), 1)
+        self.assertIn("capacidade.json", self.avisos_da_central()[0])
+        (self.raiz / "capacidade.json").write_text("{lixo", encoding="utf-8")
+        c.ciclo()
+        self.assertEqual(self.enviar.chamadas, [])
+
+    def test_retrato_que_nao_cabe_nao_e_enviado_e_avisa(self):
+        c = self.central()
+        with unittest.mock.patch.object(retrato, "ajustar", return_value=None):
+            c.ciclo()
+        self.assertEqual(self.enviar.chamadas, [])
+        self.assertIn("não cabe", self.avisos_da_central()[0])
+
+    def test_corta_planos_encerrados_antes_de_enviar(self):
+        self.escrever_fila({"repos": [{"repo": REPO, "projeto": "cliente"}]})
+        c = self.central()
+        c.ciclo()
+        dados = self.fila_estado()
+        for n in range(60):
+            dados["fila"].append(
+                {
+                    "id": "dono--cliente--velho%02d--aaaaaa" % n,
+                    "repo": REPO,
+                    "feature": "velho%d" % n,
+                    "estado": "concluido",
+                    "entrouEm": "2026-10-01T00:%02d:00Z" % n,
+                    "arquivos": ["x"],
+                }
+            )
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        c.ciclo()
+        planos = self.enviar.chamadas[-1]["corpo"]["planos"]
+        self.assertEqual(len(planos), 50)
+        self.assertEqual(planos[0]["feature"], "velho10")
+
+    def test_o_status_mostra_o_ultimo_envio_e_o_resultado(self):
+        c = self.central(None, retrato.FalhaDeEnvio("HTTP 401"))
+        c.ciclo()
+        self.assertIn("envio à Central: ligado", c.status())
+        self.assertIn("último envio à Central: 2026-11-03T12:00:00Z enviado", c.status())
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        self.assertIn("último envio à Central: 2026-11-03T12:01:00Z falhou: HTTP 401", c.status())
+        self.assertEqual(coordenador.status(self.raiz, CENTRAL), c.status())
+
+    def test_as_variaveis_da_central_nao_vao_para_o_plano_env_nem_para_o_ambiente(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.central(ambiente={"GH_TOKEN_FILE": "/seg/gh", "FABRICA_CENTRAL_URL": CENTRAL["url"], "FABRICA_CENTRAL_TOKEN_FILE": "/seg/central"})
+        c.ciclo()
+        env = (self.pasta(a) / "plano.env").read_text(encoding="utf-8")
+        self.assertNotIn("CENTRAL", env)
+        self.assertNotIn("/seg/central", env)
+        self.assertEqual(c.ambiente, {"GH_TOKEN_FILE": "/seg/gh"})
+        self.assertNotIn("CENTRAL", json.dumps(self.executar.chamadas[0][1]))
+
+    def test_de_ponta_a_ponta_com_uma_central_de_verdade(self):
+        arquivo = self.raiz / "token-central"
+        arquivo.write_text(testes_retrato.TOKEN + "\n", encoding="utf-8")
+        servidor = testes_retrato.Central()
+        self.addCleanup(servidor.parar)
+        self.publicar("login", ["src/login/**"])
+        c = self.novo(central={"url": servidor.url, "token_file": str(arquivo)})
+        c.ciclo()
+        ((caminho, cabecalhos, corpo),) = servidor.recebidos
+        self.assertEqual(caminho, "/api/fabrica/estado")
+        self.assertEqual(cabecalhos["Authorization"], "Bearer " + testes_retrato.TOKEN)
+        self.assertEqual(json.loads(corpo)["versao"], 1)
+        self.assertIn("enviado", c.status())
+
+    def test_central_fora_401_e_redirecionamento_nao_vazam_o_token_nem_mexem_na_fila(self):
+        arquivo = self.raiz / "token-central"
+        arquivo.write_text(testes_retrato.TOKEN, encoding="utf-8")
+        a = self.publicar("login", ["src/login/**"])
+        destino = testes_retrato.Central()
+        self.addCleanup(destino.parar)
+        casos = {
+            "401": testes_retrato.Central(codigo=401),
+            "redireciona": testes_retrato.Central(codigo=302, local=destino.url),
+        }
+        for nome, servidor in casos.items():
+            self.addCleanup(servidor.parar)
+            with self.subTest(nome=nome):
+                c = self.novo(central={"url": servidor.url, "token_file": str(arquivo)})
+                c.ciclo()
+                self.assertEqual(self.estados()[a], "ativo")
+        morto = testes_retrato.Central()
+        url_morta = morto.url
+        morto.parar()
+        self.novo(central={"url": url_morta, "token_file": str(arquivo)}).ciclo()
+        self.novo(central={"url": "http://localhost.exemplo.com/x", "token_file": str(arquivo)}).ciclo()
+        self.novo(central={"url": "https://central.exemplo.com/x", "token_file": str(self.raiz / "nao-existe")}).ciclo()
+        self.assertEqual(destino.recebidos, [])
+        for arq in self.raiz.rglob("*"):
+            if arq.is_file() and arq.name != "token-central":
+                self.assertNotIn(testes_retrato.TOKEN, arq.read_text(encoding="utf-8", errors="replace"), str(arq))
+        self.assertTrue(self.avisos_da_central())
+
+
+class TestesConfiguracaoDaCentral(Base):
+    def test_sem_url_e_desligado(self):
+        self.assertIsNone(coordenador.configuracao_central({}, self.raiz))
+        self.assertIsNone(coordenador.configuracao_central({"FABRICA_CENTRAL_TOKEN_FILE": "/seg/c"}, self.raiz))
+
+    def test_le_do_ambiente_e_do_coordenador_env_e_o_ambiente_vale_mais(self):
+        (self.raiz / "coordenador.env").write_text(
+            "FABRICA_CENTRAL_URL=\"https://central.exemplo.com/x\"\nFABRICA_CENTRAL_TOKEN_FILE=/seg/central\nGH_TOKEN_FILE=/seg/gh\n", encoding="utf-8"
+        )
+        self.assertEqual(coordenador.configuracao_central({}, self.raiz), {"url": "https://central.exemplo.com/x", "token_file": "/seg/central"})
+        self.assertEqual(
+            coordenador.configuracao_central({"FABRICA_CENTRAL_URL": "http://127.0.0.1:13000/x"}, self.raiz),
+            {"url": "http://127.0.0.1:13000/x", "token_file": "/seg/central"},
+        )
+
+    def test_coordenador_env_ilegivel_nao_levanta(self):
+        (self.raiz / "coordenador.env").write_bytes(b"\xff\xfe")
+        self.assertIsNone(coordenador.configuracao_central({}, self.raiz))
+        self.assertEqual(coordenador.configuracao_central({"FABRICA_CENTRAL_URL": "https://c.exemplo.com/x"}, self.raiz)["url"], "https://c.exemplo.com/x")
+
+    def test_ler_coordenador_env_continua_so_com_as_tres_de_hoje(self):
+        (self.raiz / "coordenador.env").write_text(
+            "WARREN_API=http://127.0.0.1:8080\nFABRICA_CENTRAL_URL=https://c.exemplo.com/x\nFABRICA_CENTRAL_TOKEN_FILE=/seg/c\n", encoding="utf-8"
+        )
+        self.assertEqual(coordenador.ler_coordenador_env(self.raiz), {"WARREN_API": "http://127.0.0.1:8080"})
+        self.assertEqual(coordenador.VARIAVEIS_REPASSADAS, ("WARREN_API", "WARREN_TOKEN_FILE", "GH_TOKEN_FILE"))
+
+    def test_status_pela_cli_le_o_coordenador_env_sem_o_ambiente_da_unit(self):
+        def status():
+            saida = io.StringIO()
+            codigo = coordenador.main(["--raiz", str(self.raiz), "status"], ambiente={}, saida=saida, erro=io.StringIO())
+            self.assertEqual(codigo, 0)
+            return saida.getvalue()
+
+        self.assertIn("envio à Central: desligado", status())
+        (self.raiz / "coordenador.env").write_text("FABRICA_CENTRAL_URL=https://c.exemplo.com/x\nFABRICA_CENTRAL_TOKEN_FILE=/seg/c\n", encoding="utf-8")
+        self.assertIn("envio à Central: ligado", status())
+
+    def test_construir_passa_a_central_ao_coordenador(self):
+        (self.raiz / "t-warren").write_text("w" * 20, encoding="utf-8")
+        (self.raiz / "t-gh").write_text("g" * 20, encoding="utf-8")
+        ambiente = {
+            "WARREN_TOKEN_FILE": str(self.raiz / "t-warren"),
+            "GH_TOKEN_FILE": str(self.raiz / "t-gh"),
+            "FABRICA_CENTRAL_URL": "https://c.exemplo.com/x",
+            "FABRICA_CENTRAL_TOKEN_FILE": "/seg/c",
+        }
+        c = coordenador.construir(ambiente, self.raiz)
+        self.assertEqual(c.central, {"url": "https://c.exemplo.com/x", "token_file": "/seg/c"})
+        self.assertNotIn("FABRICA_CENTRAL_URL", c.ambiente)
 
 
 class TestesMain(Base):

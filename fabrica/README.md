@@ -113,7 +113,7 @@ O instalador é idempotente: atualiza o kit no branch pedido, cria `~/fabrica/pl
 
 Faltando requisito, sai com 2 e lista o que falta.
 
-Os caminhos dos tokens e a URL do Warren vêm de `~/fabrica/coordenador.env` (opcional, `WARREN_API`, `WARREN_TOKEN_FILE` e `GH_TOKEN_FILE`, uma `CHAVE=VALOR` por linha, sem expansão), o mesmo arquivo da unit `fabrica-fila`. O instalador e os comandos `registrar`, `status` e `vagas` também o leem; uma variável do ambiente vale mais que o arquivo.
+Os caminhos dos tokens e a URL do Warren vêm de `~/fabrica/coordenador.env` (opcional, `WARREN_API`, `WARREN_TOKEN_FILE` e `GH_TOKEN_FILE`, uma `CHAVE=VALOR` por linha, sem expansão), o mesmo arquivo da unit `fabrica-fila`. O instalador e os comandos `registrar`, `status` e `vagas` também o leem; uma variável do ambiente vale mais que o arquivo. O mesmo arquivo aceita as duas variáveis do envio à Central, que têm leitura própria e estão em [Painel da Fábrica na Central](#painel-da-fábrica-na-central).
 
 **Grupo `docker` nas units.** Com o linger, o `user@` sobe no boot com os grupos daquele momento. Se você entrar no grupo `docker` depois, rode `sudo systemctl restart user@$(id -u)` (ou reinicie a máquina) para as units herdarem o grupo. O instalador confere com `systemd-run --user --wait --pipe id -nG`; sem o `systemd-run`, só avisa.
 
@@ -155,6 +155,34 @@ A máquina tem `vagas` raias ao mesmo tempo (padrão 3) e só despacha uma raia 
 O coordenador prepara o Warren (no lugar de cada despachante) e desliga o `warren-automerge.service` e o `warren-auto.service`. Para voltar atrás no `warren-auto`: `systemctl enable --now warren-auto`.
 
 Enquanto o coordenador prepara o Warren, ele marca uma **drenagem**: todos os planos seguram os despachos até os runs acabarem. Uma drenagem com mais de 45 min é ignorada.
+
+### Painel da Fábrica na Central
+
+A cada ciclo o coordenador pode enviar um retrato do estado da Fábrica (fila, fases e raias, vagas, decisões abertas e avisos) à Central, que o mostra em `/desenvolvimento/fabrica`. É só saída: a máquina não abre porta e a Central nunca comanda a Fábrica. Sem URL, o envio fica desligado.
+
+Para ligar, crie o token em Configurações → Fábrica de agentes na Central, grave-o num arquivo legível só pelo usuário da Fábrica e acrescente ao `~/fabrica/coordenador.env`:
+
+```bash
+printf '%s\n' "<token>" > ~/.fabrica-central-token && chmod 600 ~/.fabrica-central-token
+```
+
+```ini
+FABRICA_CENTRAL_URL=https://central.exemplo.com/api/fabrica/estado
+FABRICA_CENTRAL_TOKEN_FILE=/home/<usuário>/.fabrica-central-token
+```
+
+Esse é o `~/fabrica/coordenador.env`. Depois reinicie o serviço com `systemctl --user restart fabrica-fila`.
+
+Variáveis novas do `coordenador.env`:
+
+- `FABRICA_CENTRAL_URL`: o endereço completo de `POST /api/fabrica/estado`. Precisa ser `https://`; `http://` só vale com o host exatamente `localhost` ou `127.0.0.1` (teste, ou o túnel reverso do Mac). Outra URL é recusada com um aviso, sem enviar.
+- `FABRICA_CENTRAL_TOKEN_FILE`: o caminho do arquivo com o token. Ele é lido a cada envio e nunca aparece em log, argumento, erro ou aviso.
+
+Estas duas não entram no `plano.env` dos planos e não mudam o que `ler_coordenador_env` devolve. Uma variável do ambiente vale mais que o arquivo.
+
+O envio é `POST` com `Authorization: Bearer` e timeout de 10 s, e não segue redirecionamento (3xx conta como falha, para o token não ir a outro host). Falha de envio (Central fora do ar, 401, timeout, token ausente ou ilegível) não muda a fila nem para o ciclo: gera um aviso só quando o erro muda, e o próximo ciclo tenta de novo. Com o `capacidade.json` inválido, o ciclo não envia e avisa.
+
+O retrato é cortado para caber no contrato e em 256 KB: saem primeiro os planos `removido` e `concluido` mais antigos, depois os avisos mais antigos, e nunca um plano ocupando vaga. Se ainda não couber, não envia e avisa. O `coordenador.py status` mostra se o envio está ligado, o último envio e o resultado.
 
 ### Riscos conhecidos
 

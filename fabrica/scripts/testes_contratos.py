@@ -26,6 +26,8 @@ import gates  # noqa: E402
 import instalar  # noqa: E402
 import preparar_warren  # noqa: E402
 import prompts  # noqa: E402
+import coordenador  # noqa: E402
+import retrato  # noqa: E402
 import raias  # noqa: E402
 import verificacao  # noqa: E402
 
@@ -470,6 +472,20 @@ class TestesOperacao(unittest.TestCase):
             with self.subTest(trecho=trecho):
                 self.assertIn(trecho, self.readme)
         self.assertIn("WARREN_PLAN_RUN_MERGE_TIMEOUT_MS=10800000", preparar_warren.DROPIN_CONTEUDO)
+
+    def test_readme_e_unit_documentam_o_envio_a_central(self):
+        corpo = secao(self.readme, "Painel da Fábrica na Central", "###")
+        self.assertIsNotNone(corpo)
+        unit = ler(KIT / "servico" / "fabrica-fila.service")
+        for variavel in (coordenador.VARIAVEL_CENTRAL_URL, coordenador.VARIAVEL_CENTRAL_TOKEN):
+            with self.subTest(variavel=variavel):
+                self.assertIn("`%s`" % variavel, corpo)
+                self.assertIn(variavel, unit)
+                self.assertNotIn(variavel, coordenador.VARIAVEIS_REPASSADAS)
+        self.assertIn("256 KB", corpo)
+        self.assertIn("redirecionamento", corpo)
+        self.assertEqual(retrato.TIMEOUT_S, 10)
+        self.assertIn("10 s", corpo)
 
     def test_readme_exemplo_de_verificacao_passa_no_validador(self):
         (bloco,) = re.findall(r"```json\n(.*?)```", self.readme, re.S)
