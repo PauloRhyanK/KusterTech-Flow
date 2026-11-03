@@ -5932,7 +5932,7 @@ class TestesCapacidadeGlobal(Base):
     def test_drenagem_do_coordenador_segura_runs_e_merges_e_depois_libera(self):
         despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
         a = self.de("a", [raia("a1")])
-        despachante.capacidade.definir_drenagem(self.cap, "2026-11-03T12:00:00Z")
+        despachante.capacidade.definir_drenagem(self.cap, self.desde_ha(a, 0))
         self.assertTrue(a._drenando())
         a.ciclo()
         self.assertEqual(self.planos_despachados(), [])
@@ -5944,7 +5944,7 @@ class TestesCapacidadeGlobal(Base):
     def test_drenagem_do_coordenador_filtra_as_mesmas_acoes_da_local(self):
         despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
         a = self.de("a", [raia("a1")])
-        despachante.capacidade.definir_drenagem(self.cap, "2026-11-03T12:00:00Z")
+        despachante.capacidade.definir_drenagem(self.cap, self.desde_ha(a, 0))
         acoes = [
             {"tipo": "despachar_raia", "raia": "a1"},
             {"tipo": "revisar", "seed": "s-1"},
@@ -5964,6 +5964,36 @@ class TestesCapacidadeGlobal(Base):
             a._agir()
         self.assertEqual(feitas, ["verificar", "aguardar_humano", "retomar_raia"])
 
+    def desde_ha(self, d, minutos):
+        instante = d._agora().astimezone(datetime.timezone.utc) - datetime.timedelta(minutes=minutos)
+        return instante.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_drenagem_global_vencida_e_ignorada_com_um_aviso_por_desde(self):
+        despachante.capacidade.configurar(self.cap, vagas=3, ram_minima_mb=2048)
+        a = self.de("a", [raia("a1")])
+        recente = self.desde_ha(a, despachante.DRENAGEM_MAXIMA.total_seconds() // 60 - 1)
+        despachante.capacidade.definir_drenagem(self.cap, recente)
+        self.assertTrue(a._drenando())
+        vencida = self.desde_ha(a, despachante.DRENAGEM_MAXIMA.total_seconds() // 60)
+        despachante.capacidade.definir_drenagem(self.cap, vencida)
+        self.assertFalse(a._drenando())
+        self.assertFalse(a._drenando())
+        avisos = [x for x in self.estado_de(a).get("avisos") or [] if "drenagem global vencida" in x]
+        self.assertEqual(avisos, ["drenagem global vencida desde %s" % vencida])
+        a.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 1)
+        outra = self.desde_ha(a, 120)
+        despachante.capacidade.definir_drenagem(self.cap, outra)
+        self.assertFalse(a._drenando())
+        avisos = [x for x in self.estado_de(a).get("avisos") or [] if "drenagem global vencida" in x]
+        self.assertEqual(len(avisos), 2)
+
+    def test_drenagem_global_ilegivel_e_ignorada_com_aviso(self):
+        a = self.de("a", [raia("a1")])
+        despachante.capacidade.definir_drenagem(self.cap, "ontem")
+        self.assertFalse(a._drenando())
+        self.assertTrue([x for x in self.estado_de(a).get("avisos") or [] if "ontem" in x])
+
     def test_capacidade_ilegivel_nao_drena_nem_derruba(self):
         a = self.de("a", [raia("a1")])
         self.cap.parent.mkdir(parents=True, exist_ok=True)
@@ -5971,7 +6001,8 @@ class TestesCapacidadeGlobal(Base):
         self.assertFalse(a._drenando())
 
     def test_sem_capacidade_a_drenagem_do_arquivo_nao_vale(self):
-        despachante.capacidade.definir_drenagem(self.cap, "2026-11-03T12:00:00Z")
+        recente = self.instante.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        despachante.capacidade.definir_drenagem(self.cap, recente)
         a = self.de("a", [raia("a1")], com_capacidade=False)
         self.assertFalse(a._drenando())
         a.ciclo()

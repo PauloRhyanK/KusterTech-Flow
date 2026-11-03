@@ -946,15 +946,28 @@ class Despachante:
     def _drenagem_do_coordenador(self) -> bool:
         """Com capacidade global, o coordenador da fila prepara o Warren e marca a drenagem no capacidade.json.
 
-        Arquivo ilegível não drena: a reserva e a trava já recusam com ele, e o erro vai para o log.
+        Arquivo ilegível não drena: a reserva e a trava já recusam com ele, e o erro vai para o log. Uma drenagem
+        mais velha que `DRENAGEM_MAXIMA` (ou com instante ilegível) é de um coordenador que morreu: é ignorada,
+        com um aviso por `desde`.
         """
         if self.capacidade is None:
             return False
         try:
-            return _texto(capacidade.ler(self.capacidade).get("drenagem"))
+            desde = capacidade.ler(self.capacidade).get("drenagem")
         except (capacidade.CapacidadeInvalida, OSError) as exc:
             self._erro_de_etapa("drenagem_do_coordenador", self.plano_id, exc)
             return False
+        if not _texto(desde):
+            return False
+        try:
+            inicio = datetime.datetime.strptime(desde, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            self._aviso("drenagem global ilegível (%s), ignorada" % _cortar(desde, 60))
+            return False
+        if self._agora().astimezone(datetime.timezone.utc) - inicio >= DRENAGEM_MAXIMA:
+            self._aviso("drenagem global vencida desde %s" % desde)
+            return False
+        return True
 
     def _preparar_o_warren(self) -> None:
         """Prepara o Warren (`preparar_warren.preparar`: --model, drop-in e automerge), se a config deixar.

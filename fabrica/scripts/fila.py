@@ -13,7 +13,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import globs  # noqa: E402
 import raias  # noqa: E402
 
-ESTADOS = ("aguardando", "ativo", "pausado", "concluido", "removido")
+# `admitindo`: o coordenador gravou a admissão e vai (ou foi) ligar a unit; ocupa como `ativo`
+ESTADOS = ("aguardando", "admitindo", "ativo", "pausado", "concluido", "removido")
+OCUPANDO = ("admitindo", "ativo", "pausado")
 
 # Mesma regra da Task 1: `plano` só vale como `.fabrica/plano.json`; em `planos/` o nome `plano` é recusado.
 _CAMINHO = re.compile(r"\.fabrica/(?:(plano)|planos/([a-z0-9]+(?:-[a-z0-9]+)*))\.json")
@@ -149,7 +151,7 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
     `agora` é ISO 8601 em UTC com `Z` (`%Y-%m-%dT%H:%M:%SZ`); outro formato levanta `ValueError`. É o
     contrato de `entrouEm`, que `admitir` ordena como texto.
 
-    Toda entrada cujo id foi descoberto guarda o `hash` do plano. `ativo`, `pausado` e `concluido` não mudam
+    Toda entrada cujo id foi descoberto guarda o `hash` do plano. `admitindo`, `ativo`, `pausado` e `concluido` não mudam
     em mais nada. Um `concluido` volta como entrada nova (`aguardando`, com outro `entrouEm`) só se o `hash`
     descoberto difere do guardado; um `concluido` antigo, sem `hash`, só ganha o hash. Um `removido` que
     reaparece volta sempre. Entradas malformadas passam como estão e não entram em nenhuma decisão.
@@ -173,7 +175,7 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
                 copia["caminho"] = atual["caminho"]
                 copia["hash"] = atual["hash"]
         elif atual is not None and ultima_por_id[entrada["id"]] == i:
-            if entrada["estado"] in ("ativo", "pausado"):
+            if entrada["estado"] in OCUPANDO:
                 copia["hash"] = atual["hash"]
             elif entrada["estado"] == "concluido" and "hash" not in entrada:
                 copia["hash"] = atual["hash"]
@@ -201,12 +203,12 @@ def colide(a: dict, b: dict) -> bool:
 def admitir(fila: list[dict]) -> list[str]:
     """Ids a admitir, do mais antigo ao mais novo.
 
-    Um plano entra se não colide com nenhum `ativo` ou `pausado`, nem com um `aguardando` mais antigo que
+    Um plano entra se não colide com nenhum `admitindo`, `ativo` ou `pausado`, nem com um `aguardando` mais antigo que
     continua esperando. Não passa na frente de quem colide com ele, mas passa na frente de quem não colide.
     Entrada malformada não é admitida e não bloqueia ninguém.
     """
     validas = [e for e in _lista(fila) if _entrada_valida(e)]
-    ocupando = [e for e in validas if e["estado"] in ("ativo", "pausado")]
+    ocupando = [e for e in validas if e["estado"] in OCUPANDO]
     esperando = sorted((e for e in validas if e["estado"] == "aguardando"), key=lambda e: e["entrouEm"])
     admitidos: list[str] = []
     ficam: list[dict] = []

@@ -22,6 +22,7 @@ import contextlib
 import copy
 import datetime
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -67,6 +68,8 @@ TAMANHO_MINIMO_SEGREDO = 8
 FORMATO_INSTANTE = "%Y-%m-%dT%H:%M:%SZ"
 UNITS_RODANDO = ("active", "activating", "reloading", "deactivating")
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
+# o formato de `fila.id_do_plano`: 4 partes `[a-z0-9]+(-[a-z0-9]+)*` separadas por `--`
+_ID = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*(--[a-z0-9]+(-[a-z0-9]+)*){3}")
 
 
 class OutroCoordenador(Exception):
@@ -174,11 +177,16 @@ def _git_url_do_repo(url: str, repo: str) -> bool:
     return url.endswith("github.com/" + alvo) or url.endswith("github.com:" + alvo)
 
 
+def _id_valido(id_) -> bool:
+    """Só um id neste formato vira nome de unit ou caminho: o fila-estado.json pode ter sido editado à mão."""
+    return isinstance(id_, str) and _ID.fullmatch(id_) is not None
+
+
 def _atuais(fila_: list) -> dict:
-    """A entrada vigente de cada id (a última válida da lista)."""
+    """A entrada vigente de cada id (a última válida da lista); id fora do formato fica de fora."""
     atuais = {}
     for entrada in fila_:
-        if isinstance(entrada, dict) and isinstance(entrada.get("id"), str) and entrada.get("estado") in fila.ESTADOS:
+        if isinstance(entrada, dict) and _id_valido(entrada.get("id")) and entrada.get("estado") in fila.ESTADOS:
             atuais[entrada["id"]] = entrada
     return atuais
 
@@ -210,7 +218,10 @@ class Coordenador:
         self.preparar_warren = preparar_warren
         self.kit = pathlib.Path(kit)
         self._agora = agora
-        self.clonar = clonar or _clonar
+        if clonar is None:
+            caminho = (ambiente or {}).get("GH_TOKEN_FILE") or despachante.GH_TOKEN_PADRAO
+            clonar = functools.partial(_clonar, token_file=os.path.abspath(os.path.expanduser(caminho)))
+        self.clonar = clonar
         ambiente = ambiente or {}
         self.ambiente = {k: ambiente[k] for k in VARIAVEIS_REPASSADAS if isinstance(ambiente.get(k), str) and ambiente[k]}
         conhecidos = {s.strip() for s in segredos if isinstance(s, str)} | {s for s in segredos if isinstance(s, str)}
@@ -221,6 +232,9 @@ class Coordenador:
         self._sha_revertido = None
         self._repetidos = {}
         self.dados = _padrao_do_estado()
+        self._tentados = set()
+        self._postas_de_lado = []  # entradas com id fora do formato: ficam no arquivo, fora de toda decisão
+        self._config = None
 
     # ------------------------------------------------------------ registro
 
@@ -273,7 +287,10 @@ class Coordenador:
 
     def _salvar(self) -> None:
         self.raiz.mkdir(parents=True, exist_ok=True)
-        despachante.gravar_json_atomico(self.raiz / ARQ_FILA_ESTADO, self.dados)
+        despachante.gravar_json_atomico(self.raiz / ARQ_FILA_ESTADO, dict(self.dados, fila=self.dados["fila"] + self._postas_de_lado))
+
+    def status(self) -> str:
+        return status(self.raiz)
 
     # ------------------------------------------------------------ registrar
 
@@ -318,8 +335,12 @@ class Coordenador:
             while ciclos is None or feitos < ciclos:
                 try:
                     self.ciclo()
-                except Exception as exc:  # noqa: BLE001 - o erro vai para o log e o laço continua
-                    self._log({"evento": "erro_no_ciclo", "erro": self._erro(exc)})
+                except ErroDeEntrada:
+                    raise  # fila.json ou fila-estado.json ilegível: saída 2, como na partida
+                except Exception as exc:  # noqa: BLE001 - o erro vai para o log (quando muda) e o laço continua
+                    self._log_repetivel("erro_no_ciclo", {"evento": "erro_no_ciclo", "erro": self._erro(exc)})
+                else:
+                    self._repetidos.pop("erro_no_ciclo", None)
                 feitos += 1
                 if ciclos is not None and feitos >= ciclos:
                     break
@@ -331,12 +352,22 @@ class Coordenador:
                     capacidade.definir_drenagem(self.capacidade, None)
 
     def ciclo(self) -> list[dict]:
-        """Os 6 passos, nesta ordem. Devolve os eventos do ciclo."""
+        """Os 6 passos, nesta ordem. Devolve os eventos do ciclo.
+
+        `fila.json` ou `fila-estado.json` ilegível levanta `ErroDeEntrada` (o `rodar` deixa sair com 2).
+        """
         self.dados = ler_estado(self.raiz)
+        self._separar_ids_invalidos()
+        self._tentados = set()
         eventos: list[dict] = []
         try:
+            config = self._config = ler_config(self.raiz)
+            if self._ciclos == 0:
+                try:
+                    self._limpar_drenagem_herdada()
+                except Exception as exc:  # noqa: BLE001
+                    self._erro_de_etapa("drenagem_herdada", "capacidade", exc)
             self._passo_preparar(eventos)
-            config = ler_config(self.raiz)
             descobertos, falhos = self._passo_descobrir(config)
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
@@ -346,7 +377,35 @@ class Coordenador:
             self._salvar()
         return eventos
 
+    def _separar_ids_invalidos(self) -> None:
+        validas, self._postas_de_lado = [], []
+        for entrada in self.dados["fila"]:
+            if isinstance(entrada, dict) and _id_valido(entrada.get("id")):
+                validas.append(entrada)
+            else:
+                self._postas_de_lado.append(entrada)
+        self.dados["fila"] = validas
+        for entrada in self._postas_de_lado:
+            if isinstance(entrada, dict) and "id" in entrada:
+                id_ = repr(entrada["id"])[:120]
+                self._aviso(
+                    "id_invalido:%s" % id_,
+                    "entrada da fila com id inválido %s ignorada; corrija ou remova a entrada em fila-estado.json" % id_,
+                )
+
     # ------------------------------------------------------------ 1. Warren
+
+    def _limpar_drenagem_herdada(self) -> None:
+        """Ao partir: a drenagem do disco é de um coordenador que morreu; solta antes do primeiro preparo."""
+        warren = self.dados["warren"]
+        drenagem = despachante._dict(warren.get("drenagem"))
+        if drenagem.get("desde"):
+            warren["drenagem"] = {"desde": None, "proxima": drenagem.get("proxima")}
+            warren["esperasSeguidas"] = 0
+            self._log({"evento": "drenagem_warren", "acao": "herdada", "desde": drenagem.get("desde")})
+            self._salvar()
+        if capacidade.ler(self.capacidade).get("drenagem"):
+            capacidade.definir_drenagem(self.capacidade, None)
 
     def _pronto(self) -> bool:
         preparado = despachante._dict(self.dados["warren"].get("preparado"))
@@ -539,22 +598,26 @@ class Coordenador:
                 self._log({"evento": "removido", "id": entrada.get("id")})
         self.dados["fila"] = nova
         self._salvar()
-        projetos = {r["repo"].lower(): r["projeto"] for r in config["repos"]}
         for id_ in fila.admitir(self.dados["fila"]):
-            entrada = _atuais(self.dados["fila"])[id_]
-            try:
-                projeto = projetos.get(entrada["repo"].lower())
-                if projeto is None:
-                    raise RuntimeError("repositório %s não está mais em fila.json" % entrada["repo"])
-                self._admitir(entrada, projeto)
-            except Exception as exc:  # noqa: BLE001 - fica aguardando; o próximo ciclo tenta de novo
-                self._aviso("admitir:%s" % id_, "não foi possível admitir %s, tento de novo no próximo ciclo: %s" % (id_, self._erro(exc)))
-                continue
-            self._esquecer("admitir:%s" % id_)
-            self.dados["fila"] = fila.marcar(self.dados["fila"], id_, "ativo")
-            self._salvar()
-            self._log({"evento": "admitido", "id": id_})
-            eventos.append({"evento": "admitido", "id": id_})
+            self._tentar_admitir(_atuais(self.dados["fila"])[id_], eventos)
+
+    def _tentar_admitir(self, entrada: dict, eventos: list) -> bool:
+        """Admite e marca `ativo`; uma falha vira aviso e fica para o próximo ciclo (`aguardando` ou `admitindo`)."""
+        id_ = entrada["id"]
+        self._tentados.add(id_)
+        try:
+            projeto = {r["repo"].lower(): r["projeto"] for r in self._config["repos"]}.get(entrada["repo"].lower())
+            if projeto is None:
+                raise RuntimeError("repositório %s não está mais em fila.json" % entrada["repo"])
+            self._admitir(entrada, projeto)
+        except Exception as exc:  # noqa: BLE001 - o próximo ciclo tenta de novo
+            self._aviso("admitir:%s" % id_, "não foi possível admitir %s, tento de novo no próximo ciclo: %s" % (id_, self._erro(exc)))
+            return False
+        self._esquecer("admitir:%s" % id_)
+        self._marcar(id_, "ativo")
+        self._log({"evento": "admitido", "id": id_})
+        eventos.append({"evento": "admitido", "id": id_})
+        return True
 
     def _pasta(self, id_: str) -> pathlib.Path:
         return self.raiz / DIR_PLANOS / id_
@@ -604,6 +667,8 @@ class Coordenador:
             if not (pasta / despachante.ARQ_ESTADO).exists():
                 raise RuntimeError("despachante.py iniciar não criou o estado.json")
             self._log({"evento": "iniciar", "id": id_})
+        # gravado antes do enable: um coordenador que morra daqui em diante acha a unit pela entrada `admitindo`
+        self._marcar(id_, "admitindo")
         codigo, saida = self.systemd("enable", "--now", self._unit(id_))
         if codigo != 0:
             raise RuntimeError("systemctl --user enable --now %s saiu com %s: %s" % (self._unit(id_), codigo, self._seguro(saida, LIMITE_SAIDA)))
@@ -618,7 +683,7 @@ class Coordenador:
         """Devolve `(ids com unit rodando, se o systemd respondeu por todos)`."""
         rodando, confiavel = set(), True
         for id_, entrada in sorted(_atuais(self.dados["fila"]).items()):
-            if entrada["estado"] not in ("ativo", "pausado"):
+            if entrada["estado"] not in fila.OCUPANDO:
                 continue
             try:
                 if not self._observar(id_, entrada, rodando, eventos):
@@ -642,7 +707,10 @@ class Coordenador:
             plano = self._ler_do_plano(id_, despachante.ARQ_PLANO)
         except (OSError, ValueError) as exc:
             self._erro_de_etapa("ler_estado_do_plano", id_, exc)
+        codigo, saida = self.systemd("is-active", unit)
+        situacao = (saida or "").strip().split("\n")[0].strip()
         if est.plano_concluido(estado_do_plano, plano):
+            causa = self._causa(unit) if situacao == "failed" else None
             codigo, saida = self.systemd("disable", "--now", unit)
             if codigo != 0:
                 raise RuntimeError("systemctl --user disable --now %s saiu com %s: %s" % (unit, codigo, self._seguro(saida, LIMITE_SAIDA)))
@@ -651,10 +719,14 @@ class Coordenador:
             capacidade.soltar_orquestrador(self.capacidade, entrada["repo"], id_)
             for chave in ("unit:%s" % id_, "pausa:%s" % id_):
                 self._esquecer(chave)
+            if causa is not None:
+                self._aviso("concluido:%s" % id_, "plano %s concluído; a unit estava failed: %s" % (id_, causa))
             eventos.append({"evento": "concluido", "id": id_})
             return True
-        codigo, saida = self.systemd("is-active", unit)
-        situacao = (saida or "").strip().split("\n")[0].strip()
+        if entrada["estado"] == "admitindo" and situacao == "inactive":
+            if id_ not in self._tentados:
+                self._tentar_admitir(entrada, eventos)  # a unit não subiu: refaz a admissão (idempotente)
+            return True
         if situacao == "active":
             rodando.add(id_)
             self._esquecer("unit:%s" % id_)
@@ -670,8 +742,7 @@ class Coordenador:
             rodando.add(id_)  # reiniciando: o despachante refaz o sincronizar quando voltar
             return True
         if situacao == "failed":
-            _, detalhe = self.systemd("status", "--no-pager", "--lines=20", unit)
-            causa = " | ".join(linha.strip() for linha in (detalhe or "").strip().splitlines()[-5:]) or "sem detalhe"
+            causa = self._causa(unit)
             self._aviso(
                 "unit:%s" % id_,
                 "%s pausado: o serviço %s falhou (journalctl --user -u %s): %s" % (id_, unit, unit, causa),
@@ -690,11 +761,17 @@ class Coordenador:
         self._erro_de_etapa("is_active", id_, RuntimeError("estado desconhecido da unit: %r" % situacao))
         return False
 
+    def _causa(self, unit: str) -> str:
+        _, detalhe = self.systemd("status", "--no-pager", "--lines=20", unit)
+        return " | ".join(linha.strip() for linha in (detalhe or "").strip().splitlines()[-5:]) or "sem detalhe"
+
     # ------------------------------------------------------------ 5. órfãos
 
     def _passo_orfaos(self, rodando: set, confiavel: bool, eventos: list) -> None:
         if not confiavel:
             return  # sem a resposta do systemd para todos, nada é solto
+        # `admitindo` conta como ativo: a unit pode estar subindo (ou ter subido antes de o coordenador morrer)
+        rodando = set(rodando) | {i for i, e in _atuais(self.dados["fila"]).items() if e["estado"] == "admitindo"}
         try:
             removidos = capacidade.limpar_orfaos(self.capacidade, rodando)
         except Exception as exc:  # noqa: BLE001
@@ -758,30 +835,55 @@ def _executar(argv, env):
     return resultado.returncode, (resultado.stdout or "") + (resultado.stderr or "")
 
 
-def _clonar(repo, destino):
-    """Clona num temporário ao lado e troca de nome no fim: `repo/` nunca fica pela metade."""
+def helper_de_credencial(token_file: str) -> str:
+    """O `credential.helper` que lê o token do arquivo na hora: só o caminho (absoluto) fica no `.git/config`."""
+    caminho = os.path.abspath(os.path.expanduser(str(token_file)))
+    if any(c in caminho for c in "'\n\r\0"):
+        raise ErroDeEntrada(["o caminho do GH_TOKEN_FILE não pode ter aspa simples nem quebra de linha: %r" % caminho])
+    return (
+        "!f() { test \"$1\" = get || exit 0; echo username=x-access-token; "
+        "printf 'password=%%s\\n' \"$(cat '%s')\"; }; f" % caminho
+    )
+
+
+def _clonar(repo, destino, *, token_file, base="https://github.com/", rodar=subprocess.run):
+    """Clona num temporário ao lado e troca de nome no fim: `repo/` nunca fica pela metade.
+
+    Autentica pelo `credential.helper` local (o vazio antes zera os helpers globais), passado ao próprio clone
+    com `-c` e regravado no `.git/config` depois: nenhum token em argv, ambiente ou URL.
+    """
+    helper = helper_de_credencial(token_file)
     destino = pathlib.Path(destino)
     tmp = destino.with_name(".repo.clonando")
     shutil.rmtree(tmp, ignore_errors=True)
-    resultado = subprocess.run(
-        ["git", "clone", "--quiet", "https://github.com/%s.git" % repo, str(tmp)], capture_output=True, text=True, timeout=1800
-    )
-    if resultado.returncode != 0:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise RuntimeError("git clone saiu com %d: %s" % (resultado.returncode, despachante._cortar(resultado.stderr or "", LIMITE_SAIDA)))
+    url = "%s%s.git" % (base, repo)
+    comandos = [
+        ["git", "clone", "--quiet", "-c", "credential.helper=", "-c", "credential.helper=" + helper, url, str(tmp)],
+        ["git", "-C", str(tmp), "config", "--local", "--unset-all", "credential.helper"],
+        ["git", "-C", str(tmp), "config", "--local", "--add", "credential.helper", ""],
+        ["git", "-C", str(tmp), "config", "--local", "--add", "credential.helper", helper],
+    ]
+    for posicao, argv in enumerate(comandos):
+        resultado = rodar(argv, capture_output=True, text=True, timeout=1800)
+        # `--unset-all` sem nada para tirar sai com 5
+        if resultado.returncode != 0 and not (posicao == 1 and resultado.returncode == 5):
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise RuntimeError(
+                "git %s saiu com %d: %s" % (argv[1] if posicao == 0 else "config", resultado.returncode, despachante._cortar(resultado.stderr or "", LIMITE_SAIDA))
+            )
     os.replace(tmp, destino)
 
 
 def construir(ambiente, raiz) -> Coordenador:
     """O coordenador real: Warren e GitHub com os tokens lidos dos arquivos do ambiente."""
-    import functools
-
     import forja as forja_github
     import motor_warren
     import preparar_warren
 
     token_warren = despachante._ler_token(ambiente.get("WARREN_TOKEN_FILE") or despachante.WARREN_TOKEN_PADRAO)
-    token_gh = despachante._ler_token(ambiente.get("GH_TOKEN_FILE") or despachante.GH_TOKEN_PADRAO)
+    caminho_gh = os.path.abspath(os.path.expanduser(ambiente.get("GH_TOKEN_FILE") or despachante.GH_TOKEN_PADRAO))
+    token_gh = despachante._ler_token(caminho_gh)
+    helper_de_credencial(caminho_gh)  # aspa simples no caminho: saída 2 já na partida
     try:
         motor = motor_warren.MotorWarren(ambiente.get("WARREN_API") or despachante.WARREN_API_PADRAO, token_warren)
         forja = forja_github.ForjaGitHub(token_gh)
@@ -795,7 +897,7 @@ def construir(ambiente, raiz) -> Coordenador:
         executar=_executar,
         preparar_warren=functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
         kit=KIT_PADRAO,
-        clonar=_clonar,
+        clonar=functools.partial(_clonar, token_file=caminho_gh),
         ambiente=ambiente,
         segredos=(token_warren, token_gh),
     )

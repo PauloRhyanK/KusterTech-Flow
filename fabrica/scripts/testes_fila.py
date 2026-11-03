@@ -257,14 +257,14 @@ class TestesEnfileirar(unittest.TestCase):
         self.assertEqual(estados(nova), {"login": "removido", "cobranca": "aguardando"})
 
     def test_removido_so_vale_para_aguardando(self):
-        for estado in ("ativo", "pausado", "concluido"):
+        for estado in ("admitindo", "ativo", "pausado", "concluido"):
             with self.subTest(estado=estado):
                 antes = [entrada("login", ["a/"], estado=estado)]
                 nova = fila.enfileirar(antes, [], self.AGORA)
                 self.assertEqual(nova, antes)
 
     def test_ativo_e_pausado_so_atualizam_o_hash(self):
-        for estado in ("ativo", "pausado"):
+        for estado in ("admitindo", "ativo", "pausado"):
             with self.subTest(estado=estado):
                 antes = [entrada("login", ["a/"], estado=estado)]
                 novo = achado("login", ["z/"])
@@ -390,6 +390,11 @@ class TestesAdmitir(unittest.TestCase):
         lista = [entrada("a", ["src/a/"], estado="pausado"), entrada("b", ["src/a/"])]
         self.assertEqual(fila.admitir(lista), [])
 
+    def test_admitindo_bloqueia_como_ativo_e_nao_e_admitido_de_novo(self):
+        lista = [entrada("a", ["src/a/"], estado="admitindo"), entrada("b", ["src/a/"])]
+        self.assertEqual(fila.admitir(lista), [])
+        self.assertEqual(fila.marcar(lista, lista[0]["id"], "ativo")[0]["estado"], "ativo")
+
     def test_concluido_e_removido_nao_bloqueiam(self):
         lista = [
             entrada("a", ["src/a/"], estado="concluido"),
@@ -463,7 +468,7 @@ class TestesMarcar(unittest.TestCase):
 
     def test_estados_validos(self):
         self.assertEqual(
-            fila.ESTADOS, ("aguardando", "ativo", "pausado", "concluido", "removido")
+            fila.ESTADOS, ("aguardando", "admitindo", "ativo", "pausado", "concluido", "removido")
         )
 
 

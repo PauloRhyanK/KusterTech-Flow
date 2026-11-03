@@ -2,7 +2,10 @@ import contextlib
 import datetime
 import io
 import json
+import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -369,13 +372,51 @@ class TestesAdmissao(Base):
         a = self.publicar("login", ["src/login/**"])
         self.systemd.falhar_enable.add(self.unit(a))
         self.novo().ciclo()
-        self.assertEqual(self.estados()[a], "aguardando")
+        # rodada 1, item 4: gravado como admitindo antes do enable; com a unit inativa, a admissão é refeita
+        self.assertEqual(self.estados()[a], "admitindo")
         self.assertTrue([m for m in self.avisos() if a in m])
         self.systemd.falhar_enable.clear()
         self.novo().ciclo()
         self.assertEqual(self.estados()[a], "ativo")
         self.assertEqual(self.iniciados(), [a])
         self.assertEqual(len(self.ligados()), 2)
+
+    def test_morte_entre_o_enable_e_a_gravacao_com_o_plano_sumido_mantem_a_unit_rastreada(self):
+        a = self.publicar("login", ["src/login/**"])
+        systemd = self.systemd
+
+        class Morte(BaseException):
+            pass
+
+        def morre_no_enable(*args):
+            resultado = systemd(*args)
+            if args[0] == "enable":
+                raise Morte()
+            return resultado
+
+        with self.assertRaises(Morte):
+            self.novo(systemd=morre_no_enable).ciclo()
+        self.assertEqual(self.estados()[a], "admitindo")
+        cap = self.raiz / "capacidade.json"
+        capacidade.reservar(cap, a, "raia-0", mem_disponivel_mb=None)
+        capacidade.tomar_orquestrador(cap, REPO, a)
+        self.apagar("login")
+        self.novo().ciclo()
+        self.assertEqual(self.estados()[a], "ativo")
+        dados = capacidade.ler(cap)
+        self.assertEqual(dados["reservas"], {a: ["raia-0"]})
+        self.assertEqual(dados["orquestrador"], {REPO: a})
+        self.assertEqual(self.iniciados(), [a])
+
+    def test_admitindo_conta_como_ativo_para_os_orfaos_mesmo_sem_resposta_ativa(self):
+        a = self.publicar("login", ["src/login/**"])
+        self.systemd.falhar_enable.add(self.unit(a))
+        self.novo().ciclo()
+        cap = self.raiz / "capacidade.json"
+        capacidade.reservar(cap, a, "raia-0", mem_disponivel_mb=None)
+        self.novo().ciclo()  # unit inativa: refaz a admissão, que falha de novo
+        self.assertEqual(self.estados()[a], "admitindo")
+        self.assertEqual(capacidade.ler(cap)["reservas"], {a: ["raia-0"]})
 
     def test_iniciar_que_falha_fica_aguardando_com_aviso_sem_token_e_tenta_de_novo(self):
         a = self.publicar("login", ["src/login/**"])
@@ -474,6 +515,37 @@ class TestesObservacao(Base):
         c.ciclo()
         self.assertEqual(self.estados()[a], "ativo")
 
+    def test_unit_failed_com_estado_concluido_conclui_e_avisa_a_causa(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.novo()
+        c.ciclo()
+        cap = self.raiz / "capacidade.json"
+        capacidade.reservar(cap, a, "raia-0", mem_disponivel_mb=None)
+        capacidade.tomar_orquestrador(cap, REPO, a)
+        self.concluir(a)
+        self.systemd.estados[self.unit(a)] = "failed"
+        self.systemd.status[self.unit(a)] = "Main process exited, status=2/INVALIDARGUMENT"
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "concluido")
+        self.assertIn(("disable", "--now", self.unit(a)), self.systemd.chamadas)
+        avisos = [m for m in self.avisos() if a in m]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("plano %s concluído; a unit estava failed: " % a, avisos[0])
+        self.assertIn("status=2", avisos[0])
+        dados = capacidade.ler(cap)
+        self.assertEqual((dados["reservas"], dados["orquestrador"]), ({}, {}))
+
+    def test_is_active_vem_antes_da_conclusao(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.novo()
+        c.ciclo()
+        self.concluir(a)
+        self.systemd.chamadas.clear()
+        c.ciclo()
+        acoes = [ch[0] for ch in self.systemd.chamadas]
+        self.assertEqual(acoes, ["is-active", "disable"])
+        self.assertEqual(self.estados()[a], "concluido")
+
     def test_pausado_bloqueia_quem_colide(self):
         a = self.publicar("login", ["src/login/**"])
         c = self.novo()
@@ -544,6 +616,32 @@ class TestesObservacao(Base):
         c.ciclo()
         self.assertEqual(self.estados()[a], "pausado")
         self.assertEqual(self.ligados(), [self.unit(a)])
+
+
+class TestesIdsDoArquivo(Base):
+    def test_id_invalido_no_fila_estado_e_ignorado_com_aviso_e_nunca_vira_unit_nem_caminho(self):
+        bom = self.publicar("login", ["src/login/**"])
+        ruins = ["../../fora", "dono--cliente--x", "Dono--cliente--login--abcdef", "a--b--c--d--e", "dono--cliente--login--abc def"]
+        fila_ = [
+            {"id": id_, "repo": REPO, "feature": "x", "caminho": ".fabrica/planos/x.json", "entrouEm": "2026-11-03T10:00:00Z", "estado": estado, "arquivos": ["outro/**"]}
+            for id_ in ruins
+            for estado in ("ativo", "aguardando")
+        ]
+        (self.raiz / "fila-estado.json").write_text(json.dumps({"fila": fila_}), encoding="utf-8")
+        c = self.novo()
+        c.ciclo()
+        c.ciclo()
+        alvos = [ch[-1] for ch in self.systemd.chamadas]
+        self.assertTrue(all(alvo == self.unit(bom) for alvo in alvos), alvos)
+        self.assertEqual(self.iniciados(), [bom])
+        self.assertFalse((self.raiz.parent / "fora").exists())
+        self.assertEqual(sorted(p.name for p in (self.raiz / "planos").iterdir()), [bom])
+        for id_ in ruins:
+            self.assertEqual(len([m for m in self.avisos() if repr(id_) in m]), 1, id_)
+        ids = [e["id"] for e in self.fila_estado()["fila"]]
+        self.assertEqual(ids.count("../../fora"), 2)  # a entrada fica no arquivo, intocada
+        fila_no_status = coordenador.status(self.raiz).split("vagas efetivas")[0]
+        self.assertNotIn("../../fora", fila_no_status)
 
 
 class TestesPlanoInvalido(Base):
@@ -706,18 +804,31 @@ class TestesDrenagem(Base):
         c.ciclo()
         self.assertIsNone(self.drenagem())
 
-    def test_coordenador_reiniciado_retoma_a_drenagem_do_disco(self):
+    def test_coordenador_novo_limpa_a_drenagem_herdada_antes_do_primeiro_preparo(self):
         self.preparar = PrepararFalso(ESPERANDO)
         c = self.novo()
         c.ciclo()
         c.ciclo()
         self.assertEqual(self.drenagem(), "2026-11-03T12:00:00Z")
-        capacidade.definir_drenagem(self.raiz / "capacidade.json", None)
+        vistos = []
+        preparar = self.preparar
+
+        def espiao(**argumentos):
+            vistos.append(self.drenagem())
+            return preparar(**argumentos)
+
         self.instante += datetime.timedelta(minutes=5)
-        self.novo().ciclo()
-        self.assertEqual(self.drenagem(), "2026-11-03T12:00:00Z")
-        self.instante += datetime.timedelta(minutes=25)
-        self.novo().ciclo()
+        novo = self.novo(preparar_warren=espiao)
+        novo.ciclo()
+        self.assertEqual(vistos, [None])
+        self.assertIsNone(self.drenagem())
+        self.assertIsNone(self.fila_estado()["warren"]["drenagem"]["desde"])
+        novo.ciclo()  # duas esperas deste coordenador: drenagem nova, com o relógio dele
+        self.assertEqual(self.drenagem(), "2026-11-03T12:05:00Z")
+
+    def test_coordenador_novo_sem_preparo_tambem_limpa(self):
+        capacidade.definir_drenagem(self.raiz / "capacidade.json", "2026-11-03T11:00:00Z")
+        self.novo(preparar_warren=None).ciclo()
         self.assertIsNone(self.drenagem())
 
 
@@ -738,6 +849,13 @@ class TestesStatus(Base):
         self.assertIn("%s: raia-0" % a, texto)
         self.assertIn("%s: %s" % (REPO, a), texto)
         self.assertIn("quebrado", texto)
+
+    def test_status_tambem_e_metodo(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.novo()
+        c.ciclo()
+        self.assertEqual(c.status(), coordenador.status(self.raiz))
+        self.assertIn("%s: ativo" % a, c.status())
 
     def test_status_sem_nada(self):
         texto = coordenador.status(self.raiz)
@@ -816,8 +934,39 @@ class TestesMain(Base):
         self.assertEqual(codigo, 0)
         self.assertEqual(len(chamadas), 3)
         log = (self.raiz / "log.jsonl").read_text(encoding="utf-8")
-        self.assertIn("erro_no_ciclo", log)
+        self.assertEqual(log.count("erro_no_ciclo"), 1)  # rodada 1, item 5: só quando a mensagem muda
         self.assertNotIn(TOKEN, log)
+
+    def test_erro_no_ciclo_registra_de_novo_quando_a_mensagem_muda(self):
+        c = self.novo()
+        mensagens = iter(["a", "a", "b", "b", "a"])
+
+        def ciclo():
+            raise RuntimeError(next(mensagens))
+
+        c.ciclo = ciclo
+        self.rodar("rodar", "--ciclos", "5", construir=lambda ambiente, raiz: c)
+        linhas = [json.loads(x) for x in (self.raiz / "log.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([x["erro"] for x in linhas if x.get("evento") == "erro_no_ciclo"], ["RuntimeError: a", "RuntimeError: b", "RuntimeError: a"])
+
+    def test_fila_json_ilegivel_no_meio_sai_com_2_e_solta_a_drenagem(self):
+        self.preparar = PrepararFalso(ESPERANDO)
+        c = self.novo()
+
+        def dormir(_):
+            if self.drenagem_atual():
+                (self.raiz / "fila.json").write_text("{ruim", encoding="utf-8")
+
+        erro = io.StringIO()
+        codigo = coordenador.main(
+            ["--raiz", str(self.raiz), "rodar", "--ciclos", "10"], ambiente={}, construir=lambda ambiente, raiz: c, saida=io.StringIO(), erro=erro, dormir=dormir
+        )
+        self.assertEqual(codigo, 2)
+        self.assertIn("fila.json", erro.getvalue())
+        self.assertIsNone(self.drenagem_atual())
+
+    def drenagem_atual(self):
+        return capacidade.ler(self.raiz / "capacidade.json")["drenagem"]
 
     def test_vagas_limpa_o_oom(self):
         cap = self.raiz / "capacidade.json"
@@ -866,6 +1015,80 @@ class TestesMain(Base):
         self.assertIsInstance(c, coordenador.Coordenador)
         self.assertIn(TOKEN, c._segredos)
         self.assertEqual(c.ambiente, {"WARREN_TOKEN_FILE": str(warren), "GH_TOKEN_FILE": str(gh)})
+
+
+class TestesClone(unittest.TestCase):
+    """Rodada 1, item 3: o clone autentica por um credential.helper local que lê GH_TOKEN_FILE; só o caminho fica gravado."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = pathlib.Path(self._tmp.name)
+        self.token = self.tmp / "segredos" / "gh-token"
+        self.token.parent.mkdir()
+        self.token.write_text("ghp_tokenDeTesteMuitoSecreto99\n", encoding="utf-8")
+        self.chamadas = []
+
+    def gravar(self, argv, **kw):
+        self.chamadas.append(list(argv))
+        env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        return subprocess.run(argv, env=env, **kw)
+
+    @unittest.skipUnless(shutil.which("git"), "sem git")
+    def test_clone_grava_o_helper_so_com_o_caminho_e_o_helper_entrega_o_token(self):
+        remoto = self.tmp / "remoto" / "dono" / "cliente.git"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(remoto)], check=True)
+        destino = self.tmp / "planos" / "p" / "repo"
+        destino.parent.mkdir(parents=True)
+        coordenador._clonar("dono/cliente", destino, token_file=str(self.token), base="file://%s/" % (self.tmp / "remoto"), rodar=self.gravar)
+        self.assertTrue((destino / ".git").is_dir())
+        self.assertIn(["git", "clone", "--quiet"], [c[:3] for c in self.chamadas])
+        clone = next(c for c in self.chamadas if c[:2] == ["git", "clone"])
+        self.assertIn("file://%s/dono/cliente.git" % (self.tmp / "remoto"), clone)
+        self.assertIn("credential.helper=", clone)  # o vazio zera os helpers globais durante o clone
+        self.assertTrue([x for x in clone if x.startswith("credential.helper=!f()")])
+        segredo = self.token.read_text(encoding="utf-8").strip()
+        for argv in self.chamadas:
+            self.assertNotIn(segredo, " ".join(argv))
+        config = (destino / ".git" / "config").read_text(encoding="utf-8")
+        self.assertNotIn(segredo, config)
+        self.assertIn(str(self.token), config)
+        self.assertIn("x-access-token", config)
+        saida = self.gravar(
+            ["git", "-C", str(destino), "credential", "fill"], input="protocol=https\nhost=github.com\n\n", capture_output=True, text=True
+        )
+        self.assertEqual(saida.returncode, 0, saida.stderr)
+        self.assertIn("username=x-access-token", saida.stdout)
+        self.assertIn("password=%s" % segredo, saida.stdout)
+
+    def test_url_padrao_do_github_e_falha_sem_deixar_pasta(self):
+        def falha(argv, **kw):
+            self.chamadas.append(list(argv))
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: repository not found")
+
+        destino = self.tmp / "repo"
+        with self.assertRaises(RuntimeError):
+            coordenador._clonar("dono/cliente", destino, token_file=str(self.token), rodar=falha)
+        self.assertIn("https://github.com/dono/cliente.git", self.chamadas[0])
+        self.assertFalse(destino.exists())
+        self.assertFalse((self.tmp / ".repo.clonando").exists())
+
+    def test_caminho_do_token_com_aspa_simples_e_entrada_invalida(self):
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            coordenador._clonar("dono/cliente", self.tmp / "repo", token_file="/tmp/it's", rodar=lambda *a, **k: None)
+        ruim = self.tmp / "it's"
+        ruim.write_text("x" * 20, encoding="utf-8")
+        boa = self.tmp / "w"
+        boa.write_text("y" * 20, encoding="utf-8")
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            coordenador.construir({"WARREN_TOKEN_FILE": str(boa), "GH_TOKEN_FILE": str(ruim)}, self.tmp)
+
+    def test_construir_passa_o_caminho_absoluto_do_token_ao_clone(self):
+        boa = self.tmp / "w"
+        boa.write_text("y" * 20, encoding="utf-8")
+        c = coordenador.construir({"WARREN_TOKEN_FILE": str(boa), "GH_TOKEN_FILE": str(self.token)}, self.tmp)
+        self.assertIs(c.clonar.func, coordenador._clonar)
+        self.assertEqual(c.clonar.keywords["token_file"], str(self.token))
 
 
 class TestesUnits(unittest.TestCase):
