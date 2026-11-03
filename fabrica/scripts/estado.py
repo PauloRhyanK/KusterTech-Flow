@@ -5,6 +5,7 @@ Observações malformadas nunca levantam exceção: são ignoradas e viram um av
 """
 
 import copy
+import datetime
 import pathlib
 import sys
 
@@ -25,6 +26,10 @@ ESTADOS_DE_GATE = ("em_revisao", "aguardando_gates", "corrigindo")
 MOTIVOS_DO_PAULO = ("nova_spec", "fase_concluida")
 PREFIXOS_DO_ORQUESTRADOR = (".fabrica/", ".seeds/")
 PERGUNTA_DO_ORQUESTRADOR = ".fabrica/pergunta.md"
+# F1: CI "ausente" logo depois de um head novo aguarda os checks por até 10 min antes de ir para o humano
+ESPERA_CI_AUSENTE = datetime.timedelta(minutes=10)
+# F2c: a partir de 2 replanejamentos da raia, a próxima falha dela vai para o Paulo, não para o orquestrador
+MAX_REPLANEJAMENTOS = 2
 
 
 def _raia_nova(plano_seeds=None) -> dict:
@@ -84,6 +89,14 @@ def _avisar(estado: dict, mensagem: str) -> None:
         estado["avisos"] = []
     if mensagem not in estado["avisos"]:
         estado["avisos"].append(mensagem)
+
+
+def _reiniciada(raia: dict, plano_seeds) -> dict:
+    """F2c: a raia nova de um replanejamento (planoSeeds novo) leva o contador de replanejamentos + 1."""
+    anteriores = raia.get("replanejamentos")
+    nova = _raia_nova(plano_seeds)
+    nova["replanejamentos"] = (anteriores if _inteiro(anteriores) and anteriores >= 0 else 0) + 1
+    return nova
 
 
 def _raias_do_plano(plano) -> list[tuple[str, object]]:
@@ -183,7 +196,7 @@ def sincronizar_plano(estado: dict, plano: dict) -> dict:
             and _chave("raia_falhou", id_) in _lista(estado.get("chavesAcordadas"))
             and _dict(estado.get("orquestrador")).get("runId") is None
         ):
-            raias_do_estado[id_] = _raia_nova(plano_seeds)
+            raias_do_estado[id_] = _reiniciada(raia, plano_seeds)
             chave = _chave("raia_falhou", id_)
             estado["chavesAcordadas"] = [c for c in _lista(estado.get("chavesAcordadas")) if c != chave]
             raias_do_estado[id_]["seedsSubstituidas"] = _remover_tentativa(estado, id_, avisar=True)
@@ -225,7 +238,7 @@ def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
     if raia.get("estado") != "executando":
         _avisar(estado, f"substituir_raia: raia {raia_id!r} não está executando")
         return estado
-    _raias(estado)[raia_id] = _raia_nova(plano_seeds)
+    _raias(estado)[raia_id] = _reiniciada(raia, plano_seeds)
     _raias(estado)[raia_id]["seedsSubstituidas"] = _remover_tentativa(estado, raia_id, avisar=False)
     return estado
 
@@ -329,8 +342,9 @@ def registrar_plano(
 
 
 def registrar_pr(
-    estado: dict, seed_id: str, *, head_sha: str, branch: str, arquivos: list[str], ci: str | None
+    estado: dict, seed_id: str, *, head_sha: str, branch: str, arquivos: list[str], ci: str | None, agora=None
 ) -> dict:
+    """`agora` (datetime): F1, a hora em que o head foi visto pela primeira vez vai para `headVistoEm`."""
     estado = copy.deepcopy(estado)
     seed = _seed(estado, seed_id, "registrar_pr")
     if seed is None:
@@ -340,6 +354,8 @@ def registrar_pr(
         if _texto(anterior) and anterior != head_sha:
             seed["tentativasMerge"] = 0  # head novo: as recusas eram do head antigo
             seed["interrupcoes"] = 0
+        if anterior != head_sha or not _texto(seed.get("headVistoEm")):
+            seed["headVistoEm"] = agora.isoformat() if isinstance(agora, datetime.datetime) else None
         seed["headSha"] = head_sha
     else:
         # sem head legível nenhum gate vale e nenhuma ação é emitida para a seed
@@ -399,6 +415,9 @@ def registrar_fim_de_run(
                 estado_run == "succeeded"
                 and isinstance(veredito, dict)
                 and seed.get("estado") in ESTADOS_DE_GATE
+                # F4: só vale o veredito do sha pedido na revisão; outro sha é revisão sem veredito válido
+                and _texto(seed.get("revisaoSha"))
+                and veredito.get("sha") == seed.get("revisaoSha")
             ):
                 seed["veredito"] = veredito
                 seed["estado"] = "aguardando_gates"
@@ -447,7 +466,18 @@ def _chave(motivo, alvo) -> str:
     return f"{motivo}:{alvo}"
 
 
-def _acoes_da_seed(seed_id: str, seed: dict, protegidos) -> list[dict]:
+def _ci_ausente_recente(seed: dict, agora) -> bool:
+    """F1: o head foi visto há menos de 10 min (relógio e marca legíveis e do mesmo tipo; senão, False)."""
+    if not isinstance(agora, datetime.datetime) or not _texto(seed.get("headVistoEm")):
+        return False
+    try:
+        decorrido = agora - datetime.datetime.fromisoformat(seed["headVistoEm"])
+    except (TypeError, ValueError):
+        return False
+    return datetime.timedelta(0) <= decorrido < ESPERA_CI_AUSENTE
+
+
+def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None) -> list[dict]:
     head = seed.get("headSha")
     r = gates.avaliar_merge(
         head_sha=head,
@@ -456,6 +486,7 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos) -> list[dict]:
         veredito=seed.get("veredito"),
         arquivos=seed.get("arquivos"),
         protegidos=protegidos,
+        ci_ausente_recente=_ci_ausente_recente(seed, agora),
     )
     decisao = r["decisao"]
     if decisao == "mergear":
@@ -496,8 +527,11 @@ def _fase_atual(plano: dict):
     return None, []
 
 
-def proximas_acoes(estado: dict, plano: dict, protegidos: list[str]) -> list[dict]:
-    """Ações na ordem: 1 seeds, 2 retomar, 3 despachar, 4 raia falhou, 5 fase concluída."""
+def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None) -> list[dict]:
+    """Ações na ordem: 1 seeds, 2 retomar, 3 despachar, 4 raia falhou, 5 fase concluída.
+
+    `agora` (datetime) liga a janela de 10 min do CI "ausente" (F1); sem ele, "ausente" vai para o humano.
+    """
     estado = copy.deepcopy(estado)
     plano = _dict(copy.deepcopy(plano))
     protegidos = copy.deepcopy(protegidos)
@@ -524,7 +558,7 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str]) -> list[dic
             raia_falhou = _dict(raias_do_estado.get(seed.get("raia"))).get("estado") == "falhou"
             acoes.extend(
                 a
-                for a in _acoes_da_seed(seed_id, seed, protegidos)
+                for a in _acoes_da_seed(seed_id, seed, protegidos, agora)
                 # raia falha: quem decide o destino do PR é o orquestrador
                 if not (raia_falhou and a["tipo"] == "mergear")
             )
@@ -651,6 +685,7 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
     if tipo == "revisar":
         if _texto(resultado.get("runId")):
             seed["revisaoRunId"] = resultado["runId"]
+            seed["revisaoSha"] = acao.get("sha") if _texto(acao.get("sha")) else None
             tentativas = seed.get("tentativasRevisao")
             seed["tentativasRevisao"] = (tentativas if _inteiro(tentativas) else MAX_TENTATIVAS_REVISAO) + 1
         else:

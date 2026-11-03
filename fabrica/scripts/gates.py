@@ -58,8 +58,12 @@ def _descrever_achados(veredito):
     return "; ".join(itens)
 
 
-def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos) -> dict:
-    """Decide `mergear`, `aguardar`, `corrigir` ou `humano`; a ordem das regras é o contrato."""
+def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos, ci_ausente_recente=False) -> dict:
+    """Decide `mergear`, `aguardar`, `corrigir` ou `humano`; a ordem das regras é o contrato.
+
+    F1: com `ci_ausente_recente` (head visto há menos de 10 min), CI "ausente" é tratado como pendente: o GitHub cria
+    os check runs alguns segundos depois do push.
+    """
     faltando = []
     if not _veredito_valido(veredito, head_sha):
         faltando.append("revisao")
@@ -69,8 +73,9 @@ def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos) 
     def resultado(decisao, motivos):
         return {"decisao": decisao, "faltando": faltando, "motivos": motivos}
 
-    # 1. sem CI
-    if ci == "ausente":
+    # 1. sem CI (F1: logo depois de um head novo, os checks ainda podem não existir)
+    ausente_recente = ci == "ausente" and ci_ausente_recente is True
+    if ci == "ausente" and not ausente_recente:
         return resultado("humano", ["repositório sem CI"])
     if ci is None:
         return resultado("aguardar", ["CI ainda não lido"])
@@ -78,7 +83,7 @@ def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos) 
         return resultado("humano", [f"estado de CI desconhecido: {ci!r}"])
 
     # 2. falta algo ou o CI ainda roda
-    if faltando or ci == "pendente":
+    if faltando or ci == "pendente" or ausente_recente:
         motivos = []
         if "revisao" in faltando:
             motivos.append("falta a revisão do head atual")
@@ -86,6 +91,8 @@ def avaliar_merge(*, head_sha, ci, verificacao, veredito, arquivos, protegidos) 
             motivos.append("falta a verificação do head atual")
         if ci == "pendente":
             motivos.append("CI pendente")
+        if ausente_recente:
+            motivos.append("CI ausente no head novo: aguardando os checks")
         return resultado("aguardar", motivos)
 
     # 3. algum gate reprovou

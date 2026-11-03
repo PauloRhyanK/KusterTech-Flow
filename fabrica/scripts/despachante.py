@@ -146,6 +146,20 @@ AVISO_AUTOMERGE = "não foi possível desligar o warren-automerge.service (ele m
 AVISO_DROPIN = "não foi possível gravar o drop-in do systemd com WARREN_PLAN_RUN_MERGE_TIMEOUT_MS; nova tentativa em 20 ciclos"
 ESPERAS_PARA_DRENAR = 2
 DRENAGEM_MAXIMA = datetime.timedelta(minutes=45)
+# F13: sem confirmação de restart com o drop-in carregado, o merge timeout do Warren ainda é o padrão (30 min)
+DRENAGEM_MAXIMA_SEM_DROPIN = datetime.timedelta(minutes=25)
+ESTADOS_COM_DROPIN_CARREGADO = ("ja_aplicado", "aplicado", "versao_desconhecida")
+# F8: o warren-automerge desligado ou inexistente libera os merges
+AUTOMERGE_DESLIGADO = ("desligado", "ausente", "ja_desligado")
+TITULO_AUTOMERGE = "[fábrica] warren-automerge ainda ativo"
+MOTIVO_AUTOMERGE = "warren-automerge ainda ativo: ele mergeia PRs sem os gates"
+# F6 (N6 e N7): além das 3 leituras boas, só desiste do retry ou do item incerto 5 min depois de vê-lo pela 1ª vez
+PISO_PARA_DESISTIR = datetime.timedelta(minutes=5)
+# F2: códigos do `docker run` em que o comando nem executou (125: o daemon ou o run falhou; 126: não executável)
+CODIGOS_DOCKER_NAO_EXECUTOU = (125, 126)
+CODIGO_COMANDO_AUSENTE = 127
+# F5: motivos de seed em que o merge é do Paulo
+MOTIVOS_MERGE_DO_PAULO = ("toca arquivos protegidos", "merge recusado pelo GitHub")
 PAUSA_ENTRE_DRENAGENS = datetime.timedelta(hours=6)
 ACOES_SEGURAS_NA_DRENAGEM = ("despachar_raia", "revisar", "corrigir", "acordar", "mergear")
 
@@ -308,6 +322,18 @@ def _ler_json(caminho: pathlib.Path):
         raise ValueError("%s ilegível: corrija ou restaure o arquivo" % caminho.name) from None
 
 
+def _ler_estado(raiz):
+    """F10: o `estado.json` da raiz (None se não existe); ilegível ou que não é objeto é entrada inválida (saída 2)."""
+    caminho = pathlib.Path(raiz) / ARQ_ESTADO
+    try:
+        estado = _ler_json(caminho)
+    except ValueError:
+        estado = []
+    if estado is not None and not isinstance(estado, dict):
+        raise ErroDeEntrada(["estado.json ilegível em %s: corrija ou restaure o arquivo" % caminho.parent])
+    return estado
+
+
 def _anexar_linha(caminho: pathlib.Path, linha: str) -> None:
     try:
         with open(caminho, "a", encoding="utf-8") as arquivo:
@@ -410,6 +436,27 @@ def _mudancas_de_verificacao(antigo, novo) -> list[str]:
     return mudancas
 
 
+def _mudancas_de_fase(antigo, novo) -> list[str]:
+    """F3: `faseAtual` mudada, fase removida ou fases reordenadas no plano novo; tudo isso é homologação do Paulo."""
+    def ids(plano):
+        return [f.get("id") for f in _lista(_dict(plano).get("fases")) if isinstance(f, dict)]
+
+    antigas, novas = ids(antigo), ids(novo)
+    mudancas = []
+    if _dict(antigo).get("faseAtual") != _dict(novo).get("faseAtual"):
+        mudancas.append(
+            "aprovar mudança de fase: faseAtual de %s para %s"
+            % (_cortar(repr(_dict(antigo).get("faseAtual")), 100), _cortar(repr(_dict(novo).get("faseAtual")), 100))
+        )
+    removidas = [f for f in antigas if f not in novas]
+    if removidas:
+        mudancas.append("aprovar mudança de fase: fases removidas " + ", ".join(_cortar(repr(f), 100) for f in removidas[:20]))
+    comuns = [f for f in novas if f in antigas]
+    if comuns != [f for f in antigas if f in novas]:
+        mudancas.append("aprovar mudança de fase: fases reordenadas (%s)" % ", ".join(_cortar(repr(f), 100) for f in comuns[:20]))
+    return mudancas
+
+
 def _validar_modelo(entrada, papel: str) -> dict:
     campo = "modelos.%s" % papel
     if not isinstance(entrada, dict):
@@ -499,10 +546,8 @@ class Despachante:
         # os mais longos primeiro, para um segredo que contém outro ser trocado inteiro
         self._segredos = tuple(sorted((s for s in conhecidos if len(s) >= TAMANHO_MINIMO_SEGREDO), key=len, reverse=True))
         self.raiz.mkdir(parents=True, exist_ok=True)
-        self.estado = _ler_json(self.raiz / ARQ_ESTADO)
+        self.estado = _ler_estado(self.raiz)
         if self.estado is not None:
-            if not isinstance(self.estado, dict):
-                raise ValueError("estado.json ilegível: corrija ou restaure o arquivo")
             if self.estado.get("repo") != repo or self.estado.get("projeto") != projeto:
                 raise ConfigInvalida("o estado.json desta raiz é de outro projeto ou repositório")
         self.plano = _dict(_ler_json(self.raiz / ARQ_PLANO))
@@ -784,7 +829,7 @@ class Despachante:
     def rodar(self, *, intervalo: int = 30, ciclos: int | None = None, dormir=time.sleep) -> None:
         with self._sob_trava():
             # M9: o estado em disco é o que vale depois de tomar a trava
-            self.estado = _ler_json(self.raiz / ARQ_ESTADO)
+            self.estado = _ler_estado(self.raiz)
             if self.estado is not None and (self.estado.get("repo") != self.repo or self.estado.get("projeto") != self.projeto):
                 raise ConfigInvalida("o estado.json desta raiz é de outro projeto ou repositório")
             self.plano = _dict(_ler_json(self.raiz / ARQ_PLANO))
@@ -865,7 +910,15 @@ class Despachante:
                 self._sha_revertido = None
             anterior = _dict(self.estado.get("warrenPreparado"))
             seguidas = (anterior.get("esperasSeguidas") if _inteiro(anterior.get("esperasSeguidas")) else 0) + 1 if estado == "aguardando_runs" else 0
-            self.estado["warrenPreparado"] = dict(registro, em=self._agora().isoformat(), esperasSeguidas=seguidas)
+            # F13: o drop-in só conta como carregado com um resultado que o confirma (sem restart pendente nem rollback)
+            carregado = anterior.get("dropinCarregado") is True
+            if estado in ESTADOS_COM_DROPIN_CARREGADO and registro.get("dropin") in ("ok", "alterado"):
+                carregado = True
+            elif registro.get("dropin") == "erro":
+                carregado = False
+            self.estado["warrenPreparado"] = dict(
+                registro, em=self._agora().isoformat(), esperasSeguidas=seguidas, dropinCarregado=carregado
+            )
             self._salvar()
             self._log(dict({"evento": "preparar_warren"}, **registro))
             self._atualizar_drenagem(estado, seguidas)
@@ -875,12 +928,30 @@ class Despachante:
                 self._retirar_aviso(AVISO_WARREN_SEM_MODELO)
             if registro.get("automerge") == "erro":
                 self._aviso(AVISO_AUTOMERGE)
+                self._garantir_decisao_de_automerge()
             if registro.get("dropin") == "erro":
                 self._aviso(AVISO_DROPIN)
             if estado == "revertido" and resultado.get("warrenVoltou") is False:
                 self._warren_fora_apos_rollback(registro["detalhe"])
         except Exception as exc:  # noqa: BLE001 - tenta de novo depois
             self._erro_de_etapa("preparar_warren", "warren", exc)
+
+    def _merges_suspensos(self) -> bool:
+        """F8: com o warren-automerge ainda ativo, os merges ficam segurados (os despachos seguem)."""
+        return self._preparar_ligado() and _dict(self.estado.get("warrenPreparado")).get("automerge") == "erro"
+
+    def _garantir_decisao_de_automerge(self) -> None:
+        corpo = (
+            "%s. O despachante não conseguiu desligar o `warren-automerge.service` e segura os merges (os despachos "
+            "seguem) até o desligamento dar certo; ele tenta de novo a cada 20 ciclos. Confira o `sudo -n` do usuário "
+            "do despachante ou desligue o serviço à mão (`sudo systemctl disable --now warren-automerge.service`). "
+            "Esta issue é fechada sozinha quando o preparo informar o automerge desligado ou ausente." % MOTIVO_AUTOMERGE
+        )
+        try:
+            url = self._abrir_decisao_rastreada(MOTIVO_AUTOMERGE, "warren", TITULO_AUTOMERGE, corpo, tipo="automerge")
+            self._log({"evento": "automerge_ativo", "url": url})
+        except Exception as exc:  # noqa: BLE001 - a intenção gravada fica para a recuperação
+            self._erro_de_etapa("automerge_ativo", self.repo, exc)
 
     def _retirar_aviso(self, mensagem: str) -> None:
         avisos = self.estado.get("avisos")
@@ -916,8 +987,10 @@ class Despachante:
             return None
 
     def _atualizar_drenagem(self, estado: str, seguidas: int) -> None:
-        """D: drenagem limitada a 45 min; depois do teto, só de novo depois de 6 h. Tudo persistido."""
+        """D: drenagem limitada a 45 min (F13: 25 min sem o drop-in carregado); depois do teto, só de novo depois de 6 h."""
         agora = self._agora()
+        carregado = _dict(self.estado.get("warrenPreparado")).get("dropinCarregado") is True
+        teto = DRENAGEM_MAXIMA if carregado else DRENAGEM_MAXIMA_SEM_DROPIN
         drenagem = _dict(self.estado.get("drenagemWarren"))
         desde = self._instante(drenagem.get("desde"))
         proxima = self._instante(drenagem.get("proxima"))
@@ -928,14 +1001,15 @@ class Despachante:
                 self._log({"evento": "drenagem_warren", "acao": "fim", "estado": estado})
             return
         if desde is not None:
-            if agora - desde >= DRENAGEM_MAXIMA:
+            if agora - desde >= teto:
                 volta = agora + PAUSA_ENTRE_DRENAGENS
                 self.estado["drenagemWarren"] = {"desde": None, "proxima": volta.isoformat()}
                 self._salvar()
                 self._log({"evento": "drenagem_warren", "acao": "teto", "desde": drenagem.get("desde")})
                 self._aviso(
-                    "drenagem do Warren para o restart do preparo expirou depois de 45 min com runs ativos (desde %s); "
-                    "despachos retomados, nova drenagem a partir de %s" % (drenagem.get("desde"), volta.isoformat())
+                    "drenagem do Warren para o restart do preparo expirou depois de %d min com runs ativos (desde %s); "
+                    "despachos retomados, nova drenagem a partir de %s"
+                    % (teto.total_seconds() // 60, drenagem.get("desde"), volta.isoformat())
                 )
             return
         if seguidas >= ESPERAS_PARA_DRENAR and (proxima is None or agora >= proxima):
@@ -1242,6 +1316,7 @@ class Despachante:
                 "buscas": 0,
                 "falhasBusca": 0,
                 "desde": desde,
+                "vistoEm": self._agora_utc(),
                 "nonces": [n for n in _lista(self._nonces_do_run(run_id).get("nonces")) if _texto(n)],
             }
             self._salvar()
@@ -1274,7 +1349,7 @@ class Despachante:
             self._fechar_decisao_de_incerto(chave, "O retry %s do run %s foi achado no Warren; issue fechada pelo despachante." % (achado, run_id))
             return ("adotado", achado)
         item["buscas"] = (item.get("buscas") if _inteiro(item.get("buscas")) else 0) + 1
-        if item["buscas"] < CICLOS_PARA_ACHAR_RETRY:
+        if item["buscas"] < CICLOS_PARA_ACHAR_RETRY or not self._passou_o_piso(item):
             self._salvar()
             return ("esperar", None)
         esperados.pop(run_id, None)
@@ -1282,6 +1357,14 @@ class Despachante:
         self._log({"evento": "retry_nao_encontrado", "runId": run_id, "papel": papel, "alvo": alvo})
         self._fechar_decisao_de_incerto(chave, "O Warren não refez o run %s; o despachante segue o caminho normal." % run_id)
         return ("desistir", None)
+
+    def _passou_o_piso(self, item: dict) -> bool:
+        """F6: 5 min desde que a falha ou a incerteza foi vista (`vistoEm`); sem marca legível, ela começa agora."""
+        try:
+            return instante(self._agora_utc()) - instante(item.get("vistoEm")) >= PISO_PARA_DESISTIR
+        except ValueError:
+            item["vistoEm"] = self._agora_utc()
+            return False
 
     def _observar_orquestrador(self, somente=None) -> None:
         orquestrador = self._orq()
@@ -1631,7 +1714,7 @@ class Despachante:
             ):
                 guardadas[seed_id] = {
                     k: copy.deepcopy(anterior.get(k))
-                    for k in ("pr", "headSha", "estado", "veredito", "verificacao", "revisaoRunId", "tentativasRevisao")
+                    for k in ("pr", "headSha", "estado", "veredito", "verificacao", "revisaoRunId", "revisaoSha", "tentativasRevisao")
                 }
                 mudou = True
         if mudou:
@@ -1650,7 +1733,7 @@ class Despachante:
             and seed.get("veredito") is None
             and seed.get("verificacao") is None
         ):
-            for chave in ("veredito", "verificacao", "revisaoRunId", "tentativasRevisao"):
+            for chave in ("veredito", "verificacao", "revisaoRunId", "revisaoSha", "tentativasRevisao"):
                 seed[chave] = anterior.get(chave)
             if seed.get("estado") == "em_revisao" and anterior.get("estado") == "aguardando_gates":
                 seed["estado"] = "aguardando_gates"
@@ -1690,6 +1773,7 @@ class Despachante:
                     branch=pr.get("branch"),
                     arquivos=pr.get("arquivos"),
                     ci=ci,
+                    agora=self._agora(),
                 )
             )
             self._restaurar_tentativa(seed_id)
@@ -1716,6 +1800,31 @@ class Despachante:
                 # P10: se o despachante está rodando, a config voltou a valer
                 mudou = True
                 self._fechar_depois(decisao["url"], "A config voltou a ser válida; issue fechada pelo despachante.", decisao=True)
+                continue
+            if decisao.get("tipo") == "automerge":
+                # F8: fecha sozinha quando o preparo informa o automerge desligado ou ausente
+                if self._merges_suspensos():
+                    restantes.append(decisao)
+                    continue
+                mudou = True
+                self._fechar_depois(decisao["url"], "O warren-automerge foi desligado; merges retomados. Issue fechada pelo despachante.", decisao=True)
+                continue
+            if decisao.get("tipo", "seed") == "seed" and self._seed_resolvida(decisao):
+                # F5: a seed foi mergeada, ficou obsoleta ou saiu do estado: a decisão acabou e não acorda ninguém
+                mudou = True
+                self._fechar_depois(
+                    decisao["url"], "A seed %s foi mergeada ou saiu do plano; decisão encerrada pelo despachante." % decisao.get("alvo"), decisao=True
+                )
+                self._log({"evento": "decisao_resolvida", "url": decisao["url"], "alvo": decisao.get("alvo")})
+                continue
+            if decisao.get("tipo") == "orquestrador" and self._pr_mergeado(decisao.get("alvo")):
+                # F9: o merge do Paulo é a aprovação: a decisão fecha sem acordar o orquestrador
+                mudou = True
+                self._fechar_depois(
+                    decisao["url"], "O PR %s foi mergeado: a aprovação está registrada. Issue fechada pelo despachante." % decisao.get("alvo"), decisao=True
+                )
+                self.estado["prsOrquestrador"] = [u for u in _lista(self.estado.get("prsOrquestrador")) if u != decisao.get("alvo")]
+                self._log({"evento": "decisao_aprovada_por_merge", "url": decisao["url"], "pr": decisao.get("alvo")})
                 continue
             try:
                 info = _dict(self.forja.decisao(decisao["url"]))
@@ -1787,6 +1896,28 @@ class Despachante:
             self._salvar()
         for decisao, nota in recriar:
             self._recriar_decisao(decisao, nota)
+
+    def _seed_resolvida(self, decisao: dict) -> bool:
+        """F5: a seed da decisão não existe mais, é terminal ou já é outra tentativa (outro PR).
+
+        Toda decisão de seed nasce com o campo `pr` (`_registrar_intencao`); sem ele, não é decisão de seed."""
+        if "pr" not in decisao:
+            return False
+        seed = _dict(self.estado.get("seeds")).get(decisao.get("alvo"))
+        if not isinstance(seed, dict) or seed.get("estado") in est.TERMINAIS:
+            return True
+        return seed.get("pr") != decisao.get("pr")
+
+    def _pr_mergeado(self, url) -> bool:
+        """F9: o PR do orquestrador foi mergeado (pelo Paulo); na dúvida (leitura falha), False."""
+        if not _texto(url) or "/pull/" not in url:
+            return False
+        try:
+            pr = _dict(self.forja.pr(url))
+        except Exception as exc:  # noqa: BLE001 - segue o caminho de hoje
+            self._erro_de_etapa("pr_da_decisao", url, exc)
+            return False
+        return pr.get("mergeado") is True and self._mesmo_repo(pr.get("repo"))
 
     def _agora_utc(self) -> str:
         momento = self._agora()
@@ -2003,11 +2134,16 @@ class Despachante:
             faltando = self._papeis_sem_modelo(plano_novo) if not erros else []
             if faltando:
                 motivos.append("o plano novo usa papéis sem modelo em config['modelos']: %s" % ", ".join(faltando))
+        # F3: qualquer mudança de fase é homologação do Paulo, qualquer que seja o motivo da acordada
+        fase = _mudancas_de_fase(self.plano, plano_novo) if plano_novo is not None and not erros else []
         decisao = "humano" if motivos else est.decidir_pr_orquestrador(
             motivo=motivo, arquivos=arquivos, erros_plano=erros
         )
+        if decisao == "mergear" and fase:
+            decisao = "humano"
         self._log_repetivel(
-            "pr_do_orquestrador:%s" % pr_url, {"evento": "pr_do_orquestrador", "pr": pr_url, "decisao": decisao, "motivos": motivos}
+            "pr_do_orquestrador:%s" % pr_url,
+            {"evento": "pr_do_orquestrador", "pr": pr_url, "decisao": decisao, "motivos": motivos + fase},
         )
         if decisao == "mergear":
             return self._mergear_pr_orquestrador(pr_url, head, motivo)
@@ -2025,7 +2161,7 @@ class Despachante:
             }
         if decisao != "humano":
             motivos.append("decisão desconhecida %r" % (decisao,))
-        url = self._decidir_humano_orquestrador(pr_url, motivo, motivos)
+        url = self._decidir_humano_orquestrador(pr_url, motivo, motivos, fase)
         return self._sem_resultado(url, motivos) if motivos else {"r": "neutro", "decisao": url}
 
     @staticmethod
@@ -2034,6 +2170,8 @@ class Despachante:
 
     def _mergear_pr_orquestrador(self, pr_url: str, head: str, motivo) -> dict:
         orquestrador = self._orq()
+        if self._merges_suspensos():
+            return {"r": "esperar"}  # F8: o merge espera o warren-automerge ser desligado
         ci = self.forja.ci(self.repo, head)
         if ci == "pendente":
             agora = self._agora()
@@ -2252,21 +2390,28 @@ class Despachante:
             except Exception as exc:  # noqa: BLE001 - fica para o próximo ciclo
                 self._erro_de_etapa("decisao_pendente", intencao.get("nonce"), exc)
 
-    def _decidir_humano_orquestrador(self, pr_url: str, motivo, motivos: list[str]) -> str:
+    def _decidir_humano_orquestrador(self, pr_url: str, motivo, motivos: list[str], mudancas_de_fase=()) -> str:
         fase = motivo in est.MOTIVOS_DO_PAULO
+        so_fase = not motivos  # F3: sem outro motivo, o título diz que é homologação de fase
+        motivos = list(motivos) + list(mudancas_de_fase)
         if not motivos and not fase:
             motivos = ["o PR do orquestrador precisa de uma decisão do Paulo"]
         if fase:
             motivos = motivos + ["aprovar fase (o orquestrador foi acordado por %s)" % motivo]
-        titulo = "[fábrica] orquestrador: " + (
-            "aprovar fase" if fase and len(motivos) == 1 else "PR do orquestrador precisa de aprovação"
-        )
+        if fase and so_fase:
+            titulo = "aprovar fase"
+        elif mudancas_de_fase and so_fase:
+            titulo = "aprovar mudança de fase"
+        else:
+            titulo = "PR do orquestrador precisa de aprovação"
+        titulo = "[fábrica] orquestrador: " + titulo
         corpo = "PR: %s\nMotivo da acordada: %s\n\nMotivos:\n%s\n\n%s" % (
             pr_url,
             motivo,
             "\n".join("- " + m for m in motivos),
-            "Mergeie ou não o PR e feche esta issue com um comentário para responder ao orquestrador. "
-            "Um PR ainda aberto quando a issue fechar é fechado pelo despachante.",
+            "Para aprovar, mergeie o PR: o merge é a aprovação, esta issue é fechada pelo despachante e o orquestrador "
+            "não é acordado. Para recusar ou pedir outra coisa, feche esta issue com um comentário: ele volta para o "
+            "orquestrador, e um PR ainda aberto quando a issue fechar é fechado pelo despachante.",
         )
         self._acompanhar_pr(pr_url)
         return self._abrir_decisao_rastreada("; ".join(motivos), pr_url, titulo, corpo, tipo="orquestrador")
@@ -2463,6 +2608,45 @@ class Despachante:
         self._salvar()
         self._log({"evento": "acao", "acao": dict(acao), "resultado": {"cancelado": plan_run_id, "prsFechados": abertos}})
 
+    def _raia_da_acordada(self, acao: dict):
+        if acao.get("motivo") == "raia_falhou":
+            return acao.get("alvo")
+        if acao.get("motivo") == "gate_falhou_apos_fixer":
+            return _dict(_dict(self.estado.get("seeds")).get(acao.get("alvo"))).get("raia")
+        return None
+
+    def _no_teto_de_replanejamento(self, acao: dict) -> bool:
+        if acao.get("tipo") != "acordar":
+            return False
+        raia = _dict(_dict(self.estado.get("raias")).get(self._raia_da_acordada(acao)))
+        n = raia.get("replanejamentos")
+        return _inteiro(n) and n >= est.MAX_REPLANEJAMENTOS
+
+    def _escalar_teto_de_replanejamento(self, acao: dict) -> bool:
+        """F2c: decisão rastreada para o Paulo no lugar da acordada; a chave fica gasta (como se tivesse acordado)."""
+        chave = "%s:%s" % (acao.get("motivo"), acao.get("alvo"))
+        raia_id = self._raia_da_acordada(acao)
+        n = _dict(_dict(self.estado.get("raias")).get(raia_id)).get("replanejamentos")
+        motivo = "a raia %s falhou de novo (%s) depois de %d replanejamentos do orquestrador" % (raia_id, chave, n)
+        corpo = (
+            "%s. Para limitar o custo, o despachante não acorda o orquestrador outra vez para esta raia.\n\nContexto:\n%s\n\n"
+            "Decida o que fazer (por exemplo: replanejar de outro jeito, tirar a raia da fase ou corrigir a verificação) e %s"
+            % (motivo, json.dumps(self._contexto(acao), ensure_ascii=False, indent=1, default=str)[:4000], RODAPE_DECISAO[0].lower() + RODAPE_DECISAO[1:])
+        )
+        try:
+            url = self._abrir_decisao_rastreada(
+                motivo, chave, "[fábrica] raia %s: falhou depois de %d replanejamentos" % (raia_id, n), corpo, tipo="replanejamento"
+            )
+        except Exception as exc:  # noqa: BLE001 - a intenção gravada fica para a recuperação
+            self._erro_de_etapa("teto_de_replanejamento", chave, exc)
+            return False
+        chaves = self.estado.setdefault("chavesAcordadas", [])
+        if isinstance(chaves, list) and chave not in chaves:
+            chaves.append(chave)
+        self._salvar()
+        self._log({"evento": "teto_de_replanejamento", "chave": chave, "raia": raia_id, "replanejamentos": n, "url": url})
+        return True
+
     def _plano_despachavel(self) -> dict:
         """O plano sem as raias que não podem ser despachadas (elas não seguram vaga) e a escalada delas."""
         plano = copy.deepcopy(self.plano)
@@ -2507,7 +2691,7 @@ class Despachante:
         # I3: com a substituição ainda pendente, a tentativa antiga não recebe gate nem retomar
         pendentes = {a["raia"] for a in self._acoes_de_substituicao()}
         seeds = _dict(self.estado.get("seeds"))
-        acoes = est.proximas_acoes(self.estado, self._plano_despachavel(), self._protegidos())
+        acoes = est.proximas_acoes(self.estado, self._plano_despachavel(), self._protegidos(), agora=self._agora())
         incertas = self._chaves_incertas()
         orquestrador_incerto = self._orquestrador_incerto()
         acoes = [
@@ -2518,7 +2702,14 @@ class Despachante:
             and not (a.get("tipo") == "retomar_raia" and a.get("raia") in pendentes)
             and _chave_acao(a) not in incertas
             and not (a.get("tipo") == "acordar" and orquestrador_incerto)
+            and not (a.get("tipo") == "verificar" and self._verificacao_em_decisao(a.get("seed")))
         ]
+        # F2c: a raia já replanejada 2 vezes não acorda o orquestrador de novo: a falha vai para o Paulo
+        no_teto = [a for a in acoes if self._no_teto_de_replanejamento(a)]
+        for acao in no_teto:
+            if self._escalar_teto_de_replanejamento(acao):
+                executadas.append({"tipo": "decidir_replanejamento", "motivo": acao.get("motivo"), "alvo": acao.get("alvo")})
+        acoes = [a for a in acoes if a not in no_teto]
         if self._bloqueado():
             acoes = [a for a in acoes if a.get("tipo") != "acordar"]
         if not any(a.get("tipo") == "acordar" for a in acoes):
@@ -2528,6 +2719,8 @@ class Despachante:
         if self._drenando():
             # D: o Warren drena para o restart do preparo; o merge também sai (dispararia o próximo filho do plan run)
             acoes = [a for a in acoes if a.get("tipo") not in ACOES_SEGURAS_NA_DRENAGEM]
+        if self._merges_suspensos():
+            acoes = [a for a in acoes if a.get("tipo") != "mergear"]
         for acao in acoes:
             if self.estado.get("pausado"):
                 break
@@ -2602,7 +2795,16 @@ class Despachante:
         chave = _chave_acao(acao)
         nonces, desde = self._cadeia(chave, nonce, desde)  # R3: a busca casa qualquer nonce da cadeia
         incertos.append(
-            {"acao": copy.deepcopy(acao), "nonce": nonce, "nonces": nonces, "chave": chave, "ciclos": 0, "desde": desde, "falhasBusca": 0}
+            {
+                "acao": copy.deepcopy(acao),
+                "nonce": nonce,
+                "nonces": nonces,
+                "chave": chave,
+                "ciclos": 0,
+                "desde": desde,
+                "falhasBusca": 0,
+                "vistoEm": self._agora_utc(),
+            }
         )
         self._salvar()
         self._aviso("despacho %s incerto (falha de rede depois do envio): procurando pelo nonce" % _chave_acao(acao))
@@ -2762,7 +2964,7 @@ class Despachante:
                 self._fechar_decisao_de_incerto(chave, "O despacho %s foi confirmado no Warren (%s); issue fechada pelo despachante." % (chave, achado))
                 continue
             item["ciclos"] = (item.get("ciclos") if _inteiro(item.get("ciclos")) else 0) + 1
-            if item["ciclos"] < CICLOS_PARA_DESCARTAR_INCERTO:
+            if item["ciclos"] < CICLOS_PARA_DESCARTAR_INCERTO or not self._passou_o_piso(item):
                 restantes.append(item)
                 continue
             self._log({"evento": "despacho_incerto_descartado", "acao": self._resumo_da_acao(acao)})
@@ -2830,6 +3032,44 @@ class Despachante:
             if isinstance(registro, dict) and registro.get("runId") == run_id:
                 return True
         return False
+
+    def _verificacao_nao_executou(self, raia_id, comando: str, resultado):
+        """F2: o comando nem rodou. Docker (125/126) ou o próprio verificador (`interno`) pausam a fábrica; o comando
+        ausente na imagem (127) abre uma decisão da raia. Nos dois casos nada vai ao fixer nem ao orquestrador."""
+        if not isinstance(resultado, dict) or not _inteiro(resultado.get("codigo")):
+            return None
+        codigo = resultado["codigo"]
+        linhas = [linha.strip() for linha in str(resultado.get("saida") or "").splitlines() if linha.strip()]
+        detalhe = _cortar(linhas[-1], 160) if linhas else "(sem saída)"
+        if resultado.get("interno") is True or codigo in CODIGOS_DOCKER_NAO_EXECUTOU:
+            self.estado["pausado"] = self._seguro("verificação não executou: código %d: %s" % (codigo, detalhe), 200)
+            self._salvar()
+            self._aviso("verificação da raia %s não executou (código %d): despachante pausado" % (raia_id, codigo))
+            return {"adiado": True, "naoExecutou": codigo}
+        if codigo != CODIGO_COMANDO_AUSENTE:
+            return None
+        motivo = "o comando de verificação da raia %s não existe na imagem: %s" % (raia_id, comando)
+        corpo = (
+            "%s\n\nSaída (fim):\n%s\n\nA verificação roda num contêiner novo, sem `node_modules`, com usuário não root e "
+            "`HOME=/tmp/home` (veja \"Comando de verificação\" em `.fabrica/orquestrador.md`): o comando precisa instalar as "
+            "dependências, por exemplo `corepack enable && pnpm install --frozen-lockfile && pnpm test`. As seeds da raia "
+            "esperam esta decisão; nada foi ao fixer nem ao orquestrador. Corrija a imagem em `.fabrica/config.json` ou peça "
+            "ao orquestrador outro comando, e %s"
+            % (motivo, _cortar(str(resultado.get("saida") or ""), 1500), RODAPE_DECISAO[0].lower() + RODAPE_DECISAO[1:])
+        )
+        try:
+            url = self._abrir_decisao_rastreada(
+                motivo, raia_id, "[fábrica] raia %s: comando de verificação não existe na imagem" % raia_id, corpo, tipo="verificacao"
+            )
+        except Exception as exc:  # noqa: BLE001 - a intenção gravada fica para a recuperação; a verificação espera
+            self._erro_de_etapa("comando_ausente", raia_id, exc)
+            url = None
+        return {"adiado": True, "naoExecutou": codigo, "decisao": url}
+
+    def _verificacao_em_decisao(self, seed_id) -> bool:
+        """F2b: a raia da seed tem uma decisão de comando de verificação aberta: a verificação espera o Paulo."""
+        raia_id = _dict(_dict(self.estado.get("seeds")).get(seed_id)).get("raia")
+        return self._decisao_aberta("verificacao", raia_id) is not None
 
     def _seed_da_acao(self, acao: dict) -> dict:
         seed = _dict(self.estado.get("seeds")).get(acao.get("seed"))
@@ -2899,6 +3139,12 @@ class Despachante:
             resultado = self._verificar(
                 self.repo_dir, acao.get("sha"), comando, conteiner=copy.deepcopy(self.config["verificacao"])
             )
+            if isinstance(resultado, dict) and isinstance(resultado.get("saida"), str):
+                # F7: a saída vai para o estado, os prompts e as issues: os segredos conhecidos saem aqui
+                resultado = dict(resultado, saida=self._seguro(resultado["saida"], max(len(resultado["saida"]), LIMITE_MENSAGEM)))
+            nao_executou = self._verificacao_nao_executou(seed.get("raia"), comando, resultado)
+            if nao_executou is not None:
+                return nao_executou
             return {"verificacao": resultado}
 
         if tipo == "mergear":
@@ -2917,13 +3163,21 @@ class Despachante:
         if tipo == "aguardar_humano":
             seed = self._seed_da_acao(acao)
             motivos = [m for m in _lista(acao.get("motivos")) if isinstance(m, str)] or ["decisão humana necessária"]
+            rodape = RODAPE_DECISAO
+            if _texto(seed.get("pr")) and any(m.startswith(MOTIVOS_MERGE_DO_PAULO) for m in motivos):
+                # F5: arquivo protegido ou merge recusado: o merge é do Paulo, e o merge dele resolve a decisão
+                rodape = (
+                    "Revise e mergeie ou feche o PR %s: o merge é seu. Mergeado o PR, esta issue é fechada pelo despachante "
+                    "sem acordar o orquestrador. Se fechar o PR sem merge, feche também esta issue com um comentário dizendo "
+                    "o que fazer: ele volta para o orquestrador." % seed["pr"]
+                )
             corpo = "Seed: %s\nRaia: %s\nPR: %s\nHead: %s\n\nMotivos:\n%s\n\n%s" % (
                 acao["seed"],
                 seed.get("raia"),
                 seed.get("pr") or "(sem PR)",
                 seed.get("headSha") or "-",
                 "\n".join("- " + m for m in motivos),
-                RODAPE_DECISAO,
+                rodape,
             )
             url = self._abrir_decisao_rastreada(
                 "; ".join(motivos), acao["seed"], "[fábrica] %s: decisão necessária" % acao["seed"], corpo, tipo="seed", pr=seed.get("pr")
@@ -2958,7 +3212,7 @@ def retomar(raiz, *, agora=datetime.datetime.now) -> None:
     A issue de pausa, se houver, é fechada pelo próximo ciclo do despachante.
     """
     raiz = pathlib.Path(raiz)
-    estado = _ler_json(raiz / ARQ_ESTADO)
+    estado = _ler_estado(raiz)
     if not isinstance(estado, dict):
         raise ErroDeEntrada(["sem estado.json em %s: rode iniciar" % raiz])
     antes = {"pausado": estado.get("pausado"), "falhasAcordar": estado.get("falhasAcordar")}
@@ -2977,7 +3231,7 @@ def retomar(raiz, *, agora=datetime.datetime.now) -> None:
 
 def status(raiz) -> str:
     raiz = pathlib.Path(raiz)
-    estado = _ler_json(raiz / ARQ_ESTADO)
+    estado = _ler_estado(raiz)
     if not isinstance(estado, dict):
         raise ErroDeEntrada(["sem estado.json em %s: rode iniciar" % raiz])
     c = compactar(estado, _dict(_ler_json(raiz / ARQ_PLANO)))

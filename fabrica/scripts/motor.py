@@ -233,6 +233,8 @@ class MotorFalso:
         self.retry_infra_perdida = True
         self.atraso_de_visibilidade = datetime.timedelta(0)
         self._retries: dict[str, str] = {}
+        # F6: o Plan Run também só aparece na busca pelo nonce depois do atraso de visibilidade
+        self._planos_criados_em: dict[str, datetime.datetime] = {}
 
     def _registrar(self, nome: str, **argumentos) -> None:
         self.chamadas.append((nome, argumentos))
@@ -424,6 +426,7 @@ class MotorFalso:
         plan_run_id = self._novo_id("plano")
         self.definir_plano(plan_run_id, "running", [])
         self._textos_enviados[plan_run_id] = (projeto, prompt_template)
+        self._planos_criados_em[plan_run_id] = self.agora()
         self._falhar_depois()
         return plan_run_id
 
@@ -499,7 +502,11 @@ class MotorFalso:
     def _procurar(self, nome: str, projeto: str, nonce, prefixo: str) -> str | None:
         self._registrar(nome, projeto=projeto, nonce=nonce)
         marcas = marcas_de_nonce(nonce)
+        agora = self.agora()
         for ident, (proj, texto) in self._textos_enviados.items():
+            criado = self._planos_criados_em.get(ident)
+            if criado is not None and criado + self.atraso_de_visibilidade > agora:
+                continue  # F6: ainda invisível
             if ident.startswith(prefixo) and proj == projeto and any(m in texto for m in marcas):
                 return ident
         return None

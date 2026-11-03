@@ -517,6 +517,40 @@ class FalhaDeCotaTest(unittest.TestCase):
             with self.subTest(texto=texto):
                 self.assertFalse(eh_falha_de_cota("provider_error", texto))
 
+    def test_f14_mensagens_novas_de_cota(self):
+        casos = [
+            "RESOURCE_EXHAUSTED",
+            "resource_exhausted",
+            "Too Many Requests",
+            "too many requests, slow down",
+            "Monthly limit reached",
+            "session limit reached, try later",
+            "Hourly limit exceeded",
+            "5-hour limit hit",
+            "weekly limit exceeded",
+            "Daily Limit",
+            "usage limit",
+        ]
+        for texto in casos:
+            with self.subTest(texto=texto):
+                self.assertTrue(eh_falha_de_cota("provider_error", texto))
+                self.assertFalse(eh_falha_de_cota("timed_out", texto))
+
+    def test_f14_limites_que_continuam_nao_sendo_cota(self):
+        for texto in (
+            "context window limit reached",
+            "max turns limit reached",
+            "limit reached",
+            "resource exhausted disk",
+            "too many open files",
+            "many requests queued",
+            "time limit",
+            "hourly",
+            "quotation",
+        ):
+            with self.subTest(texto=texto):
+                self.assertFalse(eh_falha_de_cota("provider_error", texto))
+
     def test_429_precisa_ser_palavra(self):
         self.assertFalse(eh_falha_de_cota("provider_error", "erro 14290 no stack"))
         self.assertTrue(eh_falha_de_cota("provider_error", "status=429."))

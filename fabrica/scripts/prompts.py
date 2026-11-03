@@ -13,7 +13,11 @@ LIMITE_SAIDA_VERIFICACAO = 4000
 ARQUIVO_EXEMPLO = "caminho/do/arquivo.ts"
 MOTIVO_EXEMPLO = "descreva o problema"
 _RESULTADOS = ("aprovado", "correcoes")
-_COTA = re.compile(r"(?i)(\b429\b|quota(?!tion)|rate.?limit|usage limit|(?:hour|weekly|daily) limit reached)")
+# F14: mensagens de cota de cada provedor; "context window limit" e "max turns limit" NÃO são cota
+_COTA = re.compile(
+    r"(?i)(\b429\b|quota(?!tion)|rate.?limit|resource_exhausted|too many requests"
+    r"|(?:monthly|session|usage|hourly|5-hour|weekly|daily) limit|(?:hour|weekly|daily) limit reached)"
+)
 
 
 def _pacote_do_papel(papel) -> str:

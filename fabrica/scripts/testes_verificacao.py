@@ -639,7 +639,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         ]
         for cfg, campo in casos:
             r, _ = self.verificar(conteiner=cfg)
-            self.assertEqual(r, {"sha": SHA, "codigo": 2, "saida": "config de contêiner inválida: " + campo})
+            self.assertEqual(r, {"sha": SHA, "codigo": 2, "saida": "config de contêiner inválida: " + campo, "interno": True})
 
     def test_config_valida_no_limite_e_password_so_em_servico(self):
         cfg = {
@@ -663,14 +663,14 @@ class TestesVerificarComFalso(unittest.TestCase):
         for sha in ruins:
             fake = DockerFalso()
             r = verificacao.verificar(self.dir, sha, "x", conteiner=CONTEINER, executar=fake)
-            self.assertEqual(r, {"sha": sha, "codigo": 2, "saida": "sha inválido"}, repr(sha))
+            self.assertEqual(r, {"sha": sha, "codigo": 2, "saida": "sha inválido", "interno": True}, repr(sha))
             self.assertEqual(fake.chamadas, [])
 
     def test_comando_invalido_nao_executa_nada(self):
         for comando in ("", "   \n", None, 5, "echo a\0b", "\0"):
             fake = DockerFalso()
             r = verificacao.verificar(self.dir, SHA, comando, conteiner=CONTEINER, executar=fake)
-            self.assertEqual(r, {"sha": SHA, "codigo": 2, "saida": "comando inválido"}, repr(comando))
+            self.assertEqual(r, {"sha": SHA, "codigo": 2, "saida": "comando inválido", "interno": True}, repr(comando))
             self.assertEqual(fake.chamadas, [])
 
     # Rede, usuário, rótulos e limites dos serviços
@@ -837,6 +837,50 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(parametros["popen"].kind, inspect.Parameter.KEYWORD_ONLY)
         for nome in ("_rodar_em_grupo", "_matar_grupo", "_extrair", "_EXECUTAR_PADRAO"):
             self.assertFalse(hasattr(verificacao, nome), nome)
+
+
+class TestesF2ErroInterno(unittest.TestCase):
+    """F2a: as falhas do próprio verificador (config, export, docker de controle, binário do host) vêm com
+    `interno: True`; o código do comando no contêiner (inclusive 2, 125, 126 e 127 do `docker run`) não."""
+
+    setUp = TestesVerificarComFalso.setUp
+    verificar = TestesVerificarComFalso.verificar
+
+    def test_falhas_do_verificador_marcam_interno(self):
+        casos = {
+            "export": DockerFalso(ls=ls_tree_saida((b"100644", "../fora.txt", OID_A)), cat=cat_file_saida((OID_A, b"x"))),
+            "git do host": DockerFalso(),
+            "docker do host": DockerFalso(),
+            "rede": DockerFalso(),
+        }
+        casos["git do host"].respostas["fetch"] = FileNotFoundError("git")
+        casos["docker do host"].respostas["rede-create"] = FileNotFoundError("docker")
+        casos["rede"].respostas["rede-create"] = proc(1, "", "Cannot connect to the Docker daemon")
+        for nome, fake in casos.items():
+            with self.subTest(caso=nome):
+                r, _ = self.verificar(fake=fake)
+                self.assertIs(r.get("interno"), True, r)
+                self.assertNotEqual(r["codigo"], 0)
+
+    def test_servico_que_nao_sobe_marca_interno(self):
+        cfg = {"imagem": IMAGEM, "servicos": [{"nome": "db", "imagem": "postgres:16"}]}
+        fake = DockerFalso()
+        fake.respostas["servico"] = [proc(125, "", "pull access denied")]
+        r, _ = self.verificar(fake=fake, conteiner=cfg)
+        self.assertIs(r.get("interno"), True)
+
+    def test_codigo_do_comando_e_do_fetch_nao_marca_interno(self):
+        for codigo in (0, 1, 2, 125, 126, 127):
+            with self.subTest(codigo=codigo):
+                fake = DockerFalso()
+                fake.respostas["principal"] = proc(codigo, "saida", "")
+                r, _ = self.verificar(fake=fake)
+                self.assertEqual(r["codigo"], codigo)
+                self.assertNotIn("interno", r)
+        fake = DockerFalso()
+        fake.respostas["fetch"] = proc(128, "", "fatal: sem remoto\n")
+        r, _ = self.verificar(fake=fake)
+        self.assertNotIn("interno", r)
 
 
 class TestesRodarLimitado(unittest.TestCase):

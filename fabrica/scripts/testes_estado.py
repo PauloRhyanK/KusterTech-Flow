@@ -1,4 +1,5 @@
 import copy
+import datetime
 import pathlib
 import sys
 import unittest
@@ -1288,6 +1289,7 @@ class TestReplanejarRaiaFalha(unittest.TestCase):
                 "falha": None,
                 "planoSeeds": "pl-00aa",
                 "seedsSubstituidas": [],
+                "replanejamentos": 1,
             },
         )
         self.assertEqual(e["chavesAcordadas"], ["fase_concluida:fundacao"])
@@ -1665,6 +1667,7 @@ class TestMutantesSobreviventes(unittest.TestCase):
                 "falha": None,
                 "planoSeeds": "pl-NEW",
                 "seedsSubstituidas": [],
+                "replanejamentos": 1,
             },
         )
 
@@ -1751,7 +1754,7 @@ class TestSubstituirRaia(unittest.TestCase):
         antes = copy.deepcopy(e)
         novo = est.substituir_raia(e, "a", "pl-00aa")
         self.assertEqual(e, antes)
-        self.assertEqual(novo["raias"]["a"], dict(est._raia_nova("pl-00aa"), seedsSubstituidas=["s1", "s2"]))
+        self.assertEqual(novo["raias"]["a"], dict(est._raia_nova("pl-00aa"), seedsSubstituidas=["s1", "s2"], replanejamentos=1))
         self.assertNotIn("s1", novo["seeds"])
         self.assertNotIn("s2", novo["seeds"])
         self.assertEqual(novo["seeds"]["s0"]["estado"], "mergeada")
@@ -1786,6 +1789,136 @@ class TestSubstituirRaia(unittest.TestCase):
                 self.assertEqual(novo["raias"]["a"], e["raias"]["a"])
                 self.assertEqual(novo["seeds"], e["seeds"])
 
+
+
+T0 = datetime.datetime(2026, 11, 3, 12, 0, 0)
+
+
+class TestCorrecaoFinalF1CiAusente(unittest.TestCase):
+    """F1: CI "ausente" com menos de 10 min desde o head visto aguarda; depois vai para o humano, como antes."""
+
+    def com_ausente(self, sha="bbb", agora=T0):
+        e = despachar(estado_inicial(), "a")
+        e = est.registrar_plano(e, "a", estado_plano="running", falha=None, filhos=[filho()])
+        return est.registrar_pr(e, "s1", head_sha=sha, branch="warren/s1", arquivos=["src/a/x.ts"], ci="ausente", agora=agora)
+
+    def test_registrar_pr_grava_head_visto_em_quando_o_head_muda(self):
+        e = self.com_ausente()
+        self.assertEqual(e["seeds"]["s1"]["headVistoEm"], T0.isoformat())
+        mesmo = est.registrar_pr(e, "s1", head_sha="bbb", branch="warren/s1", arquivos=[], ci="ausente", agora=T0 + datetime.timedelta(minutes=5))
+        self.assertEqual(mesmo["seeds"]["s1"]["headVistoEm"], T0.isoformat())
+        depois = T0 + datetime.timedelta(minutes=7)
+        novo = est.registrar_pr(e, "s1", head_sha="ccc", branch="warren/s1", arquivos=[], ci="ausente", agora=depois)
+        self.assertEqual(novo["seeds"]["s1"]["headVistoEm"], depois.isoformat())
+        sem_relogio = est.registrar_pr(e, "s1", head_sha="ddd", branch="warren/s1", arquivos=[], ci="ausente")
+        self.assertIsNone(sem_relogio["seeds"]["s1"]["headVistoEm"])
+
+    def test_estado_antigo_sem_head_visto_em_ganha_a_marca(self):
+        e = com_pr(sha="bbb", ci="ausente")
+        e["seeds"]["s1"].pop("headVistoEm", None)
+        e = est.registrar_pr(e, "s1", head_sha="bbb", branch="warren/s1", arquivos=["src/a/x.ts"], ci="ausente", agora=T0)
+        self.assertEqual(e["seeds"]["s1"]["headVistoEm"], T0.isoformat())
+
+    def test_ausente_recente_aguarda_sem_humano_e_pede_os_gates(self):
+        e = self.com_ausente()
+        for minutos in (0, 9):
+            with self.subTest(minutos=minutos):
+                lista = est.proximas_acoes(e, plano(), PROTEGIDOS, agora=T0 + datetime.timedelta(minutes=minutos, seconds=59))
+                self.assertEqual([a["tipo"] for a in da_seed(lista)], ["revisar", "verificar"])
+
+    def test_ausente_com_tudo_verde_dentro_da_janela_nao_mergeia_nem_escala(self):
+        e = self.com_ausente()
+        e = revisar(e, "bbb", "rv1", veredito("bbb"))
+        e = verificar(e, "bbb")
+        self.assertEqual(da_seed(est.proximas_acoes(e, plano(), PROTEGIDOS, agora=T0 + datetime.timedelta(minutes=3))), [])
+
+    def test_ausente_depois_de_10_min_vai_para_o_humano(self):
+        e = self.com_ausente()
+        for agora in (T0 + datetime.timedelta(minutes=10), T0 + datetime.timedelta(hours=3)):
+            with self.subTest(agora=agora):
+                [acao] = da_seed(est.proximas_acoes(e, plano(), PROTEGIDOS, agora=agora))
+                self.assertEqual((acao["tipo"], acao["motivos"]), ("aguardar_humano", ["repositório sem CI"]))
+
+    def test_sem_relogio_ou_marca_ilegivel_vai_para_o_humano(self):
+        e = self.com_ausente()
+        [acao] = da_seed(est.proximas_acoes(e, plano(), PROTEGIDOS))
+        self.assertEqual(acao["tipo"], "aguardar_humano")
+        for ruim in (None, "", "ontem", 3, (T0 + datetime.timedelta(hours=1)).isoformat()):
+            with self.subTest(ruim=ruim):
+                e2 = copy.deepcopy(e)
+                e2["seeds"]["s1"]["headVistoEm"] = ruim
+                [acao] = da_seed(est.proximas_acoes(e2, plano(), PROTEGIDOS, agora=T0))
+                self.assertEqual(acao["tipo"], "aguardar_humano")
+        com_fuso = T0.replace(tzinfo=datetime.timezone.utc)
+        [acao] = da_seed(est.proximas_acoes(e, plano(), PROTEGIDOS, agora=com_fuso))
+        self.assertEqual(acao["tipo"], "aguardar_humano")
+
+
+class TestCorrecaoFinalF2Replanejamentos(unittest.TestCase):
+    """F2c: cada reinício da raia por planoSeeds novo conta em `replanejamentos`."""
+
+    def test_substituir_raia_conta(self):
+        e = com_pr(sha="bbb")
+        e = est.substituir_raia(e, "a", "pl-00aa")
+        self.assertEqual(e["raias"]["a"]["replanejamentos"], 1)
+        e["raias"]["a"].update(estado="executando", planRunId="p2")
+        e = est.substituir_raia(e, "a", "pl-00ab")
+        self.assertEqual(e["raias"]["a"]["replanejamentos"], 2)
+
+    def test_reinicio_h_da_raia_falha_conta(self):
+        e = despachar(estado_inicial(), "a")
+        e["raias"]["a"]["replanejamentos"] = 1
+        e = est.registrar_plano(e, "a", estado_plano="failed", falha="run_failed", filhos=[])
+        e = est.aplicar(e, {"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, {"runId": "orq1"})
+        e = est.concluir_orquestrador(e)
+        p = plano()
+        p["raias"][1]["planoSeeds"] = "pl-00aa"
+        e = est.sincronizar_plano(e, p)
+        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["replanejamentos"]), ("planejada", 2))
+
+    def test_contador_corrompido_recomeca_em_um(self):
+        for ruim in (None, "x", True, -3):
+            with self.subTest(ruim=ruim):
+                e = com_pr(sha="bbb")
+                e["raias"]["a"]["replanejamentos"] = ruim
+                self.assertGreaterEqual(est.substituir_raia(e, "a", "pl-00aa")["raias"]["a"]["replanejamentos"], 1)
+
+
+class TestCorrecaoFinalF4VereditoDoShaPedido(unittest.TestCase):
+    """F4: o veredito só vale se o sha dele é o sha pedido na revisão (`revisaoSha`)."""
+
+    def test_revisar_grava_o_sha_pedido(self):
+        e = com_pr(sha="bbb")
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv1"})
+        self.assertEqual(e["seeds"]["s1"]["revisaoSha"], "bbb")
+
+    def test_veredito_de_outro_sha_e_descartado(self):
+        e = com_pr(sha="bbb")
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv1"})
+        e = est.registrar_pr(e, "s1", head_sha="ccc", branch="warren/s1", arquivos=["src/a/x.ts"], ci="verde")
+        e = est.registrar_fim_de_run(e, "rv1", estado_run="succeeded", motivo_falha=None, veredito=veredito("ccc"), cota=False)
+        seed = e["seeds"]["s1"]
+        self.assertIsNone(seed["veredito"])
+        self.assertIsNone(seed["revisaoRunId"])
+        self.assertEqual(seed["estado"], "em_revisao")
+        e = verificar(e, "ccc")
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["revisar"])
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "ccc"}, {"runId": "rv2"})
+        e = est.registrar_fim_de_run(e, "rv2", estado_run="succeeded", motivo_falha=None, veredito=veredito("bbb"), cota=False)
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["aguardar_humano"])
+
+    def test_veredito_do_sha_pedido_vale(self):
+        e = com_pr(sha="bbb")
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv1"})
+        e = est.registrar_fim_de_run(e, "rv1", estado_run="succeeded", motivo_falha=None, veredito=veredito("bbb"), cota=False)
+        self.assertEqual(e["seeds"]["s1"]["veredito"], veredito("bbb"))
+
+    def test_sem_sha_pedido_nenhum_veredito_vale(self):
+        e = com_pr(sha="bbb")
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv1"})
+        del e["seeds"]["s1"]["revisaoSha"]
+        e = est.registrar_fim_de_run(e, "rv1", estado_run="succeeded", motivo_falha=None, veredito=veredito("bbb"), cota=False)
+        self.assertIsNone(e["seeds"]["s1"]["veredito"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -303,5 +303,31 @@ class AvaliarMergeTest(unittest.TestCase):
         self.assertEqual(protegidos, ["**/migrations/**"])
 
 
+
+class CiAusenteRecenteTest(unittest.TestCase):
+    """F1: CI "ausente" logo depois de um head novo é transitório (os checks ainda não foram criados)."""
+
+    def test_ausente_recente_aguarda_em_vez_de_humano(self):
+        r = avaliar(ci="ausente", ci_ausente_recente=True)
+        self.assertEqual(r["decisao"], "aguardar")
+        self.assertEqual(r["faltando"], [])
+        self.assertTrue(any("CI ausente" in m for m in r["motivos"]))
+
+    def test_ausente_recente_com_gate_faltando_aguarda_e_lista_o_que_falta(self):
+        r = avaliar(ci="ausente", ci_ausente_recente=True, veredito=None, verificacao=None)
+        self.assertEqual(r["decisao"], "aguardar")
+        self.assertEqual(r["faltando"], ["revisao", "verificacao"])
+
+    def test_ausente_sem_a_janela_continua_humano(self):
+        for kw in ({}, {"ci_ausente_recente": False}):
+            with self.subTest(kw=kw):
+                r = avaliar(ci="ausente", **kw)
+                self.assertEqual((r["decisao"], r["motivos"]), ("humano", ["repositório sem CI"]))
+
+    def test_janela_nao_muda_os_outros_estados_de_ci(self):
+        self.assertEqual(avaliar(ci="verde", ci_ausente_recente=True)["decisao"], "mergear")
+        self.assertEqual(avaliar(ci="vermelho", ci_ausente_recente=True)["decisao"], "corrigir")
+        self.assertEqual(avaliar(ci="pendente", ci_ausente_recente=True)["decisao"], "aguardar")
+
 if __name__ == "__main__":
     unittest.main()

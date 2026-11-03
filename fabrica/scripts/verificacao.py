@@ -155,8 +155,13 @@ def _aviso_e_saida(avisos: list[str], saida: str) -> str:
     return texto + (saida[-restante:] if restante > 0 else "")
 
 
-def _resposta(sha, codigo: int, saida: str = "", avisos: list[str] | None = None) -> dict:
-    return {"sha": sha, "codigo": codigo, "saida": _aviso_e_saida(avisos or [], saida)}
+def _resposta(sha, codigo: int, saida: str = "", avisos: list[str] | None = None, *, interno: bool = False) -> dict:
+    """F2a: `interno: True` quando a falha é do próprio verificador (config, export, docker de controle, binário do
+    host), não do comando no contêiner; o despachante pausa em vez de chamar o fixer."""
+    resposta = {"sha": sha, "codigo": codigo, "saida": _aviso_e_saida(avisos or [], saida)}
+    if interno:
+        resposta["interno"] = True
+    return resposta
 
 
 def _env_flags(env: dict) -> list[str]:
@@ -240,13 +245,13 @@ def verificar(
     `_rodar_limitado` com `popen`, para a saída nunca ficar inteira em memória.
     """
     if not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "sha inválido")
+        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "sha inválido", interno=True)
     if not isinstance(comando, str) or not comando.strip() or "\0" in comando:
-        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "comando inválido")
+        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "comando inválido", interno=True)
     try:
         config = _validar_conteiner(conteiner)
     except _ConfigInvalida as erro:
-        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "config de contêiner inválida: %s" % erro)
+        return _resposta(sha, CODIGO_ENTRADA_INVALIDA, "config de contêiner inválida: %s" % erro, interno=True)
 
     avisos: list[str] = []
     ambiente_git = _exportar.ambiente_git()
@@ -265,7 +270,7 @@ def verificar(
         aviso = "git fetch: tempo esgotado após %s s" % _exportar.TIMEOUT_GIT_S
         return _resposta(sha, CODIGO_TIMEOUT, _texto(erro.stdout) + _texto(erro.stderr), [aviso])
     except OSError as erro:
-        return _resposta(sha, CODIGO_NAO_EXECUTOU, _falha_ao_executar("git", erro))
+        return _resposta(sha, CODIGO_NAO_EXECUTOU, _falha_ao_executar("git", erro), interno=True)
     if resultado.returncode != 0:
         return _resposta(sha, resultado.returncode, _texto(resultado.stdout) + _texto(resultado.stderr))
 
@@ -274,6 +279,7 @@ def verificar(
     base = tempfile.mkdtemp(prefix="fabrica-verif-")
     src = os.path.join(base, "src")
     criados = {"rede": False, "servicos": []}
+    interno = []  # F2a: marcado quando a falha é do verificador, não do comando no contêiner
 
     def docker(args: list[str], timeout: int):
         return executar(["docker"] + args, capture_output=True, text=True, errors="replace", timeout=timeout)
@@ -282,10 +288,12 @@ def verificar(
         os.chmod(base, 0o700)
         os.mkdir(src, 0o755)
         if ":" in src or "," in src:
+            interno.append(True)
             return CODIGO_ENTRADA_INVALIDA, "diretório temporário inválido para montar no contêiner"
         try:
             avisos.extend(_exportar.exportar(repo_dir, sha, src, executar))
         except _exportar.ExportInvalido as erro:
+            interno.append(True)
             return CODIGO_ENTRADA_INVALIDA, "export inválido: %s" % erro
         except _exportar.GitFalhou as erro:
             return erro.codigo, erro.saida
@@ -293,6 +301,7 @@ def verificar(
             avisos.insert(0, "git: tempo esgotado após %s s" % _exportar.TIMEOUT_GIT_S)
             return CODIGO_TIMEOUT, _texto(erro.stdout) + _texto(erro.stderr)
         except OSError as erro:
+            interno.append(True)
             return CODIGO_NAO_EXECUTOU, _falha_ao_executar("git", erro)
 
         try:
@@ -301,6 +310,7 @@ def verificar(
             resultado = docker(criar_rede + [rede], TIMEOUT_DOCKER_S)
             if resultado.returncode != 0:
                 criados["rede"] = False
+                interno.append(True)
                 return resultado.returncode, "docker network create: " + _texto(resultado.stdout) + _texto(resultado.stderr)
             for servico in config["servicos"]:
                 nome_servico = "%s-%s" % (principal, servico["nome"])
@@ -315,6 +325,7 @@ def verificar(
                     TIMEOUT_DOCKER_S,
                 )
                 if resultado.returncode != 0:
+                    interno.append(True)
                     return resultado.returncode, "serviço %s: %s%s" % (
                         servico["nome"],
                         _texto(resultado.stdout),
@@ -346,13 +357,14 @@ def verificar(
             avisos.insert(0, "docker: tempo esgotado")
             return CODIGO_TIMEOUT, _texto(erro.stdout) + _texto(erro.stderr)
         except OSError as erro:
+            interno.append(True)
             return CODIGO_NAO_EXECUTOU, _falha_ao_executar("docker", erro)
 
     try:
         codigo, saida = corpo()
     finally:
         _limpar(executar, principal, criados, rede, base, avisos)
-    return _resposta(sha, codigo, saida, avisos)
+    return _resposta(sha, codigo, saida, avisos, interno=bool(interno))
 
 
 def _falha_ao_executar(programa: str, erro: OSError) -> str:

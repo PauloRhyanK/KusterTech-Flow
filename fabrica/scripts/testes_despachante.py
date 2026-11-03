@@ -542,13 +542,18 @@ class TestesPrepararWarren(Base):
 
         return preparar
 
-    def rodar_com(self, respostas, ciclos, config=None, passo=None, d=None):
-        """Roda `ciclos` ciclos vazios; com `passo`, o relógio anda `passo` a cada ciclo."""
+    def rodar_com(self, respostas, ciclos, config=None, passo=None, d=None, dropin_carregado=False):
+        """Roda `ciclos` ciclos vazios; com `passo`, o relógio anda `passo` a cada ciclo.
+
+        `dropin_carregado`: F13, um preparo anterior já confirmou o drop-in carregado (teto de drenagem de 45 min)."""
         if d is None:
             self.ciclos_feitos = []
             self.publicar(plano(raia("a")))
             d = self.novo(preparar_warren=self.preparar_falso(respostas), config=config)
             d.iniciar()
+            if dropin_carregado:
+                d.estado["warrenPreparado"] = {"dropinCarregado": True}
+                d._salvar()
 
         def ciclo():
             self.ciclos_feitos.append(1)
@@ -773,7 +778,7 @@ class TestesPrepararWarren(Base):
     def test_teto_de_45_min_desliga_avisa_e_espera_6_h(self):
         inicio = self.instante
         passo = datetime.timedelta(minutes=10)
-        d = self.rodar_com(["aguardando_runs"], ciclos=6, passo=passo)
+        d = self.rodar_com(["aguardando_runs"], ciclos=6, passo=passo, dropin_carregado=True)
         # checagens em t0..t50; ligou em t10; em t50 faz 40 min
         self.assertEqual(self.drenagem()["desde"], (inicio + passo).isoformat())
         d = self.rodar_com(None, ciclos=1, passo=passo, d=d)
@@ -792,7 +797,7 @@ class TestesPrepararWarren(Base):
 
     def test_drenagem_persiste_e_e_retomada_pelo_relogio_original(self):
         inicio = self.instante
-        self.rodar_com(["aguardando_runs"], ciclos=2)
+        self.rodar_com(["aguardando_runs"], ciclos=2, dropin_carregado=True)
         self.assertEqual(self.drenagem()["desde"], inicio.isoformat())
         self.instante = inicio + datetime.timedelta(minutes=30)
         self.ciclos_feitos = []
@@ -1169,7 +1174,7 @@ class TestesPersistencia(Base):
 
     def test_estado_ilegivel_nao_e_recriado(self):
         (self.raiz / "estado.json").write_text("{quebrado", encoding="utf-8")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(despachante.ErroDeEntrada):  # F10: saída 2, não um laço de reinícios
             self.novo()
         self.assertEqual((self.raiz / "estado.json").read_text(encoding="utf-8"), "{quebrado")
 
@@ -3361,6 +3366,7 @@ class TestesRodada3(Base):
         for _ in range(2):
             d.ciclo()  # procurado e não achado: nada de novo despacho ainda
             self.assertEqual(len(self.runs(OPUS)), 1)
+        self.instante += despachante.PISO_PARA_DESISTIR  # F6: e só depois do piso de 5 min
         d.ciclo()  # 3ª busca sem achar: descartado e redespachado com nonce novo
         d.ciclo()
         revisoes = self.runs(OPUS)
@@ -3386,6 +3392,7 @@ class TestesRodada3(Base):
         for _ in range(2):
             d.ciclo()
             self.assertEqual(len(self.runs(FABLE)), 1)  # só o incerto, nenhum outro orquestrador
+        self.instante += despachante.PISO_PARA_DESISTIR  # F6: o incerto só sai depois do piso de 5 min
         for _ in range(3):
             d.ciclo()
         self.assertGreaterEqual(len(self.runs(FABLE)), 2)
@@ -3804,6 +3811,7 @@ class TestesRodada4(Base):
         self.assertEqual(item["nonce"], raiz)
         self.assertRegex(item["desde"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         for _ in range(3):
+            self.instante += datetime.timedelta(minutes=2)  # F6: o piso de 5 min passa junto com as 3 buscas
             d.ciclo()  # 3 buscas sem achar: descartado e redespachado (mesma chave, nonce novo no texto)
         buscas = [a for nome, a in self.motor.chamadas if nome == "procurar_run"]
         self.assertEqual([(b["nonce"], b["desde"]) for b in buscas], [([raiz], item["desde"])] * 3)  # a hora da ação limita a busca
@@ -3835,6 +3843,7 @@ class TestesRodada4(Base):
         d = self.preparar_raia()
         self.abrir_pr(H1)
         for _ in range(5):
+            self.instante += datetime.timedelta(minutes=2)  # F6: o piso de 5 min passa
             d.ciclo()
         criados = self._runs_criados()
         self.assertEqual(len(criados), 1)
@@ -3847,6 +3856,7 @@ class TestesRodada4(Base):
         d = self.preparar_raia()
         self.abrir_pr(H1)
         for _ in range(45):
+            self.instante += datetime.timedelta(minutes=2)  # F6: o piso de 5 min passa a cada 3 buscas
             d.ciclo()
         e = self.estado()
         self.assertIsNone(e["pausado"])
@@ -4151,6 +4161,7 @@ class TestesRodada4(Base):
                         break  # o ciclo tem menos de k gravações
                     d2 = self.novo()
                     for _ in range(8):
+                        self.instante += datetime.timedelta(minutes=2)  # F6: um incerto da queda só sai depois do piso
                         rid = self.estado()["orquestrador"].get("runId")
                         if rid and self.motor._runs.get(rid, {}).get("estado") == "running":
                             self.motor.definir_run(rid, estado="succeeded", prUrl=None)
@@ -4477,14 +4488,14 @@ class TestesRodada5(Base):
                 posts = len(self.runs())
                 self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
                 for k in (1, 2):
-                    self._avancar()
+                    self._avancar(150)  # F6: 3 buscas de 2,5 min passam o piso de 5 min
                     d.ciclo()
                     e = self.estado()
                     self.assertEqual(self._run_de(campo), original)  # ainda esperando o retry
                     self.assertEqual(len(self.runs()), posts)
                     self.assertEqual(e["retriesEsperados"][original]["buscas"], k)
                     self.assertEqual(e["retriesEsperados"][original]["papel"], papel)
-                self._avancar()
+                self._avancar(150)
                 d.ciclo()
                 e = self.estado()
                 self.assertNotIn(original, e.get("retriesEsperados") or {})
@@ -4562,7 +4573,8 @@ class TestesRodada5(Base):
                 self.setUp()
                 self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 10**6)
                 self._relogio()
-                self.motor.atraso_de_visibilidade = datetime.timedelta(seconds=120)
+                # F6: com o piso de 5 min, um atraso de 120 s já não gera 2º POST; 7 min ainda exercita a cadeia
+                self.motor.atraso_de_visibilidade = datetime.timedelta(seconds=420)
                 self.motor.iniciar_historico(60, projeto=PROJETO, ha=datetime.timedelta(hours=1))
                 d = self.preparar_raia()
                 self.abrir_pr(H1)
@@ -4594,7 +4606,7 @@ class TestesRodada5(Base):
         self.abrir_pr(H1)
         nonces = []
         for _ in range(8):
-            self._avancar()
+            self._avancar(150)  # F6: 3 buscas de 2,5 min passam o piso de 5 min
             d.ciclo()
             for item in self.estado()["despachosIncertos"]:
                 self.assertEqual(item["nonces"][-1], item["nonce"])
@@ -4737,6 +4749,665 @@ class TestesRodada5(Base):
         self.assertEqual(e["seeds"]["s-1"]["revisaoRunId"], rid)
         self.assertEqual(len(self.runs(OPUS)), 1)
         self.assertEqual(self._titulos().count(titulo), 1)
+
+
+# ---------------------------------------------------------------- correção final (F1–F14)
+
+
+def _plano_de_duas_fases(fase="f1", ordem=("f1", "f2")):
+    fases = {"f1": {"id": "f1", "raias": ["a"]}, "f2": {"id": "f2", "raias": ["b"]}}
+    return {
+        "versao": 1,
+        "faseAtual": fase,
+        "fases": [fases[f] for f in ordem],
+        "raias": [raia("a"), raia("b", plano_seeds="pl-000b")],
+    }
+
+
+class TestesCorrecaoFinal(Base):
+    UTC = datetime.timezone.utc
+    _relogio = TestesRodada5._relogio
+    _avancar = TestesRodada5._avancar
+    _runs_criados = TestesRodada5._runs_criados
+    _ate_o_run = TestesRodada5._ate_o_run
+    _run_de = TestesRodada5._run_de
+
+    def _titulos(self):
+        return [t for t, _ in self.forja.decisoes]
+
+    def _passar(self, minutos=0, segundos=0):
+        self.instante += datetime.timedelta(minutes=minutos, seconds=segundos)
+
+    def _verificacao_fixa(self, codigo, saida="", **extra):
+        def verificar(repo_dir, sha, comando, *, conteiner):
+            self.verificacoes.append((repo_dir, sha, comando, conteiner))
+            return dict({"sha": sha, "codigo": codigo, "saida": saida}, **extra)
+
+        self.verificar_falso = verificar
+
+    # ------------------------------------------------ F1: CI "ausente" transitório
+    def test_f1_ci_ausente_logo_depois_do_pr_e_verde_em_seguida_mergeia_sem_issue_nem_orquestrador(self):
+        """probe_a2: CI "ausente" no primeiro ciclo depois do PR e verde no seguinte."""
+        d = self.preparar_raia()
+        self.abrir_pr(H1, ci="ausente")
+        acoes = d.ciclo()
+        self.assertEqual([a["tipo"] for a in acoes], ["revisar", "verificar"])
+        self.assertEqual(self.estado()["seeds"]["s-1"]["headVistoEm"], self.instante.isoformat())
+        self.forja.definir_ci(REPO, H1, "verde")
+        self.terminar_revisao(H1)
+        self._passar(segundos=30)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H1)])
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertEqual(self.estado()["acordarPendentes"], [])
+
+    def test_f1_ci_ausente_por_10_min_vai_para_o_humano(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, ci="ausente")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self._passar(minutos=9, segundos=59)
+        d.ciclo()
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual(self.forja.merges, [])
+        self._passar(segundos=1)
+        d.ciclo()
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertIn("repositório sem CI", corpo)
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+
+    def test_f1_head_novo_do_fixer_ganha_nova_janela(self):
+        self.codigos[H1] = 1
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()  # corrigir
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="succeeded")
+        self._passar(minutos=30)
+        self.mover_head(H2, ci="ausente")
+        d.ciclo()
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual(self.estado()["seeds"]["s-1"]["headVistoEm"], self.instante.isoformat())
+
+    # ------------------------------------------------ F2: falha de infraestrutura na verificação
+    def test_f2a_verificacao_que_nao_executou_pausa_uma_vez_sem_fixer(self):
+        """probe_loop / probes B: 125 (daemon), 126, e o erro interno do verificador pausam; nada vai ao fixer."""
+        casos = (
+            (125, "docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock", {}),
+            (126, "permission denied", {}),
+            (2, "export inválido: caminho inseguro", {"interno": True}),
+            (127, "não foi possível executar docker (FileNotFoundError)", {"interno": True}),
+            (1, "docker network create: Cannot connect", {"interno": True}),
+        )
+        for codigo, saida, extra in casos:
+            with self.subTest(codigo=codigo, extra=extra):
+                self.setUp()
+                self._verificacao_fixa(codigo, saida, **extra)
+                d = self.preparar_raia()
+                self.abrir_pr(H1)
+                d.ciclo()
+                e = self.estado()
+                self.assertTrue(e["pausado"].startswith("verificação não executou: "), e["pausado"])
+                self.assertIn("código %d" % codigo, e["pausado"])
+                self.assertIsNone(e["seeds"]["s-1"]["verificacao"])
+                self.terminar_revisao(H1)
+                for _ in range(3):
+                    d.ciclo()
+                self.assertEqual(self.runs(HAIKU), [])
+                self.assertEqual(self.runs(FABLE), [])
+                pausas = [t for t in self._titulos() if t.startswith("[fábrica] despachante pausado: verificação não executou")]
+                self.assertEqual(len(pausas), 1)
+                self.assertEqual(len(self.verificacoes), 1)
+
+    def test_f2a_codigo_2_do_comando_continua_indo_para_o_fixer(self):
+        self._verificacao_fixa(2, "lint falhou")
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.assertEqual([a["tipo"] for a in d.ciclo()], ["corrigir"])
+        self.assertIsNone(self.estado()["pausado"])
+
+    def test_f2b_codigo_127_do_comando_abre_decisao_sem_fixer_nem_orquestrador(self):
+        self._verificacao_fixa(127, "bash: line 1: pnpm: command not found")
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        for _ in range(3):
+            d.ciclo()
+        self.assertEqual(self.runs(HAIKU), [])
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertEqual(self.forja.merges, [])
+        self.assertIsNone(self.estado()["pausado"])
+        self.assertEqual(len(self.verificacoes), 1)  # com a decisão aberta, a verificação não roda de novo
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertIn("o comando de verificação da raia a não existe na imagem: pnpm test", corpo)
+        self.assertIn("raia a", titulo)
+        (decisao,) = self.estado()["decisoes"]
+        self.assertEqual((decisao["tipo"], decisao["alvo"]), ("verificacao", "a"))
+        # o Paulo responde: a decisão sai e a verificação volta a rodar
+        self._verificacao_fixa(0, "ok")
+        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="corrigi a imagem")
+        d.ciclo()
+        self.assertEqual(len(self.verificacoes), 2)
+
+    def test_f2b_falha_ao_abrir_a_decisao_do_127_nao_vira_decisao_de_seed(self):
+        self._verificacao_fixa(127, "pnpm: command not found")
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        with mock.patch.object(self.forja, "abrir_decisao", side_effect=RuntimeError("HTTP 502")):
+            d.ciclo()
+        e = self.estado()
+        self.assertIsNone(e["seeds"]["s-1"]["pendenteHumano"])
+        self.assertIsNone(e["seeds"]["s-1"]["verificacao"])
+        self.assertEqual(self.forja.decisoes, [])
+        d.ciclo()  # a intenção gravada é recuperada: a decisão abre uma vez
+        self.assertEqual(len([t for t in self._titulos() if "comando de verificação" in t]), 1)
+        self.assertEqual(self.runs(HAIKU), [])
+
+    def _seed_ate_o_gate_falhar(self, d, it, plan_run):
+        sid, url = "s%d" % it, "https://github.com/dono/cliente/pull/%d" % (10 + it)
+        ha, hb = ("%x" % (2 * it + 1)).rjust(40, "c"), ("%x" % (2 * it + 2)).rjust(40, "d")
+        self.motor.definir_plano(plan_run, "running", [{"seedId": sid, "estado": "pr_open", "runId": "rx%d" % it, "prUrl": url}])
+        self.forja.definir_pr(url, head_sha=ha, branch="w/" + sid, arquivos=["src/a/x.ts"])
+        self.forja.definir_ci(REPO, ha, "verde")
+        d.ciclo()
+        self.terminar_revisao(ha, seed=sid)
+        d.ciclo()  # verificação 1 → fixer
+        fid = self.estado()["seeds"][sid]["fixerRunId"]
+        self.motor.definir_run(fid, estado="succeeded")
+        self.forja.definir_pr(url, head_sha=hb, branch="w/" + sid, arquivos=["src/a/x.ts"])
+        self.forja.definir_ci(REPO, hb, "verde")
+        d.ciclo()
+        self.terminar_revisao(hb, seed=sid)
+        return d.ciclo()
+
+    def test_f2c_terceira_falha_depois_de_2_replanejamentos_vai_para_o_paulo(self):
+        """probe_loop com o comando falhando de verdade: 2 replanejamentos pagos e a 3ª falha vira decisão."""
+        self._verificacao_fixa(1, "testes falharam")
+        d = self.preparar_raia()
+        plano_atual = plano(raia("a"))
+        for it in range(3):
+            acoes = self._seed_ate_o_gate_falhar(d, it, self.estado()["raias"]["a"]["planRunId"])
+            if it == 2:
+                break
+            self.assertEqual([(a["tipo"], a.get("motivo")) for a in acoes], [("acordar", "gate_falhou_apos_fixer")])
+            orq = self.estado()["orquestrador"]["runId"]
+            plano_atual = plano(raia("a", plano_seeds="pl-0b%02d" % it))
+            prq, hp = "https://github.com/dono/cliente/pull/%d" % (90 + it), ("%x" % (it + 1)).rjust(40, "f")
+            self.pr_do_orquestrador(orq, [".fabrica/plano.json"], plano_atual, head=hp, url=prq)
+            d.ciclo()
+            self.assertIn((prq, hp), self.forja.merges)
+            self.publicar(plano_atual)
+            d.ciclo()
+            d.ciclo()
+            self.assertEqual(self.estado()["raias"]["a"]["replanejamentos"], it + 1)
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        self.assertNotIn("acordar", [a["tipo"] for a in acoes])
+        (decisao,) = [x for x in self.estado()["decisoes"] if x.get("tipo") == "replanejamento"]
+        self.assertEqual(decisao["alvo"], "gate_falhou_apos_fixer:s2")
+        titulo, corpo = self.forja.decisoes[-1]
+        self.assertIn("raia a", titulo)
+        self.assertIn("2 replanejamentos", corpo)
+        pagos = len(self.runs()) + len(self.planos_despachados())
+        for _ in range(5):
+            d.ciclo()
+        self.assertEqual(len(self.runs()) + len(self.planos_despachados()), pagos)
+        self.assertEqual(len([x for x in self.estado()["decisoes"] if x.get("tipo") == "replanejamento"]), 1)
+
+    def test_f2c_raia_falhou_no_teto_abre_decisao_e_abaixo_do_teto_acorda(self):
+        for replanejamentos, acorda in ((1, True), (2, False), (5, False)):
+            with self.subTest(replanejamentos=replanejamentos):
+                self.setUp()
+                d = self.preparar_raia()
+                d.estado["raias"]["a"]["replanejamentos"] = replanejamentos
+                d._salvar()
+                self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+                d.ciclo()
+                d.ciclo()
+                self.assertEqual(len(self.runs(FABLE)), 1 if acorda else 0)
+                tipos = [x.get("tipo") for x in self.estado()["decisoes"]]
+                self.assertEqual(tipos.count("replanejamento"), 0 if acorda else 1)
+                if not acorda:
+                    self.assertIn("raia_falhou:a", self.estado()["chavesAcordadas"])
+
+    # ------------------------------------------------ F3: PR do orquestrador que mexe nas fases
+    def test_f3_pr_do_orquestrador_que_muda_fase_vai_para_o_paulo_qualquer_que_seja_o_motivo(self):
+        """probe_fase: acordado por raia_falhou, o orquestrador avança faseAtual; remove ou reordena fases."""
+        sem_f2 = _plano_de_duas_fases()
+        sem_f2["fases"] = sem_f2["fases"][:1]
+        sem_f2["raias"] = sem_f2["raias"][:1]
+        casos = {
+            "avanca": _plano_de_duas_fases(fase="f2"),
+            "remove": sem_f2,
+            "reordena": _plano_de_duas_fases(ordem=("f2", "f1")),
+        }
+        for nome, novo in casos.items():
+            with self.subTest(caso=nome):
+                self.setUp()
+                d, rid = self.acordar_por_falha(_plano_de_duas_fases())
+                novo = copy.deepcopy(novo)
+                novo["raias"][0]["planoSeeds"] = "pl-00aa"
+                self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo)
+                d.ciclo()
+                self.assertEqual(self.forja.merges, [])
+                ((titulo, corpo),) = self.forja.decisoes
+                self.assertEqual(titulo, "[fábrica] orquestrador: aprovar mudança de fase")
+                self.assertIn("aprovar mudança de fase", corpo)
+                orq = self.estado()["orquestrador"]
+                self.assertIsNone(orq["runId"])
+                self.assertEqual(orq.get("semResultadoSeguidos"), 0)
+
+    def test_f3_pr_que_so_replaneja_sem_mexer_nas_fases_segue_mergeado(self):
+        d, rid = self.acordar_por_falha(_plano_de_duas_fases())
+        novo = _plano_de_duas_fases()
+        novo["raias"][0]["planoSeeds"] = "pl-00aa"
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.assertEqual(self.forja.decisoes, [])
+
+    def test_f3_fase_concluida_continua_aprovar_fase(self):
+        d = self.preparar_raia(_plano_de_duas_fases())
+        self.motor.definir_plano("plano-1", "succeeded", [])
+        d.ciclo()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], _plano_de_duas_fases(fase="f2"))
+        d.ciclo()
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertEqual(titulo, "[fábrica] orquestrador: aprovar fase")
+        self.assertIn("faseAtual", corpo)
+        self.assertEqual(self.estado()["orquestrador"].get("semResultadoSeguidos"), 0)
+
+    # ------------------------------------------------ F4: veredito preso ao sha pedido
+    def test_f4_revisor_que_aprova_outro_sha_nao_libera_o_merge(self):
+        """probes C: a revisão foi pedida em H1 e o veredito fala de H2 (um commit que o revisor pode ter empurrado)."""
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoSha"], H1)
+        self.mover_head(H2)
+        self.terminar_revisao(H2)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(len(self.runs(OPUS)), 2)
+        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoSha"], H2)
+        self.terminar_revisao(H2)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H2)])
+
+    # ------------------------------------------------ F5: decisões de seed
+    def _decisao_por_protegido(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=("src/a/x.ts", ".env.local"))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        return d
+
+    def test_f5_corpo_da_decisao_por_protegido_diz_que_o_merge_e_do_paulo(self):
+        self._decisao_por_protegido()
+        ((_, corpo),) = self.forja.decisoes
+        self.assertIn("Revise e mergeie ou feche o PR %s: o merge é seu." % PR, corpo)
+        self.assertNotIn(despachante.RODAPE_DECISAO, corpo)
+
+    def test_f5_corpo_da_decisao_por_merge_recusado_diz_que_o_merge_e_do_paulo(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        with mock.patch.object(self.forja, "mergear", return_value=False):
+            for _ in range(4):
+                d.ciclo()
+        ((_, corpo),) = self.forja.decisoes
+        self.assertIn("merge recusado pelo GitHub", corpo)
+        self.assertIn("Revise e mergeie ou feche o PR %s: o merge é seu." % PR, corpo)
+
+    def test_f5_outras_decisoes_de_seed_mantem_o_rodape(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, ci="ausente")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self._passar(minutos=11)
+        d.ciclo()
+        ((_, corpo),) = self.forja.decisoes
+        self.assertIn(despachante.RODAPE_DECISAO, corpo)
+        self.assertNotIn("o merge é seu", corpo)
+
+    def test_f5_paulo_mergeia_o_pr_a_decisao_fecha_sozinha_e_nao_acorda(self):
+        """probe_prot: o Paulo mergeia o PR à mão; o Warren vê o merge; a decisão fecha e sai, sem resposta_paulo."""
+        d = self._decisao_por_protegido()
+        url = self.estado()["decisoes"][0]["url"]
+        self.forja.definir_pr(PR, head_sha=H1, branch="warren/s-1", arquivos=["src/a/x.ts", ".env.local"], aberto=False, mergeado=True)
+        self.motor.definir_plano("plano-1", "running", [{"seedId": "s-1", "estado": "merged", "runId": "run-filho", "prUrl": PR}])
+        d.ciclo()
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(e["seeds"]["s-1"]["estado"], "mergeada")
+        self.assertEqual(e["decisoes"], [])
+        self.assertTrue(self.forja._decisoes[url]["fechada"])
+        self.assertIn(despachante.MARCADOR_DESPACHANTE, self.forja._decisoes[url]["ultimoComentario"])
+        for _ in range(2):
+            d.ciclo()
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertEqual(self.estado()["acordarPendentes"], [])
+
+    def test_f5_seed_removida_ou_obsoleta_fecha_a_decisao_sem_acordar(self):
+        for destino in ("removida", "obsoleta"):
+            with self.subTest(destino=destino):
+                self.setUp()
+                d = self._decisao_por_protegido()
+                url = self.estado()["decisoes"][0]["url"]
+                if destino == "removida":
+                    del d.estado["seeds"]["s-1"]
+                    self.motor.definir_plano("plano-1", "running", [])  # o Warren também não a lista mais
+                else:
+                    d.estado["seeds"]["s-1"]["estado"] = "obsoleta"
+                d._salvar()
+                self.forja.definir_decisao(url, fechada=True, ultimo_comentario="tanto faz")
+                d.ciclo()
+                d.ciclo()
+                self.assertEqual(self.estado()["decisoes"], [])
+                self.assertEqual(self.runs(FABLE), [])
+                self.assertEqual(self.estado()["acordarPendentes"], [])
+
+    def test_f5_decisao_de_seed_ainda_bloqueada_fechada_com_comentario_acorda(self):
+        d = self._decisao_por_protegido()
+        url = self.estado()["decisoes"][0]["url"]
+        self.forja.definir_decisao(url, fechada=True, ultimo_comentario="pode replanejar")
+        d.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)
+        self.assertIn("Motivo: resposta_paulo", self.runs(FABLE)[0]["prompt"])
+
+    # ------------------------------------------------ F6: piso de 5 min para N6 e N7
+    def test_f6_retry_visivel_depois_de_120_ou_300_s_nao_e_pago_de_novo(self):
+        for papel in ("revisor", "orquestrador"):
+            for atraso in (120, 300):
+                with self.subTest(papel=papel, atraso=atraso):
+                    self.setUp()
+                    self._relogio()
+                    self.motor.atraso_de_visibilidade = datetime.timedelta(seconds=atraso)
+                    d, campo, original = self._ate_o_run(papel)
+                    posts = len(self.runs())
+                    self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
+                    retry = self.motor.retry_de(original)
+                    for _ in range(20):
+                        self._avancar()
+                        d.ciclo()
+                    self.assertEqual(len(self.runs()), posts)
+                    self.assertEqual(self._run_de(campo), retry)
+
+    def test_f6_sem_retry_desiste_so_depois_de_5_min(self):
+        self._relogio()
+        self.motor.retry_infra_perdida = False
+        d, campo, original = self._ate_o_run("revisor")
+        posts = len(self.runs())
+        self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
+        for _ in range(9):  # 4 min 30 s: 9 leituras boas, ainda no piso
+            self._avancar()
+            d.ciclo()
+            self.assertEqual(len(self.runs()), posts)
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(len(self.runs()), posts)
+        self._avancar()
+        d.ciclo()
+        self.assertEqual(len(self.runs()), posts + 1)
+
+    def test_f6_plan_run_incerto_visivel_depois_de_120_ou_300_s_paga_um_so(self):
+        for atraso in (120, 300):
+            with self.subTest(atraso=atraso):
+                self.setUp()
+                self.motor = MotorTimeoutDepoisDeAceitar("despachar_plano", 1)
+                self._relogio()
+                self.motor.atraso_de_visibilidade = datetime.timedelta(seconds=atraso)
+                self.publicar(plano(raia("a")))
+                d = self.novo()
+                d.iniciar()
+                d.ciclo()
+                self.assertEqual(len(self.estado()["despachosIncertos"]), 1)
+                for _ in range(20):
+                    self._avancar()
+                    d.ciclo()
+                self.assertEqual(len(self.planos_despachados()), 1)
+                self.assertEqual(self.estado()["raias"]["a"]["planRunId"], "plano-1")
+                self.assertEqual(self.estado()["despachosIncertos"], [])
+
+    def test_f6_run_incerto_sem_a_chave_de_idempotencia_paga_um_so(self):
+        """Restart do Warren entre o POST e a busca (a chave some): só o piso segura o redespacho."""
+        for papel, atraso in (("revisor", 120), ("revisor", 300), ("orquestrador", 300)):
+            with self.subTest(papel=papel, atraso=atraso):
+                self.setUp()
+                self.motor = MotorTimeoutDepoisDeAceitar("despachar_run", 1)
+                self._relogio()
+                self.motor.atraso_de_visibilidade = datetime.timedelta(seconds=atraso)
+                d = self.preparar_raia()
+                if papel == "revisor":
+                    self.abrir_pr(H1)
+                else:
+                    self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+                d.ciclo()
+                self.motor._idempotencia.clear()
+                for _ in range(20):
+                    self._avancar()
+                    d.ciclo()
+                self.assertEqual(len(self._runs_criados()), 1)
+
+    def test_f6_motor_falso_esconde_o_plan_run_durante_o_atraso(self):
+        m = motor.MotorFalso()
+        relogio = [datetime.datetime(2026, 11, 3, 12, tzinfo=datetime.timezone.utc)]
+        m.agora = lambda: relogio[0]
+        m.atraso_de_visibilidade = datetime.timedelta(seconds=120)
+        nonce = "a" * 32
+        pid = m.despachar_plano(projeto=PROJETO, plano_seeds="pl-1", agente="x", modelo="y", prompt_template="t\n" + motor.MARCADOR_NONCE % nonce, max_custo_usd=1)
+        self.assertIsNone(m.procurar_plano(PROJETO, nonce))
+        relogio[0] += datetime.timedelta(seconds=119)
+        self.assertIsNone(m.procurar_plano(PROJETO, nonce))
+        relogio[0] += datetime.timedelta(seconds=1)
+        self.assertEqual(m.procurar_plano(PROJETO, nonce), pid)
+
+    # ------------------------------------------------ F7: segredo na saída da verificação
+    def test_f7_saida_da_verificacao_e_redigida_antes_do_estado_e_do_fixer(self):
+        """probes D: o token aparece na saída do git fetch."""
+        self._verificacao_fixa(1, "fatal: https://x:%s@github.com/dono/cliente e %s" % (TOKEN_GH, TOKEN))
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        (fixer,) = self.runs(HAIKU)
+        self.assertNotIn(TOKEN_GH, fixer["prompt"])
+        self.assertNotIn(TOKEN, fixer["prompt"])
+        self.assertIn("https://x:***@github.com", fixer["prompt"])
+        bruto = (self.raiz / "estado.json").read_text(encoding="utf-8")
+        self.assertNotIn(TOKEN_GH, bruto)
+        self.assertNotIn(TOKEN, bruto)
+
+    # ------------------------------------------------ F9: merge do Paulo no PR do orquestrador
+    def _decisao_de_fase(self):
+        self.publicar(plano(raia("a")))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo()
+        d.iniciar(spec="docs/spec.md")
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a"), raia("b", plano_seeds="pl-000b")))
+        d.ciclo()
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertEqual(titulo, "[fábrica] orquestrador: aprovar fase")
+        return d, self.estado()["decisoes"][0]["url"]
+
+    def test_f9_merge_do_paulo_aprova_e_fecha_a_decisao_sem_acordar(self):
+        for fechada in (False, True):
+            with self.subTest(issue_fechada=fechada):
+                self.setUp()
+                d, url = self._decisao_de_fase()
+                self.forja.definir_pr(PR_ORQ, head_sha=H3, branch="warren/orq", arquivos=[".fabrica/plano.json"], aberto=False, mergeado=True)
+                if fechada:
+                    self.forja.definir_decisao(url, fechada=True, ultimo_comentario="ok")
+                d.ciclo()
+                d.ciclo()
+                e = self.estado()
+                self.assertEqual(e["decisoes"], [])
+                self.assertTrue(self.forja._decisoes[url]["fechada"])
+                self.assertEqual(len(self.runs(FABLE)), 1)
+                self.assertEqual(e["acordarPendentes"], [])
+                self.assertNotIn(PR_ORQ, e.get("prsOrquestrador") or [])
+
+    def test_f9_fechada_sem_merge_com_comentario_vai_ao_orquestrador(self):
+        d, url = self._decisao_de_fase()
+        self.forja.definir_decisao(url, fechada=True, ultimo_comentario="não: refaça a fase 2")
+        d.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 2)
+        self.assertIn("refaça a fase 2", self.runs(FABLE)[1]["prompt"])
+
+    # ------------------------------------------------ F10: estado.json corrompido
+    def test_f10_estado_corrompido_sai_com_2_e_mensagem_curta(self):
+        for conteudo in ("{quebrado", "[]", "NaN"):
+            with self.subTest(conteudo=conteudo):
+                (self.raiz / "estado.json").write_text(conteudo, encoding="utf-8")
+                for argv in (["rodar"], ["status"], ["retomar"]):
+                    erro = io.StringIO()
+                    codigo = despachante.main(
+                        argv, ambiente={"FABRICA_RAIZ": str(self.raiz)}, construir=lambda amb: self.novo(), saida=io.StringIO(), erro=erro
+                    )
+                    self.assertEqual(codigo, 2, argv)
+                    self.assertIn("estado.json ilegível", erro.getvalue())
+                    self.assertNotIn("Traceback", erro.getvalue())
+                    self.assertLess(len(erro.getvalue()), 300)
+
+    def test_f10_estado_corrompido_depois_de_construido_tambem_e_entrada_invalida(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        (self.raiz / "estado.json").write_text("{quebrado", encoding="utf-8")
+        with self.assertRaises(despachante.ErroDeEntrada):
+            d.rodar(intervalo=1, ciclos=1, dormir=lambda s: None)
+
+
+class TestesCorrecaoFinalPreparo(Base):
+    preparar_falso = TestesPrepararWarren.preparar_falso
+    rodar_com = TestesPrepararWarren.rodar_com
+    drenagem = TestesPrepararWarren.drenagem
+    TITULO_AUTOMERGE = "[fábrica] warren-automerge ainda ativo"
+
+    def _preparar(self, automerge):
+        """Um preparar cujo `automerge` vem da lista mutável `automerge` (o último valor vale)."""
+
+        def preparar(**kwargs):
+            return {"estado": "ja_aplicado", "detalhe": "x", "dropin": "ok", "automerge": automerge[-1], "sha": "a" * 64}
+
+        return preparar
+
+    def _rodar(self, d, ciclos=1):
+        d.rodar(intervalo=1, ciclos=ciclos, dormir=lambda s: None)
+
+    # ------------------------------------------------ F8: automerge em erro
+    def test_f8_automerge_em_erro_segura_os_merges_abre_uma_decisao_e_retoma(self):
+        for desligado in ("desligado", "ausente", "ja_desligado"):
+            with self.subTest(desligado=desligado):
+                self.setUp()
+                automerge = ["erro"]
+                self.publicar(plano(raia("a")))
+                d = self.novo(preparar_warren=self._preparar(automerge))
+                d.iniciar()
+                self._rodar(d)
+                self.assertEqual(len(self.planos_despachados()), 1)  # os despachos seguem
+                self.abrir_pr(H1)
+                self._rodar(d)
+                self.terminar_revisao(H1)
+                self._rodar(d, ciclos=3)
+                self.assertEqual(self.forja.merges, [])
+                titulos = [t for t, _ in self.forja.decisoes]
+                self.assertEqual(titulos.count(self.TITULO_AUTOMERGE), 1)
+                (_, corpo), = [x for x in self.forja.decisoes if x[0] == self.TITULO_AUTOMERGE]
+                self.assertIn("warren-automerge ainda ativo: ele mergeia PRs sem os gates", corpo)
+                url = [x["url"] for x in self.estado()["decisoes"] if x.get("tipo") == "automerge"][0]
+                automerge.append(desligado)
+                self._rodar(d, ciclos=2)
+                self.assertEqual(self.forja.merges, [(PR, H1)])
+                self.assertTrue(self.forja._decisoes[url]["fechada"])
+                self.assertEqual([x for x in self.estado()["decisoes"] if x.get("tipo") == "automerge"], [])
+                self.assertEqual(self.runs(FABLE), [])
+
+    def test_f8_automerge_em_erro_segura_o_merge_do_pr_do_orquestrador(self):
+        automerge = ["erro"]
+        self.publicar(plano(raia("a")))
+        d = self.novo(preparar_warren=self._preparar(automerge))
+        d.iniciar()
+        self._rodar(d)
+        self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+        self._rodar(d)
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")))
+        self._rodar(d, ciclos=2)
+        self.assertEqual(self.forja.merges, [])
+        automerge.append("desligado")
+        self._rodar(d)
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+
+    # ------------------------------------------------ F13: teto da drenagem
+    def test_f13_teto_de_25_min_sem_o_drop_in_confirmado(self):
+        inicio = self.instante
+        passo = datetime.timedelta(minutes=5)
+        d = self.rodar_com(["aguardando_runs"], ciclos=6, passo=passo)
+        # checagens em t0..t25; a drenagem liga em t5 e em t25 faz 20 min
+        self.assertEqual(self.drenagem()["desde"], (inicio + passo).isoformat())
+        d = self.rodar_com(None, ciclos=1, passo=passo, d=d)  # t30: 25 min
+        self.assertFalse(self.drenagem().get("desde"))
+        (aviso,) = [a for a in self.estado()["avisos"] if "drenagem" in a]
+        self.assertIn("25 min", aviso)
+
+    def test_f13_teto_de_45_min_com_o_drop_in_carregado(self):
+        inicio = self.instante
+        passo = datetime.timedelta(minutes=5)
+        self.publicar(plano(raia("a")))
+        self.ciclos_feitos = []
+        d = self.novo(preparar_warren=self.preparar_falso(["ja_aplicado", "aguardando_runs"]))
+        d.iniciar()
+        d.estado["warrenPreparado"] = {"estado": "aguardando_runs", "esperasSeguidas": 0}
+        d._salvar()
+        d = self.rodar_com(None, ciclos=1, passo=passo, d=d)  # t0: ja_aplicado com o drop-in ok confirma
+        self.assertIs(self.estado()["warrenPreparado"]["dropinCarregado"], True)
+        d.estado = self.estado()
+        d.estado["warrenPreparado"]["estado"] = "aguardando_runs"
+        d._salvar()
+        d = self.rodar_com(None, ciclos=8, passo=passo, d=d)  # t5..t40: liga em t10, em t40 faz 30 min
+        self.assertEqual(self.drenagem()["desde"], (inicio + 2 * passo).isoformat())
+        d = self.rodar_com(None, ciclos=2, passo=passo, d=d)  # t50: 40 min
+        self.assertTrue(self.drenagem().get("desde"))
+        d = self.rodar_com(None, ciclos=1, passo=passo, d=d)  # t55: 45 min
+        self.assertFalse(self.drenagem().get("desde"))
+
+    def test_f13_drop_in_em_erro_desconfirma(self):
+        self.publicar(plano(raia("a")))
+        self.ciclos_feitos = []
+        d = self.novo(preparar_warren=self.preparar_falso([{"estado": "ja_aplicado", "detalhe": "", "dropin": "erro", "automerge": "ausente"}]))
+        d.iniciar()
+        d.estado["warrenPreparado"] = {"estado": "ja_aplicado", "dropinCarregado": True}
+        d._salvar()
+        self.rodar_com(None, ciclos=1, d=d)
+        self.assertIs(self.estado()["warrenPreparado"]["dropinCarregado"], False)
+        for estado, dropin, esperado in (
+            ("aguardando_runs", "ok", False),
+            ("revertido", "ok", False),
+            ("aplicado", "alterado", True),
+            ("versao_desconhecida", "ok", True),
+        ):
+            with self.subTest(estado=estado, dropin=dropin):
+                self.setUp()
+                self.publicar(plano(raia("a")))
+                self.ciclos_feitos = []
+                d = self.novo(preparar_warren=self.preparar_falso([{"estado": estado, "detalhe": "", "dropin": dropin, "automerge": "ausente"}]))
+                d.iniciar()
+                self.rodar_com(None, ciclos=1, d=d)
+                self.assertIs(self.estado()["warrenPreparado"]["dropinCarregado"], esperado)
 
 
 if __name__ == "__main__":
