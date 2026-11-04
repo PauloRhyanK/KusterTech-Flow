@@ -543,6 +543,40 @@ class TestesJornada(Base):
                 self.assertIsNone(self.estado()["seeds"]["s-1"]["veredito"])
                 self.assertEqual(self.forja.merges, [])
 
+    def _fixer_sem_commit(self):
+        self.codigos[H1] = 1
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1, resultado="correcoes", achados=[{"arquivo": "src/a/x.ts", "motivo": "erro"}])
+        d.ciclo()
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="failed", motivoFalha="no_changes")
+        self.motor.definir_texto(fid, "O defeito está fora da raia: precisa mexer em outro arquivo.")
+        return d
+
+    def test_fixer_sem_commit_acorda_o_orquestrador_com_os_achados_e_o_relato(self):
+        d = self._fixer_sem_commit()
+        d.ciclo()
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual(seed["estado"], "falhou")
+        self.assertEqual(seed["veredito"]["resultado"], "correcoes")
+        self.assertEqual([a["motivo"] for a in self.acordadas()], ["gate_falhou_apos_fixer"])
+        contexto = self.estado()["orquestrador"]["acordada"]["contexto"]
+        self.assertIn("fora da raia", contexto["relatoDoFixer"])
+        self.assertEqual(contexto["veredito"]["achados"][0]["arquivo"], "src/a/x.ts")
+        self.assertEqual(self.forja.merges, [])
+
+    def test_fixer_sem_commit_acorda_uma_vez_so(self):
+        d = self._fixer_sem_commit()
+        d.ciclo()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.motor.definir_run(rid, estado="failed", motivoFalha="x")
+        d.ciclo()
+        d.ciclo()
+        self.assertLessEqual(len([a for a in self.acordadas() if a["motivo"] == "gate_falhou_apos_fixer"]), 3)
+        self.assertEqual(self.forja.merges, [])
+
     def test_fixer_sem_commit_continua_falha(self):
         self.codigos[H1] = 1
         d = self.preparar_raia()

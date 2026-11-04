@@ -125,6 +125,7 @@ MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
 ARQUIVOS_DE_CONTROLE_DO_WARREN = (".seeds/**", ".mulch/**")
 MAX_SEM_RESULTADO = 2
 MAX_RECUSAS_DO_MOTOR = 5
+LIMITE_RELATO_DO_FIXER = 2000
 MAX_ATUALIZACOES_DO_BRANCH = 5
 MAX_FALHAS_DE_LEITURA = 5
 MAX_FALHAS_DE_CANCELAR = 5
@@ -1402,6 +1403,9 @@ class Despachante:
                         cota=cota,
                     )
                 )
+                if not revisao and estado_run != "succeeded":
+                    # o porquê de o fixer não ter resolvido é o que o orquestrador precisa para decidir
+                    _dict(_dict(self.estado.get("seeds")).get(seed_id))["relatoDoFixer"] = self._seguro(texto, LIMITE_RELATO_DO_FIXER)
                 if run.get("motivoFalha") == est.OOM:
                     self._notar_oom()
                 self._log(
@@ -2690,6 +2694,7 @@ class Despachante:
                     "headSha": seed.get("headSha"),
                     "ci": seed.get("ci"),
                     "veredito": seed.get("veredito"),
+                    "relatoDoFixer": seed.get("relatoDoFixer"),
                     "verificacao": {"codigo": verif.get("codigo"), "saida": str(verif.get("saida") or "")[-2000:]},
                 }
             )

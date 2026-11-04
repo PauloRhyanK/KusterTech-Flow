@@ -627,7 +627,21 @@ class TestGates(unittest.TestCase):
             e = est.aplicar(tudo_verde(ci="vermelho"), {"tipo": "corrigir", "seed": "s1", "sha": "bbb", "motivos": [], "achados": []}, {"runId": "fx1"})
             e = est.registrar_fim_de_run(e, "fx1", estado_run=estado_run, motivo_falha="x", veredito=None, cota=False)
             self.assertEqual((e["seeds"]["s1"]["estado"], e["seeds"]["s1"]["fixerRunId"]), ("falhou", None), estado_run)
-            self.assertEqual(da_seed(acoes(e)), [])
+            self.assertEqual(da_seed(acoes(e)), [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}])
+
+    def test_fixer_que_falhou_com_raia_executando_acorda_o_orquestrador(self):
+        e = est.aplicar(tudo_verde(ci="vermelho"), {"tipo": "corrigir", "seed": "s1", "sha": "bbb", "motivos": []}, {"runId": "fx1"})
+        e = est.registrar_fim_de_run(e, "fx1", estado_run="failed", motivo_falha="no_changes", veredito=None, cota=False)
+        e["raias"][e["seeds"]["s1"]["raia"]]["estado"] = "executando"
+        e["seeds"]["s1"]["pr"] = "https://github.com/o/r/pull/1"
+        plano_ = {"versao": 1, "faseAtual": None, "fases": [], "raias": []}
+        self.assertIn(
+            {"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}, est.proximas_acoes(e, plano_, [])
+        )
+        e["raias"][e["seeds"]["s1"]["raia"]]["estado"] = "falhou"
+        self.assertNotIn(
+            {"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}, est.proximas_acoes(e, plano_, [])
+        )
 
     def test_seed_com_run_em_curso_nao_age(self):
         e = est.aplicar(com_pr(), {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv1"})
