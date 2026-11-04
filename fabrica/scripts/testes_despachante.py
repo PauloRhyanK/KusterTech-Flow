@@ -551,7 +551,7 @@ class TestesJornada(Base):
         for _ in range(5):
             d.ciclo()
         d.estado["chavesAcordadas"].append("seed_parada:s-1")
-        d.estado["orquestrador"].update(runId=None, ocupadoEm=None)
+        d.estado["orquestrador"]["runId"] = None
         d.estado["acordarPendentes"] = []
         self.instante += despachante.SEM_PROGRESSO * 3
         acoes = d._acoes_de_seeds_paradas()
@@ -564,7 +564,8 @@ class TestesJornada(Base):
         d.estado["orquestrador"]["runId"] = "run-longo"
         self.instante += despachante.SEM_PROGRESSO * 4
         self.assertEqual(d._acoes_de_seeds_paradas(), [])
-        d.estado["orquestrador"]["runId"] = None
+        d._concluir_orquestrador()
+        self.assertIsNone(d.estado["orquestrador"].get("runId"))
         self.assertEqual(d._acoes_de_seeds_paradas(), [])
         self.instante += despachante.SEM_PROGRESSO
         self.assertEqual([a["tipo"] for a in d._acoes_de_seeds_paradas()], ["aguardar_humano"])
@@ -612,6 +613,35 @@ class TestesJornada(Base):
             d._observadas.add(seed_id)
         self.instante += despachante.SEM_PROGRESSO * 2
         self.assertEqual(len(d._acoes_de_seeds_paradas()), 1)
+
+    def test_vigia_nao_acorda_logo_depois_do_orquestrador(self):
+        d = self._seed_parada()
+        self.instante += despachante.SEM_PROGRESSO * 2
+        d.estado["orquestrador"]["runId"] = "run-x"
+        d._concluir_orquestrador()
+        self.assertEqual(d._acoes_de_seeds_paradas(), [])
+        self.instante += despachante.SEM_PROGRESSO
+        self.assertEqual([a["tipo"] for a in d._acoes_de_seeds_paradas()], ["acordar"])
+
+    def test_ci_pendente_obrigatorio_tem_teto(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1)
+        self.forja.definir_ci(REPO, H1, "pendente")
+        d.ciclo()
+        self.instante += despachante.CI_PENDENTE_MAXIMO - datetime.timedelta(seconds=1)
+        self.assertEqual(d._acoes_de_seeds_paradas(), [])
+        self.instante += datetime.timedelta(seconds=1)
+        self.assertEqual([a["tipo"] for a in d._acoes_de_seeds_paradas()], ["acordar"])
+
+    def test_substituir_pr_mantem_o_bloqueio_com_issue(self):
+        d = self._com_travas_no_orquestrador()
+        d.estado["orquestrador"]["bloqueio"] = {"url": "https://x/9", "erros": ["e"]}
+        d.estado["decisoes"] = [{"tipo": "bloqueio", "alvo": PR_ORQ, "url": "https://x/9"}]
+        d.estado["prsOrquestrador"] = [PR_ORQ, PR_ORQ + "1"]
+        d._substituir_prs_do_orquestrador(PR_ORQ + "1")
+        self.assertIsNone(d.estado["orquestrador"]["bloqueio"]["url"])
+        d._garantir_decisao_de_bloqueio()
+        self.assertTrue(d.estado["orquestrador"]["bloqueio"]["url"])
 
     def test_vigia_cobre_seed_que_falhou_com_a_chave_gasta(self):
         d = self._seed_parada()
@@ -693,7 +723,6 @@ class TestesJornada(Base):
         d.ciclo()
         d.estado["orquestrador"]["runId"] = None
         d.estado["acordarPendentes"] = []
-        d.estado["orquestrador"]["ocupadoEm"] = None
         self.instante += despachante.SEM_PROGRESSO * 3
         d.ciclo()
         self.assertEqual(d.estado["seeds"]["s-1"]["estado"], "bloqueada_humano")

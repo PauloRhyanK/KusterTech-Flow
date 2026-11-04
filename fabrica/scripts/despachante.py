@@ -1638,6 +1638,7 @@ class Despachante:
         manter = {k: antes[k] for k in ("semResultadoSeguidos", "bloqueio", "contadoRunId") if k in antes}
         novo = est.concluir_orquestrador(self.estado)
         _dict(novo.get("orquestrador")).update(manter)
+        novo["orquestradorLivreDesde"] = self._agora().isoformat()
         self._mudar(novo)
 
     def _observar_planos(self) -> None:
@@ -2001,7 +2002,6 @@ class Despachante:
             and seed_id not in self._prs_sem_leitura
             and not seed.get("revisaoRunId")
             and not seed.get("fixerRunId")
-            and not (self.config["ciObrigatorioNasSeeds"] is not False and seed.get("ci") == "pendente")
             and _dict(_dict(self.estado.get("raias")).get(seed.get("raia"))).get("estado") == "executando"
         )
 
@@ -2010,7 +2010,7 @@ class Despachante:
         if _lista(self.estado.get("acordarPendentes")) or _lista(self.estado.get("prsOrquestrador")):
             return False
         try:
-            return agora - datetime.datetime.fromisoformat(self._orq().get("ocupadoEm")) >= SEM_PROGRESSO
+            return agora - datetime.datetime.fromisoformat(self.estado.get("orquestradorLivreDesde")) >= SEM_PROGRESSO
         except (TypeError, ValueError):
             return True
 
@@ -2022,9 +2022,7 @@ class Despachante:
         if self.config["orquestradorResolveTravas"] is not True or self._vigia_em_espera():
             return []
         agora = self._agora()
-        if self._orq().get("runId") is not None:
-            self._orq()["ocupadoEm"] = agora.isoformat()
-            self._salvar()
+        if self._orq().get("runId") is not None or not self._orquestrador_assentou(agora):
             return []
         acoes, acordou = [], False
         for seed_id, seed in _dict(self.estado.get("seeds")).items():
@@ -2036,13 +2034,14 @@ class Despachante:
                 seed["progressoEm"] = agora.isoformat()  # nunca observada: o relógio começa agora
                 self._salvar()
                 continue
-            if parada < SEM_PROGRESSO:
+            ci_em_espera = self.config["ciObrigatorioNasSeeds"] is not False and seed.get("ci") == "pendente"
+            if parada < (CI_PENDENTE_MAXIMO if ci_em_espera else SEM_PROGRESSO):
                 continue
             if "seed_parada:%s" % seed_id not in _lista(self.estado.get("chavesAcordadas")):
                 if not acordou:
                     acoes.append({"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id})
                     acordou = True
-            elif parada >= SEM_PROGRESSO * 3 and self._orquestrador_assentou(agora):
+            elif parada >= SEM_PROGRESSO * 3:
                 motivo = seed.get("pendenteHumano")
                 motivos = [motivo if _texto(motivo) else "PR parado há %d min, mesmo depois de acordar o orquestrador" % (parada.total_seconds() // 60)]
                 acoes.append({"tipo": "aguardar_humano", "seed": seed_id, "motivos": motivos})
@@ -2520,6 +2519,9 @@ class Despachante:
             restantes = []
             for decisao in _lista(self.estado.get("decisoes")):
                 if isinstance(decisao, dict) and decisao.get("alvo") == url and _texto(decisao.get("url")):
+                    bloqueio = self._orq().get("bloqueio")
+                    if isinstance(bloqueio, dict) and bloqueio.get("url") == decisao["url"]:
+                        bloqueio["url"] = None  # o bloqueio segue valendo: _garantir_decisao_de_bloqueio reabre a issue
                     self._fechar_depois(
                         decisao["url"], "O PR %s foi substituído pelo PR %s; decisão encerrada." % (url, novo), decisao=True
                     )
