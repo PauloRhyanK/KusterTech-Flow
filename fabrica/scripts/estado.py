@@ -433,6 +433,8 @@ def registrar_fim_de_run(
                 seed["veredito"] = None  # o head mudou: o próximo ciclo pede revisão nova
             elif seed.get("estado") not in TERMINAIS:
                 seed["estado"] = "falhou"
+                # os achados que o fixer não resolveu vão para o orquestrador
+                seed["veredito"] = seed.get("vereditoAnterior")
                 _avisar(estado, f"seed {seed_id!r}: fixer terminou em {estado_run!r}")
             seed["vereditoAnterior"] = None
     if not achou:
@@ -529,7 +531,7 @@ def _fase_atual(plano: dict):
 
 
 def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None, ci_opcional=False) -> list[dict]:
-    """Ações na ordem: 1 seeds, 2 retomar, 3 despachar, 4 raia falhou, 5 fase concluída.
+    """Ações na ordem: 1 seeds, 2 retomar, 3 despachar, 4 fixer que não resolveu, 5 raia falhou, 6 fase concluída.
 
     `agora` (datetime) liga a janela de 10 min do CI "ausente" (F1); sem ele, "ausente" vai para o humano.
     """
@@ -583,12 +585,24 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None,
         ]
         acoes.extend({"tipo": "despachar_raia", "raia": i} for i in prontas[:vagas])
 
-    # 4. raias que falharam
+    # 4. fixer que não resolveu: sem PR novo para os gates, quem decide é o orquestrador
+    for seed_id, seed in _seeds(estado).items():
+        if (
+            isinstance(seed, dict)
+            and seed.get("estado") == "falhou"
+            and seed.get("fixerUsado") is True
+            and not seed.get("pendenteHumano")
+            and _texto(seed.get("pr"))
+            and _dict(raias_do_estado.get(seed.get("raia"))).get("estado") == "executando"
+        ):
+            acoes.append({"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id})
+
+    # 5. raias que falharam
     for id_, raia in raias_do_estado.items():
         if raia.get("estado") == "falhou":
             acoes.append({"tipo": "acordar", "motivo": "raia_falhou", "alvo": id_})
 
-    # 5. fase atual concluída
+    # 6. fase atual concluída
     fase_id, membros = _fase_atual(plano)
     if membros and all(
         raias_do_estado.get(m, {}).get("estado") == "concluida" for m in membros
