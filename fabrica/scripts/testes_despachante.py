@@ -338,6 +338,43 @@ class TestesJornada(Base):
             d.ciclo()
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
 
+    def test_github_sem_protecao_na_config_mergeia_sozinho(self):
+        config = dict(CONFIG, protegidos=[".env*"])
+        self.publicar(plano(raia("a")))
+        d = self.novo(config=config)
+        d.iniciar()
+        d.ciclo()
+        self.abrir_pr(H1, arquivos=(".github/workflows/ci.yml", "src/a/x.ts"))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H1)])
+
+    def test_github_protegido_na_config_continua_parando(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        d.ciclo()
+        self.abrir_pr(H1, arquivos=(".github/workflows/ci.yml",))
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
+    def test_gates_da_fabrica_param_mesmo_fora_da_config(self):
+        for arquivo in (".fabrica/config.json", ".warren/config.yaml", ".claude/settings.json"):
+            with self.subTest(arquivo=arquivo):
+                self.setUp()
+                self.publicar(plano(raia("a")))
+                d = self.novo(config=dict(CONFIG, protegidos=[".env*"]))
+                d.iniciar()
+                d.ciclo()
+                self.abrir_pr(H1, arquivos=(arquivo,))
+                d.ciclo()
+                self.terminar_revisao(H1)
+                d.ciclo()
+                self.assertEqual(self.forja.merges, [])
+
     def test_revisor_sem_commit_vale_pelo_veredito(self):
         # O Warren reapa como falha o run sem commit num branch existente; o revisor não commita por desenho.
         for motivo in ("dropped_commit", "no_changes"):
@@ -1763,7 +1800,7 @@ class TestesConfig(Base):
         d = self.novo(config=config)
         d.iniciar()
         d.ciclo()
-        self.abrir_pr(H1, arquivos=("src/a/x.ts", ".github/workflows/ci.yml"))
+        self.abrir_pr(H1, arquivos=("src/a/x.ts", ".warren/config.yaml"))
         d.ciclo()
         self.terminar_revisao(H1)
         d.ciclo()

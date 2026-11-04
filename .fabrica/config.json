@@ -7,14 +7,11 @@
     "prepararAutomatico": true
   },
   "protegidos": [
-    "**/migrations/**",
-    ".github/**",
     ".warren/**",
     ".claude/**",
     ".fabrica/orquestrador.md",
     ".fabrica/equipes/**",
     ".fabrica/config.json",
-    "**/auth/**",
     ".env*",
     "fabrica/**"
   ],
