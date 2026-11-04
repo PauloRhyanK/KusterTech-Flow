@@ -4,6 +4,8 @@
   "ciObrigatorioNoPlano": false,
   "ciObrigatorioNasSeeds": false,
   "homologacaoDeFase": false,
+  "orquestradorResolveTravas": true,
+  "maxReplanejamentos": 5,
   "warren": {
     "prepararAutomatico": true
   },
