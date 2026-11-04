@@ -125,6 +125,7 @@ MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
 ARQUIVOS_DE_CONTROLE_DO_WARREN = (".seeds/**", ".mulch/**")
 MAX_SEM_RESULTADO = 2
 MAX_RECUSAS_DO_MOTOR = 5
+MAX_ATUALIZACOES_DO_BRANCH = 5
 MAX_FALHAS_DE_LEITURA = 5
 MAX_FALHAS_DE_CANCELAR = 5
 MAX_TENTATIVAS_DE_FECHAR = 5
@@ -586,6 +587,7 @@ class Despachante:
         limpar_residuos=verificacao.limpar_residuos,
         segredos=(),
         preparar_warren=None,
+        atualizar_branch=None,
         caminho_plano: str = CAMINHO_PLANO,
         capacidade: str | None = None,
         plano_id: str | None = None,
@@ -621,6 +623,7 @@ class Despachante:
         self._limpar = limpar_residuos
         # sem preparar injetado (testes, ou outro motor) nada é tocado no Warren; o `construir` liga o real
         self._preparar_warren = preparar_warren
+        self._atualizar_branch = atualizar_branch
         # E: o sha do adaptador depois de um rollback; só em memória (um reinício do despachante libera nova tentativa)
         self._sha_revertido = None
         conhecidos = {s for s in segredos if isinstance(s, str)} | {s.strip() for s in segredos if isinstance(s, str)}
@@ -2368,6 +2371,13 @@ class Despachante:
         if self.forja.mergear(pr_url, head) is True:
             self._log({"evento": "merge_do_orquestrador", "pr": pr_url, "sha": head})
             return {"r": "merge"}
+        if self._atualizar_branch is not None and orquestrador.get("branchAtualizado") != pr_url:
+            branch = _dict(self.forja.pr(pr_url)).get("branch")
+            if _texto(branch) and _texto(self._atualizar_branch(branch, self.branch)):
+                orquestrador["branchAtualizado"] = pr_url
+                self._log({"evento": "branch_atualizado", "pr": pr_url})
+                self._salvar()
+                return {"r": "esperar"}
         motivos = ["merge recusado pelo GitHub"]
         return self._sem_resultado(self._decidir_humano_orquestrador(pr_url, motivo, motivos), motivos)
 
@@ -3411,6 +3421,26 @@ class Despachante:
             raise ValueError("seed desconhecida %r" % (acao.get("seed"),))
         return seed
 
+    def _atualizar_branch_da_seed(self, seed_id: str, seed: dict) -> bool:
+        """O GitHub recusou o merge: tenta trazer o branch padrão para o PR, sem gastar run.
+
+        O código do PR não muda, então a revisão continua valendo; a verificação roda de novo no head novo, porque o
+        branch padrão andou. Com conflito de verdade, nada muda e a recusa segue o caminho de sempre.
+        """
+        vezes = seed.get("atualizacoesDoBranch") if _inteiro(seed.get("atualizacoesDoBranch")) else 0
+        if self._atualizar_branch is None or vezes >= MAX_ATUALIZACOES_DO_BRANCH or not _texto(seed.get("branch")):
+            return False
+        novo = self._atualizar_branch(seed["branch"], self.branch)
+        if not _texto(novo):
+            return False
+        seed["atualizacoesDoBranch"] = vezes + 1
+        seed["headSha"] = novo
+        seed["verificacao"] = None
+        if isinstance(seed.get("veredito"), dict):
+            seed["veredito"]["sha"] = novo
+        self._log({"evento": "branch_atualizado", "seed": seed_id, "sha": novo})
+        return True
+
     def _tratar_recusa_do_motor(self, raia_id, exc: RecusaDoMotor) -> None:
         """Warren recusou o despacho (a cópia dele pode nem ter o plano): atualiza a cópia e tenta no próximo ciclo.
 
@@ -3505,7 +3535,11 @@ class Despachante:
             seed = self._seed_da_acao(acao)
             if acao.get("sha") != seed.get("headSha") or not _texto(seed.get("pr")):
                 raise ValueError("merge fora do head observado")
-            return {"ok": self.forja.mergear(seed["pr"], acao["sha"]) is True}
+            if self.forja.mergear(seed["pr"], acao["sha"]) is True:
+                return {"ok": True}
+            if self._atualizar_branch_da_seed(acao["seed"], seed):
+                return {"adiado": True}
+            return {"ok": False}
 
         if tipo == "retomar_raia":
             raia = _dict(_dict(self.estado.get("raias")).get(acao.get("raia")))
@@ -3639,6 +3673,7 @@ def construir(ambiente) -> Despachante:
 
     import forja as forja_github
     import motor_warren
+    import atualizar_branch
     import preparar_warren
 
     raiz = _exigir(ambiente, "FABRICA_RAIZ")
@@ -3690,6 +3725,7 @@ def construir(ambiente) -> Despachante:
         preparar_warren=None
         if sem_preparo
         else functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),
+        atualizar_branch=functools.partial(atualizar_branch.atualizar, repo_dir),
         caminho_plano=caminho_plano,
         capacidade=caminho_capacidade,
         plano_id=plano_id,
