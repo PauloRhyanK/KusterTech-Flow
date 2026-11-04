@@ -12,7 +12,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from motor import FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, instante, marcas_de_nonce, procurar_nonce, validar_nonce  # noqa: E402
+from motor import FalhaAntesDoEnvio, FalhaIncerta, MotorOcupado, RecusaDoMotor, instante, marcas_de_nonce, procurar_nonce, validar_nonce  # noqa: E402
 
 # Falhas em que a requisição nunca foi escrita: o servidor não pode ter aceitado nada.
 _ERRNOS_ANTES = {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EADDRNOTAVAIL}
@@ -161,6 +161,8 @@ class MotorWarren:
             raise classe("%s %s: falha de rede (%s)" % (metodo, caminho, type(erro).__name__)) from None
         if status == 429:
             raise MotorOcupado(_retry_after(resp_headers))
+        if status == 400:
+            raise RecusaDoMotor("%s %s: HTTP 400" % (metodo, caminho))
         if not 200 <= status < 300:
             raise RuntimeError("%s %s: HTTP %s" % (metodo, caminho, status))
         return resp_corpo
@@ -396,6 +398,9 @@ class MotorWarren:
         if not isinstance(versao, str) or not versao.strip():
             raise RuntimeError("GET /version: resposta sem o campo 'version'")
         return versao
+
+    def atualizar_projeto(self, projeto: str) -> None:
+        self._requisitar("POST", "/projects/%s/refresh" % urllib.parse.quote(projeto, safe=""))
 
     def projetos(self) -> list[dict]:
         """GET /projects: a lista pura ou `{"projects": [...]}`; só ficam itens com `id` (texto ou inteiro) e `gitUrl`."""

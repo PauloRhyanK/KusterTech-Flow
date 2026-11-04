@@ -1639,6 +1639,29 @@ class TestesProjetos(unittest.TestCase):
             m.projetos()
         self.assertEqual(str(ctx.exception), "GET /projects: HTTP 500")
 
+    def test_400_vira_recusa(self):
+        m, _ = novo((400, {}, b'{"error": "plano sem seeds"}'))
+        with self.assertRaises(motor.RecusaDoMotor) as ctx:
+            m.despachar_plano(**ARGS_PLANO)
+        self.assertEqual(str(ctx.exception), "POST /plan-runs: HTTP 400")
+
+    def test_outros_erros_nao_sao_recusa(self):
+        for status in (404, 422, 500):
+            m, _ = novo((status, {}, b""))
+            with self.assertRaises(RuntimeError) as ctx:
+                m.despachar_plano(**ARGS_PLANO)
+            self.assertNotIsInstance(ctx.exception, motor.RecusaDoMotor)
+
+    def test_atualizar_projeto(self):
+        m, t = novo((200, {}, b"{}"))
+        m.atualizar_projeto("prj_1/a")
+        self.assertEqual(t.requisicoes[0][:2], ("POST", BASE + "/projects/prj_1%2Fa/refresh"))
+
+    def test_atualizar_projeto_com_erro(self):
+        m, _ = novo((500, {}, b""))
+        with self.assertRaises(RuntimeError):
+            m.atualizar_projeto("prj_1")
+
     def test_motor_falso(self):
         m = motor.MotorFalso()
         self.assertEqual(m.projetos(), [])

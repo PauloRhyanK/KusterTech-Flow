@@ -128,6 +128,10 @@ class FalhaIncerta(FalhaDeRede):
     """A requisição pode ter chegado (timeout de leitura, conexão derrubada): o serviço pode ter aceitado."""
 
 
+class RecusaDoMotor(RuntimeError):
+    """O Warren recusou o pedido (HTTP 400): com certeza nada foi criado, então pode tentar de novo."""
+
+
 class MotorOcupado(Exception):
     """O motor recusou o despacho por falta de cota ou de vaga (HTTP 429)."""
 
@@ -205,6 +209,10 @@ class Motor(typing.Protocol):
 
     def versao(self) -> str:
         """GET /version: a versão do Warren; responder é o sinal de que ele está de pé."""
+        ...
+
+    def atualizar_projeto(self, projeto: str) -> None:
+        """POST /projects/:id/refresh: atualiza a cópia do repositório que o Warren usa."""
         ...
 
     def projetos(self) -> list[dict]:
@@ -531,6 +539,9 @@ class MotorFalso:
     def versao(self) -> str:
         self._registrar("versao")
         return "0.19.3"
+
+    def atualizar_projeto(self, projeto: str) -> None:
+        self._registrar("atualizar_projeto", projeto=projeto)
 
     def projetos(self) -> list[dict]:
         self._registrar("projetos")

@@ -302,6 +302,42 @@ class TestesJornada(Base):
         self.assertEqual(len(self.runs(HAIKU)), 1)
         self.assertEqual(self.forja.merges, [])
 
+    def test_recusa_do_motor_atualiza_o_projeto_e_tenta_de_novo(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        with mock.patch.object(self.motor, "despachar_plano", side_effect=despachante.RecusaDoMotor("POST /plan-runs: HTTP 400")):
+            d.ciclo()
+            d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
+        self.assertEqual(self.estado()["raias"]["a"]["recusasDoMotor"], 2)
+        self.assertEqual(len([1 for nome, _ in self.motor.chamadas if nome == "atualizar_projeto"]), 2)
+        self.assertEqual(self.runs(), [])
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+        self.assertEqual(self.acordadas(), [])
+
+    def test_recusa_do_motor_alem_do_teto_vira_falha_da_raia(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        with mock.patch.object(self.motor, "despachar_plano", side_effect=despachante.RecusaDoMotor("POST /plan-runs: HTTP 400")):
+            for _ in range(despachante.MAX_RECUSAS_DO_MOTOR):
+                d.ciclo()
+                self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
+            d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
+
+    def test_falha_ao_atualizar_o_projeto_nao_derruba_o_ciclo(self):
+        self.publicar(plano(raia("a")))
+        d = self.novo()
+        d.iniciar()
+        with mock.patch.object(self.motor, "despachar_plano", side_effect=despachante.RecusaDoMotor("x")), mock.patch.object(
+            self.motor, "atualizar_projeto", side_effect=RuntimeError("fora")
+        ):
+            d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
+
     def test_revisor_sem_commit_vale_pelo_veredito(self):
         # O Warren reapa como falha o run sem commit num branch existente; o revisor não commita por desenho.
         for motivo in ("dropped_commit", "no_changes"):

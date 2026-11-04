@@ -50,7 +50,16 @@ import prompts  # noqa: E402
 import raias  # noqa: E402
 import verificacao  # noqa: E402
 from forja import LABEL_DECISAO  # noqa: E402
-from motor import MARCADOR_NONCE, MOTIVOS_INFRA_PERDIDA, FalhaAntesDoEnvio, FalhaDeRede, FalhaIncerta, MotorOcupado, instante  # noqa: E402
+from motor import (  # noqa: E402
+    MARCADOR_NONCE,
+    MOTIVOS_INFRA_PERDIDA,
+    FalhaAntesDoEnvio,
+    FalhaDeRede,
+    FalhaIncerta,
+    MotorOcupado,
+    RecusaDoMotor,
+    instante,
+)
 
 ARQ_ESTADO = "estado.json"
 ARQ_PLANO = "plano.json"
@@ -113,6 +122,7 @@ PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
 
 MAX_SEM_RESULTADO = 2
+MAX_RECUSAS_DO_MOTOR = 5
 MAX_FALHAS_DE_LEITURA = 5
 MAX_FALHAS_DE_CANCELAR = 5
 MAX_TENTATIVAS_DE_FECHAR = 5
@@ -3352,6 +3362,22 @@ class Despachante:
             raise ValueError("seed desconhecida %r" % (acao.get("seed"),))
         return seed
 
+    def _tratar_recusa_do_motor(self, raia_id, exc: RecusaDoMotor) -> None:
+        """Warren recusou o despacho (a cópia dele pode nem ter o plano): atualiza a cópia e tenta no próximo ciclo.
+
+        Nada foi criado, então repetir é seguro. Depois do teto, a recusa segue como falha da raia.
+        """
+        raia = _dict(_dict(self.estado.get("raias")).get(raia_id))
+        recusas = (raia.get("recusasDoMotor") if _inteiro(raia.get("recusasDoMotor")) else 0) + 1
+        if recusas > MAX_RECUSAS_DO_MOTOR:
+            return
+        raia["recusasDoMotor"] = recusas
+        try:
+            self.motor.atualizar_projeto(self.projeto)
+        except Exception as erro:  # noqa: BLE001 - a próxima tentativa ainda pode dar certo
+            self._erro_de_etapa("atualizar_projeto", self.projeto, erro)
+        raise _NaoExecutada(str(exc)) from None
+
     def _efeito(self, acao: dict, nonce: str | None = None, raiz: str | None = None) -> dict:
         tipo = acao.get("tipo")
         if tipo == "despachar_raia":
@@ -3363,14 +3389,18 @@ class Despachante:
                 template = prompts.prompt_template_raia(raia.get("papel"))
             except (ConfigInvalida, ValueError) as exc:
                 raise _NaoExecutada(str(exc)) from None
-            plan_run_id = self.motor.despachar_plano(
-                projeto=self.projeto,
-                plano_seeds=raia.get("planoSeeds"),
-                agente=modelo["agente"],
-                modelo=modelo["modelo"],
-                prompt_template=_com_nonce(template, nonce) if nonce else template,
-                max_custo_usd=modelo["maxCustoUsd"],
-            )
+            try:
+                plan_run_id = self.motor.despachar_plano(
+                    projeto=self.projeto,
+                    plano_seeds=raia.get("planoSeeds"),
+                    agente=modelo["agente"],
+                    modelo=modelo["modelo"],
+                    prompt_template=_com_nonce(template, nonce) if nonce else template,
+                    max_custo_usd=modelo["maxCustoUsd"],
+                )
+            except RecusaDoMotor as exc:
+                self._tratar_recusa_do_motor(acao.get("raia"), exc)
+                raise
             return {"planRunId": plan_run_id}
 
         if tipo in ("revisar", "corrigir"):
