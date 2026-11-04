@@ -125,6 +125,7 @@ MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
 ARQUIVOS_DE_CONTROLE_DO_WARREN = (".seeds/**", ".mulch/**")
 MAX_SEM_RESULTADO = 2
 MAX_RECUSAS_DO_MOTOR = 5
+SEM_PROGRESSO = datetime.timedelta(minutes=20)
 LIMITE_RELATO_DO_FIXER = 2000
 MAX_ATUALIZACOES_DO_BRANCH = 5
 MAX_FALHAS_DE_LEITURA = 5
@@ -562,6 +563,11 @@ def _validar_config(config) -> dict:
         raise ConfigInvalida("ciObrigatorioNasSeeds")
     if not isinstance(config.setdefault("homologacaoDeFase", True), bool):
         raise ConfigInvalida("homologacaoDeFase")
+    if not isinstance(config.setdefault("orquestradorResolveTravas", False), bool):
+        raise ConfigInvalida("orquestradorResolveTravas")
+    teto = config.setdefault("maxReplanejamentos", est.MAX_REPLANEJAMENTOS)
+    if not _inteiro(teto) or not 0 <= teto <= 20:
+        raise ConfigInvalida("maxReplanejamentos")
     try:
         verificacao._validar_conteiner(config.get("verificacao"))
     except verificacao._ConfigInvalida as erro:
@@ -1829,6 +1835,7 @@ class Despachante:
         chaves = _lista(self.estado.get("chavesAcordadas"))
         if chave in chaves:
             self.estado["chavesAcordadas"] = [c for c in chaves if c != chave]
+        self._esquecer_chave_da_trava(seed_id)
         restantes = []
         for decisao in _lista(self.estado.get("decisoes")):
             if isinstance(decisao, dict) and decisao.get("tipo", "seed") == "seed" and decisao.get("alvo") == seed_id:
@@ -1919,8 +1926,79 @@ class Despachante:
                 )
             )
             self._herdar_gates_do_head(seed_id)
+            self._marcar_progresso(seed_id)
             self._restaurar_tentativa(seed_id)
             self._observadas.add(seed_id)
+
+    def _marcar_progresso(self, seed_id: str) -> None:
+        """Guarda quando o estado de gate da seed mudou pela última vez: é o que o vigia de seed parada olha."""
+        seed = _dict(_dict(self.estado.get("seeds")).get(seed_id))
+        assinatura = json.dumps(
+            [
+                seed.get("estado"),
+                seed.get("headSha"),
+                seed.get("revisaoRunId"),
+                seed.get("fixerRunId"),
+                _dict(seed.get("veredito")).get("resultado"),
+                _dict(seed.get("verificacao")).get("codigo"),
+                seed.get("tentativasMerge"),
+            ]
+        )
+        if seed.get("assinaturaDoProgresso") != assinatura:
+            head_novo = _texto(seed.get("progressoHead")) and seed["progressoHead"] != seed.get("headSha")
+            seed["assinaturaDoProgresso"] = assinatura
+            seed["progressoHead"] = seed.get("headSha")
+            seed["progressoEm"] = self._agora().isoformat()
+            # avançou: se parar de novo, o orquestrador tem outra chance; head novo também invalida a trava antiga
+            self._esquecer_chave_da_trava(seed_id)
+            if head_novo and self.config["orquestradorResolveTravas"] is True:
+                seed["pendenteHumano"] = None
+            self._salvar()
+
+    def _esquecer_chave_da_trava(self, seed_id: str) -> None:
+        chave = "seed_parada:%s" % seed_id
+        chaves = _lista(self.estado.get("chavesAcordadas"))
+        if chave in chaves:
+            self.estado["chavesAcordadas"] = [c for c in chaves if c != chave]
+
+    def _acoes_de_seeds_paradas(self) -> list[dict]:
+        """O vigia: PR de raia em andamento, sem run nenhum e sem mudança há tempo demais vai para o orquestrador.
+
+        Cobre o que nenhuma regra previu. Se ele já foi chamado para essa seed e ela segue parada, vai para o Paulo.
+        """
+        if (
+            self.config["orquestradorResolveTravas"] is not True
+            or self._orq().get("runId") is not None
+            or self._merges_suspensos()
+            or self._drenando()
+        ):
+            return []
+        agora = self._agora()
+        acoes = []
+        for seed_id, seed in _dict(self.estado.get("seeds")).items():
+            seed = _dict(seed)
+            if (
+                seed_id not in self._observadas
+                or seed.get("estado") in est.TERMINAIS + ("bloqueada_humano", "executando")
+                or seed.get("pendenteHumano")
+                or not _texto(seed.get("pr"))
+                or seed.get("revisaoRunId")
+                or seed.get("fixerRunId")
+                or _dict(_dict(self.estado.get("raias")).get(seed.get("raia"))).get("estado") != "executando"
+            ):
+                continue
+            try:
+                parada = agora - datetime.datetime.fromisoformat(seed.get("progressoEm"))
+            except (TypeError, ValueError):
+                continue
+            if parada < SEM_PROGRESSO:
+                continue
+            if "seed_parada:%s" % seed_id not in _lista(self.estado.get("chavesAcordadas")):
+                acoes.append({"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id})
+            elif parada >= SEM_PROGRESSO * 3:
+                motivos = ["PR parado há %d min, mesmo depois de acordar o orquestrador" % (parada.total_seconds() // 60)]
+                acoes.append({"tipo": "aguardar_humano", "seed": seed_id, "motivos": motivos})
+        return acoes
 
     def _herdar_gates_do_head(self, seed_id: str) -> None:
         """Ao fechar um run, o Warren empurra `chore(warren): seeds state` no branch: o head muda, o código não.
@@ -2684,12 +2762,14 @@ class Despachante:
                 if isinstance(s, dict) and s.get("raia") == alvo
             }
             return {"raia": alvo, "falha": raia.get("falha"), "retomadas": raia.get("retomadas"), "seeds": seeds}
-        if motivo == "gate_falhou_apos_fixer":
+        if motivo in ("gate_falhou_apos_fixer", "seed_parada"):
             seed = _dict(_dict(self.estado.get("seeds")).get(alvo))
             verif = _dict(seed.get("verificacao"))
             return self._limitar(
                 {
                     "seed": alvo,
+                    "trava": seed.get("pendenteHumano") or seed.get("motivoHumano"),
+                    "tentativasMerge": seed.get("tentativasMerge"),
                     "pr": seed.get("pr"),
                     "headSha": seed.get("headSha"),
                     "ci": seed.get("ci"),
@@ -2797,7 +2877,7 @@ class Despachante:
     def _raia_da_acordada(self, acao: dict):
         if acao.get("motivo") == "raia_falhou":
             return acao.get("alvo")
-        if acao.get("motivo") == "gate_falhou_apos_fixer":
+        if acao.get("motivo") in ("gate_falhou_apos_fixer", "seed_parada"):
             return _dict(_dict(self.estado.get("seeds")).get(acao.get("alvo"))).get("raia")
         return None
 
@@ -2806,7 +2886,7 @@ class Despachante:
             return False
         raia = _dict(_dict(self.estado.get("raias")).get(self._raia_da_acordada(acao)))
         n = raia.get("replanejamentos")
-        return _inteiro(n) and n >= est.MAX_REPLANEJAMENTOS
+        return _inteiro(n) and n >= self.config["maxReplanejamentos"]
 
     def _escalar_teto_de_replanejamento(self, acao: dict) -> bool:
         """F2c: decisão rastreada para o Paulo no lugar da acordada; a chave fica gasta (como se tivesse acordado)."""
@@ -2883,7 +2963,10 @@ class Despachante:
             self._protegidos(),
             agora=self._agora(),
             ci_opcional=self.config["ciObrigatorioNasSeeds"] is False,
+            resolver_travas=self.config["orquestradorResolveTravas"],
         )
+        if not any(a.get("tipo") == "acordar" for a in acoes):
+            acoes = acoes + self._acoes_de_seeds_paradas()
         incertas = self._chaves_incertas()
         orquestrador_incerto = self._orquestrador_incerto()
         acoes = [

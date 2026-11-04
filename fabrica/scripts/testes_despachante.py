@@ -469,6 +469,155 @@ class TestesJornada(Base):
         d, _ = self._recusado_uma_vez(None)
         self.assertEqual(self.estado()["seeds"]["s-1"]["tentativasMerge"], 1)
 
+    def _com_travas_no_orquestrador(self, **extra):
+        self.publicar(plano(raia("a")))
+        d = self.novo(config=dict(CONFIG, orquestradorResolveTravas=True, **extra))
+        d.iniciar()
+        d.ciclo()
+        self.abrir_pr(H1)
+        d.ciclo()
+        return d
+
+    def _recusar_merges(self):
+        self.forja.mergear = lambda url, sha: False
+
+    def test_merge_recusado_vai_ao_orquestrador_e_nao_ao_paulo(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1)
+        self._recusar_merges()
+        for _ in range(5):
+            d.ciclo()
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual([a["motivo"] for a in self.acordadas()], ["seed_parada"])
+        contexto = self.estado()["orquestrador"]["acordada"]["contexto"]
+        self.assertIn("merge recusado", contexto["trava"])
+        self.assertEqual(self.forja.merges, [])
+
+    def test_por_padrao_merge_recusado_vai_ao_paulo(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self._recusar_merges()
+        for _ in range(5):
+            d.ciclo()
+        self.assertEqual(self.acordadas(), [])
+        self.assertEqual(len(self.forja.decisoes), 1)
+
+    def test_orquestrador_ja_chamado_para_a_trava_vai_ao_paulo(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1)
+        self._recusar_merges()
+        for _ in range(4):
+            d.ciclo()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.motor.definir_run(rid, estado="succeeded")
+        for _ in range(3):
+            d.ciclo()
+        self.assertEqual(len([a for a in self.acordadas() if a["motivo"] == "seed_parada"]), 1)
+        self.assertEqual(len([t for t, _ in self.forja.decisoes if "decisão necessária" in t]), 1)
+
+    def test_revisor_sem_veredito_vai_ao_orquestrador(self):
+        d = self._com_travas_no_orquestrador()
+        for _ in range(4):
+            rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
+            if not rid:
+                break
+            self.motor.definir_run(rid, estado="succeeded")
+            self.motor.definir_texto(rid, "sem veredito")
+            d.ciclo()
+        self.assertEqual([a["motivo"] for a in self.acordadas()], ["seed_parada"])
+
+    def test_vigia_acorda_o_orquestrador_depois_de_20_min_parado(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1, resultado="correcoes", achados=[{"arquivo": "src/a/x.ts", "motivo": "erro"}])
+        self.forja.definir_ci(REPO, H1, "pendente")
+        d.ciclo()
+        fixer = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.assertIsNone(fixer)
+        self.assertEqual(self.acordadas(), [])
+        self.instante += despachante.SEM_PROGRESSO + datetime.timedelta(seconds=1)
+        d.ciclo()
+        self.assertEqual([a["motivo"] for a in self.acordadas()], ["seed_parada"])
+
+    def test_vigia_nao_acorda_com_run_em_curso(self):
+        d = self._com_travas_no_orquestrador()
+        d.ciclo()
+        self.assertTrue(self.estado()["seeds"]["s-1"]["revisaoRunId"])
+        self.instante += despachante.SEM_PROGRESSO * 2
+        d.ciclo()
+        self.assertEqual(self.acordadas(), [])
+
+    def test_vigia_desligado_por_padrao(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1, resultado="correcoes", achados=[{"arquivo": "src/a/x.ts", "motivo": "erro"}])
+        self.forja.definir_ci(REPO, H1, "pendente")
+        d.ciclo()
+        self.instante += despachante.SEM_PROGRESSO * 4
+        self.assertEqual(d._acoes_de_seeds_paradas(), [])
+
+    def test_vigia_manda_ao_paulo_se_continuar_parado(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1, resultado="correcoes", achados=[{"arquivo": "src/a/x.ts", "motivo": "erro"}])
+        self.forja.definir_ci(REPO, H1, "pendente")
+        d.ciclo()
+        self.instante += despachante.SEM_PROGRESSO + datetime.timedelta(seconds=1)
+        d.ciclo()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.motor.definir_run(rid, estado="succeeded")
+        self.instante += despachante.SEM_PROGRESSO * 3
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+
+    def test_trava_espera_o_orquestrador_acordado(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1)
+        self._recusar_merges()
+        for _ in range(8):
+            d.ciclo()
+        self.assertIsNotNone(self.estado()["orquestrador"]["runId"])
+        self.assertEqual(self.forja.decisoes, [])
+
+    def test_head_novo_limpa_a_trava_e_da_outra_chance(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1)
+        self._recusar_merges()
+        for _ in range(5):
+            d.ciclo()
+        self.motor.definir_run(self.estado()["orquestrador"]["runId"], estado="succeeded")
+        self.mover_head(H2)
+        d.ciclo()
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertIsNone(seed["pendenteHumano"])
+        self.assertEqual(seed["tentativasMerge"], 0)
+        self.assertNotIn("seed_parada:s-1", self.estado()["chavesAcordadas"])
+        self.assertEqual(self.forja.decisoes, [])
+
+    def test_vigia_nao_acorda_sem_ler_o_pr(self):
+        d = self._com_travas_no_orquestrador()
+        self.terminar_revisao(H1, resultado="correcoes", achados=[{"arquivo": "src/a/x.ts", "motivo": "erro"}])
+        self.forja.definir_ci(REPO, H1, "pendente")
+        d.ciclo()
+        self.instante += despachante.SEM_PROGRESSO * 2
+        d._observadas.clear()
+        self.assertEqual(d._acoes_de_seeds_paradas(), [])
+
+    def test_max_replanejamentos_vem_da_config(self):
+        d = self._com_travas_no_orquestrador(maxReplanejamentos=5)
+        acao = {"tipo": "acordar", "motivo": "seed_parada", "alvo": "s-1"}
+        d.estado["raias"]["a"]["replanejamentos"] = 4
+        self.assertFalse(d._no_teto_de_replanejamento(acao))
+        d.estado["raias"]["a"]["replanejamentos"] = 5
+        self.assertTrue(d._no_teto_de_replanejamento(acao))
+
+    def test_config_invalida_das_travas(self):
+        for campo, valor in (("orquestradorResolveTravas", "sim"), ("maxReplanejamentos", -1), ("maxReplanejamentos", 21), ("maxReplanejamentos", True)):
+            with self.assertRaises(despachante.ConfigInvalida, msg=campo):
+                despachante._validar_config(dict(CONFIG, **{campo: valor}))
+
     def test_github_sem_protecao_na_config_mergeia_sozinho(self):
         config = dict(CONFIG, protegidos=[".env*"])
         self.publicar(plano(raia("a")))

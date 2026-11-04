@@ -75,6 +75,10 @@ Cota estourada não se resolve trocando de modelo: isso é do Paulo.
 
 Contexto: `{"seed", "pr", "headSha", "ci", "veredito", "verificacao": {"codigo", "saida"}}`. O fixer já rodou uma vez e o gate continua vermelho. Não peça outro fixer. Leia os achados, a saída da verificação e o estado do CI, e decida: um **plano Seeds novo** para a raia, com o BRIEFING tratando a causa (o despachante cancela a tentativa antiga e fecha os PRs dela); uma correção de contrato ou de dependência; ou uma pergunta ao Paulo, se o gate em si parece errado (a `verificacao` da raia, um arquivo protegido, um critério de aceite impossível). Nunca afrouxe um critério de aceite para o gate passar.
 
+### `seed_parada`
+
+Contexto: o mesmo de `gate_falhou_apos_fixer`, mais `trava` (o que travou, se a causa é conhecida) e `tentativasMerge`. Um PR de seed parou e nenhuma regra automática resolveu: merge recusado por conflito de verdade, revisor sem veredito válido, falha repetida de ambiente ou simplesmente sem nada acontecer há 20 minutos. Descubra a causa pela evidência e resolva sem chamar o Paulo sempre que a decisão couber em você: um **plano Seeds novo** para a raia, partindo do `main` atual, é o caminho comum. Só pergunte ao Paulo se a decisão for de produto ou de escopo.
+
 ### `plano_invalido`
 
 Contexto: `{"erros": [...], "pr", "runId", "acordadaAnterior"}` ou `{"erro": "run do orquestrador terminou sem PR"}`. O seu run anterior não produziu um PR mergeável: o plano não passou em `validar_plano` ou não houve PR. Corrija só os erros listados e conclua o trabalho da `acordadaAnterior` (o motivo original continua valendo). Dois runs seguidos sem PR válido bloqueiam o orquestrador até o Paulo responder: rode o comando de validação antes do commit.

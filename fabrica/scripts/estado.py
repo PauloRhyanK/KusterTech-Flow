@@ -530,7 +530,9 @@ def _fase_atual(plano: dict):
     return None, []
 
 
-def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None, ci_opcional=False) -> list[dict]:
+def proximas_acoes(
+    estado: dict, plano: dict, protegidos: list[str], agora=None, ci_opcional=False, resolver_travas=False
+) -> list[dict]:
     """Ações na ordem: 1 seeds, 2 retomar, 3 despachar, 4 fixer que não resolveu, 5 raia falhou, 6 fase concluída.
 
     `agora` (datetime) liga a janela de 10 min do CI "ausente" (F1); sem ele, "ausente" vai para o humano.
@@ -548,7 +550,16 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None,
         if not isinstance(seed, dict):
             continue
         pendente = seed.get("pendenteHumano")
+        chave_da_trava = _chave("seed_parada", seed_id)
+        # com o orquestrador acordado a trava espera por ele: o `acordar` repetido é descartado no fim, sem chamar o Paulo
+        vai_ao_orquestrador = resolver_travas is True and (
+            chave_da_trava not in _lista(estado.get("chavesAcordadas"))
+            or _dict(estado.get("orquestrador")).get("runId") is not None
+        )
         if pendente and seed.get("estado") not in TERMINAIS + ("bloqueada_humano",):
+            if vai_ao_orquestrador:
+                acoes.append({"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id})
+                continue
             motivo = pendente if _texto(pendente) else "decisão humana necessária"
             acoes.append({"tipo": "aguardar_humano", "seed": seed_id, "motivos": [motivo]})
             continue
@@ -559,12 +570,13 @@ def proximas_acoes(estado: dict, plano: dict, protegidos: list[str], agora=None,
             and _texto(seed.get("headSha"))
         ):
             raia_falhou = _dict(raias_do_estado.get(seed.get("raia"))).get("estado") == "falhou"
-            acoes.extend(
-                a
-                for a in _acoes_da_seed(seed_id, seed, protegidos, agora, ci_opcional)
+            for a in _acoes_da_seed(seed_id, seed, protegidos, agora, ci_opcional):
                 # raia falha: quem decide o destino do PR é o orquestrador
-                if not (raia_falhou and a["tipo"] == "mergear")
-            )
+                if raia_falhou and a["tipo"] == "mergear":
+                    continue
+                if vai_ao_orquestrador and a["tipo"] == "aguardar_humano" and a["motivos"] == ["revisor sem veredito válido"]:
+                    a = {"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id}
+                acoes.append(a)
 
     executando = [i for i, r in raias_do_estado.items() if r.get("estado") == "executando"]
 
