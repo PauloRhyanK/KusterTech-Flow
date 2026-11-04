@@ -112,8 +112,9 @@ def permitidos_ao_orquestrador(caminho_plano) -> tuple:
 
 # o do plano legado (`caminho_plano` padrão)
 PERMITIDOS_AO_ORQUESTRADOR = permitidos_ao_orquestrador(CAMINHO_PLANO)
-# Valem em todo PR de seed, somados aos `protegidos` da config do cliente.
-PROTEGIDOS_FIXOS = (".github/**", ".warren/**", ".fabrica/**", ".claude/**")
+# Valem em todo PR de seed, somados aos `protegidos` da config do cliente: são os gates e as credenciais da própria Fábrica.
+# `.github/**` fica na config (o padrão do kit protege), para o dono poder liberar o CI.
+PROTEGIDOS_FIXOS = (".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
 ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
