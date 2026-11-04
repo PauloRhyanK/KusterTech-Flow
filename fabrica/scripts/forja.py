@@ -19,6 +19,7 @@ BASE = "https://api.github.com"
 VERSAO_API = "2022-11-28"
 LABEL_DECISAO = "fabrica:decisao"
 POR_PAGINA = 100
+LIMITE_ARQUIVOS_COMPARE = 300  # acima disso, a API de compare corta a lista
 MAX_PAGINAS = 40
 RESULTADOS_CI = ("ausente", "pendente", "vermelho", "verde")
 
@@ -301,6 +302,19 @@ class ForjaGitHub:
         except UnicodeDecodeError:
             raise RuntimeError("GET %s: conteúdo não é UTF-8" % alvo) from None
 
+    def arquivos_entre(self, repo: str, base: str, head: str) -> list[str] | None:
+        """Arquivos mudados de `base` para `head`; `None` se `head` não descende de `base` ou a lista veio cortada."""
+        dono, nome = _analisar_repo(repo)
+        _validar_sha_completo(base)
+        _validar_sha_completo(head)
+        caminho = "/repos/%s/%s/compare/%s...%s" % (dono, nome, base, head)
+        dados = self._objeto("GET", caminho)
+        arquivos = dados.get("files")
+        if dados.get("status") != "ahead" or not isinstance(arquivos, list) or len(arquivos) >= LIMITE_ARQUIVOS_COMPARE:
+            return None
+        nomes = [item.get("filename") if isinstance(item, dict) else None for item in arquivos]
+        return nomes if all(isinstance(nome_, str) and nome_ for nome_ in nomes) else None
+
     def listar(self, repo: str, ref: str, diretorio: str) -> list[str] | None:
         """Caminhos dos ARQUIVOS do diretório (subdiretórios ficam de fora); `None` se ele não existe."""
         dono, nome = _analisar_repo(repo)
@@ -472,6 +486,7 @@ class ForjaFalsa:
         self._prs: dict[str, dict] = {}
         self._ci: dict[tuple[str, str], str] = {}
         self._arquivos: dict[tuple[str, str, str], str] = {}
+        self._comparacoes: dict = {}
         self._branches: dict[str, str] = {}
         self._decisoes: dict[str, dict] = {}
         self._corpos: dict[str, str] = {}
@@ -511,6 +526,12 @@ class ForjaFalsa:
         _analisar_repo(repo)
         _caminho_de_arquivo(caminho)
         self._arquivos[(repo, ref, caminho)] = conteudo
+
+    def definir_comparacao(self, repo: str, base: str, head: str, arquivos: list[str] | None) -> None:
+        self._comparacoes[(repo, base, head)] = arquivos
+
+    def arquivos_entre(self, repo: str, base: str, head: str) -> list[str] | None:
+        return self._comparacoes.get((repo, base, head))
 
     def definir_branch_padrao(self, repo: str, branch: str) -> None:
         _analisar_repo(repo)
