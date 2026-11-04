@@ -550,12 +550,9 @@ def proximas_acoes(
         if not isinstance(seed, dict):
             continue
         pendente = seed.get("pendenteHumano")
-        chave_da_trava = _chave("seed_parada", seed_id)
-        # com o orquestrador acordado a trava espera por ele: o `acordar` repetido é descartado no fim, sem chamar o Paulo
-        vai_ao_orquestrador = resolver_travas is True and (
-            chave_da_trava not in _lista(estado.get("chavesAcordadas"))
-            or _dict(estado.get("orquestrador")).get("runId") is not None
-        )
+        # a trava vai ao orquestrador; o `acordar` repetido é descartado no fim e o vigia do despachante decide quando
+        # chamar o Paulo, depois de dar tempo ao que o orquestrador fez
+        vai_ao_orquestrador = resolver_travas is True
         if pendente and seed.get("estado") not in TERMINAIS + ("bloqueada_humano",):
             if vai_ao_orquestrador:
                 acoes.append({"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id})

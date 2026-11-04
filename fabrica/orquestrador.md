@@ -77,7 +77,7 @@ Contexto: `{"seed", "pr", "headSha", "ci", "veredito", "verificacao": {"codigo",
 
 ### `seed_parada`
 
-Contexto: o mesmo de `gate_falhou_apos_fixer`, mais `trava` (o que travou, se a causa é conhecida) e `tentativasMerge`. Um PR de seed parou e nenhuma regra automática resolveu: merge recusado por conflito de verdade, revisor sem veredito válido, falha repetida de ambiente ou simplesmente sem nada acontecer há 20 minutos. Descubra a causa pela evidência e resolva sem chamar o Paulo sempre que a decisão couber em você: um **plano Seeds novo** para a raia, partindo do `main` atual, é o caminho comum. Só pergunte ao Paulo se a decisão for de produto ou de escopo.
+Contexto: o mesmo de `gate_falhou_apos_fixer`, mais `trava` (o que travou, se a causa é conhecida), `tentativasMerge` e `tentativasRevisao`. Uma seed parou e nenhuma regra automática resolveu: merge recusado por conflito de verdade, revisor sem veredito válido, falha repetida de ambiente, PR fechado sem merge ou simplesmente sem nada acontecer há 20 minutos. Descubra a causa pela evidência e resolva sem chamar o Paulo sempre que a decisão couber em você: um **plano Seeds novo** para a raia, partindo do `main` atual, é o caminho comum. Só pergunte ao Paulo se a decisão for de produto ou de escopo.
 
 ### `plano_invalido`
 
