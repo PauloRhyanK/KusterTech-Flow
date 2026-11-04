@@ -1382,7 +1382,7 @@ class Despachante:
                     if situacao == "esperar":
                         continue
                 revisao = campo == "revisaoRunId"
-                texto = self._texto_do_run(run_id, run, obrigatorio=revisao)
+                texto = self._texto_do_run(run_id, run, obrigatorio=revisao or run["estado"] != "succeeded")
                 if texto is None:
                     continue  # tenta de novo no próximo ciclo, sem gastar tentativa
                 veredito = None
