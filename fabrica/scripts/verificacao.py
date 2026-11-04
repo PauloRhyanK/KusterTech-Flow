@@ -146,6 +146,13 @@ def _validar_conteiner(conteiner) -> dict:
     }
 
 
+FILTRO_VAZIO = "No projects matched the filters"
+AVISO_FILTRO_VAZIO = (
+    "verificação reprovada: o --filter do pnpm não achou nenhum pacote, então nenhum teste rodou. "
+    "Confira o nome do pacote no comando de verificação da raia."
+)
+
+
 def _aviso_e_saida(avisos: list[str], saida: str) -> str:
     """Os avisos ficam no começo, sempre inteiros; a saída entra com o que sobrar dos 4.000."""
     texto = "".join(a + "\n" for a in avisos)[:LIMITE_AVISOS]
@@ -158,6 +165,10 @@ def _aviso_e_saida(avisos: list[str], saida: str) -> str:
 def _resposta(sha, codigo: int, saida: str = "", avisos: list[str] | None = None, *, interno: bool = False) -> dict:
     """F2a: `interno: True` quando a falha é do próprio verificador (config, export, docker de controle, binário do
     host), não do comando no contêiner; o despachante pausa em vez de chamar o fixer."""
+    if codigo == 0 and not interno and FILTRO_VAZIO in saida:
+        # o pnpm sai com 0 quando o --filter não acha o pacote: nenhum teste rodou, e isso não prova nada
+        codigo = 1
+        saida = saida + "\n" + AVISO_FILTRO_VAZIO
     resposta = {"sha": sha, "codigo": codigo, "saida": _aviso_e_saida(avisos or [], saida)}
     if interno:
         resposta["interno"] = True

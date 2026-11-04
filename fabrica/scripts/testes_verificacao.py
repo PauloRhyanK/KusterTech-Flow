@@ -158,6 +158,26 @@ class TestesVerificarComFalso(unittest.TestCase):
         )
         return r, fake
 
+    def test_filtro_do_pnpm_que_nao_acha_pacote_reprova(self):
+        fake = DockerFalso()
+        fake.respostas["principal"] = proc(0, "Scope: 0 of 6 workspace projects\nNo projects matched the filters in \"/w\"\n")
+        r, _ = self.verificar(fake)
+        self.assertEqual(r["codigo"], 1)
+        self.assertIn("nenhum teste rodou", r["saida"])
+        self.assertNotIn("interno", r)
+
+    def test_saida_normal_continua_passando(self):
+        fake = DockerFalso()
+        fake.respostas["principal"] = proc(0, "Tests 5 passed\n")
+        r, _ = self.verificar(fake)
+        self.assertEqual(r["codigo"], 0)
+
+    def test_filtro_vazio_nao_mascara_outra_falha(self):
+        fake = DockerFalso()
+        fake.respostas["principal"] = proc(3, "No projects matched the filters\n")
+        r, _ = self.verificar(fake)
+        self.assertEqual(r["codigo"], 3)
+
     def bases_restantes(self):
         """Diretórios `fabrica-verif-*` que sobraram no tempdir deste teste."""
         return sorted(p.name for p in self.tmp.glob("fabrica-verif-*"))
