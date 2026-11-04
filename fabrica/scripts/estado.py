@@ -802,8 +802,11 @@ def _caminho_do_orquestrador(caminho) -> bool:
     return all(p not in ("", ".", "..") for p in partes[1:])
 
 
-def decidir_pr_orquestrador(*, motivo: str, arquivos: list[str], erros_plano: list[str]) -> str:
-    """`humano`, `replanejar` ou `mergear` para o PR aberto pelo orquestrador."""
+def decidir_pr_orquestrador(*, motivo: str, arquivos: list[str], erros_plano: list[str], fase_sozinha: bool = False) -> str:
+    """`humano`, `replanejar` ou `mergear` para o PR aberto pelo orquestrador.
+
+    `fase_sozinha` (`homologacaoDeFase: false` na config): o PR de `fase_concluida` não vai para o Paulo.
+    """
     if not isinstance(arquivos, list) or not arquivos:
         return "humano"
     if PERGUNTA_DO_ORQUESTRADOR in arquivos:
@@ -814,6 +817,6 @@ def decidir_pr_orquestrador(*, motivo: str, arquivos: list[str], erros_plano: li
         return "humano"
     if erros_plano:
         return "replanejar"
-    if motivo in MOTIVOS_DO_PAULO:
+    if motivo in MOTIVOS_DO_PAULO and not (fase_sozinha is True and motivo == "fase_concluida"):
         return "humano"
     return "mergear"

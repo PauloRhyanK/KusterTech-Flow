@@ -122,6 +122,7 @@ PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 # então nesses dois motivos vale o veredito dele. Sem veredito válido, continua sendo falha.
 MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
 
+ARQUIVOS_DE_CONTROLE_DO_WARREN = (".seeds/**", ".mulch/**")
 MAX_SEM_RESULTADO = 2
 MAX_RECUSAS_DO_MOTOR = 5
 MAX_FALHAS_DE_LEITURA = 5
@@ -485,14 +486,20 @@ def _mudancas_de_verificacao(antigo, novo) -> list[str]:
     return mudancas
 
 
-def _mudancas_de_fase(antigo, novo) -> list[str]:
-    """F3: `faseAtual` mudada, fase removida ou fases reordenadas no plano novo; tudo isso é homologação do Paulo."""
+def _mudancas_de_fase(antigo, novo, *, avancar_sozinho: bool = False) -> list[str]:
+    """F3: `faseAtual` mudada, fase removida ou fases reordenadas no plano novo; tudo isso é homologação do Paulo.
+
+    Com `avancar_sozinho` (`homologacaoDeFase: false`), avançar para a fase seguinte na ordem não pede aprovação.
+    Pular fase, voltar, remover ou reordenar continua pedindo, porque muda o escopo aprovado.
+    """
     def ids(plano):
         return [f.get("id") for f in _lista(_dict(plano).get("fases")) if isinstance(f, dict)]
 
     antigas, novas = ids(antigo), ids(novo)
     mudancas = []
-    if _dict(antigo).get("faseAtual") != _dict(novo).get("faseAtual"):
+    atual, proxima = _dict(antigo).get("faseAtual"), _dict(novo).get("faseAtual")
+    seguinte = atual in antigas and antigas.index(atual) + 1 < len(antigas) and antigas[antigas.index(atual) + 1] == proxima
+    if atual != proxima and not (avancar_sozinho is True and seguinte):
         mudancas.append(
             "aprovar mudança de fase: faseAtual de %s para %s"
             % (_cortar(repr(_dict(antigo).get("faseAtual")), 100), _cortar(repr(_dict(novo).get("faseAtual")), 100))
@@ -504,6 +511,10 @@ def _mudancas_de_fase(antigo, novo) -> list[str]:
     if comuns != [f for f in antigas if f in novas]:
         mudancas.append("aprovar mudança de fase: fases reordenadas (%s)" % ", ".join(_cortar(repr(f), 100) for f in comuns[:20]))
     return mudancas
+
+
+def _so_controle(caminho: str) -> bool:
+    return any(globs.casa_glob(caminho, g) for g in ARQUIVOS_DE_CONTROLE_DO_WARREN)
 
 
 def _validar_modelo(entrada, papel: str) -> dict:
@@ -547,6 +558,8 @@ def _validar_config(config) -> dict:
         raise ConfigInvalida("ciObrigatorioNoPlano")
     if not isinstance(config.setdefault("ciObrigatorioNasSeeds", True), bool):
         raise ConfigInvalida("ciObrigatorioNasSeeds")
+    if not isinstance(config.setdefault("homologacaoDeFase", True), bool):
+        raise ConfigInvalida("homologacaoDeFase")
     try:
         verificacao._validar_conteiner(config.get("verificacao"))
     except verificacao._ConfigInvalida as erro:
@@ -1898,8 +1911,38 @@ class Despachante:
                     agora=self._agora(),
                 )
             )
+            self._herdar_gates_do_head(seed_id)
             self._restaurar_tentativa(seed_id)
             self._observadas.add(seed_id)
+
+    def _herdar_gates_do_head(self, seed_id: str) -> None:
+        """Ao fechar um run, o Warren empurra `chore(warren): seeds state` no branch: o head muda, o código não.
+
+        Sem isto, a revisão e a verificação do head anterior nunca valem e a seed acaba no Paulo. Só herda quando o head
+        novo descende do anterior e mudou apenas arquivos de controle do Warren; qualquer outro arquivo pede gates novos.
+        """
+        seed = _dict(_dict(self.estado.get("seeds")).get(seed_id))
+        head = seed.get("headSha")
+        gates = [g for g in (seed.get("veredito"), seed.get("verificacao")) if isinstance(g, dict)]
+        bases = {g.get("sha") for g in gates if _texto(g.get("sha")) and g.get("sha") != head}
+        if not _texto(head) or not bases:
+            return
+        mudou = False
+        for base in bases:
+            try:
+                arquivos = self.forja.arquivos_entre(self.repo, base, head)
+            except Exception as exc:  # noqa: BLE001 - sem a comparação, valem as regras de sempre
+                self._erro_de_etapa("comparar_head", seed_id, exc)
+                continue
+            if not arquivos or not all(_so_controle(a) for a in arquivos):
+                continue
+            for gate in gates:
+                if gate.get("sha") == base:
+                    gate["sha"] = head
+                    mudou = True
+        if mudou:
+            self._log({"evento": "gates_herdados", "seed": seed_id, "sha": head})
+            self._salvar()
 
     def _observar_decisoes(self) -> None:
         decisoes = _lista(self.estado.get("decisoes"))
@@ -2258,9 +2301,14 @@ class Despachante:
             if faltando:
                 motivos.append("o plano novo usa papéis sem modelo em config['modelos']: %s" % ", ".join(faltando))
         # F3: qualquer mudança de fase é homologação do Paulo, qualquer que seja o motivo da acordada
-        fase = _mudancas_de_fase(self.plano, plano_novo) if plano_novo is not None and not erros else []
+        fase_sozinha = self.config["homologacaoDeFase"] is False
+        fase = (
+            _mudancas_de_fase(self.plano, plano_novo, avancar_sozinho=fase_sozinha)
+            if plano_novo is not None and not erros
+            else []
+        )
         decisao = "humano" if motivos else est.decidir_pr_orquestrador(
-            motivo=motivo, arquivos=arquivos, erros_plano=erros
+            motivo=motivo, arquivos=arquivos, erros_plano=erros, fase_sozinha=fase_sozinha
         )
         if decisao == "mergear" and fase:
             decisao = "humano"

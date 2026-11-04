@@ -654,6 +654,25 @@ class TestesListar(unittest.TestCase):
         f, t = novo(ok(self.item(".fabrica/plano.json")))
         self.assertIsNone(f.listar("acme/app", "main", ".fabrica/plano.json"))
 
+    def test_arquivos_entre(self):
+        outro = "b" * 40
+        arquivos = {"status": "ahead", "files": [{"filename": ".seeds/issues.jsonl"}]}
+        f, t = novo(ok(arquivos))
+        self.assertEqual(f.arquivos_entre("acme/app", SHA, outro), [".seeds/issues.jsonl"])
+        self.assertEqual(t.urls()[0], API + "/repos/acme/app/compare/%s...%s" % (SHA, outro))
+
+    def test_arquivos_entre_sem_descender_ou_cortado_da_none(self):
+        outro = "b" * 40
+        for corpo in (
+            {"status": "diverged", "files": [{"filename": "a"}]},
+            {"status": "behind", "files": []},
+            {"status": "ahead"},
+            {"status": "ahead", "files": [{"filename": "a"}] * 300},
+            {"status": "ahead", "files": [{}]},
+        ):
+            f, t = novo(ok(corpo))
+            self.assertIsNone(f.arquivos_entre("acme/app", SHA, outro), repr(corpo)[:60])
+
     def test_objeto_que_nao_e_arquivo_levanta(self):
         for corpo in ({}, {"type": "dir"}, {"message": "x"}, {"type": "submodule", "path": "a"}):
             f, t = novo(ok(corpo))

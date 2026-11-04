@@ -3,6 +3,7 @@
   "branchPadrao": "main",
   "ciObrigatorioNoPlano": false,
   "ciObrigatorioNasSeeds": false,
+  "homologacaoDeFase": false,
   "warren": {
     "prepararAutomatico": true
   },

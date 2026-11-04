@@ -338,6 +338,69 @@ class TestesJornada(Base):
             d.ciclo()
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
 
+    def test_head_que_so_muda_seeds_herda_revisao_e_verificacao(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.mover_head(H2)
+        self.forja.definir_comparacao(REPO, H1, H2, [".seeds/issues.jsonl", ".mulch/x"])
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H2)])
+        self.assertEqual(self.runs(modelo=CONFIG["modelos"]["revisor"]["modelo"]).__len__(), 1)
+
+    def test_head_que_muda_codigo_nao_herda(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.mover_head(H2)
+        self.forja.definir_comparacao(REPO, H1, H2, [".seeds/issues.jsonl", "src/a/x.ts"])
+        acoes = d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+        self.assertIn(("revisar", H2), [(a["tipo"], a.get("sha")) for a in acoes])
+
+    def test_head_sem_comparacao_nao_herda(self):
+        # `None`: o head não descende do anterior, ou a lista veio cortada
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.mover_head(H2)
+        self.forja.definir_comparacao(REPO, H1, H2, None)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
+    def test_comparacao_vazia_nao_herda(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.mover_head(H2)
+        self.forja.definir_comparacao(REPO, H1, H2, [])
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
+    def test_falha_ao_comparar_nao_herda_nem_derruba(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.mover_head(H2)
+        with mock.patch.object(self.forja, "arquivos_entre", side_effect=RuntimeError("fora")):
+            d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
+    def test_veredito_reprovado_tambem_e_herdado_e_nao_mergeia(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1, resultado="correcoes", achados=[{"arquivo": "src/a/x.ts", "motivo": "erro"}])
+        self.mover_head(H2)
+        self.forja.definir_comparacao(REPO, H1, H2, [".seeds/issues.jsonl"])
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
     def test_github_sem_protecao_na_config_mergeia_sozinho(self):
         config = dict(CONFIG, protegidos=[".env*"])
         self.publicar(plano(raia("a")))
@@ -1806,7 +1869,7 @@ class TestesConfig(Base):
         d.ciclo()
         self.assertEqual(self.forja.merges, [])
         ((_, corpo),) = self.forja.decisoes
-        self.assertIn(".github/workflows/ci.yml", corpo)
+        self.assertIn(".warren/config.yaml", corpo)
 
     def test_plano_invalido_no_branch_nao_substitui_o_anterior(self):
         d = self.preparar_raia()
@@ -5155,6 +5218,53 @@ class TestesCorrecaoFinal(Base):
         d.ciclo()
         self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
         self.assertEqual(self.forja.decisoes, [])
+
+    def _fase_sem_homologacao(self, plano_do_pr):
+        self.publicar(_plano_de_duas_fases())
+        d = self.novo(config=dict(CONFIG, homologacaoDeFase=False))
+        d.iniciar()
+        d.ciclo()
+        self.motor.definir_plano("plano-1", "succeeded", [])
+        d.ciclo()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano_do_pr)
+        d.ciclo()
+        return d
+
+    def test_sem_homologacao_avancar_para_a_fase_seguinte_mergeia_sozinho(self):
+        self._fase_sem_homologacao(_plano_de_duas_fases(fase="f2"))
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+
+    def test_sem_homologacao_remover_fase_continua_indo_ao_paulo(self):
+        novo = _plano_de_duas_fases(fase="f2")
+        novo["fases"] = [f for f in novo["fases"] if f["id"] != "f1"]
+        self._fase_sem_homologacao(novo)
+        self.assertEqual(self.forja.merges, [])
+
+    def test_sem_homologacao_voltar_de_fase_nao_conta_como_seguinte(self):
+        antigo = _plano_de_duas_fases(fase="f2")
+        self.assertTrue(despachante._mudancas_de_fase(antigo, _plano_de_duas_fases(fase="f1"), avancar_sozinho=True))
+        self.assertEqual(despachante._mudancas_de_fase(_plano_de_duas_fases(), antigo, avancar_sozinho=True), [])
+
+    def test_por_padrao_avancar_continua_pedindo_aprovacao(self):
+        self.assertTrue(despachante._mudancas_de_fase(_plano_de_duas_fases(), _plano_de_duas_fases(fase="f2")))
+        self.assertEqual(
+            est.decidir_pr_orquestrador(motivo="fase_concluida", arquivos=[".fabrica/plano.json"], erros_plano=[]), "humano"
+        )
+
+    def test_sem_homologacao_nova_spec_continua_indo_ao_paulo(self):
+        self.assertEqual(
+            est.decidir_pr_orquestrador(
+                motivo="nova_spec", arquivos=[".fabrica/plano.json"], erros_plano=[], fase_sozinha=True
+            ),
+            "humano",
+        )
+
+    def test_homologacao_de_fase_invalida_e_config_invalida(self):
+        with self.assertRaises(despachante.ConfigInvalida):
+            despachante._validar_config(dict(CONFIG, homologacaoDeFase="nao"))
 
     def test_f3_fase_concluida_continua_aprovar_fase(self):
         d = self.preparar_raia(_plano_de_duas_fases())
