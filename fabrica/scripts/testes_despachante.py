@@ -401,6 +401,74 @@ class TestesJornada(Base):
         d.ciclo()
         self.assertEqual(self.forja.merges, [])
 
+    def _recusado_uma_vez(self, atualizar):
+        self.publicar(plano(raia("a")))
+        d = self.novo(atualizar_branch=atualizar)
+        d.iniciar()
+        d.ciclo()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        real = self.forja.mergear
+        chamadas = []
+
+        def recusa_a_primeira(url, sha):
+            chamadas.append(sha)
+            return False if len(chamadas) == 1 else real(url, sha)
+
+        self.forja.mergear = recusa_a_primeira
+        d.ciclo()
+        return d, chamadas
+
+    def test_merge_recusado_atualiza_o_branch_e_mergeia_sem_nova_revisao(self):
+        pedidos = []
+
+        def atualizar(branch, padrao):
+            pedidos.append((branch, padrao))
+            self.mover_head(H2)
+            return H2
+
+        d, _ = self._recusado_uma_vez(atualizar)
+        self.assertEqual(pedidos, [("warren/s-1", "main")])
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual(seed["headSha"], H2)
+        self.assertEqual(seed["veredito"]["sha"], H2)
+        self.assertIsNone(seed["verificacao"])
+        self.assertEqual(seed["tentativasMerge"], 0)
+        revisoes = len(self.runs(modelo=CONFIG["modelos"]["revisor"]["modelo"]))
+        d.ciclo()  # verificação no head novo
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR, H2)])
+        self.assertEqual(len(self.runs(modelo=CONFIG["modelos"]["revisor"]["modelo"])), revisoes)
+
+    def test_verificacao_vermelha_no_head_atualizado_nao_mergeia(self):
+        def atualizar(branch, padrao):
+            self.mover_head(H2)
+            self.codigos[H2] = 1
+            return H2
+
+        d, _ = self._recusado_uma_vez(atualizar)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+
+    def test_conflito_de_verdade_conta_como_recusa(self):
+        d, _ = self._recusado_uma_vez(lambda branch, padrao: None)
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual(seed["tentativasMerge"], 1)
+        self.assertEqual(seed["headSha"], H1)
+
+    def test_atualizacoes_do_branch_tem_teto(self):
+        d, _ = self._recusado_uma_vez(lambda branch, padrao: None)
+        seed = {"branch": "b", "atualizacoesDoBranch": despachante.MAX_ATUALIZACOES_DO_BRANCH}
+        d._atualizar_branch = lambda branch, padrao: H2
+        self.assertFalse(d._atualizar_branch_da_seed("s-1", seed))
+        self.assertNotIn("headSha", seed)
+
+    def test_sem_atualizador_a_recusa_segue_como_antes(self):
+        d, _ = self._recusado_uma_vez(None)
+        self.assertEqual(self.estado()["seeds"]["s-1"]["tentativasMerge"], 1)
+
     def test_github_sem_protecao_na_config_mergeia_sozinho(self):
         config = dict(CONFIG, protegidos=[".env*"])
         self.publicar(plano(raia("a")))
