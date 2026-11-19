@@ -68,7 +68,10 @@ export interface EntradaDaAvaliacao {
 }
 
 export type Avaliacao =
-  { resultado: 'aceito' } | { resultado: 'recusado' | 'dispensado'; motivo: string }
+  | { resultado: 'aceito' }
+  | { resultado: 'recusado' | 'dispensado'; motivo: string }
+  /** Há algo no ar mas a comparação com ele não veio: não aceita nem publica; o pedido volta à verificação. */
+  | { resultado: 'tentar_de_novo' }
 
 export function avaliarPedido(e: EntradaDaAvaliacao): Avaliacao {
   if (e.relacaoComMain !== 'a_frente' && e.relacaoComMain !== 'identico') {
@@ -82,8 +85,10 @@ export function avaliarPedido(e: EntradaDaAvaliacao): Avaliacao {
       return { resultado: 'dispensado', motivo: MOTIVOS.jaNoAr }
     case 'divergente':
       return { resultado: 'recusado', motivo: motivoDeBaseAntiga(e.publicacoesAusentes) }
-    default:
+    case 'a_frente':
       return { resultado: 'aceito' }
+    default:
+      return { resultado: 'tentar_de_novo' }
   }
 }
 
@@ -181,7 +186,11 @@ export function escolherProximo(e: EntradaDaEscolha): Escolha {
     return { tipo: 'publicar', ids: ids(fila), obrigatorioId: doConserto.id, lote: null }
   }
 
-  if (e.automatico && fila.length > 0 && loteVencido(e.horaDoLote, e.ultimoLoteEm, e.agora)) {
+  if (
+    e.automatico &&
+    fila.some((p) => p.modo === 'lote') &&
+    loteVencido(e.horaDoLote, e.ultimoLoteEm, e.agora)
+  ) {
     return {
       tipo: 'publicar',
       ids: ids(fila),
@@ -202,16 +211,7 @@ export function escolherProximo(e: EntradaDaEscolha): Escolha {
 }
 
 function partesLocais(instante: Date) {
-  const f = new Intl.DateTimeFormat('en-US', {
-    timeZone: FUSO_DO_LOTE,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-  })
+  const f = FORMATADOR_DO_LOTE
   const p: Record<string, number> = {}
   for (const parte of f.formatToParts(instante)) {
     if (parte.type !== 'literal') p[parte.type] = Number(parte.value)
@@ -225,6 +225,17 @@ function partesLocais(instante: Date) {
     second: number
   }
 }
+
+const FORMATADOR_DO_LOTE = new Intl.DateTimeFormat('en-US', {
+  timeZone: FUSO_DO_LOTE,
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+})
 
 /** Instante, no dia local (São Paulo) de `agora`, em que o relógio local marca `hora`. */
 export function instanteDoLote(agora: Date, hora: string): Date {
@@ -264,12 +275,13 @@ export function escolherCandidato(
     obrigatorioId == null
       ? [...ids]
       : ids.filter((id) => id === obrigatorioId || contem(id, obrigatorioId))
-  let candidatoId = elegiveis.at(-1) ?? obrigatorioId ?? ''
+  let candidatoId = elegiveis.at(-1) ?? obrigatorioId
+  if (candidatoId == null) throw new Error('escolherCandidato: nenhum pedido')
   let mudou = true
   while (mudou) {
     mudou = false
     for (const id of elegiveis) {
-      if (id !== candidatoId && contem(id, candidatoId)) {
+      if (id !== candidatoId && contem(id, candidatoId) && !contem(candidatoId, id)) {
         candidatoId = id
         mudou = true
       }
@@ -308,7 +320,7 @@ export function aplicarEstadoReportado(
   reportado: 'em_curso' | 'com_pr' | 'desistiu',
 ): EstadoDoConserto | null {
   if (reportado === 'em_curso') return atual === 'aberto' ? 'em_curso' : null
-  if (reportado === 'com_pr') return atual === 'em_curso' ? 'com_pr' : null
+  if (reportado === 'com_pr') return atual === 'aberto' || atual === 'em_curso' ? 'com_pr' : null
   return atual === 'aberto' || atual === 'em_curso' ? 'desistiu' : null
 }
 

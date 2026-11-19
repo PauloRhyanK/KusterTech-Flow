@@ -81,6 +81,11 @@ describe('avaliarPedido', () => {
     })
     expect(motivoDeBaseAntiga(0)).toBe('base antiga: não contém a última publicação')
   })
+  test('algo no ar sem comparação com ele não aceita', () => {
+    expect(avaliarPedido({ ...base, relacaoComNoAr: null })).toEqual({
+      resultado: 'tentar_de_novo',
+    })
+  })
   test('commit no ar fora de main recusa antes da regra 2', () => {
     expect(avaliarPedido({ ...base, noArEmMain: false, relacaoComNoAr: 'identico' })).toEqual({
       resultado: 'recusado',
@@ -209,6 +214,30 @@ describe('escolherProximo', () => {
       lote: null,
     })
   })
+  test('lote vencido sem pedido de lote não vira lote; sem automático não roda', () => {
+    const tarde = new Date('2026-11-20T01:30:00Z')
+    expect(escolherProximo(entrada({ agora: tarde, pedidos: [pedido('a')] }))).toEqual({
+      tipo: 'publicar',
+      ids: ['a'],
+      obrigatorioId: null,
+      lote: null,
+    })
+    expect(
+      escolherProximo(
+        entrada({ agora: tarde, automatico: false, pedidos: [pedido('l', { modo: 'lote' })] }),
+      ),
+    ).toEqual({ tipo: 'nada' })
+  })
+  test('consertando com pedido em verificação continua', () => {
+    expect(
+      escolherProximo(
+        entrada({
+          situacao: 'consertando',
+          pedidos: [pedido('v', { estado: 'verificando' })],
+        }),
+      ),
+    ).toEqual({ tipo: 'continuar', id: 'v' })
+  })
   test('só lote antes da hora não faz nada', () => {
     expect(escolherProximo(entrada({ pedidos: [pedido('l', { modo: 'lote' })] }))).toEqual({
       tipo: 'nada',
@@ -310,6 +339,16 @@ describe('escolherCandidato', () => {
       restantes: ['a', 'b'],
     })
   })
+  test('dois pedidos do mesmo commit terminam e escolhem o último', () => {
+    expect(escolherCandidato(['a', 'b'], () => true)).toEqual({
+      candidatoId: 'b',
+      atendidos: ['a'],
+      restantes: [],
+    })
+  })
+  test('lista vazia sem obrigatório lança', () => {
+    expect(() => escolherCandidato([], () => false)).toThrow()
+  })
   test('obrigatório', () => {
     expect(escolherCandidato(['a', 'b', 'c'], cadeia, 'b')).toEqual({
       candidatoId: 'c',
@@ -346,6 +385,7 @@ test('aposFalha', () => {
 test('aplicarEstadoReportado', () => {
   expect(aplicarEstadoReportado('aberto', 'em_curso')).toBe('em_curso')
   expect(aplicarEstadoReportado('em_curso', 'com_pr')).toBe('com_pr')
+  expect(aplicarEstadoReportado('aberto', 'com_pr')).toBe('com_pr')
   expect(aplicarEstadoReportado('aberto', 'desistiu')).toBe('desistiu')
   expect(aplicarEstadoReportado('em_curso', 'desistiu')).toBe('desistiu')
   expect(aplicarEstadoReportado('com_pr', 'em_curso')).toBeNull()
