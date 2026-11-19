@@ -92,7 +92,7 @@ test('admin vê os grupos na ordem #grupo-homologacao, -autorizacao-prod, -diver
   await capturar(page, testInfo.project.name, '7-visao-geral-admin.png')
 })
 
-test('cada pendência leva ao registro único no contexto certo e voltar mostra a Visão Geral', async ({
+test('cada pendência leva ao registro único no contexto certo e voltar mostra a Visão Geral @congelado', async ({
   page,
 }) => {
   test.setTimeout(120_000)

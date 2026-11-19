@@ -1,4 +1,5 @@
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { modulosAtivos } from '@/lib/modulos'
 import { db } from '@/lib/db'
 import { idsVisiveis, podeVerVisaoGlobal } from '@/modules/clientes/model'
 import { estadoDoRepositorio } from '@/modules/github/model'
@@ -108,7 +109,9 @@ export async function obterResumoDeProjetos(
   ])
   // Só o item "pendente" interessa; o estado da integração não o altera.
   const configuracaoIncompleta = projetos.filter((p) =>
-    calcularChecklist(p._count, null, 'nao-configurada').some((i) => i.estado === 'pendente'),
+    calcularChecklist(p._count, null, 'nao-configurada', null, modulosAtivos()).some(
+      (i) => i.estado === 'pendente',
+    ),
   ).length
 
   return {

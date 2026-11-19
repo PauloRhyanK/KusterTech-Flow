@@ -34,7 +34,7 @@ async function capturar(page: Page, testInfo: TestInfo, nomeArquivo: string): Pr
   await page.screenshot({ path: caminho, fullPage: true })
 }
 
-test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo', async ({
+test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo @congelado', async ({
   page,
   browser,
 }, testInfo) => {

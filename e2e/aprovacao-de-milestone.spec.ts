@@ -58,7 +58,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   await fazerLogin(page, admin.email, admin.senha)
 })
 
-test('com a #2 aberta, a aba Homologação do cliente A mostra "1 issue do escopo ainda está aberta no GitHub." e nenhum botão "Aprovar milestone"', async ({
+test('com a #2 aberta, a aba Homologação do cliente A mostra "1 issue do escopo ainda está aberta no GitHub." e nenhum botão "Aprovar milestone" @congelado', async ({
   page,
 }) => {
   await page.goto(urlDaMilestoneDoCliente(h, h.clienteAId))
@@ -70,7 +70,7 @@ test('com a #2 aberta, a aba Homologação do cliente A mostra "1 issue do escop
   await expect(page.getByRole('button', { name: 'Aprovar milestone' })).toHaveCount(0)
 })
 
-test('com #2 fechada no banco, aprovador do cliente A confere cliente, milestone e "Versões avaliadas", confirma e vê "Milestone aprovada para …"; a visão global mostra "2 clientes · 1 com milestone aprovada · 1 em andamento" e "Ver itens de <B>" expande os itens de B', async ({
+test('com #2 fechada no banco, aprovador do cliente A confere cliente, milestone e "Versões avaliadas", confirma e vê "Milestone aprovada para …"; a visão global mostra "2 clientes · 1 com milestone aprovada · 1 em andamento" e "Ver itens de <B>" expande os itens de B @congelado', async ({
   page,
   browser,
 }) => {
@@ -128,7 +128,7 @@ test('com #2 fechada no banco, aprovador do cliente A confere cliente, milestone
   ).toHaveAttribute('href', urlDaMilestoneDoCliente(h, h.clienteBId))
 })
 
-test('aprovador do cliente A em /clientes/<B>/…/milestones/<m> vê "Sem permissão"; POST forjado para B não muda a homologação de B', async ({
+test('aprovador do cliente A em /clientes/<B>/…/milestones/<m> vê "Sem permissão"; POST forjado para B não muda a homologação de B @congelado', async ({
   page,
   browser,
 }) => {
@@ -197,7 +197,7 @@ test('aprovador do cliente A em /clientes/<B>/…/milestones/<m> vê "Sem permis
   }
 })
 
-test('mobile: painel de aprovação e consolidação sem rolagem horizontal', async ({
+test('mobile: painel de aprovação e consolidação sem rolagem horizontal @congelado', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Só no projeto mobile.')

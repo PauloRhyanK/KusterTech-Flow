@@ -19,6 +19,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  grepInvert: process.env.FLOW_MODULOS_EXTRAS ? undefined : /@congelado/,
   reporter: [['list'], ['html', { open: 'never' }]],
   globalSetup: './e2e/support/global-setup.ts',
   use: {

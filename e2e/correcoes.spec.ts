@@ -55,7 +55,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparVinculosDeIssuesNoBanco(repositorios)
 })
 
-test('na issue #3 de repoDois, "Esta issue corrige" repoUm #1 → "Correção registrada. A issue entrou em 1 milestone da original."; M mostra #3 com "Correção herdada" e "1 de 4 issues fechadas · 25%"', async ({
+test('na issue #3 de repoDois, "Esta issue corrige" repoUm #1 → "Correção registrada. A issue entrou em 1 milestone da original."; M mostra #3 com "Correção herdada" e "1 de 4 issues fechadas · 25%" @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -81,7 +81,7 @@ test('na issue #3 de repoDois, "Esta issue corrige" repoUm #1 → "Correção re
   await expect(page.getByText('1 de 4 issues fechadas · 25%').first()).toBeVisible()
 })
 
-test('marcar fora do escopo sem justificativa mostra "A justificativa é obrigatória." e nada muda no banco; com "Pertence à próxima entrega." a linha mostra "Fora do escopo" e o progresso volta a "1 de 3 issues fechadas · 33%"; "Voltar ao escopo" pede confirmação e volta a 25%', async ({
+test('marcar fora do escopo sem justificativa mostra "A justificativa é obrigatória." e nada muda no banco; com "Pertence à próxima entrega." a linha mostra "Fora do escopo" e o progresso volta a "1 de 3 issues fechadas · 33%"; "Voltar ao escopo" pede confirmação e volta a 25% @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -128,7 +128,7 @@ test('marcar fora do escopo sem justificativa mostra "A justificativa é obrigat
   })
 })
 
-test('contexto de A, aberta pela milestone: trilha Clientes › A › P › Entregas › M › #1 com todos os links em /clientes/<A>/…; lateral sem "Pull requests" e sem "Abrir no GitHub"; "Corrigida por" leva à #3 no contexto de A', async ({
+test('contexto de A, aberta pela milestone: trilha Clientes › A › P › Entregas › M › #1 com todos os links em /clientes/<A>/…; lateral sem "Pull requests" e sem "Abrir no GitHub"; "Corrigida por" leva à #3 no contexto de A @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -175,7 +175,7 @@ test('contexto de A, aberta pela milestone: trilha Clientes › A › P › Entr
   await expect(page).toHaveURL(`${base}/entregas/issues/${dois3}`)
 })
 
-test('issue sem milestone de A no contexto de A → "Registro não encontrado"; testador de A vê a issue de M no contexto de A sem formulários de escopo nem de correção', async ({
+test('issue sem milestone de A no contexto de A → "Registro não encontrado"; testador de A vê a issue de M no contexto de A sem formulários de escopo nem de correção @congelado', async ({
   page,
   browser,
 }, testInfo) => {

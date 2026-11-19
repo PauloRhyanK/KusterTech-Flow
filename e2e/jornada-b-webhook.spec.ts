@@ -53,7 +53,7 @@ test.beforeEach(async ({}, testInfo) => {
   await liberarRepositoriosNoBanco(repositoriosDoProjetoE2E(testInfo.project.name))
 })
 
-test('Jornada B passo 6: a issue fechada no GitHub chega por webhook antes do próximo ciclo', async ({
+test('Jornada B passo 6: a issue fechada no GitHub chega por webhook antes do próximo ciclo @congelado', async ({
   page,
   request,
 }, testInfo) => {
@@ -107,7 +107,7 @@ test('Jornada B passo 6: a issue fechada no GitHub chega por webhook antes do pr
   expect(await contarEventosDeWebhook(deliveryId)).toBe(1)
 })
 
-test('Configuração mostra "Webhooks ativos" e "Último evento recebido em" depois da entrega', async ({
+test('Configuração mostra "Webhooks ativos" e "Último evento recebido em" depois da entrega @congelado', async ({
   page,
   request,
 }, testInfo) => {

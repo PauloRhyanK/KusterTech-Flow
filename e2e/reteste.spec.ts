@@ -47,7 +47,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   await fazerLogin(page, admin.email, admin.senha)
 })
 
-test('admin cria a correção pela tela, worker conclui, correção fechada e v2 registrada em QA, worker roda: A vê "Aguardando reteste" e "Versão atual em QA: v2"; a rodada v1 está recolhida e abre ao clicar; B vê "Aprovada" na #2', async ({
+test('admin cria a correção pela tela, worker conclui, correção fechada e v2 registrada em QA, worker roda: A vê "Aguardando reteste" e "Versão atual em QA: v2"; a rodada v1 está recolhida e abre ao clicar; B vê "Aprovada" na #2 @congelado', async ({
   page,
 }) => {
   await page.goto(urlDaIssue(h, h.clienteAId, h.issues.n2))
@@ -88,7 +88,7 @@ test('admin cria a correção pela tela, worker conclui, correção fechada e v2
   expect((await obterItemNoBanco(h.clienteBId, h.issues.n2)).estado).toBe('APROVADA')
 })
 
-test('sem evidência: admin responde sem tarefa e confirma o reteste na v1 com justificativa; aparece "Reteste confirmado manualmente na versão v1"', async ({
+test('sem evidência: admin responde sem tarefa e confirma o reteste na v1 com justificativa; aparece "Reteste confirmado manualmente na versão v1" @congelado', async ({
   page,
 }) => {
   await page.goto(urlDaIssue(h, h.clienteAId, h.issues.n2))
@@ -118,7 +118,7 @@ test('sem evidência: admin responde sem tarefa e confirma o reteste na v1 com j
   expect((await obterItemNoBanco(h.clienteAId, h.issues.n2)).estado).toBe('AGUARDANDO_RETESTE')
 })
 
-test('aprovador do cliente A não vê "Confirmar reteste"; POST forjado não muda obterItemNoBanco', async ({
+test('aprovador do cliente A não vê "Confirmar reteste"; POST forjado não muda obterItemNoBanco @congelado', async ({
   page,
   browser,
 }) => {

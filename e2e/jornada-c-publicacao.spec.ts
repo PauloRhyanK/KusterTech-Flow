@@ -75,7 +75,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparPublicacaoE2E(repositoriosDoProjetoE2E(testInfo.project.name))
 })
 
-test('Jornada C, fim: candidata, autorização sem deploy, Em PROD, verificação, quatro estados na milestone e na issue, divergência e isolamento do cliente', async ({
+test('Jornada C, fim: candidata, autorização sem deploy, Em PROD, verificação, quatro estados na milestone e na issue, divergência e isolamento do cliente @congelado', async ({
   page,
   browser,
 }, testInfo) => {

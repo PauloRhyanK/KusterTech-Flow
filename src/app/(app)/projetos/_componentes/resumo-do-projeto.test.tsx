@@ -1,7 +1,12 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { ProjetoResumo } from '@/modules/projetos/service'
 import { ResumoDoProjeto } from './resumo-do-projeto'
+
+// Módulo congelado: o teste roda com ele ligado.
+vi.hoisted(() => {
+  process.env.FLOW_MODULOS_EXTRAS = 'entregas,ambientes,homologacao,publicacao'
+})
 
 const projeto = {
   id: 'p-1',

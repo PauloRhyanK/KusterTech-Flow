@@ -49,7 +49,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   await fazerLogin(page, admin.email, admin.senha)
 })
 
-test('admin reabre a #4 do cliente A: vê "Reabertura no GitHub pendente"; após rodarWorkerUmaVez vê "Issue #4 reaberta no GitHub"; a #4 no contexto do cliente B não mostra o bloco de correção', async ({
+test('admin reabre a #4 do cliente A: vê "Reabertura no GitHub pendente"; após rodarWorkerUmaVez vê "Issue #4 reaberta no GitHub"; a #4 no contexto do cliente B não mostra o bloco de correção @congelado', async ({
   page,
 }) => {
   await page.goto(urlDaIssue(h, h.clienteAId, h.issues.n4))
@@ -78,7 +78,7 @@ test('admin reabre a #4 do cliente A: vê "Reabertura no GitHub pendente"; após
   await expect(page.getByRole('heading', { name: 'Correção', exact: true })).toHaveCount(0)
 })
 
-test('admin responde sem tarefa como Compartilhável: "Respondida sem tarefa" e a resposta na timeline; contarTarefasGitHub inalterado', async ({
+test('admin responde sem tarefa como Compartilhável: "Respondida sem tarefa" e a resposta na timeline; contarTarefasGitHub inalterado @congelado', async ({
   page,
 }) => {
   const tarefasAntes = await contarTarefasGitHub(h.repositorio)
@@ -96,7 +96,7 @@ test('admin responde sem tarefa como Compartilhável: "Respondida sem tarefa" e 
   expect((await obterSolicitacaoNoBanco(solicitacaoDaN4)).estado).toBe('RESPONDIDA_SEM_TAREFA')
 })
 
-test('tarefa forçada para FALHOU mostra "Falha no GitHub: O GitHub não concluiu a operação depois de 3 tentativas. …" e a triagem volta a ser oferecida', async ({
+test('tarefa forçada para FALHOU mostra "Falha no GitHub: O GitHub não concluiu a operação depois de 3 tentativas. …" e a triagem volta a ser oferecida @congelado', async ({
   page,
 }) => {
   await page.goto(urlDaIssue(h, h.clienteAId, h.issues.n4))
@@ -114,7 +114,7 @@ test('tarefa forçada para FALHOU mostra "Falha no GitHub: O GitHub não conclui
   await expect(page.getByRole('group', { name: 'Decisão da triagem' })).toBeVisible()
 })
 
-test('testador do cliente A não vê "Decisão da triagem"; POST forjado da triagem (como em repositorios.spec.ts) não cria tarefa', async ({
+test('testador do cliente A não vê "Decisão da triagem"; POST forjado da triagem (como em repositorios.spec.ts) não cria tarefa @congelado', async ({
   page,
   browser,
 }) => {

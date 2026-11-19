@@ -7,6 +7,7 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { exigirModulo } from '@/lib/modulos-rota'
 import { resumirErroParaLog } from '@/modules/github/model'
 import {
   autorizarPublicacao,
@@ -40,6 +41,7 @@ export async function autorizarPublicacaoAction(
   _anterior: EstadoDaAutorizacao,
   formData: FormData,
 ): Promise<EstadoDaAutorizacao> {
+  exigirModulo('publicacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -106,6 +108,7 @@ export async function reconhecerDivergenciaAction(
   _anterior: EstadoDaAutorizacao,
   formData: FormData,
 ): Promise<EstadoDaAutorizacao> {
+  exigirModulo('publicacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -132,6 +135,7 @@ export async function registrarVerificacaoAction(
   _anterior: EstadoDaAutorizacao,
   formData: FormData,
 ): Promise<EstadoDaAutorizacao> {
+  exigirModulo('publicacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')

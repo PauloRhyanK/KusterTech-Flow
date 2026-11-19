@@ -1,4 +1,5 @@
 import { ErroDeDominio } from '@/lib/erros'
+import type { ModuloId } from '@/lib/modulos'
 import type { EstadoIntegracao } from '@/modules/github/model'
 
 export function validarNomeDeProjeto(nome: string): string {
@@ -99,7 +100,8 @@ export function calcularChecklist(
   contagens: ContagensDoProjeto,
   hrefConfiguracao: string | null,
   estadoGitHub: EstadoIntegracao,
-  hrefEntregas: string | null = null,
+  hrefEntregas: string | null,
+  ativos: ReadonlySet<ModuloId>,
 ): readonly ItemChecklist[] {
   const itemClientes: ItemChecklist =
     contagens.clientes > 0
@@ -127,8 +129,10 @@ export function calcularChecklist(
   return [
     itemClientes,
     calcularItemGitHub(contagens.repositorios, hrefConfiguracao, estadoGitHub),
-    calcularItemAmbientes(contagens.ambientes, hrefConfiguracao),
-    calcularItemMilestones(contagens.milestones, hrefEntregas),
+    ...(ativos.has('ambientes')
+      ? [calcularItemAmbientes(contagens.ambientes, hrefConfiguracao)]
+      : []),
+    ...(ativos.has('entregas') ? [calcularItemMilestones(contagens.milestones, hrefEntregas)] : []),
   ]
 }
 
@@ -140,34 +144,45 @@ export interface Aba {
   disponivel: boolean
 }
 
-export function abasDoContexto(projetoId: string, contexto: Contexto): readonly Aba[] {
+export function abasDoContexto(
+  projetoId: string,
+  contexto: Contexto,
+  ativos: ReadonlySet<ModuloId>,
+): readonly Aba[] {
   if (contexto.tipo === 'global') {
-    return [
-      { rotulo: 'Resumo', href: `/projetos/${projetoId}`, disponivel: true },
-      { rotulo: 'Entregas', href: `/projetos/${projetoId}/entregas`, disponivel: true },
-      { rotulo: 'Homologação', href: `/projetos/${projetoId}/homologacao`, disponivel: true },
-      { rotulo: 'Publicações', href: `/projetos/${projetoId}/publicacoes`, disponivel: true },
-      { rotulo: 'Saúde e Erros', href: `/projetos/${projetoId}/saude`, disponivel: true },
-      { rotulo: 'Recursos', href: `/projetos/${projetoId}/recursos`, disponivel: true },
+    const base = `/projetos/${projetoId}`
+    const abas: (Aba & { modulo?: ModuloId })[] = [
+      { rotulo: 'Resumo', href: base, disponivel: true },
+      { rotulo: 'Entregas', href: `${base}/entregas`, disponivel: true, modulo: 'entregas' },
+      {
+        rotulo: 'Homologação',
+        href: `${base}/homologacao`,
+        disponivel: true,
+        modulo: 'homologacao',
+      },
+      {
+        rotulo: 'Publicações',
+        href: `${base}/publicacoes`,
+        disponivel: true,
+        modulo: 'publicacao',
+      },
+      { rotulo: 'Saúde e Erros', href: `${base}/saude`, disponivel: true },
+      { rotulo: 'Recursos', href: `${base}/recursos`, disponivel: true },
     ]
+    return abas
+      .filter((aba) => aba.modulo === undefined || ativos.has(aba.modulo))
+      .map(({ rotulo, href, disponivel }) => ({ rotulo, href, disponivel }))
   }
 
+  const base = `/clientes/${contexto.clienteId}/projetos/${projetoId}`
   return [
-    {
-      rotulo: 'Resumo',
-      href: `/clientes/${contexto.clienteId}/projetos/${projetoId}`,
-      disponivel: true,
-    },
-    {
-      rotulo: 'Entregas',
-      href: `/clientes/${contexto.clienteId}/projetos/${projetoId}/entregas`,
-      disponivel: true,
-    },
-    {
-      rotulo: 'Homologação',
-      href: `/clientes/${contexto.clienteId}/projetos/${projetoId}/homologacao`,
-      disponivel: true,
-    },
+    { rotulo: 'Resumo', href: base, disponivel: true },
+    ...(ativos.has('entregas')
+      ? [{ rotulo: 'Entregas', href: `${base}/entregas`, disponivel: true }]
+      : []),
+    ...(ativos.has('homologacao')
+      ? [{ rotulo: 'Homologação', href: `${base}/homologacao`, disponivel: true }]
+      : []),
   ]
 }
 

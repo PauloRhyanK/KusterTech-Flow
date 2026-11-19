@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { log } from '@/lib/log'
+import { moduloAtivo } from '@/lib/modulos'
 import { autenticarTokenDeEvidencia } from '@/modules/ambientes/service'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { registrarVerificacaoPorEvidencia } from '@/modules/publicacao/service'
@@ -30,6 +31,7 @@ function extrairToken(autorizacao: string | null): string | null {
 // Verificação em produção por evidência (decisão 10): o token é o do ambiente PROD. As respostas
 // trazem só mensagens fixas; nada do corpo ou do token vai para o log.
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!moduloAtivo('publicacao')) return new NextResponse(null, { status: 404 })
   try {
     const token = extrairToken(request.headers.get('authorization'))
     const autenticado = token === null ? null : await autenticarTokenDeEvidencia(token)

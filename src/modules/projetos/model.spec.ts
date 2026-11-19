@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { ErroDeDominio } from '@/lib/erros'
+import { resolverModulosAtivos } from '@/lib/modulos'
 import type { EstadoIntegracao } from '@/modules/github/model'
 import {
   abasDoContexto,
@@ -9,6 +10,9 @@ import {
   trilhasDoProjeto,
   validarNomeDeProjeto,
 } from './model'
+
+const padrao = resolverModulosAtivos(undefined)
+const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
 
 describe('projetos / model (unitário)', () => {
   test('calcularChecklist: sem clientes → clientes pendente com ação para o href; com clientes → concluido; href null → pendente sem ação; github pelo estado real; ambientes pela contagem; nunca concluido sem contagem; ordem fixa', () => {
@@ -23,6 +27,8 @@ describe('projetos / model (unitário)', () => {
       contagensSemClientes,
       '/projetos/p-1/configuracao',
       'nao-configurada',
+      null,
+      todos,
     )
 
     // Ordem fixa: clientes, github, ambientes, milestones
@@ -74,7 +80,13 @@ describe('projetos / model (unitário)', () => {
     })
 
     // Sem clientes e com href null → pendente sem ação
-    const checklistSemHref = calcularChecklist(contagensSemClientes, null, 'nao-configurada')
+    const checklistSemHref = calcularChecklist(
+      contagensSemClientes,
+      null,
+      'nao-configurada',
+      null,
+      todos,
+    )
     expect(checklistSemHref[0]).toEqual({
       chave: 'clientes',
       titulo: 'Clientes',
@@ -94,6 +106,8 @@ describe('projetos / model (unitário)', () => {
       contagensComClientes,
       '/projetos/p-1/configuracao',
       'nao-configurada',
+      null,
+      todos,
     )
     expect(checklistConcluido[0]).toEqual({
       chave: 'clientes',
@@ -110,7 +124,7 @@ describe('projetos / model (unitário)', () => {
       ambientes: 3,
       milestones: 2,
     }
-    const checklistAltas = calcularChecklist(contagensAltas, null, 'conectada')
+    const checklistAltas = calcularChecklist(contagensAltas, null, 'conectada', null, todos)
     expect(checklistAltas[1]?.estado).toBe('concluido')
     expect(checklistAltas[2]?.estado).toBe('concluido')
     expect(checklistAltas[3]?.estado).toBe('concluido')
@@ -119,9 +133,13 @@ describe('projetos / model (unitário)', () => {
   test('checklist: 0 → pendente "Nenhum ambiente configurado" com href #ambientes; 2 → "2 de 3 ambientes configurados"; 3 → concluido "DEV, QA e PROD configurados"; href null → sem acao', () => {
     const base: ContagensDoProjeto = { clientes: 1, repositorios: 1, ambientes: 0, milestones: 1 }
     const ambientes = (ambientesConfigurados: number, href: string | null) =>
-      calcularChecklist({ ...base, ambientes: ambientesConfigurados }, href, 'conectada').find(
-        (i) => i.chave === 'ambientes',
-      )
+      calcularChecklist(
+        { ...base, ambientes: ambientesConfigurados },
+        href,
+        'conectada',
+        null,
+        todos,
+      ).find((i) => i.chave === 'ambientes')
     const acao = {
       rotulo: 'Configurar ambientes',
       href: '/projetos/p-1/configuracao#ambientes',
@@ -161,7 +179,9 @@ describe('projetos / model (unitário)', () => {
   test('calcularChecklist milestones: 0 com hrefEntregas → acao Criar milestone para /projetos/p-1/entregas?nova=1#nova-milestone; 1 → "1 milestone ativa"; 2 → "2 milestones ativas"', () => {
     const base: ContagensDoProjeto = { clientes: 1, repositorios: 1, ambientes: 0, milestones: 0 }
     const milestones = (c: ContagensDoProjeto, hrefEntregas?: string | null) =>
-      calcularChecklist(c, null, 'conectada', hrefEntregas).find((i) => i.chave === 'milestones')
+      calcularChecklist(c, null, 'conectada', hrefEntregas ?? null, todos).find(
+        (i) => i.chave === 'milestones',
+      )
 
     expect(milestones(base, '/projetos/p-1/entregas')).toEqual({
       chave: 'milestones',
@@ -184,7 +204,7 @@ describe('projetos / model (unitário)', () => {
     const base: ContagensDoProjeto = { clientes: 1, repositorios: 0, ambientes: 0, milestones: 0 }
     const href = '/projetos/p-1/configuracao'
     const github = (c: ContagensDoProjeto, h: string | null, e: EstadoIntegracao) =>
-      calcularChecklist(c, h, e).find((i) => i.chave === 'github')
+      calcularChecklist(c, h, e, null, todos).find((i) => i.chave === 'github')
 
     expect(github(base, href, 'nao-configurada')).toEqual({
       chave: 'github',
@@ -220,7 +240,7 @@ describe('projetos / model (unitário)', () => {
     const projetoId = 'proj-123'
 
     // Contexto global
-    const abasGlobal = abasDoContexto(projetoId, { tipo: 'global' })
+    const abasGlobal = abasDoContexto(projetoId, { tipo: 'global' }, todos)
     expect(abasGlobal).toEqual([
       { rotulo: 'Resumo', href: '/projetos/proj-123', disponivel: true },
       { rotulo: 'Entregas', href: '/projetos/proj-123/entregas', disponivel: true },
@@ -231,7 +251,7 @@ describe('projetos / model (unitário)', () => {
     ])
 
     // Contexto cliente
-    const abasCliente = abasDoContexto(projetoId, { tipo: 'cliente', clienteId: 'cli-456' })
+    const abasCliente = abasDoContexto(projetoId, { tipo: 'cliente', clienteId: 'cli-456' }, todos)
     expect(abasCliente).toEqual([
       { rotulo: 'Resumo', href: '/clientes/cli-456/projetos/proj-123', disponivel: true },
       {
@@ -245,6 +265,53 @@ describe('projetos / model (unitário)', () => {
         disponivel: true,
       },
     ])
+  })
+
+  test('abas globais sem módulos congelados: Resumo, Saúde e Erros, Recursos', () => {
+    expect(abasDoContexto('p1', { tipo: 'global' }, padrao).map((a) => a.rotulo)).toEqual([
+      'Resumo',
+      'Saúde e Erros',
+      'Recursos',
+    ])
+  })
+
+  test('abas globais com tudo ligado mantêm as seis de antes', () => {
+    expect(abasDoContexto('p1', { tipo: 'global' }, todos).map((a) => a.rotulo)).toEqual([
+      'Resumo',
+      'Entregas',
+      'Homologação',
+      'Publicações',
+      'Saúde e Erros',
+      'Recursos',
+    ])
+  })
+
+  test('contexto de cliente sem módulos congelados tem só Resumo', () => {
+    expect(
+      abasDoContexto('p1', { tipo: 'cliente', clienteId: 'c1' }, padrao).map((a) => a.rotulo),
+    ).toEqual(['Resumo'])
+  })
+
+  test('checklist padrão tem só clientes e github', () => {
+    const itens = calcularChecklist(
+      { clientes: 0, repositorios: 0, ambientes: 0, milestones: 0 },
+      '/x',
+      'nao-configurada',
+      null,
+      padrao,
+    )
+    expect(itens.map((i) => i.chave)).toEqual(['clientes', 'github'])
+  })
+
+  test('checklist com ambientes e entregas ligados tem os quatro itens', () => {
+    const itens = calcularChecklist(
+      { clientes: 0, repositorios: 0, ambientes: 0, milestones: 0 },
+      '/x',
+      'nao-configurada',
+      null,
+      todos,
+    )
+    expect(itens.map((i) => i.chave)).toEqual(['clientes', 'github', 'ambientes', 'milestones'])
   })
 
   test('rotasDoProjeto: global e cliente para entregas, milestone com aba homologacao e issue com ?milestone=m-1', () => {

@@ -327,6 +327,10 @@ export async function contarAmbientes(projetoId: string): Promise<number> {
   return db.ambiente.count({ where: { projetoId } })
 }
 
+export async function contarEvidenciasDeDeploy(): Promise<number> {
+  return db.evidenciaDeploy.count()
+}
+
 export async function contarEvidencias(projetoId: string): Promise<number> {
   return db.evidenciaDeploy.count({ where: { ambiente: { projetoId } } })
 }

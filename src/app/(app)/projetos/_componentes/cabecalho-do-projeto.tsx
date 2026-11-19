@@ -3,6 +3,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { cn } from '@/lib/utils'
+import { modulosAtivos } from '@/lib/modulos'
 import { abasDoContexto, type Contexto } from '@/modules/projetos/model'
 import type { ProjetoResumo } from '@/modules/projetos/service'
 import { AbasDoProjeto } from './abas-do-projeto'
@@ -65,7 +66,7 @@ export function CabecalhoDoProjeto({
         situacao={situacao}
         acoes={acoes}
       />
-      <AbasDoProjeto abas={abasDoContexto(projeto.id, contexto)} />
+      <AbasDoProjeto abas={abasDoContexto(projeto.id, contexto, modulosAtivos())} />
     </div>
   )
 }

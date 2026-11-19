@@ -1,4 +1,5 @@
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { modulosAtivos } from '@/lib/modulos'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { podeVerVisaoGlobal, idsVisiveis } from '@/modules/clientes/model'
@@ -289,7 +290,7 @@ export async function pendenciasDeConfiguracao(sujeito: Sujeito): Promise<Entrad
 
   const itens = projetos.flatMap((p) => {
     // Só o item "pendente" interessa; o estado da integração não o altera.
-    const checklist = calcularChecklist(p._count, null, 'nao-configurada')
+    const checklist = calcularChecklist(p._count, null, 'nao-configurada', null, modulosAtivos())
     const pendencia = pendenciaDeConfiguracao(p, checklist)
     return pendencia ? [pendencia] : []
   })

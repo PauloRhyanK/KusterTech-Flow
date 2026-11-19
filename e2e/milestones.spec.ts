@@ -69,7 +69,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparVinculosDeIssuesNoBanco(repositorios)
 })
 
-test('admin cria pela tela a milestone com prazo 2026-11-30 e cliente A, adiciona #1 e #4 de repoUm e #1 de repoDois: lista e detalhe mostram "1 de 3 issues fechadas · 33%" e progressbar 33; "Issues sem milestone" fica com 4; mobile sem rolagem horizontal', async ({
+test('admin cria pela tela a milestone com prazo 2026-11-30 e cliente A, adiciona #1 e #4 de repoUm e #1 de repoDois: lista e detalhe mostram "1 de 3 issues fechadas · 33%" e progressbar 33; "Issues sem milestone" fica com 4; mobile sem rolagem horizontal @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -114,7 +114,7 @@ test('admin cria pela tela a milestone com prazo 2026-11-30 e cliente A, adicion
   expect(await semRolagemHorizontal(page)).toBe(true)
 })
 
-test('aba Issues: Abertas → 2, Fechadas → 1, Todas + repositório repoDois → 1; remover #1 de repoUm pede confirmação e o progresso vai a "1 de 2 issues fechadas · 50%"', async ({
+test('aba Issues: Abertas → 2, Fechadas → 1, Todas + repositório repoDois → 1; remover #1 de repoUm pede confirmação e o progresso vai a "1 de 2 issues fechadas · 50%" @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -153,7 +153,7 @@ test('aba Issues: Abertas → 2, Fechadas → 1, Todas + repositório repoDois �
   await expect(page.getByText('1 de 2 issues fechadas · 50%').first()).toBeVisible()
 })
 
-test('aba Homologação: a global lista Entrega 1 por cliente e o contexto de A, sem QA, mostra "O ambiente QA ainda não está configurado neste projeto." sem o link de configuração', async ({
+test('aba Homologação: a global lista Entrega 1 por cliente e o contexto de A, sem QA, mostra "O ambiente QA ainda não está configurado neste projeto." sem o link de configuração @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -189,7 +189,7 @@ test('aba Homologação: a global lista Entrega 1 por cliente e o contexto de A,
   await expect(page.getByRole('link', { name: 'Ver na visão global' })).toBeVisible()
 })
 
-test('contexto de A lista só a milestone de A, sem "Issues sem milestone"; contexto de B mostra "Nenhuma milestone associada a este cliente."', async ({
+test('contexto de A lista só a milestone de A, sem "Issues sem milestone"; contexto de B mostra "Nenhuma milestone associada a este cliente." @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -215,7 +215,7 @@ test('contexto de A lista só a milestone de A, sem "Issues sem milestone"; cont
   await expect(page.getByText('Entrega A')).toHaveCount(0)
 })
 
-test('Resumo global mostra a milestone com "1 de 3 issues fechadas · 33%" abaixo de Próximas ações, checklist Milestones Concluído "1 milestone ativa"; Resumo no contexto de B mostra "Nenhuma milestone associada a este cliente."', async ({
+test('Resumo global mostra a milestone com "1 de 3 issues fechadas · 33%" abaixo de Próximas ações, checklist Milestones Concluído "1 milestone ativa"; Resumo no contexto de B mostra "Nenhuma milestone associada a este cliente." @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -262,7 +262,7 @@ test('Resumo global mostra a milestone com "1 de 3 issues fechadas · 33%" abaix
   await expect(page.getByText('Entrega 1')).toHaveCount(0)
 })
 
-test('testador de A: milestone global → "Sem permissão para esta área."; milestone de A no contexto de B → "Sem permissão para esta área."; POST forjado de "Adicionar à milestone" (capturado do admin e desfeito por desvincularIssuesNoBanco) não grava; o mesmo POST do admin grava', async ({
+test('testador de A: milestone global → "Sem permissão para esta área."; milestone de A no contexto de B → "Sem permissão para esta área."; POST forjado de "Adicionar à milestone" (capturado do admin e desfeito por desvincularIssuesNoBanco) não grava; o mesmo POST do admin grava @congelado', async ({
   page,
   browser,
 }, testInfo) => {

@@ -42,7 +42,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
-test('com dev/qa/production e worker: "Em cada ambiente" mostra v1.4.0 em QA de repoUm com "Falha no último deploy" e v1.3.0 em PROD; lista com 6 versões', async ({
+test('com dev/qa/production e worker: "Em cada ambiente" mostra v1.4.0 em QA de repoUm com "Falha no último deploy" e v1.3.0 em PROD; lista com 6 versões @congelado', async ({
   page,
 }, testInfo) => {
   const [repoUm, repoDois] = repositoriosDoProjetoE2E(testInfo.project.name)
@@ -73,7 +73,7 @@ test('com dev/qa/production e worker: "Em cada ambiente" mostra v1.4.0 em QA de 
   await expect(page.getByRole('list', { name: 'Versões' }).getByRole('listitem')).toHaveCount(6)
 })
 
-test('DEV sem nome no GitHub: "Registrar deploy manual" de V2 em repoUm mostra DEV v1.4.0 "Manual · Admin E2E"', async ({
+test('DEV sem nome no GitHub: "Registrar deploy manual" de V2 em repoUm mostra DEV v1.4.0 "Manual · Admin E2E" @congelado', async ({
   page,
 }, testInfo) => {
   const [repoUm, repoDois] = repositoriosDoProjetoE2E(testInfo.project.name)
@@ -102,7 +102,7 @@ test('DEV sem nome no GitHub: "Registrar deploy manual" de V2 em repoUm mostra D
   await expect(devDoRepoUm).toContainText('Manual · Admin E2E')
 })
 
-test('testador escopado: "Sem permissão para esta área." em /versoes; POST forjado de registrar deploy → contarEvidencias(projeto) inalterado', async ({
+test('testador escopado: "Sem permissão para esta área." em /versoes; POST forjado de registrar deploy → contarEvidencias(projeto) inalterado @congelado', async ({
   page,
   browser,
 }, testInfo) => {

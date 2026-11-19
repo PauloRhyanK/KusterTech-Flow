@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { modulosAtivos } from '@/lib/modulos'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { cn } from '@/lib/utils'
 import type { EstadoIntegracao } from '@/modules/github/model'
@@ -76,6 +77,7 @@ export function ResumoDoProjeto({
                 podeGerenciar ? `/projetos/${projeto.id}/configuracao` : null,
                 estadoGitHub,
                 podeGerenciar ? rotas.entregas : null,
+                modulosAtivos(),
               )}
             />
             <h3 className="text-[15px] font-[600] text-text-primary">Homologações pendentes</h3>

@@ -92,7 +92,7 @@ test.afterEach(async ({}, testInfo) => {
   await liberarRepositoriosNoBanco([repositorioDeAgentesE2E(testInfo.project.name)])
 })
 
-test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a seed e abre a execução concluída com a issue aberta', async ({
+test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a seed e abre a execução concluída com a issue aberta @congelado', async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000)
