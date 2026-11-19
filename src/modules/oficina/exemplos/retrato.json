@@ -1,0 +1,23 @@
+{
+  "em": "2026-11-18T10:02:00-03:00",
+  "ligadaDesde": "2026-11-10T08:15:00-03:00",
+  "containers": [
+    {
+      "nome": "flow-app",
+      "estado": "rodando",
+      "codigoDeSaida": null,
+      "memoriaBytes": 222298112,
+      "cpuPct": 1.5,
+      "desde": "2026-11-17T21:00:00-03:00"
+    },
+    {
+      "nome": "flow-worker",
+      "estado": "parado",
+      "codigoDeSaida": 137,
+      "memoriaBytes": null,
+      "cpuPct": null,
+      "desde": "2026-11-18T09:40:00-03:00"
+    }
+  ],
+  "servicos": { "fabrica": "ativa", "runners": { "noAr": 2, "ocupados": 1, "total": 2 } }
+}

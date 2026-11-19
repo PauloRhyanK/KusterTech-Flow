@@ -1,0 +1,2 @@
+{"em":"2026-11-18T09:00:00-03:00","origem":"oficina","tipo":"disco","severidade":"alta","usoPct":83,"limitePct":80,"mensagem":"Disco da oficina em 83% depois da limpeza diária"}
+{"em":"2026-11-18T09:30:00-03:00","origem":"oficina","tipo":"backup","severidade":"media","mensagem":"Backup da noite não terminou"}
