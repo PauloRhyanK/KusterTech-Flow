@@ -16,7 +16,7 @@ type SaidaDoPost = {
   status: 200 | 201 | 401 | 404 | 409 | 413 | 415 | 422 | 500
   corpo: object
 }
-type SaidaDoGet = { status: 200 | 401 | 404; corpo: object }
+type SaidaDoGet = { status: 200 | 401 | 404 | 500; corpo: object }
 
 const NAO_AUTORIZADO = { erro: 'Token inválido.' }
 const CORPO_INVALIDO: SaidaDoPost = { status: 422, corpo: { erro: 'Corpo inválido.' } }
@@ -82,12 +82,12 @@ async function registrarChegada(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${repositorioId}))`
     const commit = pedido.commit ?? null
     const noAr = await tx.pedidoDePublicacao.findFirst({
-      where: { repositorioId, estado: 'PUBLICADO', commit: { not: null } },
+      where: { repositorioId, estado: 'PUBLICADO', commit: { not: null }, atendidoPorId: null },
       orderBy: [{ concluidoEm: { sort: 'desc', nulls: 'last' } }, { criadoEm: 'desc' }],
       select: { commit: true },
     })
     const pendentes = await tx.pedidoDePublicacao.findMany({
-      where: { repositorioId, estado: { in: [...PENDENTES] } },
+      where: { repositorioId, estado: { in: [...PENDENTES] }, atendidoPorId: null },
       select: { id: true, commit: true },
     })
     const decisao = classificarChegada({
@@ -202,42 +202,50 @@ export async function consultarPedidoDePublicacao(
   authorization: string | null,
   id: string,
 ): Promise<SaidaDoGet> {
-  const fonte = await autenticarFonte(authorization)
-  if (fonte === null) return { status: 401, corpo: NAO_AUTORIZADO }
+  try {
+    const fonte = await autenticarFonte(authorization)
+    if (fonte === null) return { status: 401, corpo: NAO_AUTORIZADO }
 
-  const naoEncontrado: SaidaDoGet = { status: 404, corpo: { erro: 'Pedido não encontrado.' } }
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return naoEncontrado
-  const pedido = await db.pedidoDePublicacao.findFirst({
-    where: { id, fonteId: fonte.id },
-    include: {
-      repositorio: { select: { nomeCompleto: true } },
-      // atendente via atendidoPorId (sem relação no schema)
-    },
-  })
-  if (!pedido) return naoEncontrado
+    const naoEncontrado: SaidaDoGet = { status: 404, corpo: { erro: 'Pedido não encontrado.' } }
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return naoEncontrado
+    const pedido = await db.pedidoDePublicacao.findFirst({
+      where: { id, fonteId: fonte.id },
+      include: {
+        repositorio: { select: { nomeCompleto: true } },
+        // atendente via atendidoPorId (sem relação no schema)
+      },
+    })
+    if (!pedido) return naoEncontrado
 
-  const atendente = pedido.atendidoPorId
-    ? await db.pedidoDePublicacao.findUnique({
-        where: { id: pedido.atendidoPorId },
-        select: { estado: true },
-      })
-    : null
-  const estado = estadoNoFio(atendente?.estado ?? pedido.estado)
-  return {
-    status: 200,
-    corpo: {
-      id: pedido.id,
-      repositorio: pedido.repositorio.nomeCompleto,
-      commit: pedido.commit,
-      modo: pedido.modo.toLowerCase(),
-      estado,
-      motivo: pedido.motivo,
-      posicao: estado === 'na_fila' ? await posicaoNaFila(pedido.repositorioId, pedido.id) : null,
-      execucaoUrl: pedido.execucaoUrl,
-      checks: pedido.checks ? pedido.checks.toLowerCase() : null,
-      criadoEm: pedido.criadoEm.toISOString(),
-      concluidoEm: pedido.concluidoEm?.toISOString() ?? null,
-      atendidoPor: pedido.atendidoPorId,
-    },
+    const atendente = pedido.atendidoPorId
+      ? await db.pedidoDePublicacao.findUnique({
+          where: { id: pedido.atendidoPorId },
+          select: { estado: true },
+        })
+      : null
+    const estado = estadoNoFio(atendente?.estado ?? pedido.estado)
+    return {
+      status: 200,
+      corpo: {
+        id: pedido.id,
+        repositorio: pedido.repositorio.nomeCompleto,
+        commit: pedido.commit,
+        modo: pedido.modo.toLowerCase(),
+        estado,
+        motivo: pedido.motivo,
+        posicao:
+          estado === 'na_fila'
+            ? await posicaoNaFila(pedido.repositorioId, pedido.atendidoPorId ?? pedido.id)
+            : null,
+        execucaoUrl: pedido.execucaoUrl,
+        checks: pedido.checks ? pedido.checks.toLowerCase() : null,
+        criadoEm: pedido.criadoEm.toISOString(),
+        concluidoEm: pedido.concluidoEm?.toISOString() ?? null,
+        atendidoPor: pedido.atendidoPorId,
+      },
+    }
+  } catch (erro) {
+    log.error({ erro: resumirErroParaLog(erro) }, 'consulta do pedido de publicação falhou')
+    return { status: 500, corpo: { erro: 'Falha ao consultar o pedido.' } }
   }
 }

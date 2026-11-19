@@ -246,6 +246,55 @@ describe('GET /api/publicacoes/<id>', () => {
   })
 })
 
+describe('correções da revisão', () => {
+  test('GET de dispensado usa a posição do pedido que o cobre', async () => {
+    await configurar()
+    const a = await pedir({ commit: C1 })
+    const b = await pedir({ commit: C1 })
+    const r = await consultarPedidoDePublicacao(`Bearer ${token}`, (b.corpo as { id: string }).id)
+    expect(r.corpo).toMatchObject({ estado: 'na_fila', posicao: 1 })
+    expect((a.corpo as { posicao: number }).posicao).toBe(1)
+  })
+
+  test('pedido já fundido em outro não conta como pendente nem como "no ar"', async () => {
+    await configurar()
+    const base = await db.pedidoDePublicacao.create({
+      data: { repositorioId, commit: C3, modo: 'IMEDIATO', estado: 'NA_FILA' },
+    })
+    await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: C1,
+        modo: 'IMEDIATO',
+        estado: 'NA_FILA',
+        atendidoPorId: base.id,
+      },
+    })
+    expect((await pedir({ commit: C1 })).status).toBe(201)
+
+    await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: C2,
+        modo: 'IMEDIATO',
+        estado: 'PUBLICADO',
+        atendidoPorId: base.id,
+        concluidoEm: AGORA,
+      },
+    })
+    expect((await pedir({ commit: C2 })).status).toBe(201)
+  })
+
+  test('GET com falha interna responde 500 no formato de erro', async () => {
+    const r = await consultarPedidoDePublicacao('Bearer fp_x', 'nao-e-uuid')
+    expect(r.status).toBe(401)
+    const spy = vi.spyOn(db.fonteDePublicacao, 'findUnique').mockRejectedValueOnce(new Error('x'))
+    const r2 = await consultarPedidoDePublicacao(`Bearer ${token}`, 'a'.repeat(36))
+    spy.mockRestore()
+    expect(r2).toEqual({ status: 500, corpo: { erro: 'Falha ao consultar o pedido.' } })
+  })
+})
+
 describe('módulo inativo', () => {
   test('as rotas respondem 404 { erro: "Não encontrado." }', async () => {
     vi.resetModules()
