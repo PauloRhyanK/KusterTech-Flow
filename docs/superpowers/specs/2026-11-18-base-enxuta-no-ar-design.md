@@ -120,13 +120,13 @@ Dois grupos com rótulo, mais Configurações:
 
 Decidir, Demandas e Publicação entram no grupo Trabalho quando os produtos deles forem entregues. Não há item de menu sem tela funcionando.
 
-Quem não tem `desenvolvimento.ler` nem `infraestrutura.ler` (aprovador e testador de cliente) vê só Início, Clientes e Projetos, como hoje.
+O menu é o mesmo para todos os perfis, como hoje: quem não tem permissão para uma área vê "Sem permissão para esta área." ao abri-la.
 
 ### 6.2 Início (`/`)
 
 Substitui a Visão Geral de seis grupos. Três blocos, nesta ordem:
 
-**Espera você.** Lista única, mais antigo primeiro. Fontes:
+**Espera você.** Lista única, na ordem dos tipos da tabela; dentro de cada tipo, o mais antigo primeiro quando a fonte informa a data. Fontes:
 
 | Tipo | Origem | Destino do link |
 | --- | --- | --- |
@@ -135,6 +135,10 @@ Substitui a Visão Geral de seis grupos. Três blocos, nesta ordem:
 | Aviso da oficina | `alertas.jsonl`, últimas 24 h | a página da máquina local |
 | Integração | repositório indisponível ou desatualizado | configuração do projeto |
 | Fábrica sem notícias | retrato com mais de 5 minutos | `/fabrica` |
+
+O retrato atual da Fábrica não traz a data de abertura de cada decisão, então a decisão aparece sem idade; a data entra quando o kit passar a enviá-la (produto 3). A lista mostra até 20 itens e diz quantos ficaram de fora.
+
+Quando um módulo congelado for religado, as pendências dele (homologação, autorização de PROD, divergência) voltam a esta lista, depois dos tipos da tabela.
 
 Sem itens: "Nada espera você nas fontes disponíveis." Fonte que falhou ao ser lida aparece como item próprio, nunca como lista vazia.
 
@@ -221,6 +225,7 @@ O Flow não fala com o Docker nem com o sistema. Ele lê arquivos que os scripts
 | `limpezas.jsonl` | `limpar-oficina.sh` | diária | **novo** |
 | `retrato.json` | `metricas_oficina.py retrato` | 1 min | **novo** |
 | `disco-por-dono.json` | `metricas_oficina.py disco` | 1 h | **novo** |
+| `backup-ultimo.json` | `backup-oficina.sh` | diária | existe |
 
 Extensões aos scripts (em `scripts/infra/`, com teste):
 
