@@ -1466,15 +1466,17 @@ class TestesStatus(Base):
 class EnviarFalso:
     """`retrato.enviar` em memória: guarda o que recebeu; `falhas` é uma fila de exceções (ou `None` para sucesso)."""
 
-    def __init__(self, *falhas):
+    def __init__(self, *falhas, resposta=None):
         self.chamadas = []
         self.falhas = list(falhas)
+        self.resposta = resposta
 
     def __call__(self, corpo, *, url, token_file):
         self.chamadas.append({"corpo": json.loads(corpo.decode("utf-8")), "bytes": len(corpo), "url": url, "token_file": token_file})
         falha = self.falhas.pop(0) if self.falhas else None
         if falha is not None:
             raise falha
+        return self.resposta
 
 
 CENTRAL = {"url": "https://central.exemplo.com/api/fabrica/estado", "token_file": "/seg/central"}
@@ -1688,6 +1690,102 @@ class TestesCentral(Base):
             if arq.is_file() and arq.name != "token-central":
                 self.assertNotIn(testes_retrato.TOKEN, arq.read_text(encoding="utf-8", errors="replace"), str(arq))
         self.assertTrue(self.avisos_da_central())
+
+
+ID_CONSERTO = "0b6f3c2e-6a1d-4c8e-9f00-1a2b3c4d5e6f"
+
+
+class TestesConsertos(Base):
+    def setUp(self):
+        super().setUp()
+        self.kit = pathlib.Path(self._tmp.name) / "kit"
+        (self.kit / "fabrica" / "modelos").mkdir(parents=True)
+        modelos = {"modelos": {"fixer": {"agente": "claude-code", "modelo": "modelo-do-fixer", "maxCustoUsd": 5}}}
+        (self.kit / "fabrica" / "modelos" / "config.json").write_text(json.dumps(modelos), encoding="utf-8")
+        self.pedido = {
+            "id": ID_CONSERTO,
+            "repositorio": REPO,
+            "commit": "c" * 40,
+            "execucaoUrl": None,
+            "trechoDoLog": "Error: falhou",
+            "abertoEm": "2026-11-03T11:50:00Z",
+        }
+        self.enviar = EnviarFalso(resposta={"resultado": "gravado", "consertos": [self.pedido]})
+
+    def coordenador(self, **extra):
+        return self.novo(central=CENTRAL, enviar=self.enviar, kit=self.kit, **extra)
+
+    def despachos(self):
+        return [a for nome, a in self.motor.chamadas if nome == "despachar_run"]
+
+    def reservas(self):
+        return capacidade.ler(self.raiz / "capacidade.json")["reservas"]
+
+    def test_passo_central_despacha_conserto_da_resposta_e_o_retrato_seguinte_traz_o_estado(self):
+        c = self.coordenador()
+        c.ciclo()
+        self.assertNotIn("consertos", self.enviar.chamadas[0]["corpo"])
+        (despacho,) = self.despachos()
+        self.assertEqual((despacho["projeto"], despacho["agente"], despacho["modelo"]), ("cliente", "claude-code", "modelo-do-fixer"))
+        self.assertEqual(despacho["chave_idempotencia"], ID_CONSERTO.replace("-", ""))
+        self.assertEqual(self.reservas(), {"conserto:" + ID_CONSERTO: ["fixer"]})
+        self.assertEqual(self.fila_estado()["consertos"][ID_CONSERTO]["estado"], "em_curso")
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        (item,) = self.enviar.chamadas[1]["corpo"]["consertos"]
+        self.assertEqual((item["id"], item["estado"], item["runId"]), (ID_CONSERTO, "em_curso", "run-1"))
+        self.assertEqual(len(self.despachos()), 1)
+        self.motor.definir_run("run-1", estado="succeeded", prUrl="https://github.com/dono/cliente/pull/3")
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        (item,) = self.enviar.chamadas[3]["corpo"]["consertos"]
+        self.assertEqual((item["estado"], item["prUrl"]), ("com_pr", "https://github.com/dono/cliente/pull/3"))
+        self.assertEqual(self.reservas(), {})
+        self.enviar.resposta = {"resultado": "gravado", "consertos": []}
+        c.ciclo()
+        c.ciclo()
+        self.assertNotIn("consertos", self.enviar.chamadas[-1]["corpo"])
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_orfaos_nao_soltam_a_vaga_de_conserto_em_curso(self):
+        c = self.coordenador()
+        for _ in range(3):
+            c.ciclo()
+            self.instante += datetime.timedelta(minutes=1)
+        self.assertEqual(self.reservas(), {"conserto:" + ID_CONSERTO: ["fixer"]})
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_coordenador_reiniciado_nao_despacha_de_novo(self):
+        self.coordenador().ciclo()
+        self.coordenador().ciclo()
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_sem_modelos_fixer_avisa_uma_vez_e_nao_despacha(self):
+        (self.kit / "fabrica" / "modelos" / "config.json").write_text(json.dumps({"modelos": {}}), encoding="utf-8")
+        c = self.coordenador()
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(self.despachos(), [])
+        self.assertEqual(len([a for a in self.avisos() if "configure modelos.fixer" in a]), 1)
+
+    def test_envio_que_falha_nao_atende_conserto_novo(self):
+        self.enviar.falhas = [retrato.FalhaDeEnvio("HTTP 500")]
+        self.coordenador().ciclo()
+        self.assertEqual(self.despachos(), [])
+
+    def test_fila_json_ilegivel_nao_da_conserto_como_sem_projeto(self):
+        (self.raiz / "fila.json").write_text("{quebrado", encoding="utf-8")
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            self.coordenador().ciclo()
+        self.assertEqual(self.despachos(), [])
+        self.assertNotIn("consertos", self.fila_estado())
+
+    def test_consertos_tortos_no_fila_estado_nao_quebram_o_ciclo(self):
+        (self.raiz / "fila-estado.json").write_text(json.dumps({"fila": [], "consertos": [1], "consertosEncerrados": "x"}), encoding="utf-8")
+        self.coordenador().ciclo()
+        self.assertEqual(len(self.despachos()), 1)
 
 
 class TestesConfiguracaoDaCentral(Base):

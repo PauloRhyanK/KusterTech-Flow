@@ -21,7 +21,9 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
 6. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
    rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
 7. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
-   mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo;
+   mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo. A resposta traz os pedidos de
+   conserto de publicação, atendidos por `consertos.py` com um run `fixer` numa vaga (o estado volta no retrato
+   seguinte);
 8. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
@@ -47,6 +49,7 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
+import consertos  # noqa: E402
 import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
@@ -226,6 +229,10 @@ def ler_estado(raiz) -> dict:
             resultado[chave] = _padrao_do_estado()[chave]
     if not isinstance(resultado.get("central", {}), dict):
         del resultado["central"]
+    if not isinstance(resultado.get("consertos", {}), dict):
+        resultado["consertos"] = {}
+    if not isinstance(resultado.get("consertosEncerrados", []), list):
+        resultado["consertosEncerrados"] = []
     if "entradaAplicada" in resultado:
         aplicados = resultado["entradaAplicada"]
         resultado["entradaAplicada"] = [n for n in aplicados if isinstance(n, str)] if isinstance(aplicados, list) else []
@@ -728,6 +735,7 @@ class Coordenador:
         self._separar_ids_invalidos()
         self._tentados = set()
         self._removendo = set()
+        self._config = None  # só o fila.json lido neste ciclo vale para os consertos
         eventos: list[dict] = []
         try:
             config = self._config = ler_config(self.raiz)
@@ -763,6 +771,7 @@ class Coordenador:
             capacidade=cap,
             planos=planos,
             mem_disponivel_mb=capacidade.mem_disponivel_mb(),
+            consertos=consertos.para_o_retrato(self.dados),
         )
         cortado = retrato.ajustar(completo)
         if cortado is None:
@@ -778,8 +787,9 @@ class Coordenador:
         if not self.central:
             return
         with contextlib.suppress(Exception):
+            resposta = None
             try:
-                self._enviar(self._retrato(), url=self.central.get("url"), token_file=self.central.get("token_file"))
+                resposta = self._enviar(self._retrato(), url=self.central.get("url"), token_file=self.central.get("token_file"))
                 falha = None
             except retrato.FalhaDeEnvio as exc:
                 falha = str(exc)
@@ -790,6 +800,36 @@ class Coordenador:
                 self._esquecer("central:envio")
             else:
                 self._aviso("central:envio", "Central: envio do retrato falhou (%s)" % falha)
+            self._passo_consertos(resposta if falha is None else None)
+
+    def _passo_consertos(self, resposta) -> None:
+        """Atende os pedidos de conserto da resposta; sem resposta legível, só acompanha os que estão em andamento."""
+        if self._config is None:
+            return  # fila.json não foi lido neste ciclo: sem ele, todo repositório pareceria fora da fila
+        abertos = consertos.ler_da_resposta(resposta) if isinstance(resposta, dict) else None
+        if abertos is None and not consertos.chaves_ocupando(self.dados):
+            return
+        modelo = consertos.ler_modelo(self.kit)
+        eventos = consertos.passo(
+            self.dados,
+            abertos,
+            motor=self.motor,
+            capacidade_path=self.capacidade,
+            projetos={r["repo"].lower(): r["projeto"] for r in self._config["repos"]},
+            modelo=modelo,
+            agora=self._agora(),
+            mem_disponivel_mb=capacidade.mem_disponivel_mb(),
+            salvar=self._salvar,
+        )
+        if modelo is not None:
+            self._esquecer(consertos.CHAVE_AVISO_MODELO)
+        for evento in eventos:
+            if evento.get("evento") == "aviso":
+                self._aviso(evento["chave"], evento["mensagem"])
+            elif evento.get("evento") == "erro":
+                self._log_repetivel("%s:%s" % (evento["etapa"], evento["alvo"]), evento)
+            else:
+                self._log(evento)
 
     def _separar_ids_invalidos(self) -> None:
         validas, self._postas_de_lado = [], []
@@ -1196,8 +1236,9 @@ class Coordenador:
             except Exception as exc:  # noqa: BLE001 - um plano não derruba os outros
                 self._erro_de_etapa("refazer_ocupacao", id_, exc)
         try:
-            # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera
-            removidos = capacidade.limpar_orfaos(self.capacidade, ocupando)
+            # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera; um
+            # conserto em andamento segura a vaga dele (`conserto:<id>`) como um plano
+            removidos = capacidade.limpar_orfaos(self.capacidade, ocupando | consertos.chaves_ocupando(self.dados))
         except Exception as exc:  # noqa: BLE001
             self._erro_de_etapa("limpar_orfaos", "capacidade", exc)
             return

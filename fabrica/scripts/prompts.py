@@ -123,6 +123,23 @@ def prompt_orquestrador(
     )
 
 
+LIMITE_LOG_CONSERTO = 4000
+
+
+def prompt_conserto(*, repositorio: str, commit: str, execucao_url: str | None, trecho_do_log: str) -> str:
+    """Prompt fixo do run `fixer` que conserta uma publicação que falhou (pedido de conserto do Flow)."""
+    return (
+        f"Você conserta a publicação de {repositorio}, que falhou no commit {commit}.\n"
+        f"Execução: {execucao_url or 'sem link'}\n"
+        "\n"
+        "Fim do log:\n"
+        f"{trecho_do_log[-LIMITE_LOG_CONSERTO:]}\n"
+        "\n"
+        "Abra um PR com a correção, a partir de main, seguindo AGENTS.md do repositório. Se não der para corrigir, "
+        "explique por que no fim da sua resposta e não abra PR."
+    )
+
+
 def _achados_validos(achados) -> bool:
     return isinstance(achados, list) and all(
         isinstance(a, dict)

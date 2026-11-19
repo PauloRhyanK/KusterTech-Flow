@@ -196,6 +196,16 @@ O envio é `POST` com `Authorization: Bearer` e timeout de 10 s, e não segue re
 
 O retrato é cortado para caber no contrato e em 256 KB: saem primeiro os planos `removido` e `concluido` mais antigos, depois os avisos mais antigos, e nunca um plano ocupando vaga. Se ainda não couber, não envia e avisa. O `coordenador.py status` mostra se o envio está ligado, o último envio e o resultado.
 
+### Consertos de publicação
+
+Quando uma publicação falha na fila do Flow, a resposta do envio do retrato traz um pedido de conserto: repositório, commit, link da execução e fim do log. O coordenador roda **um** run do Warren com o papel `fixer` (o modelo de `modelos.fixer` em `fabrica/modelos/config.json`) no projeto do repositório em `fila.json`, com um prompt fixo: abrir um PR com a correção a partir de `main`, ou explicar por que não dá.
+
+- Diferente do fixer das seeds, esse run **ocupa uma vaga** de `capacidade.json` (chave `conserto:<id>`). Sem vaga, com pouca RAM ou com drenagem, o pedido espera o próximo ciclo.
+- O retrato seguinte leva o estado do conserto: `em_curso`, `com_pr` (com o link do PR) ou `desistiu` (com o motivo). O conserto nunca publica nada: a correção entra em `main` pelo caminho normal do repositório e a publicação é um pedido novo na fila.
+- Teto de 1 h: o motor não cancela run, então no teto o conserto `desistiu` e a vaga é solta, mas o run pode seguir no Warren até terminar sozinho.
+- Repositório fora de `fila.json` desiste na hora. Sem `modelos.fixer`, nada é despachado e sai um aviso.
+- O estado fica em `fila-estado.json` (`consertos`), gravado antes do despacho. Um coordenador reiniciado acha o run pelo nonce do pedido e nunca despacha dois runs para o mesmo conserto.
+
 ### Riscos conhecidos
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
