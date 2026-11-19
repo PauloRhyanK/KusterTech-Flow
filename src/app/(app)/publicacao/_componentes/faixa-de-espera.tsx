@@ -30,7 +30,7 @@ export function FaixaDeEspera({ avisos }: { avisos: readonly AvisoDePublicacao[]
       >
         !
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-48 flex-1">
         <p className="text-[15px] font-[650] leading-snug text-text-primary">{primeiro.titulo}</p>
         <p className="text-[13px] text-text-secondary">
           <span>{primeiro.contexto}</span>

@@ -4,11 +4,35 @@ function instanteUTC(data: Date): string {
   return data.toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-// Retrato v1 mínimo e válido pelo contrato; `feature` identifica o plano na página.
+// O estado de um pedido de conserto contado de volta pela Fábrica (campo opcional do retrato).
+export interface ConsertoDoRetrato {
+  id: string
+  estado: 'em_curso' | 'com_pr' | 'desistiu'
+  runId?: string | null
+  prUrl?: string | null
+  motivo?: string | null
+}
+
+// Retrato v1 mínimo e válido pelo contrato; `feature` identifica o plano na página. Com
+// `consertos`, o retrato leva o campo opcional dos pedidos de conserto de publicação.
 export function retratoDeTeste(
   feature: string,
   geradoEm: Date = new Date(),
+  consertos?: readonly ConsertoDoRetrato[],
 ): Record<string, unknown> {
+  const extra =
+    consertos === undefined
+      ? {}
+      : {
+          consertos: consertos.map((c) => ({
+            id: c.id,
+            estado: c.estado,
+            runId: c.runId ?? null,
+            prUrl: c.prUrl ?? null,
+            motivo: c.motivo ?? null,
+            em: instanteUTC(geradoEm),
+          })),
+        }
   return {
     versao: 1,
     geradoEm: instanteUTC(geradoEm),
@@ -42,6 +66,7 @@ export function retratoDeTeste(
       },
     ],
     avisos: [],
+    ...extra,
   }
 }
 

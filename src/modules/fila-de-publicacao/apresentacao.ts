@@ -174,7 +174,9 @@ export function rotuloDaLinha(
 
 export function noArDaLinha(linha: LinhaDaFila, agora: Date): string {
   if (!linha.noAr) return '—'
-  return `${sha7(linha.noAr.commit)} · ${formatarIdade(linha.noAr.desde, agora).replace(/^há /, '')}`
+  // Compacta para caber na coluna "No ar": "há 3 h" → "3 h"; "há menos de 1 min" → "agora".
+  const idade = formatarIdade(linha.noAr.desde, agora).replace(/^há /, '')
+  return `${sha7(linha.noAr.commit)} · ${idade === 'menos de 1 min' ? 'agora' : idade}`
 }
 
 function emSeguida(linha: LinhaDaFila): PedidoDaLinha[] {

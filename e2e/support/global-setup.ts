@@ -121,6 +121,16 @@ export default async function globalSetup(): Promise<void> {
     })
     await db.recurso.deleteMany({ where: { nome: { startsWith: 'E2E ' } } })
 
+    // Fontes de publicação também (FK RESTRICT em criadaPorId); os pedidos ficam sem fonte.
+    await db.fonteDePublicacao.deleteMany({
+      where: {
+        OR: [
+          { nome: { startsWith: 'E2E ' } },
+          { criadaPor: { email: { startsWith: 'e2e+', endsWith: '@local.test' } } },
+        ],
+      },
+    })
+
     // Fontes da Fábrica antes dos usuários que as criaram (FK RESTRICT); o retrato sai em cascata.
     await db.fonteDaFabrica.deleteMany({
       where: {

@@ -4,6 +4,7 @@ import {
   colunaDeEstado,
   itensDoUltimoLote,
   montarResumoDaPublicacao,
+  noArDaLinha,
   pilulasDaLinha,
   rodapeDoLote,
   rotuloDaLinha,
@@ -304,6 +305,17 @@ describe('colunaDeEstado', () => {
     ).toBe('Avisado')
     expect(colunaDeEstado(linha({ aguardando: [pedido()] }), AGORA, false)?.texto).toBe('Na fila')
     expect(colunaDeEstado(linha(), AGORA, false)).toBeNull()
+  })
+})
+
+describe('noArDaLinha', () => {
+  // A coluna "No ar" tem largura fixa: a idade fica curta como no desenho ("a41c9e2 · 3 h").
+  test('commit curto e idade compacta; menos de 1 min vira "agora"; sem publicação, "—"', () => {
+    const noAr = (desde: Date) => linha({ noAr: { commit: sha('a'), desde } })
+    expect(noArDaLinha(noAr(AGORA), AGORA)).toBe('aaaaaaa · agora')
+    expect(noArDaLinha(noAr(minutos(-12)), AGORA)).toBe('aaaaaaa · 12 min')
+    expect(noArDaLinha(noAr(minutos(-180)), AGORA)).toBe('aaaaaaa · 3 h')
+    expect(noArDaLinha(linha(), AGORA)).toBe('—')
   })
 })
 

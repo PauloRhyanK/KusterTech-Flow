@@ -3,6 +3,7 @@ import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
 import { normalizarNome, validarNomeDeCliente } from '@/modules/clientes/model'
+import { hashDoTokenDaFabrica } from '@/modules/fabrica/model'
 import { assinaturaDaEntrada, prsMergeadosDaIssue } from '@/modules/ambientes/model'
 import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
 import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
@@ -1058,5 +1059,100 @@ export async function garantirMaquinaLocalNoBanco(): Promise<{ id: string }> {
       especificacao: 'i5 · 8 GB · SSD 120 GB',
     },
     select: { id: true },
+  })
+}
+
+// Fila de publicação: o repositório com cabeça, execuções e comparações nas fixtures do GitHub
+// (Task 3). Desktop usa o portal (prefixo `ca`), mobile o site (prefixo `cb`).
+export function repositorioDePublicacaoE2E(projectName: string): string {
+  return projectName === 'mobile' ? 'kustertech-exemplo/site' : 'kustertech-exemplo/portal'
+}
+
+// BASE ← NOVO ← QUEBRA em main; ANTIGO também está em main, mas não contém NOVO. A execução de
+// QUEBRA falha; as demais passam.
+export function commitsDePublicacaoE2E(projectName: string): {
+  BASE: string
+  NOVO: string
+  ANTIGO: string
+  QUEBRA: string
+} {
+  const h = (n: number) => `${projectName === 'mobile' ? 'cb' : 'ca'}${'0'.repeat(37)}${n}`
+  return { BASE: h(1), NOVO: h(2), ANTIGO: h(3), QUEBRA: h(4) }
+}
+
+// Apaga consertos, pedidos e configurações dos repositórios de exemplo, as fontes de publicação
+// do E2E e a pausa geral: cada teste começa com a fila vazia.
+export async function limparPublicacaoNoBanco(): Promise<void> {
+  const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
+  await db.pedidoDeConserto.deleteMany({ where: dosExemplos })
+  await db.pedidoDePublicacao.deleteMany({ where: dosExemplos })
+  await db.configuracaoDePublicacao.deleteMany({ where: dosExemplos })
+  await db.fonteDePublicacao.deleteMany({ where: { nome: { startsWith: 'E2E ' } } })
+  await db.pausaGeralDePublicacao.deleteMany({})
+}
+
+// Vincula o repositório ao projeto e grava a configuração de publicação (workflow `deploy.yml`).
+export async function configurarPublicacaoNoBanco(
+  projetoId: string,
+  nomeCompleto: string,
+  opcoes: { horaDoLote?: string; modoPadrao?: 'IMEDIATO' | 'LOTE' } = {},
+): Promise<{ repositorioId: string }> {
+  await vincularNoBanco(projetoId, nomeCompleto)
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto },
+    select: { id: true },
+  })
+  const dados = {
+    workflow: 'deploy.yml',
+    horaDoLote: opcoes.horaDoLote ?? '22:00',
+    modoPadrao: opcoes.modoPadrao ?? 'IMEDIATO',
+  }
+  await db.configuracaoDePublicacao.upsert({
+    where: { repositorioId: repositorio.id },
+    update: dados,
+    create: { repositorioId: repositorio.id, ...dados },
+  })
+  return { repositorioId: repositorio.id }
+}
+
+// Uma fonte de publicação criada pelo admin do E2E; o token volta só aqui, como na tela.
+export async function criarFonteDePublicacaoNoBanco(nome: string): Promise<string> {
+  const criadaPorId = process.env.E2E_ADMIN_ID
+  if (!criadaPorId) throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
+  const token = `fp_${randomBytes(32).toString('base64url')}`
+  await db.fonteDePublicacao.create({
+    data: { nome, tokenHash: hashDoTokenDaFabrica(token), criadaPorId },
+  })
+  return token
+}
+
+// Só para as capturas: um pedido gravado direto no estado pedido, sem passar pelo worker.
+export async function semearPedidoDePublicacaoNoBanco(
+  repositorioId: string,
+  dados: {
+    commit: string
+    descricao: string
+    estado: 'NA_FILA' | 'PUBLICANDO' | 'PUBLICADO'
+    modo?: 'IMEDIATO' | 'LOTE'
+    checks?: 'SUCESSO' | 'FALHA' | 'SEM_CHECKS'
+    minutosAtras?: number
+    /** Só para PUBLICADO: quanto a publicação levou (alimenta o "costuma levar"). */
+    duracaoMin?: number
+  },
+): Promise<void> {
+  const em = new Date(Date.now() - (dados.minutosAtras ?? 0) * 60_000)
+  const inicio = new Date(em.getTime() - (dados.duracaoMin ?? 0) * 60_000)
+  await db.pedidoDePublicacao.create({
+    data: {
+      repositorioId,
+      commit: dados.commit,
+      descricao: dados.descricao,
+      modo: dados.modo ?? 'IMEDIATO',
+      estado: dados.estado,
+      checks: dados.checks ?? 'SUCESSO',
+      criadoEm: em,
+      iniciadoEm: dados.estado === 'NA_FILA' ? null : dados.estado === 'PUBLICADO' ? inicio : em,
+      concluidoEm: dados.estado === 'PUBLICADO' ? em : null,
+    },
   })
 }

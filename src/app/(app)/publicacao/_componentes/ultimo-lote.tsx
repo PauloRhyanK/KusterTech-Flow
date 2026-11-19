@@ -34,7 +34,10 @@ export function UltimoLote({ quando, itens, rodape }: UltimoLoteProps) {
                   {item.titulo}
                   {item.estado === 'falhou' && <span className="sr-only"> (falhou)</span>}
                 </span>
-                <span className="shrink-0 whitespace-nowrap rounded-[6px] bg-tonal-neutro px-2 py-0.5 text-xs text-neutro">
+                <span
+                  title={item.projeto}
+                  className="min-w-0 max-w-[50%] truncate whitespace-nowrap rounded-[6px] bg-tonal-neutro px-2 py-0.5 text-xs text-neutro"
+                >
                   {item.projeto}
                 </span>
               </li>
