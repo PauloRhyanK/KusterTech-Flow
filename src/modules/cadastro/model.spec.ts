@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { z } from 'zod'
 import {
   arquivoDeCadastroSchema,
+  AVISO_DE_IMPORTACAO_INTERROMPIDA,
   planejarImportacao,
+  relatorioDaImportacao,
   type ArquivoDeCadastro,
   type EstadoAtual,
 } from './model'
@@ -150,5 +152,62 @@ describe('planejarImportacao', () => {
       repositoriosCatalogados: [],
     })
     expect(plano).toEqual({ acoes: [], repositoriosPendentes: [], erros: [] })
+  })
+})
+
+describe('arquivoDeCadastroSchema', () => {
+  it.each([
+    ['cliente', { clientes: [{ nome: '   ' }] }],
+    ['projeto', { projetos: [{ nome: ' \t ' }] }],
+    ['máquina', { maquinas: [{ nome: '  ', tipo: 'SERVIDOR' }] }],
+    ['cliente do projeto', { projetos: [{ nome: 'P', clientes: ['  '] }] }],
+    ['repositório do projeto', { projetos: [{ nome: 'P', repositorios: [' '] }] }],
+    ['projeto da máquina', { maquinas: [{ nome: 'M', tipo: 'SERVIDOR', projetos: ['   '] }] }],
+  ])('recusa nome só com espaços: %s', (_rotulo, entrada) => {
+    expect(arquivoDeCadastroSchema.safeParse(entrada).success).toBe(false)
+  })
+
+  it('aceita nomes com espaços nas pontas e os apara', () => {
+    const lido = arquivoDeCadastroSchema.parse({
+      clientes: [{ nome: '  Cliente Um ' }],
+      projetos: [{ nome: ' P ', clientes: [' Cliente Um'] }],
+    })
+    expect(lido.clientes[0]?.nome).toBe('Cliente Um')
+    expect(lido.projetos[0]).toMatchObject({ nome: 'P', clientes: ['Cliente Um'] })
+  })
+})
+
+describe('relatorioDaImportacao', () => {
+  it('sem erros: contagens por tipo de ação e repositórios pendentes', () => {
+    const plano = planejarImportacao(completo, vazio)
+    const { saida, erros } = relatorioDaImportacao(plano, false)
+    expect(saida[0]).toBe('Importação:')
+    expect(saida).toContain('  Clientes a criar: 1')
+    expect(saida).toContain('Ainda não visíveis para a GitHub App:')
+    expect(saida).toContain('  - dono/alfa')
+    expect(erros).toEqual([])
+  })
+
+  it('simulação avisa que nada foi gravado', () => {
+    const plano = planejarImportacao(completo, comCatalogo)
+    expect(relatorioDaImportacao(plano, true).saida[0]).toBe('Simulação (nada foi gravado):')
+  })
+
+  it('com erros: só os erros, sem contagens de ações', () => {
+    const plano = planejarImportacao(
+      arquivo({ clientes: [{ nome: 'Um' }], projetos: [{ nome: 'P', clientes: ['Fantasma'] }] }),
+      vazio,
+    )
+    expect(plano.acoes.length).toBeGreaterThan(0)
+    const { saida, erros } = relatorioDaImportacao(plano, false)
+    expect(saida).toEqual([])
+    expect(erros[0]).toBe('Erros (nada foi gravado):')
+    expect(erros.slice(1)).toEqual(plano.erros.map((e) => `  - ${e}`))
+  })
+
+  it('o aviso de interrupção diz que parte pode ter sido gravada', () => {
+    expect(AVISO_DE_IMPORTACAO_INTERROMPIDA).toBe(
+      'Importação interrompida; parte pode ter sido gravada. Rode de novo para completar.',
+    )
   })
 })

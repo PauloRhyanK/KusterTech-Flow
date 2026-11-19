@@ -150,6 +150,21 @@ O [`docker-compose.oficina.yml`](../../docker-compose.oficina.yml) sobrepõe o c
 
 Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual, fixando a imagem acompanhada pelo atualizador: `test -s .imagem-atual && FLOW_IMAGEM=ghcr.io/paulorhyank/kustertech-flow@$(cat .imagem-atual) docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d` (o `test -s` evita montar `repo@` vazio quando o arquivo não existe). O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`.
 
+### Comandos na imagem
+
+Os scripts rodam dentro da imagem, em `~devops/flow`, com o banco já migrado (`--no-deps` não sobe o `migrate` de novo):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.oficina.yml run --rm --no-deps \
+  web node scripts/criar-admin.mjs --email <admin> --nome "Administrador"
+
+docker compose -f docker-compose.yml -f docker-compose.oficina.yml run --rm --no-deps \
+  -v "$PWD/cadastro.json:/tmp/cadastro.json:ro" \
+  web node scripts/importar-cadastro.mjs /tmp/cadastro.json --email <admin> [--simular]
+```
+
+O arquivo do cadastro fica no host e é montado só leitura. O contêiner roda com o uid 1000, então o arquivo precisa ser legível por ele (por exemplo, `chmod 644 cadastro.json`).
+
 ### Atualização por puxada
 
 O timer `oficina-flow-atualizar.timer` roda a cada 5 minutos (`*:0/5`, com até 30 s de atraso aleatório) e chama [`atualizar-flow.sh`](../../scripts/infra/atualizar-flow.sh):

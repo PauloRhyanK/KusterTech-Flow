@@ -11,20 +11,20 @@ const TIPOS_DE_MAQUINA = [
 ] as const satisfies readonly TipoRecurso[]
 
 const textoOpcional = z.string().nullish()
+// Nome só com espaços é recusado; espaços nas pontas são aparados.
+const nome = z.string().trim().min(1)
 
 export const arquivoDeCadastroSchema = z
   .object({
-    clientes: z
-      .array(z.object({ nome: z.string().min(1), observacoes: textoOpcional }).strict())
-      .default([]),
+    clientes: z.array(z.object({ nome, observacoes: textoOpcional }).strict()).default([]),
     projetos: z
       .array(
         z
           .object({
-            nome: z.string().min(1),
+            nome,
             descricao: textoOpcional,
-            clientes: z.array(z.string().min(1)).default([]),
-            repositorios: z.array(z.string().min(1)).default([]),
+            clientes: z.array(nome).default([]),
+            repositorios: z.array(nome).default([]),
           })
           .strict(),
       )
@@ -33,7 +33,7 @@ export const arquivoDeCadastroSchema = z
       .array(
         z
           .object({
-            nome: z.string().min(1),
+            nome,
             tipo: z.enum(TIPOS_DE_MAQUINA),
             identificadorExterno: textoOpcional,
             provedor: textoOpcional,
@@ -41,7 +41,7 @@ export const arquivoDeCadastroSchema = z
             especificacao: textoOpcional,
             custoMensal: z.number().nonnegative().nullish(),
             hospedadaEm: textoOpcional,
-            projetos: z.array(z.string().min(1)).default([]),
+            projetos: z.array(nome).default([]),
           })
           .strict(),
       )
@@ -269,4 +269,44 @@ export function planejarImportacao(
   }
 
   return { acoes, repositoriosPendentes, erros }
+}
+
+const ROTULOS_DAS_ACOES: Record<Acao['tipo'], string> = {
+  'criar-cliente': 'Clientes a criar',
+  'atualizar-cliente': 'Clientes a atualizar',
+  'criar-projeto': 'Projetos a criar',
+  'atualizar-projeto': 'Projetos a atualizar',
+  'associar-cliente': 'Clientes a associar a projetos',
+  'vincular-repositorio': 'Repositórios a vincular',
+  'criar-maquina': 'Máquinas a criar',
+  'atualizar-maquina': 'Máquinas a atualizar',
+  'associar-maquina': 'Máquinas a associar a projetos',
+}
+
+export const AVISO_DE_IMPORTACAO_INTERROMPIDA =
+  'Importação interrompida; parte pode ter sido gravada. Rode de novo para completar.'
+
+// Com erros nada é gravado: o relatório mostra só os erros, nunca contagens de ações.
+export function relatorioDaImportacao(
+  plano: PlanoDeImportacao,
+  simular: boolean,
+): { saida: string[]; erros: string[] } {
+  if (plano.erros.length > 0) {
+    return {
+      saida: [],
+      erros: ['Erros (nada foi gravado):', ...plano.erros.map((e) => `  - ${e}`)],
+    }
+  }
+  const saida = [simular ? 'Simulação (nada foi gravado):' : 'Importação:']
+  for (const [tipo, rotulo] of Object.entries(ROTULOS_DAS_ACOES)) {
+    const total = plano.acoes.filter((a) => a.tipo === tipo).length
+    if (total > 0) {
+      saida.push(`  ${rotulo}: ${total}`)
+    }
+  }
+  if (plano.repositoriosPendentes.length > 0) {
+    saida.push('Ainda não visíveis para a GitHub App:')
+    saida.push(...plano.repositoriosPendentes.map((r) => `  - ${r}`))
+  }
+  return { saida, erros: [] }
 }

@@ -13,18 +13,6 @@ function carregarEnvSeNecessario(): void {
 
 const USO = 'Uso: pnpm importar-cadastro <arquivo.json> [--simular] --email <admin>'
 
-const ROTULOS: Record<string, string> = {
-  'criar-cliente': 'Clientes a criar',
-  'atualizar-cliente': 'Clientes a atualizar',
-  'criar-projeto': 'Projetos a criar',
-  'atualizar-projeto': 'Projetos a atualizar',
-  'associar-cliente': 'Clientes a associar a projetos',
-  'vincular-repositorio': 'Repositórios a vincular',
-  'criar-maquina': 'Máquinas a criar',
-  'atualizar-maquina': 'Máquinas a atualizar',
-  'associar-maquina': 'Máquinas a associar a projetos',
-}
-
 async function executar(): Promise<void> {
   carregarEnvSeNecessario()
 
@@ -87,30 +75,30 @@ async function executar(): Promise<void> {
     }
 
     const { importarCadastro } = await import('@/modules/cadastro/service')
-    const plano = await importarCadastro(
-      { usuarioId: usuario.id, papeis: usuario.papeis },
-      lido.data,
-      { simular },
-    )
+    const { AVISO_DE_IMPORTACAO_INTERROMPIDA, relatorioDaImportacao } =
+      await import('@/modules/cadastro/model')
+    let plano
+    try {
+      plano = await importarCadastro({ usuarioId: usuario.id, papeis: usuario.papeis }, lido.data, {
+        simular,
+      })
+    } catch (erro) {
+      console.error(erro instanceof Error ? erro.message : 'Erro ao importar o cadastro.')
+      if (!simular) {
+        console.error(AVISO_DE_IMPORTACAO_INTERROMPIDA)
+      }
+      process.exitCode = 1
+      return
+    }
 
-    console.log(simular ? 'Simulação (nada foi gravado):' : 'Importação:')
-    for (const [tipo, rotulo] of Object.entries(ROTULOS)) {
-      const total = plano.acoes.filter((a) => a.tipo === tipo).length
-      if (total > 0) {
-        console.log(`  ${rotulo}: ${total}`)
-      }
+    const { saida, erros } = relatorioDaImportacao(plano, simular)
+    for (const linha of saida) {
+      console.log(linha)
     }
-    if (plano.repositoriosPendentes.length > 0) {
-      console.log('Ainda não visíveis para a GitHub App:')
-      for (const repositorio of plano.repositoriosPendentes) {
-        console.log(`  - ${repositorio}`)
-      }
+    for (const linha of erros) {
+      console.error(linha)
     }
-    if (plano.erros.length > 0) {
-      console.error('Erros (nada foi gravado):')
-      for (const erro of plano.erros) {
-        console.error(`  - ${erro}`)
-      }
+    if (erros.length > 0) {
       process.exitCode = 1
     }
   } catch (erro) {

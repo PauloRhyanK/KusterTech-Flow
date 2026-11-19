@@ -31,10 +31,10 @@ Central de Operações da KusterTech: painel administrativo self-hosted para cli
 3. Crie o primeiro administrador (a senha será solicitada de forma oculta no terminal):
 
    ```bash
-   docker compose run --rm web node scripts/criar-admin.mjs --email admin@exemplo.com --nome "Administrador"
+   docker compose run --rm --no-deps web node scripts/criar-admin.mjs --email admin@exemplo.com --nome "Administrador"
    ```
 
-   O comando `scripts/importar-cadastro.mjs` está na imagem da mesma forma (`docker compose run --rm web node scripts/importar-cadastro.mjs <arquivo.json> --email <admin>`).
+   O `--no-deps` evita subir de novo o `migrate`: o banco já foi migrado pelo `up`. O comando `scripts/importar-cadastro.mjs` também está na imagem; veja [Importar o cadastro](#importar-o-cadastro).
 
 4. Acesse a aplicação em `http://localhost:3000/entrar` (ou na porta definida em `WEB_PORT`). O healthcheck está disponível em `GET /api/saude`.
 
@@ -285,7 +285,15 @@ pnpm importar-cadastro cadastro.json --simular --email admin@exemplo.com   # só
 pnpm importar-cadastro cadastro.json --email admin@exemplo.com
 ```
 
-Na imagem: `docker compose run --rm web node scripts/importar-cadastro.mjs <arquivo.json> [--simular] --email <admin>`.
+Na imagem, o arquivo fica no host e precisa ser montado no contêiner (exemplo na oficina, com o banco já migrado):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.oficina.yml run --rm --no-deps \
+  -v "$PWD/cadastro.json:/tmp/cadastro.json:ro" \
+  web node scripts/importar-cadastro.mjs /tmp/cadastro.json --email <admin> [--simular]
+```
+
+O contêiner roda com o uid 1000: o arquivo precisa ser legível por ele (por exemplo, `chmod 644 cadastro.json`). Fora da oficina, omita os dois `-f`.
 
 - **Quem roda:** o e-mail precisa ser de um administrador. Toda escrita passa pelos mesmos serviços da interface.
 - **Formato:** listas `clientes`, `projetos` e `maquinas`. O projeto cita seus clientes pelo nome e seus repositórios por `dono/nome`. A máquina cita o projeto e a máquina que a hospeda pelo nome. Campo desconhecido invalida o arquivo.

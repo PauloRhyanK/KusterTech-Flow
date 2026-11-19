@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { arquivoDeCadastroSchema } from '@/modules/cadastro/model'
+import { normalizarNome } from '@/modules/clientes/model'
 import { importarCadastro } from '@/modules/cadastro/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
@@ -77,6 +78,41 @@ describe('importarCadastro (integração)', () => {
     expect(await fotografia()).toEqual(antes)
     expect(plano.acoes.length).toBeGreaterThan(0)
     expect(plano.acoes.every((a) => a.tipo.startsWith('atualizar'))).toBe(true)
+  })
+
+  test('reimportar com grafias alteradas (caixa, acento, espaços duplos) deixa o banco igual', async () => {
+    expect((await importarCadastro(admin, exemplo, { simular: false })).erros).toEqual([])
+    const antes = await fotografia()
+
+    const trocas: [string, string][] = [
+      ['Cliente Exemplo Um', 'CLIENTE  exemplo um'],
+      ['Cliente Exemplo Dois', 'cliente exémplo  DOIS'],
+      ['Projeto Aurora', 'projeto  AURÓRA'],
+      ['Projeto Boreal', 'PROJETO boreal'],
+      ['Projeto Interno Exemplo', 'Projeto  Interno  Exêmplo'],
+      ['Servidor Exemplo', 'SERVIDOR  exemplo'],
+      ['Banco Exemplo', 'banco exêmplo'],
+      ['Armazenamento Exemplo', 'Armazenamento  EXEMPLO'],
+    ]
+    let texto = readFileSync('cadastro.exemplo.json', 'utf8')
+    for (const [de, para] of trocas) texto = texto.replaceAll(`"${de}"`, `"${para}"`)
+    const alterado = arquivoDeCadastroSchema.parse(JSON.parse(texto))
+    expect(alterado.clientes[0]?.nome).toBe('CLIENTE  exemplo um')
+
+    const plano = await importarCadastro(admin, alterado, { simular: false })
+    expect(plano.erros).toEqual([])
+    expect(plano.acoes.every((a) => a.tipo.startsWith('atualizar'))).toBe(true)
+    // Atualizar regrava o nome com a grafia do arquivo; a identidade (nome normalizado),
+    // as contagens e os vínculos ficam iguais.
+    const depois = await fotografia()
+    const comNomeNormalizado = (f: typeof antes) => ({
+      ...f,
+      recursos: f.recursos
+        .map((r) => ({ ...r, nome: normalizarNome(r.nome) }))
+        .sort((a, b) => a.nome.localeCompare(b.nome)),
+    })
+    expect(comNomeNormalizado(depois)).toEqual(comNomeNormalizado(antes))
+    expect(depois.recursos.map((r) => r.nome)).toContain('banco exêmplo')
   })
 
   test('simular não grava nada', async () => {
