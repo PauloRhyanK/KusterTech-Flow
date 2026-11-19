@@ -54,6 +54,7 @@ import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
 import motor as motor_  # noqa: E402
+import publicar  # noqa: E402
 import raias  # noqa: E402
 import retrato  # noqa: E402
 from despachante import ErroDeEntrada  # noqa: E402
@@ -86,6 +87,9 @@ VARIAVEIS_REPASSADAS = ("WARREN_API", "WARREN_TOKEN_FILE", "GH_TOKEN_FILE")
 # envio do retrato à Central: leitura própria, fora de VARIAVEIS_REPASSADAS (não vai para o plano.env)
 VARIAVEL_CENTRAL_URL = "FABRICA_CENTRAL_URL"
 VARIAVEL_CENTRAL_TOKEN = "FABRICA_CENTRAL_TOKEN_FILE"
+# pedido de publicação ao Flow (token de uma fonte de publicação): sem ele o passo fica desligado
+VARIAVEL_PUBLICACAO_TOKEN = "FABRICA_PUBLICACAO_TOKEN_FILE"
+LIMITE_DESCRICAO = 200
 LIMITE_AVISOS = 50
 AVISOS_NO_STATUS = 10
 LIMITE_MENSAGEM = 500
@@ -192,10 +196,14 @@ def configuracao_central(ambiente, raiz):
         arquivo = _ler_variaveis_do_env(raiz)
     except ErroDeEntrada:
         arquivo = {}
-    valores = {chave: (ambiente.get(chave) or arquivo.get(chave) or None) for chave in (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN)}
+    chaves = (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN, VARIAVEL_PUBLICACAO_TOKEN)
+    valores = {chave: (ambiente.get(chave) or arquivo.get(chave) or None) for chave in chaves}
     if not valores[VARIAVEL_CENTRAL_URL]:
         return None
-    return {"url": valores[VARIAVEL_CENTRAL_URL], "token_file": valores[VARIAVEL_CENTRAL_TOKEN]}
+    configuracao = {"url": valores[VARIAVEL_CENTRAL_URL], "token_file": valores[VARIAVEL_CENTRAL_TOKEN]}
+    if valores[VARIAVEL_PUBLICACAO_TOKEN]:
+        configuracao["publicacao_token_file"] = valores[VARIAVEL_PUBLICACAO_TOKEN]
+    return configuracao
 
 
 def _com_coordenador_env(ambiente, raiz) -> dict:
@@ -229,6 +237,8 @@ def ler_estado(raiz) -> dict:
             resultado[chave] = _padrao_do_estado()[chave]
     if not isinstance(resultado.get("central", {}), dict):
         del resultado["central"]
+    if not isinstance(resultado.get("publicacao", {}), dict):
+        del resultado["publicacao"]
     if not isinstance(resultado.get("consertos", {}), dict):
         resultado["consertos"] = {}
     if not isinstance(resultado.get("consertosEncerrados", []), list):
@@ -300,6 +310,7 @@ class Coordenador:
         segredos=(),
         central=None,
         enviar=None,
+        pedir_publicacao=None,
     ):
         self.raiz = pathlib.Path(raiz)
         self.forja = forja
@@ -320,6 +331,7 @@ class Coordenador:
         self.capacidade = self.raiz / ARQ_CAPACIDADE
         self.central = central  # {"url", "token_file"} ou None (envio desligado)
         self._enviar = enviar or retrato.enviar
+        self._pedir_publicacao = pedir_publicacao or publicar.pedir
         self._ciclos = 0
         self._ultimo_preparo = None
         self._sha_revertido = None
@@ -749,6 +761,7 @@ class Coordenador:
             self._passo_entrada(eventos)
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
+            self._passo_publicar()
             self._passo_orfaos(rodando, confiavel, eventos)
         finally:
             self._ciclos += 1
@@ -804,6 +817,55 @@ class Coordenador:
             else:
                 self._aviso("central:envio", "Central: envio do retrato falhou (%s)" % falha)
             self._passo_consertos(resposta if falha is None else None)
+
+    def _passo_publicar(self) -> None:
+        """Pede ao Flow a publicação depois do merge de uma seed: um pedido por plano por ciclo. Nunca levanta.
+
+        Desligado sem `FABRICA_CENTRAL_URL` e `FABRICA_PUBLICACAO_TOKEN_FILE`. A primeira leitura de um plano só
+        grava as seeds já mergeadas (linha de base). Falha não marca a seed como vista (tenta no ciclo seguinte);
+        o aviso sai só quando a categoria muda, e um ciclo sem falha o zera. Nada daqui muda a fila nem para o ciclo.
+        """
+        central = self.central or {}
+        if not central.get("url") or not central.get("publicacao_token_file"):
+            return
+        with contextlib.suppress(Exception):
+            try:
+                url = publicar.url_da_rota(central["url"])
+            except retrato.FalhaDeEnvio as exc:
+                self._aviso("publicacao:envio", "Publicação: pedido ao Flow falhou (%s)" % exc)
+                return
+            publicacao = self.dados.get("publicacao")
+            vistas = publicacao.get("vistas") if isinstance(publicacao, dict) else None
+            vistas = {k: [n for n in v if isinstance(n, str)] for k, v in vistas.items() if isinstance(v, list)} if isinstance(vistas, dict) else {}
+            falha = None
+            planos = _atuais(self.dados["fila"])
+            lidos = retrato.ler_planos(self.raiz / DIR_PLANOS, planos)
+            for id_, entrada in planos.items():
+                estado = lidos[id_]["estado"]
+                if estado is None:
+                    continue
+                if id_ not in vistas:
+                    vistas[id_] = publicar.seeds_novas([], estado)
+                    continue
+                novas = publicar.seeds_novas(vistas[id_], estado)
+                if not novas:
+                    continue
+                feature = entrada.get("feature") if isinstance(entrada.get("feature"), str) and entrada.get("feature") else id_
+                descricao = retrato._cortar("%s · %s" % (feature, novas[0]), LIMITE_DESCRICAO)
+                try:
+                    self._pedir_publicacao(repo=entrada.get("repo"), descricao=descricao, url=url, token_file=central["publicacao_token_file"])
+                except retrato.FalhaDeEnvio as exc:
+                    falha = str(exc)
+                except Exception as exc:  # noqa: BLE001 - só a classe, nunca o texto
+                    falha = "falha inesperada (%s)" % type(exc).__name__
+                else:
+                    vistas[id_] = vistas[id_] + novas
+            self.dados["publicacao"] = {"vistas": vistas}
+            if falha is None:
+                self._esquecer("publicacao:envio")
+            else:
+                self._aviso("publicacao:envio", "Publicação: pedido ao Flow falhou (%s)" % falha)
+            self._salvar()
 
     def _passo_consertos(self, resposta) -> None:
         """Atende os pedidos de conserto da resposta; sem resposta legível, só acompanha os que estão em andamento."""

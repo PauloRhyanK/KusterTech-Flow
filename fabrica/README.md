@@ -196,6 +196,22 @@ O envio é `POST` com `Authorization: Bearer` e timeout de 10 s, e não segue re
 
 O retrato é cortado para caber no contrato e em 256 KB: saem primeiro os planos `removido` e `concluido` mais antigos, depois os avisos mais antigos, e nunca um plano ocupando vaga. Se ainda não couber, não envia e avisa. O `coordenador.py status` mostra se o envio está ligado, o último envio e o resultado.
 
+### Pedido de publicação depois do merge
+
+Quando uma seed de um plano é mergeada, o coordenador pede ao Flow que publique o projeto (`POST /api/publicacoes`, sem `commit`: o Flow publica a cabeça do branch padrão). Fica desligado enquanto não houver `FABRICA_CENTRAL_URL` e o token de uma fonte de publicação. Crie a fonte em Configurações → Publicação na Central, grave o token num arquivo só seu e acrescente ao `~/fabrica/coordenador.env`:
+
+```bash
+printf '%s\n' "<token>" > ~/.fabrica-publicacao-token && chmod 600 ~/.fabrica-publicacao-token
+```
+
+```ini
+FABRICA_PUBLICACAO_TOKEN_FILE=/home/<usuário>/.fabrica-publicacao-token
+```
+
+- A rota vem da `FABRICA_CENTRAL_URL` (mesmo host, caminho `/api/publicacoes`). O token é lido do arquivo a cada pedido e nunca aparece em log, erro ou aviso; a variável não entra no `plano.env`.
+- A primeira leitura de um plano só anota as seeds já mergeadas (linha de base), sem pedir. Depois, é um pedido por plano por ciclo, mesmo com várias seeds novas, com a descrição `<feature> · <seed>`. As seeds vistas ficam em `fila-estado.json`, em `publicacao.vistas`.
+- Falha (Flow fora do ar, 409 "publicação não configurada", 401, timeout) nunca para o coordenador nem o despachante: a seed não é marcada como vista, o próximo ciclo tenta de novo e o aviso `Publicação:` sai só quando a categoria muda.
+
 ### Consertos de publicação
 
 Quando uma publicação falha na fila do Flow, a resposta do envio do retrato traz um pedido de conserto: repositório, commit, link da execução e fim do log. O coordenador roda **um** run do Warren com o papel `fixer` (o modelo de `modelos.fixer` em `fabrica/modelos/config.json`) no projeto do repositório em `fila.json`, com um prompt fixo: abrir um PR com a correção a partir de `main`, ou explicar por que não dá.

@@ -1804,6 +1804,115 @@ class TestesConsertos(Base):
         self.assertEqual(len(self.despachos()), 1)
 
 
+class PedirFalso:
+    """`publicar.pedir` em memória: guarda os pedidos; `falhas` é uma fila de exceções (ou `None` para sucesso)."""
+
+    def __init__(self, *falhas):
+        self.chamadas = []
+        self.falhas = list(falhas)
+
+    def __call__(self, *, repo, descricao, url, token_file):
+        self.chamadas.append({"repo": repo, "descricao": descricao, "url": url, "token_file": token_file})
+        falha = self.falhas.pop(0) if self.falhas else None
+        if falha is not None:
+            raise falha
+        return {}
+
+
+PUBLICACAO = dict(CENTRAL, publicacao_token_file="/seg/publicacao")
+
+
+class TestesPublicacao(Base):
+    def coordenador_com(self, *falhas, central=PUBLICACAO):
+        self.pedir = PedirFalso(*falhas)
+        return self.novo(central=central, enviar=EnviarFalso(), pedir_publicacao=self.pedir)
+
+    def seeds(self, id_, **seeds):
+        estado = self.estado_do_plano(id_)
+        estado["seeds"] = {nome: {"estado": situacao} for nome, situacao in seeds.items()}
+        self.gravar_estado_do_plano(id_, estado)
+
+    def avisos_de_publicacao(self):
+        return [a for a in self.avisos() if a.startswith("Publicação:")]
+
+    def com_seeds(self, **seeds):
+        """Plano admitido e com as seeds dadas, ainda não lido pelo passo (sem linha de base)."""
+        id_ = self.publicar("login", ["src/login/**"])
+        c = self.coordenador_com()
+        c.ciclo()
+        self.seeds(id_, **seeds)
+        dados = self.fila_estado()
+        dados.pop("publicacao", None)
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        return id_, c
+
+    def test_primeira_leitura_grava_linha_de_base_sem_pedir(self):
+        id_, c = self.com_seeds(a="mergeada", b="em_andamento")
+        c.ciclo()
+        self.assertEqual(self.pedir.chamadas, [])
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a"]})
+
+    def test_seed_nova_mergeada_pede_uma_vez_e_nao_repete(self):
+        id_, c = self.com_seeds(a="mergeada", b="em_andamento")
+        c.ciclo()
+        self.seeds(id_, a="mergeada", b="mergeada")
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(
+            self.pedir.chamadas,
+            [{"repo": REPO, "descricao": "login · b", "url": "https://central.exemplo.com/api/publicacoes", "token_file": "/seg/publicacao"}],
+        )
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a", "b"]})
+
+    def test_duas_seeds_novas_no_mesmo_ciclo_fazem_um_pedido(self):
+        id_, c = self.com_seeds(a="mergeada", b="em_andamento", c="em_andamento")
+        c.ciclo()
+        self.seeds(id_, a="mergeada", b="mergeada", c="mergeada")
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 1)
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a", "b", "c"]})
+
+    def test_falha_no_pedido_tenta_no_ciclo_seguinte_e_avisa_uma_vez(self):
+        id_, c = self.com_seeds(a="em_andamento")
+        c.ciclo()
+        self.seeds(id_, a="mergeada")
+        self.pedir.falhas.extend([retrato.FalhaDeEnvio("HTTP 409"), retrato.FalhaDeEnvio("HTTP 409"), None])
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 2)
+        self.assertEqual(self.avisos_de_publicacao(), ["Publicação: pedido ao Flow falhou (HTTP 409)"])
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: []})
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 3)
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a"]})
+        self.assertNotIn("publicacao:envio", self.fila_estado()["chaves"])
+
+    def test_falha_inesperada_nao_para_o_ciclo(self):
+        id_, c = self.com_seeds(a="em_andamento")
+        c.ciclo()
+        self.seeds(id_, a="mergeada")
+        self.pedir.falhas.append(KeyError("fp_segredo"))
+        c.ciclo()
+        self.assertEqual(self.avisos_de_publicacao(), ["Publicação: pedido ao Flow falhou (falha inesperada (KeyError))"])
+        self.assertNotIn("fp_segredo", json.dumps(self.fila_estado()))
+
+    def test_sem_token_de_publicacao_o_passo_nao_roda(self):
+        id_ = self.publicar("login", ["src/login/**"])
+        c = self.coordenador_com(central=CENTRAL)
+        c.ciclo()
+        self.seeds(id_, a="mergeada")
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(self.pedir.chamadas, [])
+        self.assertNotIn("publicacao", self.fila_estado())
+
+    def test_configuracao_le_o_token_de_publicacao_do_ambiente_e_do_env(self):
+        (self.raiz / "coordenador.env").write_text("FABRICA_CENTRAL_URL=https://c.exemplo.com/x\nFABRICA_PUBLICACAO_TOKEN_FILE=/seg/p\n", encoding="utf-8")
+        self.assertEqual(coordenador.configuracao_central({}, self.raiz)["publicacao_token_file"], "/seg/p")
+        self.assertEqual(coordenador.configuracao_central({"FABRICA_PUBLICACAO_TOKEN_FILE": "/seg/q"}, self.raiz)["publicacao_token_file"], "/seg/q")
+        self.assertNotIn("FABRICA_PUBLICACAO_TOKEN_FILE", coordenador.ler_coordenador_env(self.raiz))
+
+
 class TestesConfiguracaoDaCentral(Base):
     def test_sem_url_e_desligado(self):
         self.assertIsNone(coordenador.configuracao_central({}, self.raiz))
