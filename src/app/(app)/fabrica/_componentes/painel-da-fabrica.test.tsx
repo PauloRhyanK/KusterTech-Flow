@@ -129,4 +129,39 @@ describe('PainelDaFabrica', () => {
     expect(screen.getByRole('heading', { name: 'Planos na fila' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Vagas e memória' })).toBeInTheDocument()
   })
+
+  test('em secao="avisos", sem retrato, mostra o estado vazio', () => {
+    render(<PainelDaFabrica secao="avisos" permitido retrato={null} agora={AGORA} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent('A Fábrica ainda não enviou o estado.')
+    expect(screen.queryByRole('heading', { name: 'Avisos' })).not.toBeInTheDocument()
+  })
+
+  test('em secao="avisos", sem permissão, mostra só a mensagem de sem permissão', () => {
+    render(
+      <PainelDaFabrica
+        secao="avisos"
+        permitido={false}
+        retrato={retratoRecebido()}
+        agora={AGORA}
+      />,
+    )
+
+    expect(screen.getByText('Sem permissão para esta área.')).toBeInTheDocument()
+    expect(screen.queryByText('Vagas reduzidas por falta de memória')).not.toBeInTheDocument()
+  })
+
+  test('em secao="avisos", com recebidoEm há mais de 5 min, avisa que a máquina parou de enviar', () => {
+    render(
+      <PainelDaFabrica
+        secao="avisos"
+        permitido
+        retrato={retratoRecebido({ recebidoEm: new Date('2026-11-03T21:36:00Z') })}
+        agora={AGORA}
+      />,
+    )
+
+    expect(screen.getByText(/A máquina parou de enviar/)).toHaveTextContent('há 6 min')
+    expect(screen.getByText('Vagas reduzidas por falta de memória')).toBeInTheDocument()
+  })
 })

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { nomeDeTeste } from './support/banco'
+import { nomeDeTeste, revogarFontesDaFabricaNoBanco } from './support/banco'
 import { enviarRetratoDaFabrica, retratoDeTeste } from './support/fabrica'
 
 function obterAdmin(): { email: string; senha: string } {
@@ -98,8 +98,14 @@ test('a aba Avisos mostra os avisos do retrato e o contador', async ({ page, req
   await revogarFonte(page, nomeDaFonte)
 })
 
-test('sem retrato, /fabrica mostra que a Fábrica ainda não enviou o estado', async ({ page }) => {
+test('sem retrato, /fabrica e /fabrica/avisos mostram que a Fábrica ainda não enviou o estado', async ({
+  page,
+}) => {
+  await revogarFontesDaFabricaNoBanco()
   await entrarComoAdmin(page)
-  await page.goto('/fabrica')
-  await expect(page.getByText('A Fábrica ainda não enviou o estado.')).toBeVisible()
+
+  for (const rota of ['/fabrica', '/fabrica/avisos']) {
+    await page.goto(rota)
+    await expect(page.getByText('A Fábrica ainda não enviou o estado.')).toBeVisible()
+  }
 })

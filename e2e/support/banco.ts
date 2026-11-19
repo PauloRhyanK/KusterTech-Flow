@@ -95,6 +95,14 @@ export async function contarProjetos(): Promise<number> {
   return db.projeto.count()
 }
 
+// Revoga toda fonte da Fábrica ainda ativa, para que nenhum retrato antigo apareça na Central.
+export async function revogarFontesDaFabricaNoBanco(): Promise<void> {
+  await db.fonteDaFabrica.updateMany({
+    where: { revogadaEm: null },
+    data: { revogadaEm: new Date() },
+  })
+}
+
 export async function definirTemaNoBanco(usuarioId: string, tema: Tema): Promise<void> {
   await db.usuario.update({
     where: { id: usuarioId },
