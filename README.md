@@ -47,7 +47,7 @@ A imagem é enxuta: servidor Next `standalone` (`node server.js`), worker e scri
 - migrations: `node node_modules/prisma/build/index.js migrate deploy`
 - scripts: `node scripts/criar-admin.mjs` e `node scripts/importar-cadastro.mjs`
 
-Tamanho medido (build local arm64): 192,9 MB, contra 419,7 MB antes de empacotar o worker. Um minuto depois de subir, o web usava 64 MiB e o worker 147 MiB.
+Tamanho medido: 193 MB comprimida (419,7 MB antes de empacotar o worker) e 874 MB no disco depois de desempacotada. Em uso, com dados carregados: web 144 MiB, worker 154 MiB e Postgres 29 MiB.
 
 Para validar uma imagem construída: `docker build -t flow:local . && bash scripts/fumaca-da-imagem.sh flow:local` (sobe um Postgres temporário, roda migrations, criar-admin, o worker uma vez e confere `/api/saude` e `/entrar`).
 

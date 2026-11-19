@@ -146,9 +146,18 @@ O [`docker-compose.oficina.yml`](../../docker-compose.oficina.yml) sobrepõe o c
 - monta `/var/lib/oficina` somente leitura em `/oficina` no web (`OFICINA_DIR=/oficina`, `FLOW_MAQUINA_LOCAL`), de onde ele lê o retrato da máquina;
 - limita a memória: postgres 512 MB, web 768 MB, worker 384 MB e migrate 384 MB, com o heap do Node abaixo do limite.
 
-**Tamanho e consumo medidos** (build local arm64, `scripts/fumaca-da-imagem.sh`): a imagem tem 192,9 MB (192.939.884 bytes). Antes de empacotar o worker e podar as dependências, tinha 419,7 MB. Um minuto depois de subir, o web usava 64 MiB e o worker 147 MiB, bem abaixo dos limites acima.
+**Tamanho e consumo medidos na oficina** (imagem amd64, 19/11/2026):
 
-Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual, fixando a imagem acompanhada pelo atualizador: `test -s .imagem-atual && FLOW_IMAGEM=ghcr.io/paulorhyank/kustertech-flow@$(cat .imagem-atual) docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d` (o `test -s` evita montar `repo@` vazio quando o arquivo não existe). O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`.
+- Imagem: 193 MB comprimida (o que trafega ao puxar) e **874 MB no disco** depois de desempacotada. Desses, 382 MB são as dependências de execução, na maior parte a ferramenta de migrations do Prisma. Antes de empacotar o worker, a imagem comprimida tinha 419,7 MB.
+- Memória com o cadastro carregado, alguns minutos depois de subir: web 144 MiB, worker 154 MiB, Postgres 29 MiB. Cerca de 330 MiB no total, contra o teto de 1,66 GB dos limites acima.
+
+Cada atualização deixa a imagem anterior no disco até a limpeza diária removê-la (72 h sem uso), então conte com cerca de 1,7 GB de imagens do Flow.
+
+Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual, fixando a imagem acompanhada pelo atualizador: `test -s .imagem-atual && FLOW_IMAGEM=ghcr.io/paulorhyank/kustertech-flow@$(cat .imagem-atual) docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d` (o `test -s` evita montar `repo@` vazio quando o arquivo não existe). O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:<WEB_PORT>`. O recurso Serve precisa estar habilitado na tailnet; na primeira vez o comando mostra o link para habilitar.
+
+**Como está instalado (19/11/2026):** `WEB_PORT=13000` no `.env`. É a porta para a qual a Fábrica já enviava o retrato (`FABRICA_CENTRAL_URL=http://127.0.0.1:13000/api/fabrica/estado`, antes um túnel até outra máquina), então nada mudou do lado da Fábrica: nem a URL, nem o token, nem os serviços. A fonte da Fábrica foi registrada no banco com o hash do token que já estava em `~devops/.fabrica-central-token`. `FLOW_MAQUINA_LOCAL=oficina`, e o cadastro real fica em `~devops/flow/cadastro.json`, fora do repositório.
+
+**Verificado ao vivo em 19/11/2026:** uma imagem quebrada publicada num registro local de teste foi recusada, a stack voltou para a imagem anterior, `/api/saude` seguiu respondendo e o aviso "Atualização do Flow falhou e foi revertida" apareceu no Início. O teste foi desfeito em seguida.
 
 ### Comandos na imagem
 
