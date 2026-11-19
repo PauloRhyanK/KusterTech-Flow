@@ -26,4 +26,11 @@ describe('SeusProjetos', () => {
     expect(container.querySelector('[data-tom="sucesso"]')).toBeNull()
     expect(container.querySelector('dl')).not.toBeNull()
   })
+
+  it('sem resumo mostra que não foi possível ler', () => {
+    render(<SeusProjetos resumo={null} />)
+    expect(screen.getByRole('heading', { level: 2, name: 'Seus projetos' })).toBeVisible()
+    expect(screen.getByText('Não foi possível ler seus projetos.')).toBeVisible()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
 })

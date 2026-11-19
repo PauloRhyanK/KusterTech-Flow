@@ -41,7 +41,7 @@ export default async function PaginaInicio() {
       {inicio.escopo === 'cliente' ? (
         <div className="space-y-6">
           <EsperaVoce espera={inicio.espera} agora={agora} />
-          {inicio.seusProjetos && <SeusProjetos resumo={inicio.seusProjetos} />}
+          <SeusProjetos resumo={inicio.seusProjetos} />
         </div>
       ) : (
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">

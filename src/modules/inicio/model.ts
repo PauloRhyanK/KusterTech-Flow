@@ -115,7 +115,15 @@ export function formatarIdade(desde: Date, agora: Date): string {
   return `há ${Math.floor(horas / 24)} d`
 }
 
-// Itens da Fábrica: uma decisão por `decisoes[]`, um por plano pausado e um quando o retrato
+// Os mesmos estados de `planosEmCurso`: concluídos e removidos não esperam ninguém.
+const PLANO_EM_CURSO: readonly RetratoRecebido['retrato']['planos'][number]['estado'][] = [
+  'ativo',
+  'admitindo',
+  'pausado',
+  'aguardando',
+]
+
+// Itens da Fábrica, só de planos em curso: uma decisão por `decisoes[]`, um por plano pausado e um quando o retrato
 // está atrasado. Sem retrato não há item: a seção "Fábrica agora" explica.
 export function esperasDaFabrica(
   recebido: RetratoRecebido | null,
@@ -126,6 +134,7 @@ export function esperasDaFabrica(
   const itens: ItemDeEspera[] = []
 
   for (const plano of recebido.retrato.planos) {
+    if (!PLANO_EM_CURSO.includes(plano.estado)) continue
     const contexto = `${nomeDoProjeto(plano.repo) ?? plano.repo} · ${plano.feature}`
     plano.decisoes.forEach((decisao, i) => {
       itens.push({

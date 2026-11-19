@@ -357,7 +357,7 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
     Promise.allSettled(consultas.map(([, consulta]) => consulta())),
     total ? semFalhar(obterCadastro(), 'cadastro') : undefined,
     verOficina ? semFalhar(hrefDaMaquinaLocal(), 'maquina-local') : undefined,
-    total ? null : obterSeusProjetos(sujeito),
+    total ? undefined : semFalhar(obterSeusProjetos(sujeito), 'seus-projetos'),
   ])
 
   const fontes: FonteDeEspera[] = simples.map((r, i) => {
@@ -407,6 +407,6 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
     oficina:
       leitura && leitura !== 'falha' ? { hrefDaMaquina: hrefDaMaquina ?? null, leitura } : null,
     cadastro: cadastro ?? null,
-    seusProjetos,
+    seusProjetos: seusProjetos ?? null,
   }
 }

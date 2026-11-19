@@ -258,6 +258,16 @@ describe('esperasDaFabrica', () => {
     expect(esperasDaFabrica(recebido([], minutosAntes(4)), AGORA, semNome)).toEqual([])
   })
 
+  it('planos concluídos ou removidos não geram decisão nem plano pausado', () => {
+    const decisoes = [{ titulo: 'Decidir', url: 'https://github.com/o/r/issues/1' }]
+    const r = recebido([
+      plano({ id: 'c', estado: 'concluido', pausado: 'Parado', decisoes }),
+      plano({ id: 'r', estado: 'removido', pausado: 'Parado', decisoes }),
+      plano({ id: 'a', estado: 'aguardando', decisoes }),
+    ])
+    expect(esperasDaFabrica(r, AGORA, semNome).map((i) => i.id)).toEqual(['decisao:a:0'])
+  })
+
   it('sem retrato não gera item da Fábrica', () => {
     expect(esperasDaFabrica(null, AGORA, semNome)).toEqual([])
   })

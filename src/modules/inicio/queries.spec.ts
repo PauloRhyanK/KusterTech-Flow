@@ -35,6 +35,10 @@ import { obterInicio } from './queries'
 
 const ADMIN: Sujeito = { usuarioId: 'u1', papeis: [{ papel: 'ADMIN', clienteId: null }] }
 const TESTADOR_A: Sujeito = { usuarioId: 'u2', papeis: [{ papel: 'TESTADOR', clienteId: 'A' }] }
+const APROVADOR_GLOBAL: Sujeito = {
+  usuarioId: 'u3',
+  papeis: [{ papel: 'APROVADOR', clienteId: null }],
+}
 const AGORA = new Date('2026-11-19T12:00:00Z')
 
 beforeEach(() => {
@@ -72,6 +76,50 @@ describe('obterInicio', () => {
     expect(db.recurso.count).not.toHaveBeenCalled()
     expect(db.recurso.findUnique).not.toHaveBeenCalled()
     expect(db.repositorioGitHub.count).not.toHaveBeenCalled()
+  })
+
+  it('falha em "Seus projetos" não derruba o Início do perfil escopado', async () => {
+    vi.mocked(db.projeto.count).mockRejectedValue(new Error('segredo-xyz'))
+
+    const inicio = await obterInicio(TESTADOR_A, AGORA)
+
+    expect(inicio.escopo).toBe('cliente')
+    expect(inicio.seusProjetos).toBeNull()
+    expect(inicio.espera).toEqual({ itens: [], total: 0, ocultos: 0, fontesComFalha: [] })
+    expect(erroLog).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(erroLog.mock.calls)).not.toContain('segredo-xyz')
+  })
+
+  it('falha numa fonte simples marca só integracao', async () => {
+    vi.mocked(db.integracaoGitHub.findUnique).mockRejectedValue(new Error('segredo-xyz'))
+
+    const inicio = await obterInicio(ADMIN, AGORA)
+
+    expect(inicio.espera.fontesComFalha).toEqual(['integracao'])
+    expect(inicio.cadastro).not.toBeNull()
+  })
+
+  it('falha na leitura do retrato marca os três tipos da Fábrica e fabrica fica nula', async () => {
+    obterRetrato.mockRejectedValue(new Error('segredo-xyz'))
+
+    const inicio = await obterInicio(ADMIN, AGORA)
+
+    expect(inicio.espera.fontesComFalha).toEqual([
+      'decisao',
+      'plano-pausado',
+      'fabrica-sem-noticias',
+    ])
+    expect(inicio.fabrica).toBeNull()
+  })
+
+  it('perfil global sem permissão de Fábrica e de máquinas não lê retrato nem oficina', async () => {
+    const inicio = await obterInicio(APROVADOR_GLOBAL, AGORA)
+
+    expect(inicio.escopo).toBe('total')
+    expect(obterRetrato).not.toHaveBeenCalled()
+    expect(obterLeitura).not.toHaveBeenCalled()
+    expect(db.recurso.findUnique).not.toHaveBeenCalled()
+    expect(inicio).toMatchObject({ fabrica: null, oficina: null })
   })
 
   it('com homologacao congelada, db.homologacaoItem não é consultado', async () => {
