@@ -30,7 +30,7 @@ test('senha errada mostra mensagem genérica e mantém o e-mail', async ({ page 
   await expect(page.getByLabel('E-mail')).toHaveValue(email)
 })
 
-test('login correto leva a / com o título Visão Geral; sair volta para /entrar', async ({
+test('login correto leva a / com o título Início; sair volta para /entrar', async ({
   page,
   baseURL,
 }) => {
@@ -42,7 +42,7 @@ test('login correto leva a / com o título Visão Geral; sair volta para /entrar
   await page.getByRole('button', { name: 'Entrar' }).click()
 
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Visão Geral')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Início')
 
   await page.getByRole('button', { name: /Menu do usuário/ }).click()
   await page.getByRole('menuitem', { name: 'Sair' }).click()
@@ -79,7 +79,7 @@ test('autenticado, /entrar redireciona para /', async ({ page }) => {
 
   await page.goto('/entrar')
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Visão Geral')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Início')
 })
 
 test('após sair, voltar a / redireciona para /entrar', async ({ page }) => {

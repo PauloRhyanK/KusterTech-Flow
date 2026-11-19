@@ -60,7 +60,10 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
         .click()
     }
 
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(m)
+    // Até o menu novo (Task 10), o item "Visão Geral" leva ao Início.
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      m === 'Visão Geral' ? 'Início' : m,
+    )
     // A Central de Desenvolvimento mostra "Conectada" na situação das fontes; a regra
     // vale para a fila, que é onde o estado de entrega aparece.
     const regiaoDaFila = page.getByRole('region', { name: 'Fila de desenvolvimento' })
@@ -83,7 +86,7 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
       const vazio = page.locator('[data-tipo="nenhum-registro"]')
       await expect(lista.or(vazio)).toBeVisible()
     } else if (m === 'Visão Geral') {
-      await expect(page.getByRole('heading', { level: 2, name: 'Pendências' })).toBeVisible()
+      await expect(page.getByRole('heading', { level: 2, name: 'Espera você' })).toBeVisible()
     } else if (m === 'Central de Desenvolvimento') {
       await expect(regiaoDaFila).toBeVisible()
     } else {

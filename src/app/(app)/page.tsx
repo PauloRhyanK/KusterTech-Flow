@@ -2,26 +2,20 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { moduloAtivo } from '@/lib/modulos'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
-import { lerGrupoExpandido, tiposDePendenciaVisiveis } from '@/modules/visao-geral/model'
-import { obterVisaoGeral } from '@/modules/visao-geral/queries'
-import {
-  obterIndicadoresDeInfraestrutura,
-  obterResumoDeProjetos,
-} from '@/modules/visao-geral/resumos'
-import { Pendencias } from './_visao-geral/pendencias'
-import { ResumoDeInfraestrutura } from './_visao-geral/resumo-de-infraestrutura'
-import { ResumoDeProjetos } from './_visao-geral/resumo-de-projetos'
+import { obterInicio } from '@/modules/inicio/queries'
+import { EsperaVoce } from './_inicio/espera-voce'
+import { FabricaAgora } from './_inicio/fabrica-agora'
+import { QuadroDaOficina } from './_inicio/quadro-da-oficina'
+import { QuadroDoCadastro } from './_inicio/quadro-do-cadastro'
+import { SeusProjetos } from './_inicio/seus-projetos'
 
 export const metadata: Metadata = {
-  title: 'Visão Geral',
+  title: 'Início',
 }
 
-export interface PaginaVisaoGeralProps {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}
-
-export default async function PaginaVisaoGeral({ searchParams }: PaginaVisaoGeralProps) {
+export default async function PaginaInicio() {
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -29,35 +23,44 @@ export default async function PaginaVisaoGeral({ searchParams }: PaginaVisaoGera
   const { sujeito } = sessao
 
   const agora = new Date()
-  const expandido = lerGrupoExpandido(await searchParams, tiposDePendenciaVisiveis(sujeito))
-  const [visao, projetos, infraestrutura] = await Promise.all([
-    obterVisaoGeral(sujeito, { expandido, agora }),
-    obterResumoDeProjetos(sujeito, agora),
-    autorizar(sujeito, 'infraestrutura.ler')
-      ? obterIndicadoresDeInfraestrutura(sujeito)
-      : Promise.resolve(null),
-  ])
+  const inicio = await obterInicio(sujeito, agora)
+  const verFabrica =
+    inicio.escopo === 'total' && moduloAtivo('fabrica') && autorizar(sujeito, 'desenvolvimento.ler')
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <CabecalhoDePagina
-        trilhas={[{ rotulo: 'Visão Geral' }]}
-        titulo="Visão Geral"
+        trilhas={[{ rotulo: 'Início' }]}
+        titulo="Início"
         contexto={
-          visao.escopo === 'cliente'
-            ? 'Pendências dos seus clientes'
-            : 'Pendências prioritárias; resumos de projetos e infraestrutura'
+          inicio.escopo === 'cliente'
+            ? 'O que espera você nos seus clientes.'
+            : 'O que espera você, o que a Fábrica está fazendo e como está a oficina.'
         }
       />
-      <Pendencias
-        grupos={visao.grupos}
-        fontesSemDados={visao.fontesSemDados}
-        escopo={visao.escopo}
-      />
-      <div className="grid gap-6 lg:grid-cols-2">
-        <ResumoDeProjetos resumo={projetos} />
-        {infraestrutura && <ResumoDeInfraestrutura resumo={infraestrutura} />}
-      </div>
+      {inicio.escopo === 'cliente' ? (
+        <div className="space-y-6">
+          <EsperaVoce espera={inicio.espera} agora={agora} />
+          {inicio.seusProjetos && <SeusProjetos resumo={inicio.seusProjetos} />}
+        </div>
+      ) : (
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="min-w-0 space-y-6">
+            <EsperaVoce espera={inicio.espera} agora={agora} />
+            {verFabrica && (
+              <FabricaAgora
+                fabrica={inicio.fabrica}
+                falhou={inicio.espera.fontesComFalha.includes('decisao')}
+                agora={agora}
+              />
+            )}
+          </div>
+          <div className="min-w-0 space-y-6">
+            <QuadroDaOficina oficina={inicio.oficina} agora={agora} />
+            {inicio.cadastro && <QuadroDoCadastro cadastro={inicio.cadastro} />}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
