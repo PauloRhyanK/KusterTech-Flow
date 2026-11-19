@@ -555,6 +555,24 @@ describe('processarFilaDePublicacao', () => {
     expect(f.disparos.filter((d) => d.repositorio === PORTAL)).toHaveLength(1)
   })
 
+  test('log ilegível de vez (job que nunca rodou, logs expirados) → FALHOU e conserto ABERTO sem trecho, sem ficar PUBLICANDO', async () => {
+    const id = await pedir(portalId, M2)
+    await ciclo()
+    const execucao = f.execucaoDe(PORTAL, M2)!
+    f.concluir(PORTAL, M2, 'failure')
+    f.falhar = (metodo) => metodo === 'lerFimDoLog'
+
+    const r = await ciclo(minutos(2))
+    expect(r.falhas).toBe(1)
+    expect(r.consertosAbertos).toBe(1)
+    expect((await pedido(id)).estado).toBe('FALHOU')
+    expect((await config(portalId)).situacao).toBe('CONSERTANDO')
+    const conserto = await db.pedidoDeConserto.findUniqueOrThrow({ where: { pedidoId: id } })
+    expect(conserto.estado).toBe('ABERTO')
+    expect(conserto.execucaoUrl).toBe(execucao.urlHtml)
+    expect(conserto.trechoDoLog).toBe('')
+  })
+
   test('falha de novo com a fila consertando → fila PARADO "a publicação seguinte falhou de novo"', async () => {
     await pedir(portalId, M2)
     await ciclo()

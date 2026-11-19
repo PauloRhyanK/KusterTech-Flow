@@ -405,11 +405,23 @@ class CicloDoRepositorio {
       candidato.consertoId !== null || atendidos.some((a) => a.consertoId !== null)
     const config = await lerConfiguracao(this.repo.id)
     const decisao = aposFalha(config.situacao.toLowerCase() as SituacaoDaFila, eraDoConserto)
-    const trecho = !decisao.abrirConserto
-      ? ''
-      : execucao
-        ? await this.fonte.lerFimDoLog(this.ref, execucao.id, LIMITE_DO_LOG)
-        : [motivo, candidato.motivo].filter(Boolean).join('\n')
+    const semLog = [motivo, candidato.motivo].filter(Boolean).join('\n')
+    let trecho = ''
+    if (decisao.abrirConserto) {
+      try {
+        trecho = execucao
+          ? await this.fonte.lerFimDoLog(this.ref, execucao.id, LIMITE_DO_LOG)
+          : semLog
+      } catch (erro) {
+        // Log ilegível de vez (job que nunca rodou, logs expirados): a falha segue sem o trecho,
+        // senão o pedido ficaria PUBLICANDO para sempre.
+        log.warn(
+          { tarefa: 'processar-fila-de-publicacao', erro: resumirErroParaLog(erro) },
+          'fim do log da execução não lido',
+        )
+        trecho = semLog
+      }
+    }
 
     await comTrava(this.repo.id, async (tx) => {
       const { count } = await tx.pedidoDePublicacao.updateMany({
