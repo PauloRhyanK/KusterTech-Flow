@@ -210,7 +210,8 @@ FABRICA_PUBLICACAO_TOKEN_FILE=/home/<usuário>/.fabrica-publicacao-token
 
 - A rota vem da `FABRICA_CENTRAL_URL` (mesmo host, caminho `/api/publicacoes`). O token é lido do arquivo a cada pedido e nunca aparece em log, erro ou aviso; a variável não entra no `plano.env`.
 - A primeira leitura de um plano só anota as seeds já mergeadas (linha de base), sem pedir. Depois, é um pedido por plano por ciclo, mesmo com várias seeds novas, com a descrição `<feature> · <seed>`. As seeds vistas ficam em `fila-estado.json`, em `publicacao.vistas`.
-- Falha (Flow fora do ar, 409 "publicação não configurada", 401, timeout) nunca para o coordenador nem o despachante: a seed não é marcada como vista, o próximo ciclo tenta de novo e o aviso `Publicação:` sai só quando a categoria muda.
+- Falha transitória (Flow fora do ar, 5xx, 401, timeout) nunca para o coordenador nem o despachante: a seed não é marcada como vista, o próximo ciclo tenta de novo, o passo para no primeiro pedido que falhou e o aviso `Publicação:` sai só quando a categoria muda.
+- Recusa definitiva (404 repositório sem projeto, 409 "publicação não configurada", 422 pedido inválido): repetir não mudaria a resposta, então as seeds contam como vistas, sai um aviso `Publicação: o Flow recusou…` e o passo segue para o próximo plano. Configure a publicação no projeto antes da próxima seed mergeada.
 
 ### Consertos de publicação
 
@@ -223,6 +224,8 @@ Quando uma publicação falha na fila do Flow, a resposta do envio do retrato tr
 - Com o envio à Central desligado, o coordenador segue acompanhando os consertos em andamento (teto e vaga), sem atender novos.
 - Repositório fora de `fila.json` desiste na hora. Sem `modelos.fixer`, nada é despachado e sai um aviso.
 - O estado fica em `fila-estado.json` (`consertos`), gravado antes do despacho. Um coordenador reiniciado acha o run pelo nonce do pedido e nunca despacha dois runs para o mesmo conserto.
+
+**Voltar o Flow para uma versão sem consertos.** Um Flow anterior aos consertos responde 400 a todo retrato que traga o campo `consertos`. Nesse caso o coordenador reenvia o mesmo retrato uma vez sem o campo, avisa uma vez (`Central: o Flow recusou o retrato com os consertos…`) e, com o retrato aceito, tira do estado os consertos já encerrados (`com_pr`, `desistiu`), que esse Flow não teria como receber. Os consertos em curso seguem até o fim (teto de 1 h e vaga), sem atender novos; quando terminam, saem do estado pelo mesmo caminho. O painel da Fábrica não congela e não há passo manual no rollback.
 
 ### Riscos conhecidos
 

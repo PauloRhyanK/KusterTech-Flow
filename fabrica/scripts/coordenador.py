@@ -90,7 +90,13 @@ VARIAVEL_CENTRAL_TOKEN = "FABRICA_CENTRAL_TOKEN_FILE"
 # pedido de publicação ao Flow (token de uma fonte de publicação): sem ele o passo fica desligado
 VARIAVEL_PUBLICACAO_TOKEN = "FABRICA_PUBLICACAO_TOKEN_FILE"
 LIMITE_DESCRICAO = 200
+# respostas do Flow ao pedido de publicação que não mudam se repetidas (sem projeto, não configurada, inválido)
+RECUSAS_DEFINITIVAS = (404, 409, 422)
 LIMITE_AVISOS = 50
+AVISO_FLOW_SEM_CONSERTOS = (
+    "Central: o Flow recusou o retrato com os consertos (HTTP 400) e o recebeu sem os consertos; "
+    "é um Flow sem suporte a consertos? Os consertos encerrados saem do estado"
+)
 AVISOS_NO_STATUS = 10
 LIMITE_MENSAGEM = 500
 LIMITE_SAIDA = 300
@@ -771,7 +777,7 @@ class Coordenador:
 
     # ------------------------------------------------------------ 7. Central
 
-    def _retrato(self) -> bytes:
+    def _retrato(self, com_consertos: bool = True) -> bytes:
         """O retrato do ciclo, já cortado, em JSON. `FalhaDeEnvio` se não dá para montar ou se não cabe."""
         try:
             cap = capacidade.ler(self.capacidade)
@@ -784,7 +790,7 @@ class Coordenador:
             capacidade=cap,
             planos=planos,
             mem_disponivel_mb=capacidade.mem_disponivel_mb(),
-            consertos=consertos.para_o_retrato(self.dados),
+            consertos=consertos.para_o_retrato(self.dados) if com_consertos else None,
         )
         cortado = retrato.ajustar(completo)
         if cortado is None:
@@ -803,9 +809,17 @@ class Coordenador:
                 self._passo_consertos(None)
             return
         with contextlib.suppress(Exception):
-            resposta = None
+            resposta, sem_consertos = None, False
+            destino = {"url": self.central.get("url"), "token_file": self.central.get("token_file")}
             try:
-                resposta = self._enviar(self._retrato(), url=self.central.get("url"), token_file=self.central.get("token_file"))
+                corpo = self._retrato()
+                try:
+                    resposta = self._enviar(corpo, **destino)
+                except retrato.FalhaDeEnvio as exc:
+                    if exc.codigo != 400 or "consertos" not in json.loads(corpo):
+                        raise
+                    # Flow de antes dos consertos (rollback): o esquema estrito recusa o campo. Vai uma vez sem ele.
+                    resposta, sem_consertos = self._enviar(self._retrato(com_consertos=False), **destino), True
                 falha = None
             except retrato.FalhaDeEnvio as exc:
                 falha = str(exc)
@@ -814,16 +828,25 @@ class Coordenador:
             self.dados["central"] = {"em": self._agora_texto(), "resultado": "enviado" if falha is None else "falhou: %s" % falha}
             if falha is None:
                 self._esquecer("central:envio")
+                if sem_consertos:
+                    self._aviso("central:consertos", AVISO_FLOW_SEM_CONSERTOS)
+                elif "consertos" in json.loads(corpo):
+                    self._esquecer("central:consertos")
             else:
                 self._aviso("central:envio", "Central: envio do retrato falhou (%s)" % falha)
+            if sem_consertos:
+                # esse Flow não conhece consertos: nada a reportar; os finais saem do estado, os em curso seguem até o fim
+                resposta = resposta if isinstance(resposta, dict) else {}
             self._passo_consertos(resposta if falha is None else None)
 
     def _passo_publicar(self) -> None:
         """Pede ao Flow a publicação depois do merge de uma seed: um pedido por plano por ciclo. Nunca levanta.
 
         Desligado sem `FABRICA_CENTRAL_URL` e `FABRICA_PUBLICACAO_TOKEN_FILE`. A primeira leitura de um plano só
-        grava as seeds já mergeadas (linha de base). Falha não marca a seed como vista (tenta no ciclo seguinte);
-        o aviso sai só quando a categoria muda, e um ciclo sem falha o zera. Nada daqui muda a fila nem para o ciclo.
+        grava as seeds já mergeadas (linha de base). Falha transitória (rede, timeout, 5xx) não marca a seed como
+        vista (tenta no ciclo seguinte) e encerra o passo; o aviso sai só quando a categoria muda, e um ciclo sem
+        falha o zera. Recusa definitiva (`RECUSAS_DEFINITIVAS`) marca as seeds como vistas, avisa e segue para o
+        próximo plano. Nada daqui muda a fila nem para o ciclo.
         """
         central = self.central or {}
         if not central.get("url") or not central.get("publicacao_token_file"):
@@ -852,11 +875,19 @@ class Coordenador:
                 try:
                     self._pedir_publicacao(repo=entrada.get("repo"), descricao=descricao, url=url, token_file=central["publicacao_token_file"])
                 except retrato.FalhaDeEnvio as exc:
-                    falha = str(exc)
+                    if exc.codigo in RECUSAS_DEFINITIVAS:
+                        # resposta determinística (sem projeto, publicação não configurada, pedido inválido):
+                        # repetir só gravaria outra recusa no Flow; as seeds contam como vistas e o passo segue
+                        self._aviso(
+                            "publicacao:recusa",
+                            "Publicação: o Flow recusou o pedido de %s (%s); confira a publicação no projeto" % (feature, exc),
+                        )
+                    else:
+                        falha = str(exc)
                 except Exception as exc:  # noqa: BLE001 - só a classe, nunca o texto
                     falha = "falha inesperada (%s)" % type(exc).__name__
                 if falha is not None:
-                    break  # uma falha custa no máximo um timeout por ciclo; os outros planos esperam o próximo
+                    break  # uma falha transitória custa no máximo um timeout por ciclo; os outros planos esperam o próximo
                 vistas[id_] = vistas[id_] + novas
                 self.dados["publicacao"] = {"vistas": vistas}
                 self._salvar()  # já gravado: queda depois do POST não repete o pedido

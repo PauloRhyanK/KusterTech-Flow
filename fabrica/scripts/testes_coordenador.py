@@ -1479,6 +1479,19 @@ class EnviarFalso:
         return self.resposta
 
 
+class FlowSemConsertos(EnviarFalso):
+    """Um Flow de antes dos consertos: 400 a todo retrato com `consertos`; sem o campo, grava e responde sem ele."""
+
+    def __init__(self):
+        super().__init__(resposta={"resultado": "gravado"})
+
+    def __call__(self, corpo, *, url, token_file):
+        resposta = super().__call__(corpo, url=url, token_file=token_file)
+        if "consertos" in self.chamadas[-1]["corpo"]:
+            raise retrato.FalhaDeEnvio("HTTP 400")
+        return resposta
+
+
 CENTRAL = {"url": "https://central.exemplo.com/api/fabrica/estado", "token_file": "/seg/central"}
 
 
@@ -1791,6 +1804,53 @@ class TestesConsertos(Base):
         self.coordenador().ciclo()
         self.assertEqual(self.despachos(), [])
 
+    def ate_com_pr(self):
+        """Um conserto despachado e terminado com PR; o retrato seguinte o traria como `com_pr`."""
+        c = self.coordenador()
+        c.ciclo()
+        self.motor.definir_run("run-1", estado="succeeded", prUrl="https://github.com/dono/cliente/pull/3")
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        self.assertEqual(self.fila_estado()["consertos"][ID_CONSERTO]["estado"], "com_pr")
+        return c
+
+    def test_flow_sem_consertos_400_reenvia_sem_o_campo_avisa_uma_vez_e_esquece_os_finais(self):
+        c = self.ate_com_pr()
+        antigo = FlowSemConsertos()
+        c._enviar = antigo
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        self.assertEqual(["consertos" in ch["corpo"] for ch in antigo.chamadas], [True, False])
+        self.assertNotIn(ID_CONSERTO, self.fila_estado().get("consertos", {}))
+        self.assertIn("enviado", c.status())
+        avisos = [a for a in self.avisos() if "sem os consertos" in a]
+        self.assertEqual(len(avisos), 1)
+        self.instante += datetime.timedelta(minutes=1)
+        c.ciclo()
+        self.assertEqual(["consertos" in ch["corpo"] for ch in antigo.chamadas], [True, False, False])
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_flow_sem_consertos_com_conserto_em_curso_avisa_uma_vez(self):
+        c = self.coordenador()
+        c.ciclo()
+        antigo = FlowSemConsertos()
+        c._enviar = antigo
+        for _ in range(3):
+            self.instante += datetime.timedelta(minutes=1)
+            c.ciclo()
+        self.assertEqual(["consertos" in ch["corpo"] for ch in antigo.chamadas], [True, False] * 3)
+        self.assertEqual(self.fila_estado()["consertos"][ID_CONSERTO]["estado"], "em_curso")
+        self.assertEqual(len([a for a in self.avisos() if "sem os consertos" in a]), 1)
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_400_sem_consertos_no_retrato_nao_reenvia(self):
+        self.enviar.resposta = {"resultado": "gravado"}
+        self.enviar.falhas = [retrato.FalhaDeEnvio("HTTP 400")]
+        c = self.coordenador()
+        c.ciclo()
+        self.assertEqual(len(self.enviar.chamadas), 1)
+        self.assertEqual([a for a in self.avisos() if a.startswith("Central:")], ["Central: envio do retrato falhou (HTTP 400)"])
+
     def test_fila_json_ilegivel_nao_da_conserto_como_sem_projeto(self):
         (self.raiz / "fila.json").write_text("{quebrado", encoding="utf-8")
         with self.assertRaises(coordenador.ErroDeEntrada):
@@ -1876,16 +1936,36 @@ class TestesPublicacao(Base):
         id_, c = self.com_seeds(a="em_andamento")
         c.ciclo()
         self.seeds(id_, a="mergeada")
-        self.pedir.falhas.extend([retrato.FalhaDeEnvio("HTTP 409"), retrato.FalhaDeEnvio("HTTP 409"), None])
+        self.pedir.falhas.extend([retrato.FalhaDeEnvio("HTTP 503"), retrato.FalhaDeEnvio("HTTP 503"), None])
         c.ciclo()
         c.ciclo()
         self.assertEqual(len(self.pedir.chamadas), 2)
-        self.assertEqual(self.avisos_de_publicacao(), ["Publicação: pedido ao Flow falhou (HTTP 409)"])
+        self.assertEqual(self.avisos_de_publicacao(), ["Publicação: pedido ao Flow falhou (HTTP 503)"])
         self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: []})
         c.ciclo()
         self.assertEqual(len(self.pedir.chamadas), 3)
         self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a"]})
         self.assertNotIn("publicacao:envio", self.fila_estado()["chaves"])
+
+    def test_recusa_definitiva_marca_como_vista_avisa_uma_vez_e_nao_repete(self):
+        for codigo in (404, 409, 422):
+            with self.subTest(codigo=codigo):
+                id_, c = self.com_seeds(a="em_andamento", b="em_andamento")
+                c.ciclo()
+                self.seeds(id_, a="mergeada", b="em_andamento")
+                self.pedir.falhas.append(retrato.FalhaDeEnvio("HTTP %d" % codigo))
+                c.ciclo()
+                c.ciclo()
+                self.assertEqual(len(self.pedir.chamadas), 1)
+                self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a"]})
+                recusas = [a for a in self.avisos_de_publicacao() if "HTTP %d" % codigo in a]
+                self.assertEqual(len(recusas), 1)
+                self.assertIn("recusou", recusas[0])
+                self.assertNotIn("publicacao:envio", self.fila_estado()["chaves"])
+                self.seeds(id_, a="mergeada", b="mergeada")
+                c.ciclo()
+                self.assertEqual(len(self.pedir.chamadas), 2)
+                self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {id_: ["a", "b"]})
 
     def test_falha_inesperada_nao_para_o_ciclo(self):
         id_, c = self.com_seeds(a="em_andamento")
@@ -1917,6 +1997,15 @@ class TestesPublicacao(Base):
         c.ciclo()
         self.assertEqual(len(self.pedir.chamadas), 3)
         self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {a: ["s1"], b: ["s1"]})
+
+    def test_recusa_definitiva_nao_trava_os_outros_planos(self):
+        a, b, c = self.dois_planos()
+        self.pedir.falhas.append(retrato.FalhaDeEnvio("HTTP 409"))
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 2)
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {a: ["s1"], b: ["s1"]})
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 2)
 
     def test_sucesso_e_gravado_antes_do_proximo_pedido(self):
         a, b, c = self.dois_planos()

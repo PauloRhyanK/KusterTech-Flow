@@ -55,7 +55,15 @@ _CAMINHO = re.compile(r"(?<![\w/:.~@-])(?:~|\.\.?)?/[^\s'\"<>|;,()\[\]{}]+")
 
 
 class FalhaDeEnvio(Exception):
-    """O envio falhou; o texto é uma categoria curta, segura para log e aviso (sem token nem URL)."""
+    """O envio falhou; o texto é uma categoria curta, segura para log e aviso (sem token nem URL).
+
+    `codigo` é o status HTTP quando a falha é uma resposta `HTTP <código>`; senão `None` (rede, timeout, …).
+    """
+
+    def __init__(self, texto: str = ""):
+        super().__init__(texto)
+        achado = re.fullmatch(r"HTTP ([0-9]{3})", texto) if isinstance(texto, str) else None
+        self.codigo = int(achado.group(1)) if achado else None
 
 
 # ---------------------------------------------------------------- textos
