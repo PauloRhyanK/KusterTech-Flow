@@ -1268,6 +1268,39 @@ class TestesRemover(Base):
         self.assertEqual(self.estados()[a], "removido")
         self.assertTrue(any(a in m and ("issue %s não encontrada" % ISSUE_PAUSA) in m for m in self.avisos()))
 
+    def test_issue_410_http_do_cliente_real_conclui_com_aviso(self):
+        c, a = self.pausado()
+        gone = RuntimeError("PATCH /repos/dono/cliente/issues/7: HTTP 410")
+        with unittest.mock.patch.object(self.forja, "fechar_decisao", side_effect=gone):
+            c.pedir("remover", a, manter_arquivo=True)
+            c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertTrue(any(a in m and ("issue %s não encontrada" % ISSUE_PAUSA) in m for m in self.avisos()))
+
+    def test_http_500_no_fechar_issue_nao_conclui(self):
+        c, a = self.pausado()
+        erro = RuntimeError("PATCH /repos/dono/cliente/issues/7: HTTP 500")
+        with unittest.mock.patch.object(self.forja, "fechar_decisao", side_effect=erro):
+            c.pedir("remover", a, manter_arquivo=True)
+            c.ciclo()
+        self.assertEqual(self.estados()[a], "pausado")
+
+    def test_entrada_aplicada_torta_no_estado_nao_trava_o_ciclo(self):
+        c, a = self.pausado()
+        dados = self.fila_estado()
+        dados["entradaAplicada"] = 5
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+
+    def test_entrada_aplicada_com_itens_que_nao_sao_texto_mantem_so_os_textos(self):
+        c, a = self.pausado()
+        dados = self.fila_estado()
+        dados["entradaAplicada"] = ["ok.json", 7, None]
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        self.assertEqual(coordenador.ler_estado(self.raiz)["entradaAplicada"], ["ok.json"])
+
     def test_falha_de_rede_no_cancelar_nao_conclui(self):
         c, a = self.pausado()
         c.pedir("remover", a, manter_arquivo=True)

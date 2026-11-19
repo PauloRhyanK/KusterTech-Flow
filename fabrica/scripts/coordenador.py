@@ -226,6 +226,9 @@ def ler_estado(raiz) -> dict:
             resultado[chave] = _padrao_do_estado()[chave]
     if not isinstance(resultado.get("central", {}), dict):
         del resultado["central"]
+    if "entradaAplicada" in resultado:
+        aplicados = resultado["entradaAplicada"]
+        resultado["entradaAplicada"] = [n for n in aplicados if isinstance(n, str)] if isinstance(aplicados, list) else []
     return resultado
 
 
@@ -530,12 +533,12 @@ class Coordenador:
     def _ou_ausente(nome: str, ausentes: list, ler):
         """`ler()`, ou `None` quando o Warren ou o GitHub responde 404 (anotado em `ausentes`).
 
-        Só o 404 explícito (`despachante._eh_404`) vira "nada a fazer"; falha de rede, timeout e outro HTTP levantam.
+        Só o 404 explícito (`despachante._eh_404`) ou o 410 Gone (issue apagada no GitHub) vira "nada a fazer"; falha de rede, timeout e outro HTTP levantam.
         """
         try:
             return ler()
         except Exception as exc:  # noqa: BLE001 - o que não é 404 sobe para o chamador
-            if despachante._eh_falha_de_rede(exc) or not despachante._eh_404(exc):
+            if despachante._eh_falha_de_rede(exc) or not (despachante._eh_404(exc) or re.search(r"HTTP 410\s*$", str(exc))):
                 raise
             ausentes.append(nome)
             return None
