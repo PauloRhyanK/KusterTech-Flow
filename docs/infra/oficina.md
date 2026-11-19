@@ -141,13 +141,36 @@ Ao fim de cada rodada, a limpeza grava `/var/lib/oficina/limpeza-ultima.json` (`
 
 O [`docker-compose.oficina.yml`](../../docker-compose.oficina.yml) sobrepõe o compose do repositório:
 
+- usa a imagem publicada `ghcr.io/paulorhyank/kustertech-flow` (`web`, `worker` e `migrate`, sem `build`); a variável `FLOW_IMAGEM` escolhe a referência, e o padrão é `:main`;
 - publica o web e o Postgres só em `127.0.0.1`;
+- monta `/var/lib/oficina` somente leitura em `/oficina` no web (`OFICINA_DIR=/oficina`, `FLOW_MAQUINA_LOCAL`), de onde ele lê o retrato da máquina;
 - limita a memória: postgres 512 MB, web 768 MB, worker 384 MB e migrate 384 MB, com o heap do Node abaixo do limite.
 
+Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual: `docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d`. O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`.
+
+### Atualização por puxada
+
+O timer `oficina-flow-atualizar.timer` roda a cada 5 minutos (`*:0/5`, com até 30 s de atraso aleatório) e chama [`atualizar-flow.sh`](../../scripts/infra/atualizar-flow.sh):
+
+1. Pega o digest de `:main` no registro. Sem rede, ou com o digest igual ao em uso (`~devops/flow/.imagem-atual`), sai sem mudar nada. Uma trava (`flock`) impede duas rodadas ao mesmo tempo.
+2. Puxa `repo@digest`, guarda a imagem em uso em `.imagem-anterior` e sobe a stack com `FLOW_IMAGEM=repo@digest`. O `migrate` roda antes do web.
+3. Confere `http://127.0.0.1:${WEB_PORT:-3000}/api/saude` com `"status":"ok"`, até 12 vezes, de 5 em 5 s. Se passar, grava `.imagem-atual`.
+4. Se não passar (inclusive migration que falha), sobe de novo a imagem anterior, puxando-a por digest caso a limpeza diária a tenha removido, mantém `.imagem-atual`, grava o digest em **`.imagem-recusada`** (a mesma imagem não é tentada outra vez; uma imagem nova volta a ser tentada) e acrescenta um aviso `tipo: "flow"`, severidade alta, em `/var/lib/oficina/alertas.jsonl`.
+
+Uma migration já aplicada **não é desfeita**: a imagem anterior roda sobre o banco novo. Quando o `migrate` tinha terminado antes da falha, o aviso diz isso. Para tentar de novo a imagem recusada, apague `.imagem-recusada`. Na primeira instalação não há imagem anterior; a falha só gera o aviso.
+
+A unit roda como root (sem `User=`): só root escreve em `/var/lib/oficina` e usa o Docker sem `sudo`. Os arquivos de estado em `~devops/flow` ficam com dono `devops` (`FLOW_DONO`). A limpeza diária remove imagens sem uso há 72 h; a reversão não depende disso porque puxa a anterior por digest.
+
+**Instalação (uma vez, na máquina):**
+
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d --build
-sudo tailscale serve --bg --https=443 http://127.0.0.1:3000   # HTTPS só dentro da tailnet
+sudo install -m 0755 scripts/infra/atualizar-flow.sh /opt/oficina/atualizar-flow.sh
+sudo install -m 0644 scripts/infra/systemd/oficina-flow-atualizar.{service,timer} /etc/systemd/system/
+sudo -u devops mkdir -p ~devops/flow   # copie os dois compose e o .env para lá; sem .imagem-atual, a primeira rodada puxa e sobe a imagem
+sudo systemctl daemon-reload && sudo systemctl enable --now oficina-flow-atualizar.timer
 ```
+
+Se a imagem for privada, faça `docker login ghcr.io` como root (o timer roda como root). Testes do script: `bash scripts/infra/testes_atualizar_flow.sh`.
 
 **Ainda não publicado:** a publicação depende da spec que está sendo planejada. Antes de ligar o `tailscale serve`, confirme na spec que o proxy sobrescreve o `X-Forwarded-For` e que o cookie `Secure` funciona atrás dele (ver o aviso no `.env.example`). O `.env` com as credenciais fica só na máquina.
 

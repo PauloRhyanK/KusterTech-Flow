@@ -1,0 +1,13 @@
+# Atualização do Flow por puxada. Instalação e regras: docs/infra/oficina.md.
+# Roda como root (sem User=): só root escreve em /var/lib/oficina e usa o Docker sem sudo.
+[Unit]
+Description=Atualização do KusterTech Flow por imagem puxada, com reversão automática
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=FLOW_DONO=devops
+ExecStart=/opt/oficina/atualizar-flow.sh
+Nice=10
+TimeoutStartSec=15min
