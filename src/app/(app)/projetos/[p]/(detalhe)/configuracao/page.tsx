@@ -13,11 +13,13 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterAmbientesDoProjeto } from '@/modules/ambientes/queries'
 import { contarMilestonesAtivasDoProjeto } from '@/modules/entregas/queries'
+import { obterPublicacaoDoProjeto } from '@/modules/fila-de-publicacao/queries'
 import { obterRepositoriosDoProjeto, obterSituacaoDoWebhook } from '@/modules/github/queries'
 import { obterProjetoParaConfiguracao } from '@/modules/projetos/queries'
 import { AmbientesDoProjeto } from '@/app/(app)/projetos/_componentes/ambientes-do-projeto'
 import { AssociacaoDeClientes } from '@/app/(app)/projetos/_componentes/associacao-de-clientes'
 import { FormularioProjeto } from '@/app/(app)/projetos/_componentes/formulario-projeto'
+import { PublicacaoNoProjeto } from '@/app/(app)/projetos/_componentes/publicacao-no-projeto'
 import { RepositoriosDoProjeto } from '@/app/(app)/projetos/_componentes/repositorios-do-projeto'
 import { SituacaoDoWebhook } from '@/app/(app)/projetos/_componentes/situacao-do-webhook'
 import {
@@ -60,12 +62,16 @@ export default async function PaginaConfiguracaoProjeto({
   let ambientes: Awaited<ReturnType<typeof obterAmbientesDoProjeto>> | null = null
   let webhook: Awaited<ReturnType<typeof obterSituacaoDoWebhook>>
   let milestonesAtivas = 0
+  let publicacao: Awaited<ReturnType<typeof obterPublicacaoDoProjeto>> | null = null
   try {
     projeto = await obterProjetoParaConfiguracao(sessao.sujeito, p)
     github = await obterRepositoriosDoProjeto(sessao.sujeito, p)
     webhook = await obterSituacaoDoWebhook(sessao.sujeito)
     if (moduloAtivo('ambientes')) {
       ambientes = await obterAmbientesDoProjeto(sessao.sujeito, p)
+    }
+    if (moduloAtivo('fila-de-publicacao')) {
+      publicacao = await obterPublicacaoDoProjeto(sessao.sujeito, p)
     }
     if (moduloAtivo('entregas')) {
       milestonesAtivas = await contarMilestonesAtivasDoProjeto(sessao.sujeito, p, {
@@ -149,6 +155,16 @@ export default async function PaginaConfiguracaoProjeto({
             githubConfigurado={ambientes.githubConfigurado}
             repositoriosVinculados={ambientes.repositoriosVinculados}
           />
+        </section>
+      ) : null}
+
+      {publicacao !== null ? (
+        <section id="publicacao" className="space-y-3">
+          <h2 className="text-lg font-semibold text-text-primary">Publicação</h2>
+          <p className="text-sm text-text-secondary">
+            A fila publica um pedido por vez, disparando o workflow de deploy do repositório.
+          </p>
+          <PublicacaoNoProjeto projetoId={projeto.id} repositorios={publicacao.repositorios} />
         </section>
       ) : null}
 

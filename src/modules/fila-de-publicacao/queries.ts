@@ -1,6 +1,8 @@
 import type { ResumoDeChecks } from '@prisma/client'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
+import { esperasDaPublicacao, type ItemDeEspera } from '@/modules/inicio/model'
 import {
   avisosDaPublicacao,
   itensDoUltimoLote,
@@ -129,6 +131,18 @@ async function montarLinha(
     }),
   ])
 
+  // O PR do conserto pelo link, sem diferenciar maiúsculas (como o worker), para o aviso de revisão.
+  const prDoConserto =
+    conserto?.estado === 'COM_PR' && conserto.prUrl
+      ? await db.pullRequestGitHub.findFirst({
+          where: {
+            repositorioId: repo.id,
+            urlHtml: { equals: conserto.prUrl, mode: 'insensitive' },
+          },
+          select: { estado: true, shaMerge: true, criadoNoGitHub: true },
+        })
+      : null
+
   const publicando = pendentes.find((p) => p.estado === 'PUBLICANDO')
   return {
     repositorioId: repo.id,
@@ -153,6 +167,12 @@ async function montarLinha(
       abertoEm: conserto.abertoEm,
       pegoEm: conserto.pegoEm,
       encerradoEm: conserto.encerradoEm,
+      correcaoPedida: conserto.shaDaCorrecao !== null,
+      pr: prDoConserto && {
+        estado: prDoConserto.estado,
+        shaMerge: prDoConserto.shaMerge,
+        criadoEm: prDoConserto.criadoNoGitHub,
+      },
     },
     ultimaFalha,
     ultimoRecusado:
@@ -205,46 +225,50 @@ async function lerUltimoLote(repositorioIds: readonly string[]): Promise<ItemDoL
 }
 
 /** Uma linha por repositório vinculado a projeto ativo. */
-export async function obterTelaDePublicacao(
-  sujeito: Sujeito,
-  agora: Date,
-): Promise<TelaDePublicacao> {
-  exigirPermissao(sujeito, 'desenvolvimento.ler')
-
-  const [repositorios, pausa] = await Promise.all([
-    db.repositorioGitHub.findMany({
-      where: { removidoDaInstalacaoEm: null, projeto: { is: { arquivadoEm: null } } },
-      orderBy: [{ projeto: { nome: 'asc' } }, { nomeCompleto: 'asc' }],
-      select: {
-        id: true,
-        nomeCompleto: true,
-        projeto: { select: { id: true, nome: true } },
-        configuracaoDePublicacao: {
-          select: {
-            pausado: true,
-            horaDoLote: true,
-            situacao: true,
-            situacaoDesde: true,
-            situacaoMotivo: true,
-            baseRedefinidaEm: true,
-          },
+async function lerLinhas(): Promise<LinhaDaFila[]> {
+  const repositorios = await db.repositorioGitHub.findMany({
+    where: { removidoDaInstalacaoEm: null, projeto: { is: { arquivadoEm: null } } },
+    orderBy: [{ projeto: { nome: 'asc' } }, { nomeCompleto: 'asc' }],
+    select: {
+      id: true,
+      nomeCompleto: true,
+      projeto: { select: { id: true, nome: true } },
+      configuracaoDePublicacao: {
+        select: {
+          pausado: true,
+          horaDoLote: true,
+          situacao: true,
+          situacaoDesde: true,
+          situacaoMotivo: true,
+          baseRedefinidaEm: true,
         },
       },
-    }),
-    db.pausaGeralDePublicacao.findUnique({ where: { id: 1 } }),
-  ])
+    },
+  })
 
   const porProjeto = new Map<string, number>()
   for (const r of repositorios) {
     if (r.projeto) porProjeto.set(r.projeto.id, (porProjeto.get(r.projeto.id) ?? 0) + 1)
   }
-  const linhas = await Promise.all(
+  return Promise.all(
     repositorios.flatMap((r) =>
       r.projeto
         ? [montarLinha({ ...r, projeto: r.projeto }, porProjeto.get(r.projeto.id) ?? 1)]
         : [],
     ),
   )
+}
+
+export async function obterTelaDePublicacao(
+  sujeito: Sujeito,
+  agora: Date,
+): Promise<TelaDePublicacao> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+
+  const [linhas, pausa] = await Promise.all([
+    lerLinhas(),
+    db.pausaGeralDePublicacao.findUnique({ where: { id: 1 } }),
+  ])
   const ultimoLote = await lerUltimoLote(linhas.map((l) => l.repositorioId))
 
   return {
@@ -256,5 +280,71 @@ export async function obterTelaDePublicacao(
     rodapeDoLote: rodapeDoLote(ultimoLote),
     podeGerenciar: autorizar(sujeito, 'projetos.gerenciar'),
     podeRedefinir: autorizar(sujeito, 'configuracoes.gerenciar'),
+  }
+}
+
+/** Os mesmos avisos da faixa da tela, como itens do "Espera você". */
+export async function esperasDePublicacao(sujeito: Sujeito, agora: Date): Promise<ItemDeEspera[]> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+  return esperasDaPublicacao(avisosDaPublicacao(await lerLinhas(), agora))
+}
+
+export interface ConfiguracaoDePublicacao {
+  workflow: string
+  entradaDoCommit: string
+  horaDoLote: string
+  modoPadrao: ModoDePublicacao
+  automatico: boolean
+  pausado: boolean
+}
+
+export interface PublicacaoDoProjeto {
+  repositorios: {
+    id: string
+    nomeCompleto: string
+    configuracao: ConfiguracaoDePublicacao | null
+  }[]
+}
+
+/** A configuração de publicação de cada repositório vinculado ao projeto. */
+export async function obterPublicacaoDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+): Promise<PublicacaoDoProjeto> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+
+  const projeto = await db.projeto.findUnique({ where: { id: projetoId }, select: { id: true } })
+  if (!projeto) throw new ErroDeDominio('Projeto não encontrado.')
+
+  const repositorios = await db.repositorioGitHub.findMany({
+    where: { projetoId, removidoDaInstalacaoEm: null },
+    orderBy: { nomeCompleto: 'asc' },
+    select: {
+      id: true,
+      nomeCompleto: true,
+      configuracaoDePublicacao: {
+        select: {
+          workflow: true,
+          entradaDoCommit: true,
+          horaDoLote: true,
+          modoPadrao: true,
+          automatico: true,
+          pausado: true,
+        },
+      },
+    },
+  })
+  return {
+    repositorios: repositorios.map((r) => {
+      const c = r.configuracaoDePublicacao
+      return {
+        id: r.id,
+        nomeCompleto: r.nomeCompleto,
+        configuracao: c && {
+          ...c,
+          modoPadrao: c.modoPadrao.toLowerCase() as ModoDePublicacao,
+        },
+      }
+    }),
   }
 }

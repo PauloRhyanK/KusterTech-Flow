@@ -14,6 +14,8 @@ const JANELA_DO_RECUSADO_MS = DIA_MS
 /** Pedidos de lote até 12 h antes do mais recente são do mesmo lote. */
 const JANELA_DO_LOTE_MS = 12 * 60 * MINUTO_MS
 const FUSO = 'America/Sao_Paulo'
+/** Um PR do conserto parado mais que isto espera alguém revisar (o COM_PR não tem teto). */
+const LIMITE_DO_PR_DO_CONSERTO_MS = 60 * MINUTO_MS
 
 export type ChecksDoPedido = 'sucesso' | 'falha' | 'pendente' | 'sem_checks' | null
 export type TomDaPilula = 'neutro' | 'execucao' | 'informacao' | 'atencao' | 'erro'
@@ -54,6 +56,14 @@ export interface LinhaDaFila {
     abertoEm: Date
     pegoEm: Date | null
     encerradoEm: Date | null
+    /** O merge do PR já virou o pedido da correção. */
+    correcaoPedida: boolean
+    /** O PR do conserto como sincronizado do GitHub; `null` enquanto não chegou. */
+    pr: {
+      estado: 'ABERTO' | 'FECHADO' | 'MERGEADO'
+      shaMerge: string | null
+      criadoEm: Date | null
+    } | null
   } | null
   ultimaFalha: { commit: string | null; execucaoUrl: string | null } | null
   /** O último recusado depois de `baseRedefinidaEm`. */
@@ -87,6 +97,8 @@ export interface AvisoDePublicacao {
   externo: boolean
   tom: 'erro' | 'atencao'
   desde: Date
+  /** Presente: o link é o do próprio aviso (o PR do conserto), também no Início. */
+  rotuloDoLink?: string
 }
 
 export interface ItemDoLote {
@@ -420,7 +432,38 @@ function avisosDaLinha(linha: LinhaDaFila, agora: Date): AvisoDePublicacao[] {
       desde: atrasado.verificandoDesde,
     })
   }
+  const pr = avisoDoPrDoConserto(linha, agora)
+  if (pr) avisos.push(pr)
   return avisos
+}
+
+/**
+ * O conserto com PR espera a revisão sem teto: passada 1 h do PR (ou, sem o PR sincronizado, de
+ * quando a Fábrica pegou o conserto), alguém precisa olhar. Vale também para o PR mergeado cujo
+ * commit do merge ainda não chegou: sem ele a correção não entra na fila.
+ */
+function avisoDoPrDoConserto(linha: LinhaDaFila, agora: Date): AvisoDePublicacao | null {
+  const c = linha.conserto
+  if (c?.estado !== 'com_pr' || c.prUrl === null || c.correcaoPedida) return null
+  if (c.pr?.estado === 'FECHADO' || (c.pr?.estado === 'MERGEADO' && c.pr.shaMerge)) return null
+  const desde = c.pr?.criadoEm ?? c.pegoEm ?? c.abertoEm
+  if (agora.getTime() - desde.getTime() <= LIMITE_DO_PR_DO_CONSERTO_MS) return null
+  const numero = numeroDoPr(c.prUrl)
+  const pr = numero === null ? 'PR' : `PR #${numero}`
+  return {
+    id: `pr-do-conserto-${linha.repositorioId}`,
+    repositorioId: linha.repositorioId,
+    titulo: `${linha.rotulo}: PR do conserto espera revisão`,
+    contexto:
+      c.pr?.estado === 'MERGEADO'
+        ? `${pr} mergeado; o commit do merge ainda não chegou ao Flow`
+        : `${pr} aberto ${formatarIdade(desde, agora)}`,
+    href: c.prUrl,
+    externo: true,
+    rotuloDoLink: 'Ver o PR',
+    tom: 'atencao',
+    desde,
+  }
 }
 
 /** A faixa do topo (e o "Espera você"): erros antes de atenção, os mais antigos primeiro. */

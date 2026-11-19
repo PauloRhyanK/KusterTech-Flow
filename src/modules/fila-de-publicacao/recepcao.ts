@@ -73,12 +73,15 @@ type Chegada =
   | { tipo: 'dispensado'; id: string; motivo: string; atendidoPor: string | null }
   | { tipo: 'recusado'; id: string; motivo: string }
 
+/** Quem pediu: uma fonte (token) ou uma pessoa ("Publicar agora"). */
+export type OrigemDoPedido = { fonteId: string } | { usuarioId: string }
+
 // A trava por repositório torna "classificar e inserir" atômico: dois pedidos do mesmo commit
 // ao mesmo tempo viram um aceito e um dispensado.
-async function registrarChegada(
+export async function registrarChegada(
   repositorioId: string,
-  fonteId: string,
-  pedido: PedidoRecebido,
+  origem: OrigemDoPedido,
+  pedido: Pick<PedidoRecebido, 'commit' | 'modo' | 'descricao'>,
   configuracao: { modoPadrao: 'IMEDIATO' | 'LOTE'; baseRedefinidaEm: Date | null } | null,
   agora: Date,
 ): Promise<Chegada> {
@@ -112,7 +115,7 @@ async function registrarChegada(
       commit,
       modo,
       descricao: pedido.descricao ?? null,
-      fonteId,
+      ...origem,
     } satisfies Partial<Prisma.PedidoDePublicacaoUncheckedCreateInput>
 
     if (decisao.resultado === 'aceito') {
@@ -167,7 +170,7 @@ export async function receberPedidoDePublicacao(
 
     const chegada = await registrarChegada(
       repositorio.id,
-      fonte.id,
+      { fonteId: fonte.id },
       lido.data,
       repositorio.configuracaoDePublicacao,
       agora,

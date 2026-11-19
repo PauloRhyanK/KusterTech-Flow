@@ -213,6 +213,8 @@ describe('pilulasDaLinha', () => {
         abertoEm: minutos(-12),
         pegoEm: minutos(-11),
         encerradoEm: null,
+        correcaoPedida: false,
+        pr: null,
       },
       aguardando: [pedido({ id: 'e1', descricao: 'Índice de busca' })],
     })
@@ -277,6 +279,8 @@ describe('colunaDeEstado', () => {
         abertoEm: minutos(-12),
         pegoEm: null,
         encerradoEm: null,
+        correcaoPedida: false,
+        pr: null,
       },
     })
     expect(colunaDeEstado(consertando, AGORA, false)).toEqual({
@@ -340,6 +344,8 @@ describe('avisosDaPublicacao', () => {
         abertoEm: minutos(-45),
         pegoEm: minutos(-44),
         encerradoEm: minutos(-5),
+        correcaoPedida: false,
+        pr: null,
       },
     })
     expect(avisosDaPublicacao([l], AGORA)).toEqual([
@@ -412,5 +418,85 @@ describe('avisosDaPublicacao', () => {
         'atencao',
       ],
     ])
+  })
+
+  describe('PR do conserto espera revisão', () => {
+    const PR = 'https://github.com/kustertech-exemplo/base/pull/212'
+    const comPr = (extra: Partial<NonNullable<LinhaDaFila['conserto']>> = {}): LinhaDaFila =>
+      linha({
+        configuracao: {
+          pausado: false,
+          horaDoLote: '22:00',
+          situacao: 'consertando',
+          situacaoDesde: minutos(-120),
+          situacaoMotivo: null,
+        },
+        conserto: {
+          estado: 'com_pr',
+          prUrl: PR,
+          abertoEm: minutos(-120),
+          pegoEm: minutos(-110),
+          encerradoEm: null,
+          correcaoPedida: false,
+          pr: { estado: 'ABERTO', shaMerge: null, criadoEm: minutos(-90) },
+          ...extra,
+        },
+      })
+
+    test('COM_PR com o PR aberto há mais de 1 h → aviso de atenção com o link do PR', () => {
+      expect(avisosDaPublicacao([comPr()], AGORA)).toEqual([
+        {
+          id: 'pr-do-conserto-r1',
+          repositorioId: 'r1',
+          titulo: 'Projeto Alfa: PR do conserto espera revisão',
+          contexto: 'PR #212 aberto há 1 h',
+          href: PR,
+          externo: true,
+          rotuloDoLink: 'Ver o PR',
+          tom: 'atencao',
+          desde: minutos(-90),
+        },
+      ])
+    })
+
+    test('PR mergeado sem o SHA do merge sincronizado também avisa', () => {
+      const [aviso] = avisosDaPublicacao(
+        [comPr({ pr: { estado: 'MERGEADO', shaMerge: null, criadoEm: minutos(-90) } })],
+        AGORA,
+      )
+      expect(aviso).toMatchObject({
+        titulo: 'Projeto Alfa: PR do conserto espera revisão',
+        contexto: 'PR #212 mergeado; o commit do merge ainda não chegou ao Flow',
+        href: PR,
+      })
+    })
+
+    test('sem o PR sincronizado conta desde que a Fábrica pegou o conserto', () => {
+      expect(avisosDaPublicacao([comPr({ pr: null })], AGORA)[0]?.desde).toEqual(minutos(-110))
+      expect(avisosDaPublicacao([comPr({ pr: null, pegoEm: minutos(-59) })], AGORA)).toEqual([])
+    })
+
+    test('1 h exata, correção já pedida, PR fechado ou mergeado com SHA → sem aviso', () => {
+      expect(
+        avisosDaPublicacao(
+          [comPr({ pr: { estado: 'ABERTO', shaMerge: null, criadoEm: minutos(-60) } })],
+          AGORA,
+        ),
+      ).toEqual([])
+      expect(avisosDaPublicacao([comPr({ correcaoPedida: true })], AGORA)).toEqual([])
+      expect(
+        avisosDaPublicacao(
+          [comPr({ pr: { estado: 'FECHADO', shaMerge: null, criadoEm: minutos(-90) } })],
+          AGORA,
+        ),
+      ).toEqual([])
+      expect(
+        avisosDaPublicacao(
+          [comPr({ pr: { estado: 'MERGEADO', shaMerge: sha('f'), criadoEm: minutos(-90) } })],
+          AGORA,
+        ),
+      ).toEqual([])
+      expect(avisosDaPublicacao([comPr({ estado: 'em_curso', prUrl: null })], AGORA)).toEqual([])
+    })
   })
 })

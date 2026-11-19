@@ -5,8 +5,9 @@ import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { PREFIXO_DO_TOKEN_DE_PUBLICACAO } from './contrato'
-import { MOTIVOS } from './model'
+import { MOTIVOS, validarHoraDoLote, type EstadoDoPedido, type ModoDePublicacao } from './model'
 import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
+import { registrarChegada } from './recepcao'
 
 // O token é devolvido só aqui; no banco fica apenas o hash (mesmo hash da Fábrica).
 export async function criarFonteDePublicacao(
@@ -152,4 +153,118 @@ export async function redefinirNoAr(sujeito: Sujeito, repositorioId: string): Pr
       data: { baseRedefinidaEm: new Date() },
     })
   })
+}
+
+const WORKFLOW = /^[A-Za-z0-9._-]+\.ya?ml$/
+const ENTRADA_DO_COMMIT = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/
+const DESCRICAO_DO_PUBLICAR_AGORA = 'Publicar agora'
+const REPOSITORIO_FORA_DO_PROJETO = 'Este repositório não está vinculado a este projeto.'
+
+export interface EntradaDaConfiguracaoDePublicacao {
+  projetoId: string
+  repositorioId: string
+  workflow: string
+  entradaDoCommit: string
+  horaDoLote: string
+  modoPadrao: ModoDePublicacao
+  automatico: boolean
+  pausado: boolean
+}
+
+/**
+ * Cria ou atualiza a configuração do repositório, que precisa estar vinculado ao projeto (ativo).
+ * A situação da fila (consertando, parado) e a base do "no ar" não mudam por aqui.
+ */
+export async function salvarConfiguracaoDePublicacao(
+  sujeito: Sujeito,
+  entrada: EntradaDaConfiguracaoDePublicacao,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+
+  const workflow = entrada.workflow.trim()
+  const entradaDoCommit = entrada.entradaDoCommit.trim()
+  if (!WORKFLOW.test(workflow)) {
+    throw new ErroDeDominio(
+      'Informe o arquivo do workflow em .github/workflows, como deploy.yml (termina em .yml ou .yaml).',
+    )
+  }
+  if (!ENTRADA_DO_COMMIT.test(entradaDoCommit)) {
+    throw new ErroDeDominio(
+      'A entrada do commit é o nome de um input do workflow: letras, números, _ ou -, começando por letra.',
+    )
+  }
+  if (!validarHoraDoLote(entrada.horaDoLote)) {
+    throw new ErroDeDominio('Informe a hora do lote como HH:MM, de 00:00 a 23:59.')
+  }
+  if (entrada.modoPadrao !== 'imediato' && entrada.modoPadrao !== 'lote') {
+    throw new ErroDeDominio('Modo padrão inválido.')
+  }
+
+  const dados = {
+    workflow,
+    entradaDoCommit,
+    horaDoLote: entrada.horaDoLote,
+    modoPadrao: entrada.modoPadrao === 'lote' ? ('LOTE' as const) : ('IMEDIATO' as const),
+    automatico: entrada.automatico,
+    pausado: entrada.pausado,
+  }
+  await comTrava(entrada.repositorioId, async (tx) => {
+    const repositorio = await tx.repositorioGitHub.findFirst({
+      where: {
+        id: entrada.repositorioId,
+        projetoId: entrada.projetoId,
+        removidoDaInstalacaoEm: null,
+        projeto: { is: { arquivadoEm: null } },
+      },
+      select: { id: true },
+    })
+    if (!repositorio) throw new ErroDeDominio(REPOSITORIO_FORA_DO_PROJETO)
+    await tx.configuracaoDePublicacao.upsert({
+      where: { repositorioId: repositorio.id },
+      create: { repositorioId: repositorio.id, ...dados },
+      update: dados,
+    })
+  })
+}
+
+/**
+ * "Publicar agora": um pedido imediato da ponta de main (sem commit: o worker resolve o HEAD),
+ * pela mesma chegada da API: sob a trava do repositório, um segundo clique vira `dispensado`.
+ */
+export async function publicarAgora(
+  sujeito: Sujeito,
+  repositorioId: string,
+): Promise<{ id: string; estado: EstadoDoPedido; motivo: string | null }> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+
+  const repositorio = await db.repositorioGitHub.findFirst({
+    where: {
+      id: repositorioId,
+      removidoDaInstalacaoEm: null,
+      projeto: { is: { arquivadoEm: null } },
+    },
+    select: {
+      id: true,
+      configuracaoDePublicacao: { select: { modoPadrao: true, baseRedefinidaEm: true } },
+    },
+  })
+  if (!repositorio) {
+    throw new ErroDeDominio('Este repositório não está vinculado a um projeto ativo.')
+  }
+
+  const chegada = await registrarChegada(
+    repositorio.id,
+    { usuarioId: sujeito.usuarioId },
+    { modo: 'imediato', descricao: DESCRICAO_DO_PUBLICAR_AGORA },
+    repositorio.configuracaoDePublicacao,
+    new Date(),
+  )
+  switch (chegada.tipo) {
+    case 'criado':
+      return { id: chegada.id, estado: 'na_fila', motivo: null }
+    case 'dispensado':
+      return { id: chegada.id, estado: 'dispensado', motivo: chegada.motivo }
+    case 'recusado':
+      return { id: chegada.id, estado: 'recusado', motivo: chegada.motivo }
+  }
 }
