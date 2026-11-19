@@ -1,4 +1,5 @@
 import { ErroDeDominio } from '@/lib/erros'
+import type { Aba } from '@/lib/ui/abas'
 import type { ModuloId } from '@/lib/modulos'
 import type { EstadoIntegracao } from '@/modules/github/model'
 
@@ -137,12 +138,6 @@ export function calcularChecklist(
 }
 
 export type Contexto = { tipo: 'global' } | { tipo: 'cliente'; clienteId: string }
-
-export interface Aba {
-  rotulo: string
-  href: string
-  disponivel: boolean
-}
 
 export function abasDoContexto(
   projetoId: string,

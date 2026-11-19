@@ -17,8 +17,8 @@ function retratoRecebido(sobrepor: Partial<RetratoRecebido> = {}): RetratoRecebi
 }
 
 describe('PainelDaFabrica', () => {
-  test('com retrato, mostra vagas, memória, planos com fase e raias, decisão com link e avisos', () => {
-    render(<PainelDaFabrica permitido retrato={retratoRecebido()} agora={AGORA} />)
+  test('com retrato, mostra vagas, memória, planos com fase e raias, decisão com link', () => {
+    render(<PainelDaFabrica secao="planos" permitido retrato={retratoRecebido()} agora={AGORA} />)
 
     const vagas = screen.getByRole('region', { name: 'Vagas e memória' })
     expect(within(vagas).getByText('Efetivas').nextElementSibling).toHaveTextContent('2')
@@ -38,12 +38,10 @@ describe('PainelDaFabrica', () => {
       'href',
       'https://github.com/PauloRhyanK/kustertech-flow/issues/147',
     )
-
-    expect(screen.getByText('Vagas reduzidas por falta de memória')).toBeInTheDocument()
   })
 
   test('mostra a idade dos dados calculada de recebidoEm e nenhum aviso de atraso quando está fresco', () => {
-    render(<PainelDaFabrica permitido retrato={retratoRecebido()} agora={AGORA} />)
+    render(<PainelDaFabrica secao="planos" permitido retrato={retratoRecebido()} agora={AGORA} />)
 
     expect(screen.getByText(/há 1 min/)).toBeInTheDocument()
     expect(screen.queryByText(/parou de enviar/)).not.toBeInTheDocument()
@@ -52,6 +50,7 @@ describe('PainelDaFabrica', () => {
   test('com recebidoEm há mais de 5 min, avisa que a máquina parou de enviar', () => {
     render(
       <PainelDaFabrica
+        secao="planos"
         permitido
         retrato={retratoRecebido({ recebidoEm: new Date('2026-11-03T21:36:00Z') })}
         agora={AGORA}
@@ -62,7 +61,7 @@ describe('PainelDaFabrica', () => {
   })
 
   test('sem retrato, mostra estado vazio com como ligar o envio', () => {
-    render(<PainelDaFabrica permitido retrato={null} agora={AGORA} />)
+    render(<PainelDaFabrica secao="planos" permitido retrato={null} agora={AGORA} />)
 
     const vazio = screen.getByRole('status')
     expect(vazio).toHaveTextContent('A Fábrica ainda não enviou o estado.')
@@ -75,7 +74,14 @@ describe('PainelDaFabrica', () => {
   })
 
   test('sem desenvolvimento.ler, mostra só a mensagem de sem permissão', () => {
-    render(<PainelDaFabrica permitido={false} retrato={retratoRecebido()} agora={AGORA} />)
+    render(
+      <PainelDaFabrica
+        secao="planos"
+        permitido={false}
+        retrato={retratoRecebido()}
+        agora={AGORA}
+      />,
+    )
 
     expect(screen.getByText('Sem permissão para esta área.')).toBeInTheDocument()
     expect(screen.queryByText('Painel da Fábrica na Central')).not.toBeInTheDocument()
@@ -83,7 +89,7 @@ describe('PainelDaFabrica', () => {
 
   test('nenhum indicador usa tom de sucesso e a página não tem controles', () => {
     const { container } = render(
-      <PainelDaFabrica permitido retrato={retratoRecebido()} agora={AGORA} />,
+      <PainelDaFabrica secao="planos" permitido retrato={retratoRecebido()} agora={AGORA} />,
     )
 
     expect(container.innerHTML).not.toContain('sucesso')
@@ -94,9 +100,33 @@ describe('PainelDaFabrica', () => {
     const retrato = structuredClone(exemplo) as unknown as RetratoV1
     retrato.planos[0]!.decisoes[0]!.url = 'https://exemplo.com/issue'
 
-    render(<PainelDaFabrica permitido retrato={retratoRecebido({ retrato })} agora={AGORA} />)
+    render(
+      <PainelDaFabrica
+        secao="planos"
+        permitido
+        retrato={retratoRecebido({ retrato })}
+        agora={AGORA}
+      />,
+    )
 
     expect(screen.getByText('Homologar o painel da Fábrica')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Homologar o painel da Fábrica' })).toBeNull()
+  })
+
+  test('em secao="avisos" não renderiza "Planos na fila"', () => {
+    render(<PainelDaFabrica secao="avisos" permitido retrato={retratoRecebido()} agora={AGORA} />)
+
+    expect(screen.queryByText('Planos na fila')).not.toBeInTheDocument()
+    expect(screen.queryByText('Vagas e memória')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Avisos' })).toBeInTheDocument()
+    expect(screen.getByText('Vagas reduzidas por falta de memória')).toBeInTheDocument()
+  })
+
+  test('em secao="planos" não renderiza "Avisos"', () => {
+    render(<PainelDaFabrica secao="planos" permitido retrato={retratoRecebido()} agora={AGORA} />)
+
+    expect(screen.queryByRole('heading', { name: 'Avisos' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Planos na fila' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Vagas e memória' })).toBeInTheDocument()
   })
 })

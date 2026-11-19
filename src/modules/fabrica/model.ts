@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { ESTADOS_DA_FILA, RetratoV1 } from './contrato'
 
 export const LIMITE_DO_CORPO_DO_RETRATO = 262_144
 export const PREFIXO_DO_TOKEN_DA_FABRICA = 'ff_'
@@ -49,4 +50,68 @@ export function validarNomeDaFonteDaFabrica(
     }
   }
   return { ok: true, nome: aparado }
+}
+
+export interface ResumoDoPlano {
+  id: string
+  repo: string
+  feature: string
+  estado: (typeof ESTADOS_DA_FILA)[number]
+  faseAtual: string | null
+  indiceDaFase: number | null
+  totalDeFases: number
+  raias: {
+    concluidas: number
+    executando: number
+    falharam: number
+    planejadas: number
+    total: number
+  }
+  decisoes: number
+  pausado: string | null
+}
+
+export function resumirPlano(plano: RetratoV1['planos'][number]): ResumoDoPlano {
+  const raias = { concluidas: 0, executando: 0, falharam: 0, planejadas: 0, total: 0 }
+  for (const fase of plano.fases) {
+    for (const raia of fase.raias) {
+      raias.total += 1
+      if (raia.estado === 'concluida') raias.concluidas += 1
+      else if (raia.estado === 'executando') raias.executando += 1
+      else if (raia.estado === 'falhou') raias.falharam += 1
+      else raias.planejadas += 1
+    }
+  }
+  const posicao = plano.fases.findIndex((fase) => fase.id === plano.faseAtual)
+  return {
+    id: plano.id,
+    repo: plano.repo,
+    feature: plano.feature,
+    estado: plano.estado,
+    faseAtual: plano.faseAtual,
+    indiceDaFase: plano.faseAtual === null || posicao === -1 ? null : posicao + 1,
+    totalDeFases: plano.fases.length,
+    raias,
+    decisoes: plano.decisoes.length,
+    pausado: plano.pausado,
+  }
+}
+
+const ORDEM_EM_CURSO: readonly ResumoDoPlano['estado'][] = [
+  'ativo',
+  'admitindo',
+  'pausado',
+  'aguardando',
+]
+
+// Só os planos que ainda estão andando, por estado e, dentro dele, por entrada na fila.
+export function planosEmCurso(retrato: RetratoV1): ResumoDoPlano[] {
+  return retrato.planos
+    .filter((plano) => ORDEM_EM_CURSO.includes(plano.estado))
+    .sort(
+      (a, b) =>
+        ORDEM_EM_CURSO.indexOf(a.estado) - ORDEM_EM_CURSO.indexOf(b.estado) ||
+        Date.parse(a.entrouEm) - Date.parse(b.entrouEm),
+    )
+    .map(resumirPlano)
 }

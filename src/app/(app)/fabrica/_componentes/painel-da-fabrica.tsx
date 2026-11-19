@@ -9,6 +9,7 @@ import { minutosDeAtraso, retratoDesatualizado } from '@/modules/fabrica/model'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 
 export interface PainelDaFabricaProps {
+  secao: 'planos' | 'avisos'
   permitido: boolean
   retrato: RetratoRecebido | null
   agora: Date
@@ -137,7 +138,15 @@ function CartaoDoPlano({ plano }: { plano: Plano }) {
   )
 }
 
-function Conteudo({ recebido, agora }: { recebido: RetratoRecebido; agora: Date }) {
+function Conteudo({
+  recebido,
+  agora,
+  secao,
+}: {
+  recebido: RetratoRecebido
+  agora: Date
+  secao: PainelDaFabricaProps['secao']
+}) {
   const { retrato, recebidoEm, geradoEm } = recebido
   const { vagas, drenagem, warren, planos, avisos } = retrato
   const desatualizado = retratoDesatualizado(recebidoEm, agora)
@@ -164,66 +173,72 @@ function Conteudo({ recebido, agora }: { recebido: RetratoRecebido; agora: Date 
         </p>
       </div>
 
-      <Secao titulo="Vagas e memória" rotuloAcessivel="Vagas e memória">
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <Indicador rotulo="Efetivas" valor={vagas.efetivas} />
-          <Indicador rotulo="Ocupadas" valor={vagas.ocupadas} />
-          <Indicador rotulo="Configuradas" valor={vagas.configuradas} />
-        </dl>
-        <p className="text-sm text-text-primary">
-          Memória disponível:{' '}
-          {vagas.memDisponivelMb === null ? 'sem medição' : `${vagas.memDisponivelMb} MB`} · mínimo
-          por vaga {vagas.ramMinimaMb} MB
-        </p>
-        {vagas.oomEm && (
-          <p className="text-sm text-text-secondary">
-            Falta de memória em {formatarDataHora(new Date(vagas.oomEm))}
-          </p>
-        )}
-        {drenagem && (
-          <p className="text-sm text-text-secondary">
-            Drenagem desde {formatarDataHora(new Date(drenagem))}
-          </p>
-        )}
-        <p className="text-sm text-text-secondary">
-          Warren: {warren.preparo ?? 'sem preparo informado'}
-          {warren.em && ` (em ${formatarDataHora(new Date(warren.em))})`}
-        </p>
-      </Secao>
+      {secao === 'planos' && (
+        <>
+          <Secao titulo="Vagas e memória" rotuloAcessivel="Vagas e memória">
+            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Indicador rotulo="Efetivas" valor={vagas.efetivas} />
+              <Indicador rotulo="Ocupadas" valor={vagas.ocupadas} />
+              <Indicador rotulo="Configuradas" valor={vagas.configuradas} />
+            </dl>
+            <p className="text-sm text-text-primary">
+              Memória disponível:{' '}
+              {vagas.memDisponivelMb === null ? 'sem medição' : `${vagas.memDisponivelMb} MB`} ·
+              mínimo por vaga {vagas.ramMinimaMb} MB
+            </p>
+            {vagas.oomEm && (
+              <p className="text-sm text-text-secondary">
+                Falta de memória em {formatarDataHora(new Date(vagas.oomEm))}
+              </p>
+            )}
+            {drenagem && (
+              <p className="text-sm text-text-secondary">
+                Drenagem desde {formatarDataHora(new Date(drenagem))}
+              </p>
+            )}
+            <p className="text-sm text-text-secondary">
+              Warren: {warren.preparo ?? 'sem preparo informado'}
+              {warren.em && ` (em ${formatarDataHora(new Date(warren.em))})`}
+            </p>
+          </Secao>
 
-      <Secao titulo="Planos na fila" rotuloAcessivel="Planos da Fábrica">
-        {planos.length === 0 ? (
-          <p className="text-sm text-text-secondary">Nenhum plano na fila.</p>
-        ) : (
-          <ul aria-label="Planos da Fábrica" className="divide-y divide-border">
-            {planos.map((plano) => (
-              <CartaoDoPlano key={plano.id} plano={plano} />
-            ))}
-          </ul>
-        )}
-      </Secao>
+          <Secao titulo="Planos na fila" rotuloAcessivel="Planos da Fábrica">
+            {planos.length === 0 ? (
+              <p className="text-sm text-text-secondary">Nenhum plano na fila.</p>
+            ) : (
+              <ul aria-label="Planos da Fábrica" className="divide-y divide-border">
+                {planos.map((plano) => (
+                  <CartaoDoPlano key={plano.id} plano={plano} />
+                ))}
+              </ul>
+            )}
+          </Secao>
+        </>
+      )}
 
-      <Secao titulo="Avisos" rotuloAcessivel="Avisos da Fábrica">
-        {avisos.length === 0 ? (
-          <p className="text-sm text-text-secondary">Nenhum aviso.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {avisos.map((aviso) => (
-              <li key={`${aviso.em}-${aviso.mensagem}`} className="space-y-0.5 py-2 text-sm">
-                <p className="text-[13px] text-text-secondary">
-                  {formatarDataHora(new Date(aviso.em))}
-                </p>
-                <p className="text-text-primary">{aviso.mensagem}</p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Secao>
+      {secao === 'avisos' && (
+        <Secao titulo="Avisos" rotuloAcessivel="Avisos da Fábrica">
+          {avisos.length === 0 ? (
+            <p className="text-sm text-text-secondary">Nenhum aviso.</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {avisos.map((aviso) => (
+                <li key={`${aviso.em}-${aviso.mensagem}`} className="space-y-0.5 py-2 text-sm">
+                  <p className="text-[13px] text-text-secondary">
+                    {formatarDataHora(new Date(aviso.em))}
+                  </p>
+                  <p className="text-text-primary">{aviso.mensagem}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Secao>
+      )}
     </div>
   )
 }
 
-export function PainelDaFabrica({ permitido, retrato, agora }: PainelDaFabricaProps) {
+export function PainelDaFabrica({ secao, permitido, retrato, agora }: PainelDaFabricaProps) {
   if (!permitido) {
     return <SemPermissao />
   }
@@ -243,5 +258,5 @@ export function PainelDaFabrica({ permitido, retrato, agora }: PainelDaFabricaPr
     )
   }
 
-  return <Conteudo recebido={retrato} agora={agora} />
+  return <Conteudo recebido={retrato} agora={agora} secao={secao} />
 }

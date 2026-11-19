@@ -68,7 +68,7 @@ export default async function PaginaDesenvolvimento({ searchParams }: PaginaDese
       contexto={CONTEXTO}
       acoes={
         podeLer ? (
-          <Link href="/desenvolvimento/fabrica" className="text-sm text-text-link hover:underline">
+          <Link href="/fabrica" className="text-sm text-text-link hover:underline">
             Fábrica de agentes
           </Link>
         ) : undefined

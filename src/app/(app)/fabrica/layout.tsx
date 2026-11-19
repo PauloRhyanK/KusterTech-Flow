@@ -1,16 +1,17 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import type { ReactNode } from 'react'
 import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { Abas } from '@/lib/ui/abas'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
-import { PainelDaFabrica } from './_componentes/painel-da-fabrica'
 
 export const metadata: Metadata = {
-  title: 'Fábrica de agentes',
+  title: 'Fábrica',
 }
 
-export default async function PaginaDaFabrica() {
+export default async function LayoutDaFabrica({ children }: { children: ReactNode }) {
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -22,14 +23,23 @@ export default async function PaginaDaFabrica() {
   return (
     <div className="space-y-6">
       <CabecalhoDePagina
-        trilhas={[
-          { rotulo: 'Central de Desenvolvimento', href: '/desenvolvimento' },
-          { rotulo: 'Fábrica de agentes' },
-        ]}
-        titulo="Fábrica de agentes"
+        trilhas={[{ rotulo: 'Fábrica' }]}
+        titulo="Fábrica"
         contexto="Estado da máquina de agentes, enviado pelo coordenador. Só leitura."
       />
-      <PainelDaFabrica permitido={permitido} retrato={retrato} agora={new Date()} />
+      <Abas
+        rotulo="Seções da Fábrica"
+        abas={[
+          { rotulo: 'Planos em execução', href: '/fabrica', disponivel: true },
+          {
+            rotulo: 'Avisos',
+            href: '/fabrica/avisos',
+            disponivel: true,
+            contador: retrato?.retrato.avisos.length,
+          },
+        ]}
+      />
+      {children}
     </div>
   )
 }
