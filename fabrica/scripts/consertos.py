@@ -7,7 +7,8 @@ Um conserto passa por `despachando` (gravado antes do POST pago) → `em_curso` 
 `desistiu`. O run ocupa uma vaga de `capacidade.json` como uma raia, na chave `conserto:<id>` e raia `fixer`, até
 sair de `em_curso`. O nonce do prompt e a `Idempotency-Key` são o id do conserto sem hífens (32 hex): um
 coordenador reiniciado em `despachando` acha o run pelo nonce e, sem ele, repete o POST com a mesma chave. Um id
-encerrado vai para `consertosEncerrados` e nunca é atendido de novo. O motor não cancela run: no teto de 1 h o
+encerrado vai para `consertosEncerrados` e nunca é atendido de novo. Um run perdido por infraestrutura
+(`sandbox_run_lost`, `preempted`) é refeito pelo Warren: o conserto adota o retry e segue `em_curso` com a vaga. O motor não cancela run: no teto de 1 h o
 conserto `desistiu` e a vaga é solta, mas o run pode seguir no Warren até terminar sozinho.
 """
 
@@ -20,6 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import despachante  # noqa: E402
+import motor as motor_  # noqa: E402
 import prompts  # noqa: E402
 import retrato  # noqa: E402
 
@@ -40,6 +42,11 @@ AVISO_SEM_MODELO = (
 MOTIVO_SEM_PROJETO = "repositório sem projeto do Warren em fila.json"
 MOTIVO_TETO = "teto de 1 h"
 MOTIVO_RUN_SUMIU = "run não encontrado no Warren"
+# R2, como no despachante: o Warren refaz sozinho, uma vez, um run perdido por infraestrutura (mesmo prompt e nonce,
+# `retryOf` = original). O conserto espera esse retry com a vaga presa, por 3 buscas boas e no mínimo 5 min.
+MARGEM_DESDE = despachante.MARGEM_DESDE
+BUSCAS_PARA_ACHAR_RETRY = despachante.CICLOS_PARA_ACHAR_RETRY
+PISO_PARA_DESISTIR = despachante.PISO_PARA_DESISTIR
 
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 _COMMIT = re.compile(r"[0-9a-fA-F]{40}")
@@ -185,6 +192,11 @@ class _Passo:
     def erro(self, id_, exc) -> None:
         self.eventos.append({"evento": "erro", "etapa": "conserto", "alvo": id_, "erro": "%s: %s" % (type(exc).__name__, exc)})
 
+    def desde(self, c: dict):
+        """O corte da busca pelo nonce: o primeiro despacho, menos a margem (como no despachante)."""
+        inicio = _instante(c.get("inicio"))
+        return _texto_do_instante(inicio - MARGEM_DESDE) if inicio is not None else None
+
     def estourou(self, c: dict) -> bool:
         inicio = _instante(c.get("inicio"))
         return inicio is None or (self.agora - inicio).total_seconds() > TETO_S
@@ -240,7 +252,7 @@ class _Passo:
     def retomar(self, id_: str, c: dict) -> None:
         """`despachando` herdado (o POST pode ter criado o run): adota pelo nonce ou repete com a mesma chave."""
         try:
-            run_id = self.motor.procurar_run(c["projeto"], nonce(id_))
+            run_id = self.motor.procurar_run(c["projeto"], nonce(id_), self.desde(c))
         except Exception:
             if self.estourou(c):
                 self.mudar(id_, c, "desistiu", motivo=MOTIVO_TETO)
@@ -266,6 +278,9 @@ class _Passo:
             return
         run = despachante._dict(run)
         situacao = run.get("estado")
+        if situacao == "failed" and run.get("motivoFalha") in motor_.MOTIVOS_INFRA_PERDIDA and not c.get("retryDe"):
+            if self.esperar_retry(id_, c, run):
+                return
         if situacao in despachante.TERMINAIS_DE_RUN:
             if retrato.url_do_github(run.get("prUrl")):
                 self.mudar(id_, c, "com_pr", prUrl=run["prUrl"])
@@ -275,6 +290,41 @@ class _Passo:
                 self.mudar(id_, c, "desistiu", motivo=motivo[:LIMITE_MOTIVO])
         elif self.estourou(c):
             self.mudar(id_, c, "desistiu", motivo=MOTIVO_TETO)
+
+    def esperar_retry(self, id_: str, c: dict, run: dict) -> bool:
+        """R2: adota o retry do Warren (segue `em_curso`, com a vaga) ou espera; `False` = não houve retry."""
+        original = c["runId"]
+        espera = c.get("retryEsperado")
+        if not isinstance(espera, dict):
+            espera = c["retryEsperado"] = {"buscas": 0, "vistoEm": self.agora_texto}
+            self.salvar()
+            self.eventos.append({"evento": "conserto_retry_esperado", "id": id_, "runId": original, "motivoFalha": run.get("motivoFalha")})
+        try:
+            achado = self.motor.procurar_retry(c["projeto"], original, [nonce(id_)], self.desde(c))
+        except Exception as exc:  # noqa: BLE001 - busca falha não conta; o teto ainda vale
+            if self.estourou(c):
+                self.mudar(id_, c, "desistiu", motivo=MOTIVO_TETO)
+            else:
+                self.erro(id_, exc)
+            return True
+        if isinstance(achado, str) and achado and achado != original:
+            c.pop("retryEsperado", None)
+            c.update(runId=achado, retryDe=original, em=self.agora_texto)
+            self.salvar()
+            self.eventos.append({"evento": "conserto_retry_adotado", "id": id_, "original": original, "runId": achado})
+            return True
+        espera["buscas"] = (espera.get("buscas") if isinstance(espera.get("buscas"), int) else 0) + 1
+        visto = _instante(espera.get("vistoEm"))
+        if visto is None:
+            espera["vistoEm"] = self.agora_texto
+            visto = self.agora
+        if espera["buscas"] < BUSCAS_PARA_ACHAR_RETRY or self.agora - visto < PISO_PARA_DESISTIR:
+            self.salvar()
+            if self.estourou(c):
+                self.mudar(id_, c, "desistiu", motivo=MOTIVO_TETO)
+            return True
+        c.pop("retryEsperado", None)
+        return False  # o Warren não refez: vale o run falho
 
     # ------------------------------------------------------------ ciclo
 

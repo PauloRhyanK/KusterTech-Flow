@@ -1757,6 +1757,22 @@ class TestesConsertos(Base):
         self.assertEqual(self.reservas(), {"conserto:" + ID_CONSERTO: ["fixer"]})
         self.assertEqual(len(self.despachos()), 1)
 
+    def test_central_desligada_com_conserto_em_curso_ainda_aplica_o_teto_e_solta_a_vaga(self):
+        self.coordenador().ciclo()
+        self.assertEqual(self.reservas(), {"conserto:" + ID_CONSERTO: ["fixer"]})
+        for central in (None, {"url": "http://central.exemplo.com/x", "token_file": "/seg/central"}):
+            with self.subTest(central=central):
+                c = self.novo(central=central, kit=self.kit)
+                c.ciclo()
+                self.assertEqual(self.fila_estado()["consertos"][ID_CONSERTO]["estado"], "em_curso")
+                self.assertEqual(self.reservas(), {"conserto:" + ID_CONSERTO: ["fixer"]})
+        self.instante += datetime.timedelta(hours=1, seconds=1)
+        self.novo(central=None, kit=self.kit).ciclo()
+        conserto = self.fila_estado()["consertos"][ID_CONSERTO]
+        self.assertEqual((conserto["estado"], conserto["motivo"]), ("desistiu", "teto de 1 h"))
+        self.assertEqual(self.reservas(), {})
+        self.assertEqual(len(self.despachos()), 1)
+
     def test_coordenador_reiniciado_nao_despacha_de_novo(self):
         self.coordenador().ciclo()
         self.coordenador().ciclo()

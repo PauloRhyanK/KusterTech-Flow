@@ -173,12 +173,61 @@ class TestesPasso(Base):
 
     def test_run_sem_pr_vira_desistiu_com_motivo(self):
         self.passo([pedido()])
-        self.motor.retry_infra_perdida = False
         self.motor.definir_run(self.conserto()["runId"], estado="failed", motivoFalha="m" * 500)
         self.passo([pedido()])
         self.assertEqual(self.conserto()["estado"], "desistiu")
         self.assertEqual(self.conserto()["motivo"], "m" * 300)
         self.assertEqual(self.reservas(), {})
+
+    def test_run_perdido_por_infra_adota_o_retry_do_warren_e_segura_a_vaga(self):
+        self.passo([pedido()])
+        original = self.conserto()["runId"]
+        self.agora += datetime.timedelta(minutes=1)
+        self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")  # o Warren cria o retry
+        retry = self.motor.retry_de(original)
+        self.assertTrue(retry)
+        self.passo([pedido()])
+        self.assertEqual(self.conserto()["estado"], "em_curso")
+        self.assertEqual((self.conserto()["runId"], self.conserto()["retryDe"]), (retry, original))
+        self.assertEqual(self.reservas(), {"conserto:" + ID: ["fixer"]})
+        self.assertEqual(len(self.despachos()), 1)
+        (busca,) = [a for nome, a in self.motor.chamadas if nome == "procurar_retry"]
+        self.assertEqual((busca["run_id"], busca["nonces"], busca["desde"]), (original, [NONCE], "2026-11-19T11:50:00Z"))
+        self.motor.definir_run(retry, estado="succeeded", prUrl=PR)
+        self.passo([pedido()])
+        self.assertEqual((self.conserto()["estado"], self.conserto()["prUrl"]), ("com_pr", PR))
+        self.assertEqual(self.reservas(), {})
+
+    def test_retry_que_nao_aparece_desiste_depois_de_3_buscas_e_5_min(self):
+        self.motor.retry_infra_perdida = False  # o Warren não refaz (orçamento acabou, cancel)
+        self.passo([pedido()])
+        self.motor.definir_run(self.conserto()["runId"], estado="failed", motivoFalha="preempted")
+        for _ in range(3):
+            self.passo([pedido()])
+            self.assertEqual(self.conserto()["estado"], "em_curso")
+        self.agora += datetime.timedelta(minutes=5)
+        self.passo([pedido()])
+        self.assertEqual((self.conserto()["estado"], self.conserto()["motivo"]), ("desistiu", "preempted"))
+        self.assertEqual(self.reservas(), {})
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_retry_perdido_de_novo_desiste_sem_esperar_outro(self):
+        self.passo([pedido()])
+        original = self.conserto()["runId"]
+        self.motor.definir_run(original, estado="failed", motivoFalha="sandbox_run_lost")
+        self.passo([pedido()])
+        retry = self.conserto()["runId"]
+        self.assertNotEqual(retry, original)
+        self.motor.definir_run(retry, estado="failed", motivoFalha="sandbox_run_lost")
+        self.passo([pedido()])
+        self.assertEqual(self.conserto()["estado"], "desistiu")
+
+    def test_reinicio_busca_o_nonce_desde_o_despacho_com_margem(self):
+        self.motor.falhar_despacho("incerta")
+        self.passo([pedido()])
+        self.passo([pedido()])
+        (busca,) = [a for nome, a in self.motor.chamadas if nome == "procurar_run"]
+        self.assertEqual(busca["desde"], "2026-11-19T11:50:00Z")
 
     def test_run_terminado_sem_pr_e_sem_motivo_tambem_desiste(self):
         self.passo([pedido()])

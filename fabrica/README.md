@@ -203,6 +203,8 @@ Quando uma publicação falha na fila do Flow, a resposta do envio do retrato tr
 - Diferente do fixer das seeds, esse run **ocupa uma vaga** de `capacidade.json` (chave `conserto:<id>`). Sem vaga, com pouca RAM ou com drenagem, o pedido espera o próximo ciclo.
 - O retrato seguinte leva o estado do conserto: `em_curso`, `com_pr` (com o link do PR) ou `desistiu` (com o motivo). O conserto nunca publica nada: a correção entra em `main` pelo caminho normal do repositório e a publicação é um pedido novo na fila.
 - Teto de 1 h: o motor não cancela run, então no teto o conserto `desistiu` e a vaga é solta, mas o run pode seguir no Warren até terminar sozinho.
+- Run perdido por infraestrutura (`sandbox_run_lost`, `preempted`): o Warren o refaz sozinho uma vez, e o conserto adota esse retry e segue `em_curso` com a vaga. Sem retry depois de 3 buscas e 5 min, desiste.
+- Com o envio à Central desligado, o coordenador segue acompanhando os consertos em andamento (teto e vaga), sem atender novos.
 - Repositório fora de `fila.json` desiste na hora. Sem `modelos.fixer`, nada é despachado e sai um aviso.
 - O estado fica em `fila-estado.json` (`consertos`), gravado antes do despacho. Um coordenador reiniciado acha o run pelo nonce do pedido e nunca despacha dois runs para o mesmo conserto.
 

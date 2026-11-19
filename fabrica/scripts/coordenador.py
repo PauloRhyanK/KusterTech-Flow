@@ -779,12 +779,15 @@ class Coordenador:
         return retrato.serializar(cortado)
 
     def _passo_central(self) -> None:
-        """Envia o retrato (sem URL, nada). Nada daqui muda a fila, para o ciclo ou deixa uma exceção escapar.
+        """Envia o retrato (sem URL, só acompanha os consertos em andamento). Nada daqui muda a fila, para o ciclo ou deixa uma exceção escapar.
 
         Roda no `finally` do ciclo, então envia mesmo quando um passo falhou. A falha vira um aviso só quando a
         categoria muda (um envio bom zera isso); a categoria nunca traz o token nem o texto da exceção.
         """
         if not self.central:
+            # envio desligado com conserto em andamento: segue acompanhando o run (teto de 1 h e a vaga)
+            with contextlib.suppress(Exception):
+                self._passo_consertos(None)
             return
         with contextlib.suppress(Exception):
             resposta = None
