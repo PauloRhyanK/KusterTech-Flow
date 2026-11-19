@@ -35,10 +35,17 @@ RUN node -e " \
 FROM base AS execucao
 COPY --from=build /app/pacotes-de-execucao.json ./package.json
 COPY pnpm-lock.yaml ./
+COPY scripts/verificar-lock-da-imagem.mjs /tmp/verificar-lock-da-imagem.mjs
 COPY prisma ./prisma
 COPY prisma.config.ts ./
+# O manifesto é um subconjunto do projeto, então o pnpm reescreve o lockfile reaproveitando as
+# resoluções existentes; a verificação falha o build se algum pacote sair da versão ou da
+# integridade fixadas no pnpm-lock.yaml do projeto.
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --prod --no-frozen-lockfile && pnpm exec prisma generate
+    cp pnpm-lock.yaml /tmp/lock-do-projeto.yaml \
+    && pnpm install --prod --no-frozen-lockfile \
+    && node /tmp/verificar-lock-da-imagem.mjs /tmp/lock-do-projeto.yaml pnpm-lock.yaml \
+    && pnpm exec prisma generate
 
 FROM node:22-bookworm-slim AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*

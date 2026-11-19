@@ -25,7 +25,7 @@ jobs:
       - name: Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build da imagem (local, para o teste de fumaça)
+      - name: Build da imagem (uma só vez, carregada no Docker local)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -48,16 +48,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publicar a imagem
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.IMAGEM }}:main
-            ${{ env.IMAGEM }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/PauloRhyanK/KusterTech-Flow
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Publicar a mesma imagem que passou na fumaça
+        run: |
+          for etiqueta in main "sha-${GITHUB_SHA}"; do
+            docker tag flow:fumaca "${IMAGEM}:${etiqueta}"
+            docker push "${IMAGEM}:${etiqueta}"
+          done
