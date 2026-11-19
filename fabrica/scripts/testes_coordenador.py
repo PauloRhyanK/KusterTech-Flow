@@ -1076,6 +1076,30 @@ class TestesSegurar(Base):
         self.novo().ciclo()
         self.assertEqual([p.name for p in entrada.glob("*.json")], ["r.json"])
 
+    def test_pedido_que_nao_sai_da_caixa_nao_e_reaplicado(self):
+        c, primeiro, segundo = self.dois_que_colidem()
+        c.pedir("segurar", segundo)
+        arquivo = next((self.raiz / "entrada").glob("*.json"))
+        with unittest.mock.patch.object(pathlib.Path, "unlink", side_effect=PermissionError("sem permissão")):
+            c.ciclo()
+            c.ciclo()
+        self.assertTrue(arquivo.exists())
+        c.pedir("soltar", segundo)
+        self.concluir(primeiro)
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(self.estados()[segundo], "ativo")
+        self.assertFalse(arquivo.exists())
+
+    def test_segurar_de_quem_ja_esta_segurado_nao_repete_aviso(self):
+        c, _, segundo = self.dois_que_colidem()
+        c.pedir("segurar", segundo)
+        c.ciclo()
+        antes = len(self.avisos())
+        c.pedir("segurar", segundo)
+        c.ciclo()
+        self.assertEqual(len(self.avisos()), antes)
+
     def test_status_mostra_segurado(self):
         c, _, segundo = self.dois_que_colidem()
         c.pedir("segurar", segundo)

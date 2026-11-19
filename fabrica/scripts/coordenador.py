@@ -62,6 +62,7 @@ CAMINHO_LEGADO = ".fabrica/plano.json"
 KIT_PADRAO = pathlib.Path(__file__).resolve().parents[2]
 RAIZ_PADRAO = "~/fabrica"
 INTERVALO_PADRAO = 60
+LIMITE_ENTRADA_APLICADA = 200
 COMANDOS_DA_CAIXA = ("segurar", "soltar")
 
 CODIGO_ERRO = 1
@@ -423,6 +424,9 @@ class Coordenador:
         pedidos = sorted(p for p in pasta.iterdir() if p.name.endswith(".json") and not p.name.startswith(".") and p.is_file())
         for caminho in pedidos:
             chave = "entrada:%s" % caminho.name
+            if caminho.name in self.dados.get("entradaAplicada", []):
+                self._descartar(caminho, chave)  # já aplicado e o arquivo não saiu: só tenta apagar de novo
+                continue
             try:
                 pedido = despachante._json_estrito(caminho.read_text(encoding="utf-8"))
                 if not isinstance(pedido, dict):
@@ -451,6 +455,8 @@ class Coordenador:
         if entrada is None:
             self._aviso(chave, "pedido %s de %s recusado: plano desconhecido" % (comando, id_))
             return
+        if valor and entrada.get("segurado"):
+            return  # já segurado: nada a fazer, nem aviso
         if valor and entrada.get("estado") != "aguardando":
             self._aviso(chave, "pedido segurar de %s recusado: o plano está %s" % (id_, entrada.get("estado")))
             return
@@ -467,6 +473,11 @@ class Coordenador:
         eventos.append({"evento": "segurado" if valor else "solto", "id": id_})
 
     def _descartar(self, caminho: pathlib.Path, chave: str) -> None:
+        """Marca o pedido como concluído (nunca é reaplicado, mesmo se o arquivo não sair) e apaga o arquivo."""
+        aplicados = self.dados.get("entradaAplicada", [])
+        if caminho.name not in aplicados:
+            self.dados["entradaAplicada"] = (aplicados + [caminho.name])[-LIMITE_ENTRADA_APLICADA:]
+            self._salvar()
         try:
             caminho.unlink()
         except FileNotFoundError:
