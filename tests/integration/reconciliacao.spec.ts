@@ -39,6 +39,11 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
     listarDeployments: guardar(base.listarDeployments),
     compararCommits: guardar(base.compararCommits),
     lerArquivo: guardar(base.lerArquivo),
+    lerCabecaDoBranchPadrao: guardar(base.lerCabecaDoBranchPadrao),
+    dispararWorkflow: guardar(base.dispararWorkflow),
+    listarExecucoesDoWorkflow: guardar(base.listarExecucoesDoWorkflow),
+    lerExecucao: guardar(base.lerExecucao),
+    lerFimDoLog: guardar(base.lerFimDoLog),
     reabrirIssue: async () => {
       throw new Error('não usado')
     },

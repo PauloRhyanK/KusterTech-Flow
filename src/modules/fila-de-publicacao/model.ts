@@ -1,4 +1,4 @@
-import type { ComparacaoDaFonte } from '@/modules/github/fonte'
+import type { ComparacaoDaFonte, ExecucaoDaFonte } from '@/modules/github/fonte'
 
 export type ModoDePublicacao = 'imediato' | 'lote'
 export type EstadoDoPedido =
@@ -55,6 +55,14 @@ const RELACOES: Record<ComparacaoDaFonte['status'], Relacao> = {
 
 export function relacaoDoCompare(status: ComparacaoDaFonte['status']): Relacao {
   return RELACOES[status]
+}
+
+/** A execução disparada leva o commit inteiro no título (`run-name: publicar <commit>`); a lista vem da mais nova para a mais antiga. */
+export function procurarExecucaoDoCommit(
+  execucoes: readonly ExecucaoDaFonte[],
+  commit: string,
+): ExecucaoDaFonte | null {
+  return execucoes.find((e) => e.titulo.split(/\s+/).includes(commit)) ?? null
 }
 
 export interface EntradaDaAvaliacao {

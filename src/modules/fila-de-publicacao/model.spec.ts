@@ -13,6 +13,7 @@ import {
   instanteDoLote,
   loteVencido,
   motivoDeBaseAntiga,
+  procurarExecucaoDoCommit,
   podeTransicionar,
   relacaoDoCompare,
   resultadoDaExecucao,
@@ -447,4 +448,22 @@ test('duracaoTipicaEmMin', () => {
   expect(duracaoTipicaEmMin([])).toBeNull()
   expect(duracaoTipicaEmMin([4 * MIN, 6 * MIN, 8 * MIN])).toBe(6)
   expect(duracaoTipicaEmMin([60 * MIN, 1 * MIN, 2 * MIN, 3 * MIN, 4 * MIN, 5 * MIN])).toBe(3)
+})
+
+test('procurarExecucaoDoCommit: casa o commit inteiro no titulo; prefixo de 7 não casa; nenhuma → null', () => {
+  const c = 'ab'.repeat(20)
+  const ex = (id: number, titulo: string) => ({
+    id: BigInt(id),
+    status: 'completed',
+    conclusao: 'success',
+    urlHtml: 'u',
+    titulo,
+    criadaEm: new Date(0),
+    atualizadaEm: new Date(0),
+  })
+  const lista = [ex(3, 'outra coisa'), ex(2, `publicar ${c}`), ex(1, `publicar ${c}`)]
+  expect(procurarExecucaoDoCommit(lista, c)?.id).toBe(BigInt(2))
+  expect(procurarExecucaoDoCommit([ex(4, `publicar ${c.slice(0, 7)}`)], c)).toBeNull()
+  expect(procurarExecucaoDoCommit([ex(5, `publicar ${c}0`)], c)).toBeNull()
+  expect(procurarExecucaoDoCommit([], c)).toBeNull()
 })

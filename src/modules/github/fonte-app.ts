@@ -5,6 +5,7 @@ import {
   mapearCheck,
   mapearComparacao,
   mapearDeployment,
+  mapearExecucao,
   mapearIssue,
   mapearIssueCriada,
   mapearPullRequest,
@@ -12,6 +13,7 @@ import {
   TAMANHO_MAXIMO_ARQUIVO,
   type ComparacaoDaFonte,
   type DeploymentDaFonte,
+  type ExecucaoDaFonte,
   type FonteGitHub,
   type IssueDaFonte,
   type PullRequestDaFonte,
@@ -105,7 +107,7 @@ export function criarFonteApp(
     metodo: 'GET' | 'POST' | 'PATCH',
     url: string,
     autorizacao: string,
-    em404?: CategoriaDeFalha,
+    em404?: CategoriaDeFalha | 'vazio',
     corpoJson?: unknown,
   ): Promise<{ corpo: unknown; link: string | null }> {
     let resposta: Response
@@ -123,8 +125,16 @@ export function criarFonteApp(
     } catch {
       throw new ErroDeIntegracao('rede')
     }
+    if (resposta.status === 404 && em404 === 'vazio') {
+      return { corpo: null, link: null }
+    }
     if (!resposta.ok) {
-      throw resposta.status === 404 && em404 ? new ErroDeIntegracao(em404) : falhaDe(resposta)
+      throw resposta.status === 404 && em404 && em404 !== 'vazio'
+        ? new ErroDeIntegracao(em404)
+        : falhaDe(resposta)
+    }
+    if (resposta.status === 204) {
+      return { corpo: null, link: null }
     }
     try {
       return { corpo: await resposta.json(), link: resposta.headers.get('link') }
@@ -204,6 +214,58 @@ export function criarFonteApp(
   }
 
   const caminhoDoRepo = (repo: RefRepositorio) => `/repos/${repo.nomeCompleto}`
+
+  // Log do job: o GitHub responde 302 para um endereço assinado de outra origem; o token não vai junto.
+  async function lerTexto(url: string, autorizacao: string): Promise<string> {
+    let resposta: Response
+    try {
+      resposta = await fetchImpl(url, {
+        method: 'GET',
+        redirect: 'manual',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          Authorization: `Bearer ${autorizacao}`,
+        },
+      })
+      if (resposta.status >= 300 && resposta.status < 400) {
+        const destino = resposta.headers.get('location')
+        if (!destino) {
+          throw new ErroDeIntegracao('resposta-invalida')
+        }
+        const alvo = new URL(destino, url)
+        resposta = await fetchImpl(alvo.toString(), {
+          method: 'GET',
+          redirect: 'error',
+          ...(alvo.origin === origem
+            ? { headers: { Authorization: `Bearer ${autorizacao}` } }
+            : {}),
+        })
+      }
+    } catch (e) {
+      throw e instanceof ErroDeIntegracao ? e : new ErroDeIntegracao('rede')
+    }
+    if (!resposta.ok) {
+      throw falhaDe(resposta)
+    }
+    try {
+      return await resposta.text()
+    } catch {
+      throw new ErroDeIntegracao('resposta-invalida')
+    }
+  }
+
+  function validar<T extends z.ZodType>(esquema: T, bruto: unknown): z.output<T> {
+    const r = esquema.safeParse(bruto)
+    if (!r.success) {
+      throw new ErroDeIntegracao('resposta-invalida')
+    }
+    return r.data
+  }
+
+  const esquemaJobs = z.object({
+    jobs: z.array(z.object({ id: z.number().int(), conclusion: z.string().nullish() })),
+  })
 
   return {
     tipo: 'app',
@@ -342,6 +404,75 @@ export function criarFonteApp(
         throw new ErroDeIntegracao('resposta-invalida')
       }
       return texto
+    },
+
+    async lerCabecaDoBranchPadrao(repo) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo: r } = await chamar('GET', `${apiUrl}${caminhoDoRepo(repo)}`, token)
+      const branch = validar(z.object({ default_branch: z.string().min(1) }), r).default_branch
+      const { corpo: c } = await chamar(
+        'GET',
+        `${apiUrl}${caminhoDoRepo(repo)}/commits/${encodeURIComponent(branch)}`,
+        token,
+      )
+      return { branch, sha: validar(z.object({ sha: z.string().min(1) }), c).sha }
+    },
+
+    async dispararWorkflow(repo, workflow, ref, entradas): Promise<void> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      await chamar(
+        'POST',
+        `${apiUrl}${caminhoDoRepo(repo)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+        token,
+        undefined,
+        { ref, inputs: entradas },
+      )
+    },
+
+    async listarExecucoesDoWorkflow(repo, workflow, desde): Promise<ExecucaoDaFonte[]> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const criadas = encodeURIComponent(`>=${desde.toISOString()}`)
+      const brutas = await paginas(
+        `${caminhoDoRepo(repo)}/actions/workflows/${encodeURIComponent(workflow)}/runs?event=workflow_dispatch&created=${criadas}&per_page=100`,
+        token,
+        (corpo) => {
+          const r = z.safeParse(z.object({ workflow_runs: z.array(z.unknown()) }), corpo)
+          if (!r.success) {
+            throw new ErroDeIntegracao('resposta-invalida')
+          }
+          return r.data.workflow_runs
+        },
+      )
+      return brutas.map(mapearExecucao)
+    },
+
+    async lerExecucao(repo, id): Promise<ExecucaoDaFonte | null> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo } = await chamar(
+        'GET',
+        `${apiUrl}${caminhoDoRepo(repo)}/actions/runs/${id}`,
+        token,
+        'vazio',
+      )
+      return corpo === null ? null : mapearExecucao(corpo)
+    },
+
+    async lerFimDoLog(repo, execucaoId, limite): Promise<string> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo } = await chamar(
+        'GET',
+        `${apiUrl}${caminhoDoRepo(repo)}/actions/runs/${execucaoId}/jobs?filter=latest&per_page=100`,
+        token,
+      )
+      const falho = validar(esquemaJobs, corpo).jobs.find((j) => j.conclusion === 'failure')
+      if (!falho) {
+        return ''
+      }
+      const texto = await lerTexto(
+        `${apiUrl}${caminhoDoRepo(repo)}/actions/jobs/${falho.id}/logs`,
+        token,
+      )
+      return limite > 0 ? texto.slice(-limite) : ''
     },
 
     async reabrirIssue(repo, numero): Promise<IssueDaFonte> {

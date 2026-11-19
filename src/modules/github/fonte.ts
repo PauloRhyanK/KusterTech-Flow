@@ -64,6 +64,16 @@ export interface ComparacaoDaFonte {
   truncada: boolean
 }
 
+export interface ExecucaoDaFonte {
+  id: bigint
+  status: string
+  conclusao: string | null
+  urlHtml: string
+  titulo: string
+  criadaEm: Date
+  atualizadaEm: Date
+}
+
 export const TAMANHO_MAXIMO_ARQUIVO = 2_000_000
 
 export interface FonteGitHub {
@@ -80,6 +90,24 @@ export interface FonteGitHub {
   compararCommits(repo: RefRepositorio, base: string, cabeca: string): Promise<ComparacaoDaFonte>
   /** Texto do arquivo no branch padrão; `null` quando o arquivo não existe. */
   lerArquivo(repo: RefRepositorio, caminho: string): Promise<string | null>
+  lerCabecaDoBranchPadrao(repo: RefRepositorio): Promise<{ branch: string; sha: string }>
+  /** Não idempotente: quem chama marca a tentativa antes e procura a execução antes de repetir. */
+  dispararWorkflow(
+    repo: RefRepositorio,
+    workflow: string,
+    ref: string,
+    entradas: Record<string, string>,
+  ): Promise<void>
+  /** Execuções `workflow_dispatch` do workflow criadas desde `desde`, mais nova primeiro. */
+  listarExecucoesDoWorkflow(
+    repo: RefRepositorio,
+    workflow: string,
+    desde: Date,
+  ): Promise<ExecucaoDaFonte[]>
+  /** `null` quando a execução não existe mais (404). */
+  lerExecucao(repo: RefRepositorio, id: bigint): Promise<ExecucaoDaFonte | null>
+  /** Os últimos `limite` caracteres do log do primeiro job que falhou; '' sem job falho. */
+  lerFimDoLog(repo: RefRepositorio, execucaoId: bigint, limite: number): Promise<string>
   /** Idempotente: reabrir uma issue já aberta devolve a issue. */
   reabrirIssue(repo: RefRepositorio, numero: number): Promise<IssueDaFonte>
   /** Não idempotente: quem chama não pode repetir depois de um resultado incerto. */
@@ -174,6 +202,16 @@ const esquemaComparacao = z.object({
   commits: z.array(z.object({ sha: z.string() })),
 })
 
+const esquemaExecucao = z.object({
+  id: z.number().int(),
+  status: z.string(),
+  conclusion: z.string().nullish(),
+  html_url: z.string(),
+  display_title: z.string(),
+  created_at: data,
+  updated_at: data,
+})
+
 const esquemaCheck = z.object({ status: z.string(), conclusion: z.string().nullish() })
 
 // Nunca repete o payload: a mensagem do ErroDeIntegracao é fixa.
@@ -263,6 +301,19 @@ export function mapearComparacao(bruto: unknown): ComparacaoDaFonte {
     status: c.status,
     commits: c.commits.map((x) => x.sha),
     truncada: c.total_commits > c.commits.length,
+  }
+}
+
+export function mapearExecucao(bruto: unknown): ExecucaoDaFonte {
+  const e = validar(esquemaExecucao, bruto)
+  return {
+    id: BigInt(e.id),
+    status: e.status,
+    conclusao: e.conclusion ?? null,
+    urlHtml: e.html_url,
+    titulo: e.display_title,
+    criadaEm: e.created_at,
+    atualizadaEm: e.updated_at,
   }
 }
 
