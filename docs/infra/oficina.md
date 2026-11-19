@@ -35,6 +35,7 @@ ssh -i ~/.ssh/id_ed25519_dev_agents -o IdentitiesOnly=yes devops@100.70.15.95
 | Builder buildx `cais`       | contêiner `buildx_buildkit_cais0`, com cache no volume `buildx_buildkit_cais0_state`                           |
 | Limpeza diária              | `oficina-limpeza.timer`, às 04:00                                                                              |
 | Métricas de desempenho      | `oficina-metricas.timer`, a cada minuto (ver [Medir o desempenho](#medir-o-desempenho))                       |
+| Disco por dono              | `oficina-disco.timer`, a cada hora (ver [Arquivos de `/var/lib/oficina`](#arquivos-de-varliboficina))         |
 | Backup externo              | `oficina-backup.timer`, às 03:30, ativo desde 18/11/2026 (ver [Backup](#backup-externo))       |
 | KusterTech Flow             | preparado, ainda não publicado (ver [KusterTech Flow](#kustertech-flow))                                       |
 
@@ -81,6 +82,22 @@ O relatório agrupa as amostras pela quantidade de raias ocupadas. Para cada gru
 Nesse caso, rode `coordenador.py vagas <N-1>`.
 
 Cada OOM kill novo também vira uma linha `tipo: "oom"` em `/var/lib/oficina/alertas.jsonl`, com as raias e vagas do momento.
+
+### Arquivos de `/var/lib/oficina`
+
+O KusterTech Flow lê estes arquivos na página da máquina (formatos em `src/modules/oficina/contrato.ts`; exemplos em `src/modules/oficina/exemplos/`). Quem grava cada um:
+
+| Arquivo               | Quem grava                                        | Conteúdo                                                                                             |
+| --------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `metricas.jsonl`      | `metricas_oficina.py coletar`, por minuto         | uma amostra por linha; inclui `cpuUsoPct`, `discoLivreBytes` e `discoTotalBytes`                     |
+| `cpu.estado`          | `coletar`                                         | contadores de CPU da amostra anterior (a primeira amostra depois de um boot tem `cpuUsoPct: null`)   |
+| `retrato.json`        | `metricas_oficina.py retrato`, por minuto         | contêineres (estado, memória, CPU, código de saída), Fábrica `ativa`/`parada` e runners              |
+| `disco-por-dono.json` | `metricas_oficina.py disco`, por hora             | bytes de `docker`, `fabrica`, `runners`, `backups` e `outros` (o que sobra do disco usado)           |
+| `alertas.jsonl`       | métricas (OOM), limpeza (disco) e backup          | uma ocorrência por linha                                                                             |
+| `limpezas.jsonl`      | `limpar-oficina.sh`, por rodada fora de `--simular` | `em`, `ok`, `livreAntesBytes`, `livreDepoisBytes`, `liberadoBytes`; `ok:false` se o script abortar |
+| `limpeza-ultima.json` | `limpar-oficina.sh`                               | resumo da última rodada                                                                              |
+
+Notas de coleta: o retrato e o disco gravam em `<arquivo>.tmp` e renomeiam. A Fábrica é a unit `fabrica-fila` do `devops`, consultada com `systemctl --user --machine=devops@ is-active`; se a consulta falhar, o retrato diz `parada` e uma linha vai para o stderr (journal). Se `docker` ou `du` falharem (ou passarem de 20 s, 300 s no `du`), o campo fica vazio e os outros coletores seguem; um dono do disco que não foi medido cai em `outros`. Instalação dos timers: copie `scripts/infra/systemd/oficina-disco.*` junto com os demais e rode `systemctl enable --now oficina-disco.timer`; o `oficina-metricas.service` agora roda `coletar` e depois `retrato`.
 
 ## Limpeza diária
 

@@ -29,6 +29,7 @@ exec > >(tee -a "$LOG") 2>&1
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
 como_usuario() { sudo -u "$USUARIO" -H -- "$@"; }
 usados_bytes() { df -B1 --output=used / | tail -1 | tr -d ' '; }
+livre_bytes() { df -B1 --output=avail / | tail -1 | tr -d ' '; }
 uso_pct() { df --output=pcent / | tail -1 | tr -dc '0-9'; }
 tamanho() { du -sh "$@" 2>/dev/null | awk '{print $1}' | paste -sd+ -; }
 
@@ -47,6 +48,23 @@ worker_ativo() {
   return 1
 }
 algum_worker() { pgrep -x Runner.Worker >/dev/null; }
+
+# Histórico em limpezas.jsonl (lido pelo Flow): uma linha por rodada fora de --simular. Se o script
+# abortar (set -u, sinal) antes de gravar a linha final, o EXIT grava a rodada com ok:false.
+# Não usa trap ERR: sem `set -e`, qualquer grep sem resultado o dispararia.
+LIVRE_ANTES=$(livre_bytes)
+LIMPEZA_GRAVADA=0
+gravar_limpeza() { # $1 = true|false
+  ((SIMULAR || LIMPEZA_GRAVADA)) && return 0
+  LIMPEZA_GRAVADA=1
+  local livre_depois
+  livre_depois=$(livre_bytes)
+  printf '{"em":"%s","ok":%s,"livreAntesBytes":%d,"livreDepoisBytes":%d,"liberadoBytes":%d}\n' \
+    "$(date --iso-8601=seconds)" "$1" "$LIVRE_ANTES" "$livre_depois" "$((livre_depois - LIVRE_ANTES))" \
+    >>"$DIR_ESTADO/limpezas.jsonl"
+}
+trap 'gravar_limpeza false' EXIT
+trap 'exit 143' TERM INT
 
 ANTES=$(usados_bytes)
 log "=== limpeza da oficina $( ((SIMULAR)) && echo '(SIMULAR: nada será apagado)') uso=$(uso_pct)%"
@@ -205,5 +223,6 @@ if ((!SIMULAR)); then
       "$agora" "$USO" "$LIMITE_USO" "$USO" >>"$DIR_ESTADO/alertas.jsonl"
     logger -t oficina-limpeza -p user.warning "disco em ${USO}% depois da limpeza"
   fi
+  gravar_limpeza true
 fi
 exit 0

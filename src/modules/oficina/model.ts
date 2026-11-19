@@ -250,11 +250,13 @@ export function diaEHora(em: Date, agora: Date): { dia: string; hora: string } {
   return { dia: dia.slice(0, 5), hora }
 }
 
-// Os contêineres do próprio Flow (nome com prefixo "flow-").
+// Os contêineres do próprio Flow: nome com prefixo "flow-" ou "kustertech-flow-" (projeto do compose).
 export function servicoDoFlow(
   cs: Container[],
 ): { total: number; noAr: number; memoriaBytes: number } | null {
-  const doFlow = cs.filter((c) => c.nome.startsWith('flow-'))
+  const doFlow = cs.filter(
+    (c) => c.nome.startsWith('flow-') || c.nome.startsWith('kustertech-flow-'),
+  )
   if (doFlow.length === 0) return null
   const noAr = doFlow.filter((c) => c.estado === 'rodando')
   return {

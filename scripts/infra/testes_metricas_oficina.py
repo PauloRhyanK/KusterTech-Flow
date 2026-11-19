@@ -108,6 +108,121 @@ class Arquivo(unittest.TestCase):
             self.assertEqual(removidas, 2)
             self.assertEqual(len(arq.read_text(encoding="utf-8").splitlines()), 1)
 
+STAT = """cpu  4705 150 1120 16250 520 0 30 0 0 0
+cpu0 2350 75 560 8125 260 0 15 0 0 0
+intr 12345
+"""
+PS = "\n".join(
+    json.dumps(o)
+    for o in (
+        {"Names": "loja-web-1", "State": "running", "Status": "Up 2 hours",
+         "CreatedAt": "2026-11-18 08:00:00 -0300 -03"},
+        {"Names": "loja-job-1", "State": "exited", "Status": "Exited (137) 3 minutes ago",
+         "CreatedAt": "2026-11-18 09:40:00 -0300 -03"},
+    )
+)
+STATS = json.dumps({"Name": "loja-web-1", "MemUsage": "212MiB / 7.6GiB", "CPUPerc": "1.50%"})
+UNIDADES = """actions.runner.acme-loja.vps-runner.service loaded active running GitHub Actions Runner
+actions.runner.acme-loja.vps-runner-2.service loaded active running GitHub Actions Runner
+actions.runner.acme-loja.vps-runner-3.service loaded inactive dead GitHub Actions Runner
+"""
+DF = "\n".join(
+    json.dumps({"Type": t, "Size": s})
+    for t, s in (("Images", "1.5GB"), ("Containers", "512kB"), ("Local Volumes", "2GB"), ("Build Cache", "0B"))
+)
+
+
+class Painel(unittest.TestCase):
+    def test_ler_cpu_separa_ocupado_do_total(self):
+        # total = user+nice+system+idle+iowait+irq+softirq+steal; ocupado = total - idle - iowait
+        self.assertEqual(mo.ler_cpu(STAT), (4705 + 150 + 1120 + 30, 4705 + 150 + 1120 + 16250 + 520 + 30))
+
+    def test_ler_cpu_sem_linha_cpu_levanta(self):
+        with self.assertRaises(ValueError):
+            mo.ler_cpu("")
+
+    def test_uso_de_cpu_entre_duas_leituras(self):
+        self.assertEqual(mo.uso_de_cpu((100, 1000), (160, 1100)), 60.0)
+
+    def test_uso_de_cpu_sem_leitura_anterior_e_none(self):
+        self.assertIsNone(mo.uso_de_cpu(None, (160, 1100)))
+
+    def test_uso_de_cpu_com_contador_que_voltou_e_none(self):
+        self.assertIsNone(mo.uso_de_cpu((5000, 90000), (160, 1100)))
+
+    def test_uso_de_cpu_sem_tempo_decorrido_e_none(self):
+        self.assertIsNone(mo.uso_de_cpu((100, 1000), (100, 1000)))
+
+    def test_ler_containers_junta_ps_e_stats_pelo_nome(self):
+        web = mo.ler_containers(PS, STATS)[0]
+        self.assertEqual(
+            web,
+            {"nome": "loja-web-1", "estado": "rodando", "codigoDeSaida": None,
+             "memoriaBytes": 212 * 1024**2, "cpuPct": 1.5, "desde": "2026-11-18T08:00:00-03:00"},
+        )
+
+    def test_container_parado_tem_memoria_e_cpu_nulos_e_codigo_de_saida(self):
+        job = mo.ler_containers(PS, STATS)[1]
+        self.assertEqual(job["estado"], "parado")
+        self.assertEqual(job["codigoDeSaida"], 137)
+        self.assertIsNone(job["memoriaBytes"])
+        self.assertIsNone(job["cpuPct"])
+
+    def test_ler_containers_com_saida_vazia_devolve_lista_vazia(self):
+        self.assertEqual(mo.ler_containers("", ""), [])
+
+    def test_ler_containers_sem_stats_deixa_memoria_nula(self):
+        self.assertIsNone(mo.ler_containers(PS, "")[0]["memoriaBytes"])
+
+    def test_ler_runners_conta_servicos_no_ar_e_ocupados(self):
+        self.assertEqual(mo.ler_runners(UNIDADES, 1), {"noAr": 2, "ocupados": 1, "total": 3})
+
+    def test_ler_runners_ocupados_nunca_passam_dos_no_ar(self):
+        self.assertEqual(mo.ler_runners(UNIDADES, 9)["ocupados"], 2)
+
+    def test_fabrica_ativa_so_com_active(self):
+        self.assertTrue(mo.fabrica_ativa("active\n"))
+        self.assertFalse(mo.fabrica_ativa("inactive\n"))
+        self.assertFalse(mo.fabrica_ativa(""))
+
+    def test_somar_docker_df_soma_os_tamanhos(self):
+        self.assertEqual(mo.somar_docker_df(DF), 1_500_000_000 + 512_000 + 2_000_000_000)
+
+    def test_classificar_disco_poe_o_resto_em_outros_e_nunca_negativo(self):
+        donos = mo.classificar_disco({"docker": 10, "fabrica": 5, "runners": 3, "backups": 2}, 25)
+        self.assertEqual([d["nome"] for d in donos], ["docker", "fabrica", "runners", "backups", "outros"])
+        self.assertEqual(donos[-1]["bytes"], 5)
+        self.assertEqual(mo.classificar_disco({"docker": 30}, 25)[-1]["bytes"], 0)
+
+    def test_retrato_gravado_passa_por_json_loads_e_tem_as_chaves_do_contrato(self):
+        retrato = mo.montar_retrato(
+            "2026-11-18T10:00:00-03:00", "2026-11-10T08:15:00-03:00",
+            mo.ler_containers(PS, STATS), True, mo.ler_runners(UNIDADES, 0),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            arq = pathlib.Path(tmp) / "retrato.json"
+            mo.gravar_json(arq, retrato)
+            lido = json.loads(arq.read_text(encoding="utf-8"))
+            self.assertFalse(arq.with_suffix(".tmp").exists())
+        self.assertEqual(set(lido), {"em", "ligadaDesde", "containers", "servicos"})
+        self.assertEqual(set(lido["servicos"]), {"fabrica", "runners"})
+        self.assertEqual(lido["servicos"]["fabrica"], "ativa")
+
+    def test_data_com_fuso_numerico(self):
+        self.assertRegex(mo.agora_iso(), r"[+-]\d\d:\d\d$")
+
+    def test_coletar_sem_fontes_do_linux_nao_quebra_e_guarda_o_estado_da_cpu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            antigo = mo.DIR_ESTADO
+            mo.DIR_ESTADO = pathlib.Path(tmp)
+            try:
+                a = mo.coletar("2026-11-18T10:00:00-03:00")
+            finally:
+                mo.DIR_ESTADO = antigo
+        self.assertIn("discoLivreBytes", a)
+        self.assertIn("discoTotalBytes", a)
+        self.assertIn("cpuUsoPct", a)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -325,6 +325,16 @@ describe('servicoDoFlow', () => {
     expect(r).toEqual({ total: 2, noAr: 2, memoriaBytes: 500 * 1024 ** 2 })
   })
 
+  it('reconhece o projeto do compose, kustertech-flow-*, sem pegar nome parecido', () => {
+    const r = servicoDoFlow([
+      container('kustertech-flow-web-1', { memoriaBytes: 300 * 1024 ** 2 }),
+      container('kustertech-flow-worker-1', { memoriaBytes: 200 * 1024 ** 2 }),
+      container('kustertech-flow-postgres-1', { estado: 'parado', memoriaBytes: null }),
+      container('outro-kustertech-flow-web-1', { memoriaBytes: 900 * 1024 ** 2 }),
+    ])
+    expect(r).toEqual({ total: 3, noAr: 2, memoriaBytes: 500 * 1024 ** 2 })
+  })
+
   it('sem contêiner do Flow devolve null', () => {
     expect(servicoDoFlow([container('fabrica-x')])).toBeNull()
   })
