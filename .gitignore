@@ -54,3 +54,6 @@ __pycache__/
 # deixados no workspace pelos runs da Fábrica
 .claude/.credentials.json
 .pnpm-store/
+
+# dados reais do cadastro (o repositório é público)
+cadastro.json
