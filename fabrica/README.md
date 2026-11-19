@@ -107,7 +107,7 @@ python3 -I ~/fabrica/kit/fabrica/scripts/instalar_maquina.py --branch <branch>
 
 Até o merge no `main`, o branch é `feat/fabrica-fila-por-plano`: o `main` ainda não tem o instalador nem as units. Use o mesmo branch no clone e no `--branch`.
 
-O instalador é idempotente: atualiza o kit no branch pedido, cria `~/fabrica/planos`, `fila.json` e `capacidade.json` (só se faltarem), liga o linger, instala as units de usuário, confere os requisitos e liga o `fabrica-fila`. Depois confere que ele ficou `active` (3 tentativas, de 2 em 2 s); se não ficar, sai com 1 e manda ver o `journalctl --user -u fabrica-fila`. Os requisitos são:
+O instalador é idempotente: atualiza o kit no branch pedido, cria `~/fabrica/planos`, `fila.json` e `capacidade.json` (só se faltarem), liga o linger, instala as units de usuário, confere os requisitos e liga o `fabrica-fila`. Depois confere que ele ficou `active` (3 tentativas, de 2 em 2 s); se não ficar, sai com 1 e manda ver o `journalctl --user -u fabrica-fila`. Ele não reinicia um `fabrica-fila` que já estava rodando: depois de atualizar o kit, rode `systemctl --user restart fabrica-fila` para o código novo valer. Os requisitos são:
 
 - grupo `docker`, também nas units (veja abaixo);
 - `sudo -n`;
