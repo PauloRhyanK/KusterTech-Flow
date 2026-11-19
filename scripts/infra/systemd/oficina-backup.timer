@@ -1,0 +1,9 @@
+[Unit]
+Description=Backup externo diário da oficina às 03:30 (antes da limpeza das 04:00)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

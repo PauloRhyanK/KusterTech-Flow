@@ -1,0 +1,9 @@
+[Unit]
+Description=Amostra de desempenho da oficina a cada minuto
+
+[Timer]
+OnCalendar=minutely
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
