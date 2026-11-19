@@ -6,15 +6,18 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
    na mesma cadência do despachante, e marca a drenagem no `capacidade.json` enquanto espera os runs;
 2. descobre os planos (`.fabrica/planos/*.json` e o legado `.fabrica/plano.json`) no branch padrão de cada
    repositório de `fila.json`; um plano inválido não entra e gera um aviso por mudança de conteúdo;
-3. aplica a fila (`fila.enfileirar` e `fila.admitir`): para cada admitido, clona o repositório, grava o
+3. lê a caixa de entrada (`<raiz>/entrada/*.json`, gravada por `segurar` e `soltar` da CLI) antes da fila: um
+   plano segurado não é admitido, mesmo com vaga e trava livres; pedido torto ou desatualizado vira aviso e
+   o arquivo é apagado (um pedido `remover` fica na caixa, intocado);
+4. aplica a fila (`fila.enfileirar` e `fila.admitir`): para cada admitido, clona o repositório, grava o
    `plano.env`, roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
-4. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
+5. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
    concluído (`estado.plano_concluido`) tem a unit desligada, as reservas soltas e vira `concluido`;
-5. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
+6. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
    rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
-6. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
+7. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
    mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo;
-7. grava `fila-estado.json` de forma atômica.
+8. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
 meio não admite duas vezes nem roda `iniciar` de novo. Os tokens só vêm de arquivos e nunca são gravados.
@@ -53,11 +56,13 @@ ARQ_TRAVA = "coordenador.lock"
 ARQ_LOG = "log.jsonl"
 ARQ_COORDENADOR_ENV = "coordenador.env"
 DIR_PLANOS = "planos"
+DIR_ENTRADA = "entrada"
 DIR_PLANOS_NO_REPO = ".fabrica/planos"
 CAMINHO_LEGADO = ".fabrica/plano.json"
 KIT_PADRAO = pathlib.Path(__file__).resolve().parents[2]
 RAIZ_PADRAO = "~/fabrica"
 INTERVALO_PADRAO = 60
+COMANDOS_DA_CAIXA = ("segurar", "soltar")
 
 CODIGO_ERRO = 1
 CODIGO_ENTRADA = 2
@@ -395,6 +400,82 @@ class Coordenador:
         despachante.gravar_json_atomico(caminho, dados)
         return "repositório %s registrado (projeto %s)" % (repo, projeto)
 
+    def pedir(self, comando: str, id_: str, **opcoes) -> str:
+        """Valida o pedido contra o `fila-estado.json` atual e o grava na caixa; o próximo ciclo o aplica."""
+        if comando not in COMANDOS_DA_CAIXA:
+            raise ErroDeEntrada(["comando desconhecido: %r" % despachante._cortar(str(comando), 100)])
+        entrada = _atuais(ler_estado(self.raiz)["fila"]).get(id_)
+        if entrada is None:
+            raise ErroDeEntrada(["plano desconhecido na fila: %r" % despachante._cortar(str(id_), 200)])
+        if comando == "segurar" and entrada.get("estado") != "aguardando":
+            raise ErroDeEntrada(["só quem aguarda pode ser segurado: %s está %s" % (id_, entrada.get("estado"))])
+        if comando == "soltar" and not entrada.get("segurado"):
+            raise ErroDeEntrada(["%s não está segurado" % id_])
+        despachante.enfileirar_pedido(self.raiz, {"comando": comando, "id": id_, **opcoes})
+        return "pedido %s de %s gravado; aplicado no próximo ciclo" % (comando, id_)
+
+    # ------------------------------------------------------------ caixa de entrada
+
+    def _passo_entrada(self, eventos: list) -> None:
+        pasta = self.raiz / DIR_ENTRADA
+        if not pasta.is_dir():
+            return
+        pedidos = sorted(p for p in pasta.iterdir() if p.name.endswith(".json") and not p.name.startswith(".") and p.is_file())
+        for caminho in pedidos:
+            chave = "entrada:%s" % caminho.name
+            try:
+                pedido = despachante._json_estrito(caminho.read_text(encoding="utf-8"))
+                if not isinstance(pedido, dict):
+                    raise ValueError("não é um objeto")
+            except (OSError, ValueError, RecursionError):
+                self._aviso(chave, "pedido inválido em %s/%s descartado" % (DIR_ENTRADA, caminho.name))
+                self._descartar(caminho, chave)
+                continue
+            comando, id_ = pedido.get("comando"), pedido.get("id")
+            if comando == "remover":
+                continue  # a remoção pelo coordenador vem em outra tarefa; o pedido espera na caixa
+            if comando not in ("segurar", "soltar") or not isinstance(id_, str):
+                self._aviso(chave, "pedido desconhecido em %s/%s descartado: %r" % (DIR_ENTRADA, caminho.name, comando))
+                self._descartar(caminho, chave)
+                continue
+            try:
+                self._segurar(id_, comando == "segurar", chave, eventos)
+            except Exception as exc:  # noqa: BLE001 - o pedido fica para o próximo ciclo
+                self._erro_de_etapa("pedido", caminho.name, exc)
+                continue
+            self._descartar(caminho, chave)
+
+    def _segurar(self, id_: str, valor: bool, chave: str, eventos: list) -> None:
+        comando = "segurar" if valor else "soltar"
+        entrada = _atuais(self.dados["fila"]).get(id_)
+        if entrada is None:
+            self._aviso(chave, "pedido %s de %s recusado: plano desconhecido" % (comando, id_))
+            return
+        if valor and entrada.get("estado") != "aguardando":
+            self._aviso(chave, "pedido segurar de %s recusado: o plano está %s" % (id_, entrada.get("estado")))
+            return
+        if not valor and not entrada.get("segurado"):
+            self._aviso(chave, "pedido soltar de %s recusado: o plano não está segurado" % id_)
+            return
+        self.dados["fila"] = fila.segurar(self.dados["fila"], id_, valor)
+        self._salvar()
+        if valor:
+            self._aviso(chave, "%s segurado na fila (coordenador.py soltar %s para liberar)" % (id_, id_))
+        else:
+            self._aviso(chave, "%s solto na fila" % id_)
+        self._log({"evento": "segurado" if valor else "solto", "id": id_})
+        eventos.append({"evento": "segurado" if valor else "solto", "id": id_})
+
+    def _descartar(self, caminho: pathlib.Path, chave: str) -> None:
+        try:
+            caminho.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            self._aviso("%s:apagar" % chave, "não foi possível apagar o pedido %s/%s (%s)" % (DIR_ENTRADA, caminho.name, type(exc).__name__))
+            return
+        self._esquecer(chave)
+
     # ------------------------------------------------------------ laço
 
     def rodar(self, *, intervalo: int = INTERVALO_PADRAO, ciclos: int | None = None, dormir=time.sleep) -> None:
@@ -420,7 +501,7 @@ class Coordenador:
                     capacidade.definir_drenagem(self.capacidade, None)
 
     def ciclo(self) -> list[dict]:
-        """Os 6 passos, nesta ordem. Devolve os eventos do ciclo.
+        """Os passos, nesta ordem. Devolve os eventos do ciclo.
 
         `fila.json` ou `fila-estado.json` ilegível levanta `ErroDeEntrada` (o `rodar` deixa sair com 2).
         """
@@ -437,6 +518,7 @@ class Coordenador:
                     self._erro_de_etapa("drenagem_herdada", "capacidade", exc)
             self._passo_preparar(eventos)
             descobertos, falhos = self._passo_descobrir(config)
+            self._passo_entrada(eventos)
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
             self._passo_orfaos(rodando, confiavel, eventos)
@@ -952,7 +1034,7 @@ def status(raiz, central=None) -> str:
     atuais = sorted(_atuais(dados["fila"]).values(), key=lambda e: (str(e.get("entrouEm")), e["id"]))
     if atuais:
         linhas.append("fila:")
-        linhas.extend("  %s: %s (entrou em %s)" % (e["id"], e["estado"], e.get("entrouEm")) for e in atuais)
+        linhas.extend("  %s: %s%s (entrou em %s)" % (e["id"], e["estado"], " (segurado)" if e.get("segurado") else "", e.get("entrouEm")) for e in atuais)
     else:
         linhas.append("fila vazia")
     try:
@@ -1086,6 +1168,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="fila, vagas, reservas, travas e avisos")
     registrar = sub.add_parser("registrar", help="registra um repositório (dono/repo) na fila")
     registrar.add_argument("repo")
+    for nome, ajuda in (("segurar", "segura um plano aguardando (não é admitido até soltar)"), ("soltar", "solta um plano segurado")):
+        sub.add_parser(nome, help=ajuda).add_argument("id")
     vagas = sub.add_parser("vagas", help="define as vagas (e limpa o OOM)")
     vagas.add_argument("n", type=int)
     vagas.add_argument("--ram-minima-mb", type=int, default=None)
@@ -1121,7 +1205,7 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, dor
     args = _parser().parse_args(argv)
     raiz = pathlib.Path(args.raiz).expanduser()
     try:
-        if args.comando in ("registrar", "status", "vagas"):
+        if args.comando in ("registrar", "status", "vagas", "segurar", "soltar"):
             # a CLI roda na shell, sem o EnvironmentFile da unit: lê o mesmo coordenador.env
             ambiente = _com_coordenador_env(ambiente, raiz)
         if args.comando == "status":
@@ -1129,6 +1213,9 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, dor
             return 0
         if args.comando == "vagas":
             print(_vagas(raiz, args.n, args.ram_minima_mb), file=saida)
+            return 0
+        if args.comando in COMANDOS_DA_CAIXA:
+            print(construir(ambiente, raiz).pedir(args.comando, args.id), file=saida)
             return 0
         if args.comando == "registrar":
             print(construir(ambiente, raiz).registrar(args.repo), file=saida)

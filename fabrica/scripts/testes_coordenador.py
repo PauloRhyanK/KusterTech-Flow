@@ -989,6 +989,100 @@ class TestesDrenagem(Base):
         self.assertIsNone(self.drenagem())
 
 
+class TestesSegurar(Base):
+    def dois_que_colidem(self):
+        self.publicar("login", ["src/x/**"])
+        self.publicar("cobranca", ["src/x/**"])
+        c = self.novo()
+        c.ciclo()
+        estados = self.estados()
+        primeiro = [i for i, e in estados.items() if e == "ativo"][0]
+        segundo = [i for i, e in estados.items() if e == "aguardando"][0]
+        return c, primeiro, segundo
+
+    def test_segurar_impede_admissao_com_vaga_e_trava_livres(self):
+        c, primeiro, segundo = self.dois_que_colidem()
+        frase = c.pedir("segurar", segundo)
+        self.assertEqual(frase, "pedido segurar de %s gravado; aplicado no próximo ciclo" % segundo)
+        self.concluir(primeiro)
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(self.estados()[segundo], "aguardando")
+        self.assertNotIn(self.unit(segundo), self.ligados())
+        self.assertIn("%s segurado na fila (coordenador.py soltar %s para liberar)" % (segundo, segundo), self.avisos())
+
+    def test_soltar_admite_no_ciclo_seguinte(self):
+        c, primeiro, segundo = self.dois_que_colidem()
+        c.pedir("segurar", segundo)
+        self.concluir(primeiro)
+        c.ciclo()
+        c.ciclo()
+        c.pedir("soltar", segundo)
+        c.ciclo()
+        self.assertEqual(self.estados()[segundo], "ativo")
+        self.assertIn(self.unit(segundo), self.ligados())
+        self.assertIn("%s solto na fila" % segundo, self.avisos())
+
+    def test_segurar_fora_de_aguardando_recusa(self):
+        c, primeiro, _ = self.dois_que_colidem()
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            c.pedir("segurar", primeiro)
+        self.assertFalse(list((self.raiz / "entrada").glob("*.json")) if (self.raiz / "entrada").exists() else [])
+
+    def test_soltar_sem_estar_segurado_recusa(self):
+        c, _, segundo = self.dois_que_colidem()
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            c.pedir("soltar", segundo)
+
+    def test_id_desconhecido_recusa(self):
+        c, _, _ = self.dois_que_colidem()
+        for comando in ("segurar", "soltar"):
+            with self.assertRaises(coordenador.ErroDeEntrada):
+                c.pedir(comando, "nao--existe--x--y")
+        self.assertFalse((self.raiz / "entrada").exists())
+
+    def test_estado_que_mudou_depois_do_pedido_vira_aviso_e_apaga(self):
+        c, primeiro, segundo = self.dois_que_colidem()
+        c.pedir("segurar", segundo)
+        self.concluir(primeiro)
+        self.dados_forcar_ativo(segundo)
+        c.ciclo()
+        self.assertEqual(list((self.raiz / "entrada").glob("*.json")), [])
+        self.assertTrue(any("segurar" in a and segundo in a for a in self.avisos()))
+
+    def dados_forcar_ativo(self, id_):
+        dados = self.fila_estado()
+        for e in dados["fila"]:
+            if e["id"] == id_:
+                e["estado"] = "ativo"
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+
+    def test_pedido_torto_e_descartado(self):  # [RF 1]
+        self.publicar("login", ["src/x/**"])
+        entrada = self.raiz / "entrada"
+        entrada.mkdir()
+        (entrada / "x.json").write_text("{", encoding="utf-8")
+        (entrada / "y.json").write_text('{"comando":"voar"}', encoding="utf-8")
+        self.novo().ciclo()
+        self.assertEqual(list(entrada.glob("*.json")), [])
+        self.assertEqual(len([a for a in self.avisos() if "pedido" in a]), 2)
+        self.assertIn("ativo", self.estados().values())
+
+    def test_remover_fica_na_caixa_intocado(self):
+        self.publicar("login", ["src/x/**"])
+        entrada = self.raiz / "entrada"
+        entrada.mkdir()
+        (entrada / "r.json").write_text('{"comando":"remover","id":"x"}', encoding="utf-8")
+        self.novo().ciclo()
+        self.assertEqual([p.name for p in entrada.glob("*.json")], ["r.json"])
+
+    def test_status_mostra_segurado(self):
+        c, _, segundo = self.dois_que_colidem()
+        c.pedir("segurar", segundo)
+        c.ciclo()
+        self.assertIn("%s: aguardando (segurado)" % segundo, c.status())
+
+
 class TestesStatus(Base):
     def test_status_mostra_fila_vagas_reservas_travas_e_avisos(self):
         a = self.publicar("login", ["src/login/**"])
@@ -1330,6 +1424,20 @@ class TestesMain(Base):
         self.assertEqual(vistos[1]["WARREN_TOKEN_FILE"], "/seg/w")
         for comando in (["status"], ["vagas", "2"]):
             self.assertEqual(coordenador.main(["--raiz", str(self.raiz), *comando], ambiente={}, saida=io.StringIO(), erro=io.StringIO()), 0)
+
+    def test_segurar_pela_cli_grava_pedido_e_id_desconhecido_sai_com_2(self):
+        self.publicar("login", ["src/x/**"])
+        self.publicar("cobranca", ["src/x/**"])
+        c = self.novo()
+        c.ciclo()
+        aguardando = [i for i, e in self.estados().items() if e == "aguardando"][0]
+        codigo, saida, _ = self.rodar("segurar", aguardando)
+        self.assertEqual(codigo, 0)
+        self.assertIn("gravado", saida)
+        self.assertEqual(len(list((self.raiz / "entrada").glob("*.json"))), 1)
+        codigo, _, erro = self.rodar("segurar", "nao-existe")
+        self.assertEqual(codigo, 2)
+        self.assertTrue(erro)
 
     def test_ler_coordenador_env(self):
         self.assertEqual(coordenador.ler_coordenador_env(self.raiz), {})
