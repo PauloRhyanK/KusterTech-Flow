@@ -7,12 +7,14 @@ A base enxuta (produto 1) está no ar na oficina desde 19/11/2026. Estes são os
 
 | Ordem | Produto | Spec | Depende de |
 | --- | --- | --- | --- |
-| 0 | Destravar a Fábrica | [`2026-11-19-fabrica-remover-plano-design.md`](2026-11-19-fabrica-remover-plano-design.md) | — |
-| 1 | Atividade real | [`2026-11-19-atividade-real-design.md`](2026-11-19-atividade-real-design.md) | — |
-| 2 | Publicação | [`2026-11-19-publicacao-design.md`](2026-11-19-publicacao-design.md) | — |
-| 3 | Demandas | [`2026-11-19-demandas-design.md`](2026-11-19-demandas-design.md) | 0 |
-| 4 | Decidir | [`2026-11-19-decidir-design.md`](2026-11-19-decidir-design.md) | 3 |
-| 5 | Relatos de usuários | [`2026-11-19-relatos-de-usuarios-design.md`](2026-11-19-relatos-de-usuarios-design.md) | 3 e 4 |
+| 0 | Destravar a Fábrica | [`2026-11-19-fabrica-remover-plano-design.md`](2026-11-19-fabrica-remover-plano-design.md) (aprovada em 19/11) | — |
+| 1 | Publicação | [`2026-11-19-publicacao-design.md`](2026-11-19-publicacao-design.md) | — |
+| 2 | Demandas | [`2026-11-19-demandas-design.md`](2026-11-19-demandas-design.md) | 0 |
+| 3 | Atividade real | [`2026-11-19-atividade-real-design.md`](2026-11-19-atividade-real-design.md) | — |
+| 4 | Decidir | [`2026-11-19-decidir-design.md`](2026-11-19-decidir-design.md) | 2 |
+| 5 | Relatos de usuários | [`2026-11-19-relatos-de-usuarios-design.md`](2026-11-19-relatos-de-usuarios-design.md) | 2 e 4 |
+
+**Ordem alterada pelo Paulo em 19/11/2026:** Publicação e Demandas passam à frente de Atividade real, porque as filas e o orquestrador de demandas precisam ir, com documentação de uso, para as sessões de outros projetos.
 
 ## Por que esta ordem
 
