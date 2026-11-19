@@ -49,7 +49,7 @@ journalctl --user -u 'fabrica-plano@<id>' -n 100
 
 O retrato também aparece no Flow, em `/fabrica`, quando `FABRICA_CENTRAL_URL` está configurada. A operação completa está em [`fabrica/README.md`](../../fabrica/README.md).
 
-> O plano `paulorhyank--caisv2--telas-crm-cais--461d19` está pausado de propósito (issue #40 do CAISv2). Não rode `retomar`, não feche a #40 e não religue o despachante dele sem decisão do Paulo.
+> Em 19/11/2026 os dois planos pausados desde 04/11 e um plano já feito por fora saíram da fila com `coordenador.py remover --manter-arquivo`, e o plano do conector de portal ficou segurado (`coordenador.py soltar <id>` libera). Ver [`fabrica/README.md`](../../fabrica/README.md).
 
 ### Capacidade
 
