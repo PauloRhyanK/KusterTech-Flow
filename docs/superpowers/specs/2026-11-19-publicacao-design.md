@@ -1,7 +1,7 @@
 # Publicação — desenho
 
 **Data:** 19/11/2026
-**Estado:** revisada com as respostas do Paulo em 19/11/2026; aguardando a aprovação por escrito
+**Estado:** aprovada pelo Paulo em 19/11/2026
 **Desenho de referência:** [`desenhos/2026-11-18-base-enxuta/04-decidir-e-publicacao.html`](desenhos/2026-11-18-base-enxuta/04-decidir-e-publicacao.html), aba "Publicação"
 
 ## 1. Por que
