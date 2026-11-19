@@ -463,6 +463,7 @@ class Coordenador:
                     etapas.append("esperar o run do orquestrador %s terminar" % alvos["runOrquestrador"])
                 etapas.extend("fechar o PR do orquestrador %s" % u for u in alvos["prs"])
                 etapas.extend("fechar a issue %s" % u for u in alvos["issues"])
+                etapas.extend("%s (404): ignorado" % nome for nome in alvos["ausentes"])
         etapas.append("marcar %s como removido%s e soltar as reservas e a trava" % (id_, " (o arquivo fica, sem reentrar)" if manter_arquivo else ""))
         return "simulação: remover %s (nada foi gravado)\n%s" % (id_, "\n".join("  - %s" % e for e in etapas))
 
@@ -525,8 +526,26 @@ class Coordenador:
             plano = None
         return estado, plano if isinstance(plano, dict) else None
 
+    @staticmethod
+    def _ou_ausente(nome: str, ausentes: list, ler):
+        """`ler()`, ou `None` quando o Warren ou o GitHub responde 404 (anotado em `ausentes`).
+
+        Só o 404 explícito (`despachante._eh_404`) vira "nada a fazer"; falha de rede, timeout e outro HTTP levantam.
+        """
+        try:
+            return ler()
+        except Exception as exc:  # noqa: BLE001 - o que não é 404 sobe para o chamador
+            if despachante._eh_falha_de_rede(exc) or not despachante._eh_404(exc):
+                raise
+            ausentes.append(nome)
+            return None
+
     def _alvos_da_remocao(self, entrada: dict, estado: dict, plano) -> dict:
-        """Só leituras: os Plan Runs vivos, o run do orquestrador em curso, os PRs do orquestrador e as issues abertas."""
+        """Só leituras: os Plan Runs vivos, o run do orquestrador em curso, os PRs do orquestrador e as issues abertas.
+
+        Plan Run, run, PR ou issue com 404 fica de fora e entra em `ausentes` ("Plan Run X", "issue URL"...).
+        """
+        ausentes = []
         projeto = {r["repo"].lower(): r["projeto"] for r in (self._config or ler_config(self.raiz))["repos"]}.get(entrada["repo"].lower())
         projeto = projeto or (estado.get("projeto") if despachante._texto(estado.get("projeto")) else None)
         estados_dos_planos = {}
@@ -539,26 +558,34 @@ class Coordenador:
         for raia in despachante._dict(estado.get("raias")).values():
             plan_run = despachante._dict(raia).get("planRunId")
             if despachante._texto(plan_run) and plan_run not in estados_dos_planos:
-                estados_dos_planos[plan_run] = self.motor.plano(plan_run).get("estado")
+                lido = self._ou_ausente("Plan Run %s não encontrado" % plan_run, ausentes, lambda p=plan_run: self.motor.plano(p))
+                if lido is not None:
+                    estados_dos_planos[plan_run] = lido.get("estado")
         planos = sorted(i for i, e in estados_dos_planos.items() if e not in motor_.TERMINAIS_DE_PLANO)
         orquestrador = despachante._dict(estado.get("orquestrador"))
         prs = [u for u in despachante._lista(estado.get("prsOrquestrador")) if despachante._texto(u)]
         run_vivo = None
         if despachante._texto(orquestrador.get("runId")):
-            run = self.motor.run(orquestrador["runId"])
-            if run.get("estado") not in despachante.TERMINAIS_DE_RUN:
-                run_vivo = orquestrador["runId"]
-            elif despachante._texto(run.get("prUrl")):
+            run_id = orquestrador["runId"]
+            run = self._ou_ausente("run do orquestrador %s não encontrado" % run_id, ausentes, lambda: self.motor.run(run_id))
+            if run is not None and run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+                run_vivo = run_id
+            elif run is not None and despachante._texto(run.get("prUrl")):
                 prs.append(run["prUrl"])
         issues = [despachante._dict(estado.get("decisaoPausa")).get("url")]
         issues += [despachante._dict(d).get("url") for d in despachante._lista(estado.get("decisoes"))]
         issues.append(despachante._dict(orquestrador.get("bloqueio")).get("url"))
-        return {
-            "planos": planos,
-            "runOrquestrador": run_vivo,
-            "prs": [u for u in dict.fromkeys(prs) if self.forja.pr(u).get("aberto")],
-            "issues": [u for u in dict.fromkeys(i for i in issues if despachante._texto(i)) if not self.forja.decisao(u).get("fechada")],
-        }
+        prs_abertos = []
+        for url in dict.fromkeys(prs):
+            lido = self._ou_ausente("PR %s não encontrado" % url, ausentes, lambda u=url: self.forja.pr(u))
+            if lido is not None and lido.get("aberto"):
+                prs_abertos.append(url)
+        abertas = []
+        for url in dict.fromkeys(i for i in issues if despachante._texto(i)):
+            lido = self._ou_ausente("issue %s não encontrada" % url, ausentes, lambda u=url: self.forja.decisao(u))
+            if lido is not None and not lido.get("fechada"):
+                abertas.append(url)
+        return {"planos": planos, "runOrquestrador": run_vivo, "prs": prs_abertos, "issues": abertas, "ausentes": ausentes}
 
     def _remover(self, pedido: dict, chave: str = "", eventos=None) -> bool:
         """Aplica um pedido de remoção. True: concluiu (ou não há o que fazer) e o pedido sai da caixa.
@@ -600,15 +627,18 @@ class Coordenador:
         if estado is not None:
             try:
                 alvos = self._alvos_da_remocao(entrada, estado, plano)
+                ausentes = alvos["ausentes"]
                 for plan_run in alvos["planos"]:
-                    self.motor.cancelar_plano(plan_run)
+                    self._ou_ausente("Plan Run %s não encontrado" % plan_run, ausentes, lambda p=plan_run: self.motor.cancelar_plano(p))
                 if alvos["runOrquestrador"]:
                     self._aviso(progresso, "%s: esperando o run do orquestrador terminar para remover" % id_)
                     return False
                 for url in alvos["prs"]:
-                    self.forja.fechar_pr(url, COMENTARIO_REMOCAO)
+                    self._ou_ausente("PR %s não encontrado" % url, ausentes, lambda u=url: self.forja.fechar_pr(u, COMENTARIO_REMOCAO))
                 for url in alvos["issues"]:
-                    self.forja.fechar_decisao(url, COMENTARIO_REMOCAO)
+                    self._ou_ausente("issue %s não encontrada" % url, ausentes, lambda u=url: self.forja.fechar_decisao(u, COMENTARIO_REMOCAO))
+                for nome in dict.fromkeys(ausentes):
+                    self._aviso("remover:%s:404:%s" % (id_, nome), "%s: %s (404), ignorado na remoção" % (id_, nome))
             except Exception as exc:  # noqa: BLE001 - Warren ou GitHub fora: o ciclo seguinte refaz
                 self._aviso(progresso, "não foi possível remover %s agora, tento de novo no próximo ciclo: %s" % (id_, self._erro(exc)))
                 return False

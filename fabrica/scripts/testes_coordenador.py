@@ -1240,6 +1240,43 @@ class TestesRemover(Base):
         self.assertEqual(self.estados()[a], "removido")
         self.assertEqual(self.caixa(), [])
 
+    def test_plan_run_404_no_estado_conclui_com_aviso(self):
+        c, a = self.pausado()
+        estado = self.estado_do_plano(a)
+        estado["raias"]["raia-0"] = {"estado": "concluida", "planRunId": "plano-sumido"}
+        self.gravar_estado_do_plano(a, estado)
+        c.pedir("remover", a, manter_arquivo=True)
+        self.assertIn("Plan Run plano-sumido não encontrado", c.pedir("remover", a, manter_arquivo=True, simular=True))
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertEqual(self.forja.decisao(ISSUE_PAUSA)["fechada"], True)
+        self.assertTrue(any(a in m and "Plan Run plano-sumido não encontrado" in m for m in self.avisos()))
+
+    def test_plan_run_404_http_do_cliente_real_tambem_conclui(self):
+        c, a = self.admitido()
+        self.com_plan_run(a)
+        with unittest.mock.patch.object(self.motor, "plano", side_effect=RuntimeError("GET /plan-runs/plano-raia: HTTP 404")):
+            c.pedir("remover", a, manter_arquivo=True)
+            c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+
+    def test_issue_404_conclui_com_aviso(self):
+        c, a = self.pausado()
+        del self.forja._decisoes[ISSUE_PAUSA]
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertTrue(any(a in m and ("issue %s não encontrada" % ISSUE_PAUSA) in m for m in self.avisos()))
+
+    def test_falha_de_rede_no_cancelar_nao_conclui(self):
+        c, a = self.pausado()
+        c.pedir("remover", a, manter_arquivo=True)
+        rede = RuntimeError("POST /plan-runs/plano-raia/cancel: falha de rede (TimeoutError)")
+        with unittest.mock.patch.object(self.motor, "cancelar_plano", side_effect=rede):
+            c.ciclo()
+        self.assertEqual(self.estados()[a], "pausado")
+        self.assertEqual(len(self.caixa()), 1)
+
     def test_orquestrador_em_curso_espera(self):  # [RF 3]
         c, a = self.admitido()
         self.motor.definir_run("run-orq", estado="running")
