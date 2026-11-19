@@ -5,6 +5,8 @@ import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { PREFIXO_DO_TOKEN_DE_PUBLICACAO } from './contrato'
+import { MOTIVOS } from './model'
+import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
 
 // O token é devolvido só aqui; no banco fica apenas o hash (mesmo hash da Fábrica).
 export async function criarFonteDePublicacao(
@@ -53,13 +55,17 @@ export async function listarFontesDePublicacao(sujeito: Sujeito) {
   })
 }
 
-/** Liga ou desliga a pausa de todas as filas; devolve `true` quando ficou pausada. */
-export async function alternarPausaGeral(sujeito: Sujeito): Promise<boolean> {
+/**
+ * Grava a pausa geral pedida (o que a pessoa viu na tela), sem alternar às cegas: com a tela
+ * velha, "Pausar tudo" sobre uma pausa que já existe continua pausado. Já no estado pedido, nada
+ * muda (o instante da pausa fica). Devolve o estado final.
+ */
+export async function definirPausaGeral(sujeito: Sujeito, pausar: boolean): Promise<boolean> {
   exigirPermissao(sujeito, 'projetos.gerenciar')
 
-  return db.$transaction(async (tx) => {
+  await db.$transaction(async (tx) => {
     const atual = await tx.pausaGeralDePublicacao.findUnique({ where: { id: 1 } })
-    const pausar = atual?.pausadaEm == null
+    if ((atual?.pausadaEm != null) === pausar) return
     const dados = pausar
       ? { pausadaEm: new Date(), pausadaPorId: sujeito.usuarioId }
       : { pausadaEm: null, pausadaPorId: null }
@@ -68,8 +74,8 @@ export async function alternarPausaGeral(sujeito: Sujeito): Promise<boolean> {
       create: { id: 1, ...dados },
       update: dados,
     })
-    return pausar
   })
+  return pausar
 }
 
 // A mesma trava por repositório da recepção e do worker.
@@ -103,15 +109,47 @@ export async function retomarFila(sujeito: Sujeito, repositorioId: string): Prom
   })
 }
 
-/** Depois de um histórico reescrito: o que foi publicado antes de agora deixa de valer como "no ar". */
+/**
+ * Depois de um histórico reescrito: o que foi publicado antes de agora deixa de valer como "no ar".
+ * Só age quando a regra 2 está de fato falhando: o último recusado depois da base é por histórico
+ * reescrito e nada foi publicado depois dele (revalidado sob a trava).
+ */
 export async function redefinirNoAr(sujeito: Sujeito, repositorioId: string): Promise<void> {
   exigirPermissao(sujeito, 'configuracoes.gerenciar')
 
   await comTrava(repositorioId, async (tx) => {
-    const { count } = await tx.configuracaoDePublicacao.updateMany({
+    const config = await tx.configuracaoDePublicacao.findUnique({
+      where: { repositorioId },
+      select: { baseRedefinidaEm: true },
+    })
+    if (!config) throw new ErroDeDominio(SEM_CONFIGURACAO)
+    const base = config.baseRedefinidaEm
+    const recusado = await tx.pedidoDePublicacao.findFirst({
+      where: {
+        repositorioId,
+        estado: 'RECUSADO',
+        concluidoEm: base ? { gt: base } : { not: null },
+      },
+      orderBy: { concluidoEm: 'desc' },
+      select: { motivo: true, concluidoEm: true },
+    })
+    const publicado = await tx.pedidoDePublicacao.findFirst({
+      where: filtroDoNoAr(repositorioId, base),
+      orderBy: ORDEM_DO_NO_AR,
+      select: { concluidoEm: true },
+    })
+    const reescrito =
+      recusado?.motivo === MOTIVOS.historicoReescrito &&
+      recusado.concluidoEm !== null &&
+      (publicado?.concluidoEm == null || publicado.concluidoEm < recusado.concluidoEm)
+    if (!reescrito) {
+      throw new ErroDeDominio(
+        'O histórico de main não foi reescrito: não há o que redefinir neste repositório.',
+      )
+    }
+    await tx.configuracaoDePublicacao.update({
       where: { repositorioId },
       data: { baseRedefinidaEm: new Date() },
     })
-    if (count === 0) throw new ErroDeDominio(SEM_CONFIGURACAO)
   })
 }

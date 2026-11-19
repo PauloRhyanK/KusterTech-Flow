@@ -4,11 +4,7 @@ import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { MOTIVOS } from '@/modules/fila-de-publicacao/model'
 import { obterTelaDePublicacao } from '@/modules/fila-de-publicacao/queries'
-import {
-  alternarPausaGeral,
-  redefinirNoAr,
-  retomarFila,
-} from '@/modules/fila-de-publicacao/service'
+import { definirPausaGeral, redefinirNoAr, retomarFila } from '@/modules/fila-de-publicacao/service'
 import { commitNoAr } from '@/modules/fila-de-publicacao/worker'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
@@ -116,7 +112,7 @@ beforeEach(async () => {
         modo: 'IMEDIATO',
         descricao: 'Exportar CSV',
         estado: 'NA_FILA',
-        criadoEm: minutos(-1),
+        criadoEm: minutos(-2),
       },
       {
         repositorioId: alfa,
@@ -241,14 +237,57 @@ describe('obterTelaDePublicacao', () => {
 })
 
 describe('ações da tela', () => {
-  test('alternarPausaGeral exige projetos.gerenciar e alterna; redefinirNoAr exige configuracoes.gerenciar e faz o próximo pedido valer como primeiro', async () => {
-    await expect(alternarPausaGeral(semPermissao)).rejects.toBeInstanceOf(ErroDeAutorizacao)
-    expect(await alternarPausaGeral(admin)).toBe(true)
-    expect((await obterTelaDePublicacao(admin, AGORA)).pausaGeral).toBe(true)
-    expect(await alternarPausaGeral(admin)).toBe(false)
-    expect((await obterTelaDePublicacao(admin, AGORA)).pausaGeral).toBe(false)
+  test('definirPausaGeral exige projetos.gerenciar e grava o valor pedido, nos dois sentidos e sem efeito quando já está nele', async () => {
+    await expect(definirPausaGeral(semPermissao, true)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    const pausa = () => db.pausaGeralDePublicacao.findUnique({ where: { id: 1 } })
 
+    expect(await definirPausaGeral(admin, true)).toBe(true)
+    expect((await obterTelaDePublicacao(admin, AGORA)).pausaGeral).toBe(true)
+    const primeira = (await pausa())?.pausadaEm
+    expect(primeira).not.toBeNull()
+    // De novo "pausar": continua pausada, com o mesmo instante.
+    expect(await definirPausaGeral(admin, true)).toBe(true)
+    expect((await pausa())?.pausadaEm).toEqual(primeira)
+
+    expect(await definirPausaGeral(admin, false)).toBe(false)
+    expect((await obterTelaDePublicacao(admin, AGORA)).pausaGeral).toBe(false)
+    expect(await definirPausaGeral(admin, false)).toBe(false)
+    expect((await pausa())?.pausadaEm).toBeNull()
+  })
+
+  test('aba velha: alguém já pausou tudo e outra aba ainda mostra "Pausar tudo" → continua pausada', async () => {
+    await definirPausaGeral(admin, true)
+    // A aba velha envia pausar=true (o que ela mostrava); nada é retomado.
+    expect(await definirPausaGeral(admin, true)).toBe(true)
+    expect((await obterTelaDePublicacao(admin, AGORA)).pausaGeral).toBe(true)
+  })
+
+  test('redefinirNoAr exige configuracoes.gerenciar, só age com o histórico reescrito e faz o próximo pedido valer como primeiro', async () => {
     await expect(redefinirNoAr(semPermissao, alfa)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    // Sem recusa por histórico reescrito: recusa redefinir.
+    await expect(redefinirNoAr(admin, alfa)).rejects.toBeInstanceOf(ErroDeDominio)
+    const recusar = (motivo: string, concluidoEm: Date) =>
+      db.pedidoDePublicacao.create({
+        data: {
+          repositorioId: alfa,
+          commit: sha('7'),
+          modo: 'IMEDIATO',
+          estado: 'RECUSADO',
+          motivo,
+          concluidoEm,
+        },
+      })
+    await recusar(MOTIVOS.foraDeMain, minutos(-20))
+    await expect(redefinirNoAr(admin, alfa)).rejects.toBeInstanceOf(ErroDeDominio)
+    // Recusa antiga, com uma publicação depois dela: o histórico já voltou a andar.
+    await recusar(MOTIVOS.historicoReescrito, minutos(-200))
+    await expect(redefinirNoAr(admin, alfa)).rejects.toBeInstanceOf(ErroDeDominio)
+    expect(
+      (await db.configuracaoDePublicacao.findUniqueOrThrow({ where: { repositorioId: alfa } }))
+        .baseRedefinidaEm,
+    ).toBeNull()
+
+    await recusar(MOTIVOS.historicoReescrito, minutos(-10))
     expect(await commitNoAr(alfa)).toBe(sha('1'))
     await redefinirNoAr(admin, alfa)
     const config = await db.configuracaoDePublicacao.findUniqueOrThrow({
@@ -258,6 +297,8 @@ describe('ações da tela', () => {
     expect(await commitNoAr(alfa)).toBeNull()
     const tela = await obterTelaDePublicacao(admin, new Date())
     expect(tela.linhas[0]?.noAr).toBeNull()
+    // Redefinido: a recusa ficou antes da base e não pede outra redefinição.
+    await expect(redefinirNoAr(admin, alfa)).rejects.toBeInstanceOf(ErroDeDominio)
 
     await expect(redefinirNoAr(admin, gama)).rejects.toBeInstanceOf(ErroDeDominio)
   })

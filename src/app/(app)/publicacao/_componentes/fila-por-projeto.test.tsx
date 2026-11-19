@@ -5,7 +5,7 @@ import { MOTIVOS } from '@/modules/fila-de-publicacao/model'
 import { FilaPorProjeto } from './fila-por-projeto'
 
 vi.mock('../actions', () => ({
-  alternarPausaGeralAction: vi.fn(),
+  definirPausaGeralAction: vi.fn(),
   retomarFilaAction: vi.fn(),
   redefinirNoArAction: vi.fn(),
 }))

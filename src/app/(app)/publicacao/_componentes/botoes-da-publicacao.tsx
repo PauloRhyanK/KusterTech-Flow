@@ -4,13 +4,14 @@ import { useActionState } from 'react'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
-import { alternarPausaGeralAction, redefinirNoArAction, retomarFilaAction } from '../actions'
+import { definirPausaGeralAction, redefinirNoArAction, retomarFilaAction } from '../actions'
 
 export function BotaoDaPausaGeral({ pausada }: { pausada: boolean }) {
-  const [estado, alternar, pendente] = useActionState(alternarPausaGeralAction, {})
+  const [estado, definir, pendente] = useActionState(definirPausaGeralAction, {})
   return (
     <div className="flex flex-col items-end gap-2">
-      <form action={alternar}>
+      <form action={definir}>
+        <input type="hidden" name="pausar" value={pausada ? 'false' : 'true'} />
         <Button type="submit" variant="outline" size="lg" aria-busy={pendente} disabled={pendente}>
           {pausada ? 'Retomar tudo' : 'Pausar tudo'}
         </Button>

@@ -8,11 +8,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { exigirModulo } from '@/lib/modulos-rota'
-import {
-  alternarPausaGeral,
-  redefinirNoAr,
-  retomarFila,
-} from '@/modules/fila-de-publicacao/service'
+import { definirPausaGeral, redefinirNoAr, retomarFila } from '@/modules/fila-de-publicacao/service'
 import { resumirErroParaLog } from '@/modules/github/model'
 
 export interface EstadoDaPublicacao {
@@ -42,15 +38,24 @@ async function exigirSessao() {
   return sessao
 }
 
-// Sem campos: o botão só alterna a pausa geral.
-export async function alternarPausaGeralAction(): Promise<EstadoDaPublicacao> {
+const pausaSchema = z.object({
+  pausar: z.enum(['true', 'false'], { error: 'Dados inválidos.' }),
+})
+
+// O botão envia o que a pessoa viu ("Pausar tudo" → pausar=true), não um "alternar" às cegas.
+export async function definirPausaGeralAction(
+  _estado: EstadoDaPublicacao,
+  form: FormData,
+): Promise<EstadoDaPublicacao> {
   const sessao = await exigirSessao()
+  const parse = pausaSchema.safeParse({ pausar: form.get('pausar') })
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
   try {
-    const pausada = await alternarPausaGeral(sessao.sujeito)
+    const pausada = await definirPausaGeral(sessao.sujeito, parse.data.pausar === 'true')
     revalidatePath('/publicacao')
     return { sucesso: pausada ? 'Todas as filas estão pausadas.' : 'As filas voltaram a andar.' }
   } catch (erro) {
-    return traduzirErro(erro, 'alternar a pausa geral')
+    return traduzirErro(erro, 'definir a pausa geral')
   }
 }
 
