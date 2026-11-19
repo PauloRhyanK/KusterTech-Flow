@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { ENTRADAS_SECUNDARIAS, GRUPOS_DE_NAVEGACAO, itemAtivo } from './navegacao'
-import { Bot, Building2, FolderKanban, LayoutDashboard, Server, Settings } from 'lucide-react'
+import {
+  Bot,
+  Building2,
+  FolderKanban,
+  LayoutDashboard,
+  Rocket,
+  Server,
+  Settings,
+} from 'lucide-react'
 
 describe('navegacao', () => {
-  it('há dois grupos, Trabalho e Cadastro, com os itens e hrefs na ordem', () => {
+  it('grupo Trabalho: Início, Publicação, Fábrica; Cadastro com os itens e hrefs na ordem', () => {
     expect(
       GRUPOS_DE_NAVEGACAO.map((g) => [g.rotulo, g.itens.map((i) => [i.rotulo, i.href])]),
     ).toEqual([
@@ -11,6 +19,7 @@ describe('navegacao', () => {
         'Trabalho',
         [
           ['Início', '/'],
+          ['Publicação', '/publicacao'],
           ['Fábrica', '/fabrica'],
         ],
       ],
@@ -26,6 +35,7 @@ describe('navegacao', () => {
     const itens = GRUPOS_DE_NAVEGACAO.flatMap((g) => g.itens)
     expect(itens.map((i) => i.icone)).toEqual([
       LayoutDashboard,
+      Rocket,
       Bot,
       Building2,
       FolderKanban,
@@ -52,6 +62,7 @@ describe('navegacao', () => {
 
   it('itemAtivo: / só casa exato; /fabrica/avisos casa Fábrica; /maquinas/x casa Máquinas; /desenvolvimento/execucoes/x não casa', () => {
     expect(itemAtivo('/')?.rotulo).toBe('Início')
+    expect(itemAtivo('/publicacao')?.rotulo).toBe('Publicação')
     expect(itemAtivo('/fabrica')?.rotulo).toBe('Fábrica')
     expect(itemAtivo('/fabrica/avisos')?.rotulo).toBe('Fábrica')
     expect(itemAtivo('/clientes')?.rotulo).toBe('Clientes')
@@ -68,6 +79,7 @@ describe('navegacao', () => {
     expect(itemAtivo('/x')).toBeUndefined()
     expect(itemAtivo('/projetoss')).toBeUndefined()
     expect(itemAtivo('/fabricas')).toBeUndefined()
+    expect(itemAtivo('/projetos/p/publicacoes')?.rotulo).toBe('Projetos')
     expect(itemAtivo('/configuracao')).toBeUndefined()
   })
 })

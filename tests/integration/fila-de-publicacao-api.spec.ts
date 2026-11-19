@@ -168,6 +168,26 @@ describe('POST /api/publicacoes', () => {
     })
   })
 
+  test('depois de redefinir o que está no ar, o commit publicado antes não conta como "no ar"', async () => {
+    await configurar()
+    await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: C1,
+        modo: 'IMEDIATO',
+        estado: 'PUBLICADO',
+        concluidoEm: new Date(AGORA.getTime() - 60_000),
+      },
+    })
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId },
+      data: { baseRedefinidaEm: AGORA },
+    })
+    const r = await pedir({ commit: C1 })
+    expect(r.status).toBe(201)
+    expect(r.corpo).toMatchObject({ estado: 'na_fila' })
+  })
+
   test('Review Focus 1: caixa diferente casa com o repositório catalogado', async () => {
     await configurar()
     const r = await enviar({ repositorio: 'Kustertech-Exemplo/Portal', commit: C1 })

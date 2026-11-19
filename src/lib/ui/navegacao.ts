@@ -4,6 +4,7 @@ import {
   FolderKanban,
   LayoutDashboard,
   type LucideIcon,
+  Rocket,
   Server,
   Settings,
 } from 'lucide-react'
@@ -29,6 +30,12 @@ export const GRUPOS_DE_NAVEGACAO: readonly GrupoDeNavegacao[] = [
         href: '/',
         icone: LayoutDashboard,
         descricao: 'O que espera você e o resumo dos projetos',
+      },
+      {
+        rotulo: 'Publicação',
+        href: '/publicacao',
+        icone: Rocket,
+        descricao: 'Fila de publicação dos projetos',
       },
       {
         rotulo: 'Fábrica',

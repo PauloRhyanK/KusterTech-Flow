@@ -11,6 +11,7 @@ import {
   type PedidoRecebido,
 } from './contrato'
 import { classificarChegada } from './model'
+import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
 
 type SaidaDoPost = {
   status: 200 | 201 | 401 | 404 | 409 | 413 | 415 | 422 | 500
@@ -60,7 +61,10 @@ async function localizarRepositorio(nome: string) {
       removidoDaInstalacaoEm: null,
       projeto: { is: { arquivadoEm: null } },
     },
-    select: { id: true, configuracaoDePublicacao: { select: { modoPadrao: true } } },
+    select: {
+      id: true,
+      configuracaoDePublicacao: { select: { modoPadrao: true, baseRedefinidaEm: true } },
+    },
   })
 }
 
@@ -75,15 +79,17 @@ async function registrarChegada(
   repositorioId: string,
   fonteId: string,
   pedido: PedidoRecebido,
-  modoPadrao: 'IMEDIATO' | 'LOTE' | undefined,
+  configuracao: { modoPadrao: 'IMEDIATO' | 'LOTE'; baseRedefinidaEm: Date | null } | null,
   agora: Date,
 ): Promise<Chegada> {
+  const modoPadrao = configuracao?.modoPadrao
   return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${repositorioId}))`
     const commit = pedido.commit ?? null
+    // O mesmo "no ar" do worker: depois de redefinido, o publicado antes não conta.
     const noAr = await tx.pedidoDePublicacao.findFirst({
-      where: { repositorioId, estado: 'PUBLICADO', commit: { not: null }, atendidoPorId: null },
-      orderBy: [{ concluidoEm: { sort: 'desc', nulls: 'last' } }, { criadoEm: 'desc' }],
+      where: filtroDoNoAr(repositorioId, configuracao?.baseRedefinidaEm ?? null),
+      orderBy: ORDEM_DO_NO_AR,
       select: { commit: true },
     })
     const pendentes = await tx.pedidoDePublicacao.findMany({
@@ -163,7 +169,7 @@ export async function receberPedidoDePublicacao(
       repositorio.id,
       fonte.id,
       lido.data,
-      repositorio.configuracaoDePublicacao?.modoPadrao,
+      repositorio.configuracaoDePublicacao,
       agora,
     )
     switch (chegada.tipo) {

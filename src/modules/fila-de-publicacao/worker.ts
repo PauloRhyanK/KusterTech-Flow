@@ -30,6 +30,7 @@ import {
   type Relacao,
   type SituacaoDaFila,
 } from './model'
+import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
 
 export interface ResumoDaFila {
   repositorios: number
@@ -64,24 +65,6 @@ function comTrava<T>(repositorioId: string, fn: (tx: Tx) => Promise<T>): Promise
     return fn(tx)
   })
 }
-
-function filtroDoNoAr(
-  repositorioId: string,
-  baseRedefinidaEm: Date | null,
-): Prisma.PedidoDePublicacaoWhereInput {
-  return {
-    repositorioId,
-    estado: 'PUBLICADO',
-    commit: { not: null },
-    atendidoPorId: null,
-    ...(baseRedefinidaEm ? { concluidoEm: { gt: baseRedefinidaEm } } : {}),
-  }
-}
-
-const ORDEM_DO_NO_AR: Prisma.PedidoDePublicacaoOrderByWithRelationInput[] = [
-  { concluidoEm: { sort: 'desc', nulls: 'last' } },
-  { criadoEm: 'desc' },
-]
 
 /** O commit do último publicado depois da redefinição (ou de sempre, sem redefinição). */
 export async function commitNoAr(repositorioId: string): Promise<string | null> {
