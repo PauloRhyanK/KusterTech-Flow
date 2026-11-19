@@ -161,8 +161,13 @@ export function abasDoContexto(
         disponivel: true,
         modulo: 'publicacao',
       },
-      { rotulo: 'Saúde e Erros', href: `${base}/saude`, disponivel: true },
-      { rotulo: 'Recursos', href: `${base}/recursos`, disponivel: true },
+      {
+        rotulo: 'Desenvolvimento',
+        href: `${base}/desenvolvimento`,
+        disponivel: true,
+        modulo: 'desenvolvimento',
+      },
+      { rotulo: 'Máquinas', href: `${base}/maquinas`, disponivel: true, modulo: 'maquinas' },
     ]
     return abas
       .filter((aba) => aba.modulo === undefined || ativos.has(aba.modulo))

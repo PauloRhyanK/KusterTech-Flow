@@ -36,6 +36,7 @@ function renderizar(grupos: GrupoDeProjeto[]) {
   return render(
     <ExecucoesAgrupadas
       grupos={grupos}
+      acao="/projetos/p-1/desenvolvimento"
       projetos={[{ id: 'p-1', nome: 'Automação' }]}
       projetoId={null}
     />,

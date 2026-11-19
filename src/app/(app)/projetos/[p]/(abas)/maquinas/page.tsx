@@ -12,11 +12,11 @@ import { rotuloDoTipo } from '@/modules/infra/model'
 import { listarRecursosDoProjeto } from '@/modules/infra/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
 
-export interface PaginaRecursosProjetoProps {
+export interface PaginaMaquinasProjetoProps {
   params: Promise<{ p: string }>
 }
 
-export async function generateMetadata({ params }: PaginaRecursosProjetoProps): Promise<Metadata> {
+export async function generateMetadata({ params }: PaginaMaquinasProjetoProps): Promise<Metadata> {
   const { p } = await params
   const sessao = await obterSessao()
   if (!sessao) {
@@ -30,7 +30,7 @@ export async function generateMetadata({ params }: PaginaRecursosProjetoProps): 
   }
 }
 
-export default async function PaginaRecursosProjeto({ params }: PaginaRecursosProjetoProps) {
+export default async function PaginaMaquinasProjeto({ params }: PaginaMaquinasProjetoProps) {
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -62,13 +62,13 @@ export default async function PaginaRecursosProjeto({ params }: PaginaRecursosPr
 
   return (
     <ListaOperacional
-      rotulo="Recursos do projeto"
+      rotulo="Máquinas do projeto"
       linhas={linhas}
       vazio={
         <EstadoVazio
           tipo="nenhum-registro"
-          titulo="Nenhum recurso associado a este projeto."
-          descricao="Associe recursos na página de cada recurso do inventário."
+          titulo="Nenhuma máquina associada a este projeto."
+          descricao="Associe máquinas na página de cada máquina do inventário."
           acao={
             <Link href="/infraestrutura" className="text-sm text-text-link hover:underline">
               Abrir inventário

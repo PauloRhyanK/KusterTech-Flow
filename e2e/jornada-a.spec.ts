@@ -168,8 +168,8 @@ test('Jornada A de ponta a ponta: cadastro, associação, contexto e escopo @con
     await expect(navAbasGlobal.getByRole('link', { name: /Entregas/ })).toBeVisible()
     await expect(navAbasGlobal.getByRole('link', { name: /Homologação/ })).toBeVisible()
     await expect(navAbasGlobal.getByRole('link', { name: /Publicações/ })).toBeVisible()
-    await expect(navAbasGlobal.getByRole('link', { name: /Saúde e Erros/ })).toBeVisible()
-    await expect(navAbasGlobal.getByRole('link', { name: /Recursos/ })).toBeVisible()
+    await expect(navAbasGlobal.getByRole('link', { name: /Desenvolvimento/ })).toBeVisible()
+    await expect(navAbasGlobal.getByRole('link', { name: /Máquinas/ })).toBeVisible()
 
     await capturar(page, testInfo, '4-admin-visao-global-resumo.png')
 

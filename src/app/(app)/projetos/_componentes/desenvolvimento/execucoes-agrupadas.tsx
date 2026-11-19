@@ -12,8 +12,10 @@ import type {
 
 export interface ExecucoesAgrupadasProps {
   grupos: readonly GrupoDeProjeto[]
-  projetos: readonly { id: string; nome: string }[]
-  projetoId: string | null
+  acao: string
+  // Sem a lista, o projeto já está fixado pela rota e o campo não aparece.
+  projetos?: readonly { id: string; nome: string }[]
+  projetoId?: string | null
 }
 
 const ESTADO_DO_PR: Record<string, string> = {
@@ -108,29 +110,39 @@ function Moldura({ children }: { children: ReactNode }) {
   )
 }
 
-export function ExecucoesAgrupadas({ grupos, projetos, projetoId }: ExecucoesAgrupadasProps) {
+export function ExecucoesAgrupadas({
+  grupos,
+  acao,
+  projetos,
+  projetoId = null,
+}: ExecucoesAgrupadasProps) {
   return (
     <section aria-label="Execuções por projeto e issue" className="space-y-6">
-      <form method="GET" action="/desenvolvimento" className="flex flex-wrap items-end gap-3">
+      <form method="GET" action={acao} className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="visao" value="execucoes" />
-        <div className="space-y-1">
-          <label htmlFor="filtro-projeto" className="block text-xs font-medium text-text-secondary">
-            Projeto
-          </label>
-          <select
-            id="filtro-projeto"
-            name="projeto"
-            defaultValue={projetoId ?? ''}
-            className={CLASSE_CAMPO}
-          >
-            <option value="">Todos</option>
-            {projetos.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nome}
-              </option>
-            ))}
-          </select>
-        </div>
+        {projetos && (
+          <div className="space-y-1">
+            <label
+              htmlFor="filtro-projeto"
+              className="block text-xs font-medium text-text-secondary"
+            >
+              Projeto
+            </label>
+            <select
+              id="filtro-projeto"
+              name="projeto"
+              defaultValue={projetoId ?? ''}
+              className={CLASSE_CAMPO}
+            >
+              <option value="">Todos</option>
+              {projetos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <Button type="submit" variant="secondary">
           Filtrar
         </Button>

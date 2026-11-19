@@ -26,6 +26,7 @@ describe('ResumoDoProjeto', () => {
         projeto={projeto}
         contagens={contagens}
         entregas={semEntregas}
+        pendencias={[]}
         contexto={{ tipo: 'global' }}
         podeGerenciar
       />,
@@ -124,6 +125,7 @@ describe('ResumoDoProjeto', () => {
         projeto={projeto}
         contagens={contagens}
         entregas={semEntregas}
+        pendencias={[]}
         contexto={{ tipo: 'global' }}
         podeGerenciar
       />,
@@ -150,10 +152,40 @@ describe('ResumoDoProjeto', () => {
         projeto={projeto}
         contagens={contagens}
         entregas={semEntregas}
+        pendencias={[]}
         contexto={{ tipo: 'cliente', clienteId: 'c-1' }}
         podeGerenciar={false}
       />,
     )
     expect(screen.getByText('Nenhuma ação pendente para este cliente.')).toBeInTheDocument()
+  })
+
+  test('sem as props de entregas e homologação não renderiza "Entregas" nem pendências de homologação', () => {
+    render(
+      <ResumoDoProjeto
+        projeto={projeto}
+        contagens={contagens}
+        contexto={{ tipo: 'global' }}
+        podeGerenciar
+      />,
+    )
+    const titulos = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(titulos).toEqual(['Próximas ações', 'Clientes'])
+    expect(screen.queryByRole('heading', { name: 'Homologações pendentes' })).toBeNull()
+    expect(screen.queryByText('Indicadores')).toBeNull()
+  })
+
+  test('nunca renderiza a seção "Saúde"', () => {
+    render(
+      <ResumoDoProjeto
+        projeto={projeto}
+        contagens={contagens}
+        entregas={semEntregas}
+        pendencias={[]}
+        contexto={{ tipo: 'global' }}
+        podeGerenciar
+      />,
+    )
+    expect(screen.queryByRole('heading', { name: 'Saúde' })).toBeNull()
   })
 })

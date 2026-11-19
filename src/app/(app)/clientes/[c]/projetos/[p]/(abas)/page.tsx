@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { autorizar, ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { moduloAtivo } from '@/lib/modulos'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterCliente } from '@/modules/clientes/service'
@@ -37,9 +38,9 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
   const { c, p } = await params
 
   let projetoComContagens: Awaited<ReturnType<typeof obterProjetoParaResumo>>
-  let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
-  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
-  let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>>
+  let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>> | undefined
+  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>> | undefined
+  let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>> | undefined
   let cliente: Awaited<ReturnType<typeof obterCliente>>
 
   try {
@@ -50,9 +51,13 @@ export default async function PaginaProjetoCliente({ params }: PaginaProjetoClie
     projetoComContagens = proj
     cliente = cli
     const contexto = { tipo: 'cliente', clienteId: c } as const
-    entregas = await obterEntregasParaResumo(sessao.sujeito, p, contexto)
-    homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, contexto)
-    pendencias = await pendenciasDoProjeto(sessao.sujeito, p, contexto)
+    if (moduloAtivo('entregas')) {
+      entregas = await obterEntregasParaResumo(sessao.sujeito, p, contexto)
+    }
+    if (moduloAtivo('homologacao')) {
+      homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, contexto)
+      pendencias = await pendenciasDoProjeto(sessao.sujeito, p, contexto)
+    }
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />

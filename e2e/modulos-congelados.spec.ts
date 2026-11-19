@@ -51,9 +51,17 @@ test('POST /api/evidencias/verificacao responde 404', async ({ request }) => {
   expect(r.status()).toBe(404)
 })
 
-test('o projeto mostra só as abas Resumo, Saúde e Erros e Recursos', async ({ page }) => {
+test('o projeto mostra só as abas Resumo, Desenvolvimento e Máquinas', async ({ page }) => {
   await entrar(page)
   await page.goto(`/projetos/${projetoId}`)
   const abas = page.getByRole('navigation', { name: 'Seções do projeto' })
-  await expect(abas.getByRole('link')).toHaveText(['Resumo', 'Saúde e Erros', 'Recursos'])
+  await expect(abas.getByRole('link')).toHaveText(['Resumo', 'Desenvolvimento', 'Máquinas'])
+})
+
+test('/desenvolvimento mostra "Registro não encontrado"', async ({ page }) => {
+  await entrar(page)
+  await page.goto('/desenvolvimento')
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Registro não encontrado' }),
+  ).toBeVisible()
 })

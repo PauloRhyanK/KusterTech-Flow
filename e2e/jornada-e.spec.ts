@@ -105,23 +105,19 @@ test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a 
   const { email, senha } = obterAdmin()
   await fazerLogin(page, email, senha)
 
-  // 1. Menu → Central de Desenvolvimento.
-  if (mobile) {
-    await page.getByRole('button', { name: 'Abrir navegação' }).click()
-    await page.getByRole('dialog').getByRole('link', { name: 'Central de Desenvolvimento' }).click()
-  } else {
-    await page
-      .getByRole('navigation', { name: 'Navegação principal' })
-      .getByRole('link', { name: 'Central de Desenvolvimento' })
-      .click()
-  }
-  await expect(
-    page.getByRole('heading', { level: 1, name: 'Central de Desenvolvimento' }),
-  ).toBeVisible()
+  // 1. Projeto → aba Desenvolvimento.
+  await page.goto(`/projetos/${projeto.id}`)
+  await page
+    .getByRole('navigation', { name: 'Seções do projeto' })
+    .getByRole('link', { name: 'Desenvolvimento' })
+    .click()
+  await expect(page).toHaveURL(new RegExp(`/projetos/${projeto.id}/desenvolvimento$`))
+  await expect(page.getByRole('heading', { level: 1, name: projeto.nome })).toBeVisible()
+  await expect(page.getByLabel('Projeto', { exact: true })).toHaveCount(0)
   await capturar(page, nomeDoProjeto, 'jornada-e-1-fila.png')
 
   // 2. Projeto do teste, situação "Em aberto": PR #3 primeiro, run 3, PR #5 e issue #1.
-  await filtrar(page, { projeto: projeto.nome, situacao: 'Em aberto' })
+  await filtrar(page, { situacao: 'Em aberto' })
   const fila = page.getByRole('list', { name: 'Fila de desenvolvimento' })
   const itens = fila.getByRole('listitem')
   await expect(itens).toHaveCount(4)
@@ -144,9 +140,8 @@ test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a 
   if (mobile) expect(await semRolagemHorizontal(page)).toBe(true)
 
   // 4. Por projeto e issue: expande EXEM-a001; EXEM-a004 mostra a dependência.
-  await page.getByRole('link', { name: 'Por projeto e issue' }).click()
+  await page.getByRole('link', { name: 'Por issue' }).click()
   await expect(page).toHaveURL(/visao=execucoes/)
-  await filtrar(page, { projeto: projeto.nome })
   const agrupada = page.getByRole('region', { name: 'Execuções por projeto e issue' })
   await expect(agrupada.getByRole('heading', { level: 2, name: projeto.nome })).toBeVisible()
   await expect(agrupada.getByText('Aguarda EXEM-a003 (em andamento).')).toBeVisible()
@@ -213,8 +208,7 @@ test('leitura do Warren com falha mostra "Não foi possível ler os dados do War
 
   const { email, senha } = obterAdmin()
   await fazerLogin(page, email, senha)
-  await page.goto('/desenvolvimento?situacao=todos&origem=warren')
-  await filtrar(page, { projeto: projeto.nome })
+  await page.goto(`/projetos/${projeto.id}/desenvolvimento?situacao=todos&origem=warren`)
 
   await expect(
     page.getByText('Não foi possível ler os dados do Warren em 1 repositório(s).'),
@@ -226,13 +220,13 @@ test('leitura do Warren com falha mostra "Não foi possível ler os dados do War
   expect(await contarExecucoes()).toBe(antes)
 })
 
-test('aprovador global e testador escopado veem "Sem permissão" em /desenvolvimento e na execução; contarExecucoes inalterado', async ({
+test('aprovador global e testador escopado veem "Sem permissão" na aba Desenvolvimento e na execução; contarExecucoes inalterado', async ({
   page,
   browser,
 }, testInfo) => {
   test.setTimeout(120_000)
   const nomeDoProjeto = testInfo.project.name
-  await prepararProjeto(nomeDoProjeto)
+  const projeto = await prepararProjeto(nomeDoProjeto)
   const execucao = await obterExecucaoNoBanco(runDeExemploE2E(nomeDoProjeto, 1))
   const antes = await contarExecucoes()
 
@@ -268,7 +262,10 @@ test('aprovador global e testador escopado veem "Sem permissão" em /desenvolvim
     try {
       const pagina = await contexto.newPage()
       await fazerLogin(pagina, emailDoUsuario, senha)
-      for (const url of ['/desenvolvimento', `/desenvolvimento/execucoes/${execucao.id}`]) {
+      for (const url of [
+        `/projetos/${projeto.id}/desenvolvimento`,
+        `/desenvolvimento/execucoes/${execucao.id}`,
+      ]) {
         await pagina.goto(url)
         await expect(pagina.getByText('Sem permissão para esta área.')).toBeVisible()
         await expect(pagina.getByRole('list', { name: 'Fila de desenvolvimento' })).toHaveCount(0)

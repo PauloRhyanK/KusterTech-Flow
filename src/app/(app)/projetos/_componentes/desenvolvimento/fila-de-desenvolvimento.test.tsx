@@ -13,6 +13,7 @@ function renderizar(props: Partial<React.ComponentProps<typeof FilaDeDesenvolvim
       itens={[itemDeTeste()]}
       total={1}
       filtros={FILTROS}
+      acao="/projetos/p-1/desenvolvimento"
       projetos={PROJETOS}
       {...props}
     />,
@@ -138,5 +139,16 @@ describe('FilaDeDesenvolvimento', () => {
   test('acima de 100 itens avisa o total real', () => {
     renderizar({ total: 137 })
     expect(screen.getByText('Mostrando 100 de 137 itens. Refine os filtros.')).toBeInTheDocument()
+  })
+
+  test('com o projeto fixado pela rota (sem a lista de projetos) a fila vazia não culpa os filtros', () => {
+    renderizar({
+      itens: [],
+      total: 0,
+      projetos: undefined,
+      filtros: { projetoId: 'p-1', situacao: 'abertos', origem: 'todas' },
+    })
+    expect(screen.getByText('Nenhuma issue, PR ou execução em aberto.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Projeto')).toBeNull()
   })
 })

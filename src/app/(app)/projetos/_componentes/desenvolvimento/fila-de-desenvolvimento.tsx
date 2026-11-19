@@ -16,7 +16,9 @@ export interface FilaDeDesenvolvimentoProps {
   itens: readonly ItemDaFila[]
   total: number
   filtros: Filtros
-  projetos: readonly { id: string; nome: string }[]
+  acao: string
+  // Sem a lista, o projeto já está fixado pela rota e o campo não aparece.
+  projetos?: readonly { id: string; nome: string }[]
 }
 
 const LIMITE_DE_LINHAS = 100
@@ -123,6 +125,7 @@ export function FilaDeDesenvolvimento({
   itens,
   total,
   filtros,
+  acao,
   projetos,
 }: FilaDeDesenvolvimentoProps) {
   if (!fontes.githubConfigurado) {
@@ -154,7 +157,9 @@ export function FilaDeDesenvolvimento({
   }
 
   const comFiltros =
-    filtros.projetoId !== null || filtros.situacao !== 'abertos' || filtros.origem !== 'todas'
+    (projetos !== undefined && filtros.projetoId !== null) ||
+    filtros.situacao !== 'abertos' ||
+    filtros.origem !== 'todas'
 
   return (
     <section aria-label="Fila de desenvolvimento" className="space-y-4">
@@ -162,7 +167,7 @@ export function FilaDeDesenvolvimento({
       <ListaOperacional
         rotulo="Fila de desenvolvimento"
         linhas={itens.map(linhaDoItem)}
-        filtros={<FiltrosDaFila filtros={filtros} projetos={projetos} />}
+        filtros={<FiltrosDaFila filtros={filtros} acao={acao} projetos={projetos} />}
         vazio={
           comFiltros ? (
             <EstadoVazio

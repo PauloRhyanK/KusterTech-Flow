@@ -8,13 +8,13 @@ import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { apresentarEstadoDaExecucao } from '@/modules/desenvolvimento/model'
 import { obterExecucao } from '@/modules/desenvolvimento/queries'
-import { DetalheDaExecucao } from '../../_componentes/detalhe-da-execucao'
+import { DetalheDaExecucao } from '@/app/(app)/projetos/_componentes/desenvolvimento/detalhe-da-execucao'
 
 export interface PaginaExecucaoProps {
   params: Promise<{ e: string }>
 }
 
-const CENTRAL = { rotulo: 'Central de Desenvolvimento', href: '/desenvolvimento' }
+const PROJETOS = { rotulo: 'Projetos', href: '/projetos' }
 
 export const metadata: Metadata = {
   title: 'Execução de agente',
@@ -30,7 +30,7 @@ export default async function PaginaExecucao({ params }: PaginaExecucaoProps) {
     return (
       <div className="space-y-6">
         <CabecalhoDePagina
-          trilhas={[CENTRAL, { rotulo: 'Execução' }]}
+          trilhas={[PROJETOS, { rotulo: 'Execução' }]}
           titulo="Execução de agente"
         />
         <SemPermissao />
@@ -55,7 +55,19 @@ export default async function PaginaExecucao({ params }: PaginaExecucaoProps) {
   return (
     <div className="space-y-6">
       <CabecalhoDePagina
-        trilhas={[CENTRAL, { rotulo: execucao.runId }]}
+        trilhas={
+          execucao.projeto
+            ? [
+                PROJETOS,
+                { rotulo: execucao.projeto.nome, href: `/projetos/${execucao.projeto.id}` },
+                {
+                  rotulo: 'Desenvolvimento',
+                  href: `/projetos/${execucao.projeto.id}/desenvolvimento`,
+                },
+                { rotulo: execucao.runId },
+              ]
+            : [PROJETOS, { rotulo: execucao.runId }]
+        }
         titulo={execucao.runId}
         contexto={
           execucao.projeto

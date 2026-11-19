@@ -6,6 +6,7 @@ describe('FiltrosDaFila', () => {
   test('formulário GET com Projeto, Situação e Origem refletindo os filtros atuais', () => {
     render(
       <FiltrosDaFila
+        acao="/projetos/p-2/desenvolvimento"
         filtros={{ projetoId: 'p-2', situacao: 'intervencao', origem: 'warren' }}
         projetos={[
           { id: 'p-1', nome: 'Automação' },
@@ -28,6 +29,21 @@ describe('FiltrosDaFila', () => {
     expect(screen.getByRole('button', { name: 'Filtrar' }).closest('form')).toHaveAttribute(
       'method',
       'GET',
+    )
+  })
+
+  test('sem a lista de projetos não mostra o campo Projeto e envia o formulário para a ação dada', () => {
+    render(
+      <FiltrosDaFila
+        acao="/projetos/p-2/desenvolvimento"
+        filtros={{ projetoId: 'p-2', situacao: 'abertos', origem: 'todas' }}
+      />,
+    )
+    expect(screen.queryByLabelText('Projeto')).toBeNull()
+    expect(screen.getByLabelText('Situação')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Filtrar' }).closest('form')).toHaveAttribute(
+      'action',
+      '/projetos/p-2/desenvolvimento',
     )
   })
 })

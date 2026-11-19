@@ -236,7 +236,7 @@ describe('projetos / model (unitário)', () => {
     expect(github({ ...base, repositorios: 1 }, null, 'indisponivel')?.acao).toBeUndefined()
   })
 
-  test('abasDoContexto: global tem 6 abas (Publicações depois de Homologação) com hrefs /projetos/[p]/... e todas disponíveis (inclusive Saúde e Erros e Recursos); cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas e Homologação disponíveis', () => {
+  test('abasDoContexto: global com tudo ligado tem 6 abas (Publicações depois de Homologação, depois Desenvolvimento e Máquinas) com hrefs /projetos/[p]/... e todas disponíveis; cliente tem 3 com /clientes/[c]/projetos/[p]/... e Entregas e Homologação disponíveis', () => {
     const projetoId = 'proj-123'
 
     // Contexto global
@@ -246,8 +246,12 @@ describe('projetos / model (unitário)', () => {
       { rotulo: 'Entregas', href: '/projetos/proj-123/entregas', disponivel: true },
       { rotulo: 'Homologação', href: '/projetos/proj-123/homologacao', disponivel: true },
       { rotulo: 'Publicações', href: '/projetos/proj-123/publicacoes', disponivel: true },
-      { rotulo: 'Saúde e Erros', href: '/projetos/proj-123/saude', disponivel: true },
-      { rotulo: 'Recursos', href: '/projetos/proj-123/recursos', disponivel: true },
+      {
+        rotulo: 'Desenvolvimento',
+        href: '/projetos/proj-123/desenvolvimento',
+        disponivel: true,
+      },
+      { rotulo: 'Máquinas', href: '/projetos/proj-123/maquinas', disponivel: true },
     ])
 
     // Contexto cliente
@@ -267,22 +271,24 @@ describe('projetos / model (unitário)', () => {
     ])
   })
 
-  test('abas globais sem módulos congelados: Resumo, Saúde e Erros, Recursos', () => {
-    expect(abasDoContexto('p1', { tipo: 'global' }, padrao).map((a) => a.rotulo)).toEqual([
-      'Resumo',
-      'Saúde e Erros',
-      'Recursos',
-    ])
+  test('abas globais padrão: Resumo, Desenvolvimento, Máquinas', () => {
+    expect(abasDoContexto('p1', { tipo: 'global' }, padrao).map((a) => [a.rotulo, a.href])).toEqual(
+      [
+        ['Resumo', '/projetos/p1'],
+        ['Desenvolvimento', '/projetos/p1/desenvolvimento'],
+        ['Máquinas', '/projetos/p1/maquinas'],
+      ],
+    )
   })
 
-  test('abas globais com tudo ligado mantêm as seis de antes', () => {
+  test('abas globais com tudo ligado: Resumo, Entregas, Homologação, Publicações, Desenvolvimento, Máquinas', () => {
     expect(abasDoContexto('p1', { tipo: 'global' }, todos).map((a) => a.rotulo)).toEqual([
       'Resumo',
       'Entregas',
       'Homologação',
       'Publicações',
-      'Saúde e Erros',
-      'Recursos',
+      'Desenvolvimento',
+      'Máquinas',
     ])
   })
 

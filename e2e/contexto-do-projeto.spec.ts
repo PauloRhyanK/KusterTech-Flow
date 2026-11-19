@@ -54,8 +54,8 @@ test('admin: /projetos/<P> mostra seis abas, trilha Projetos › P e checklist c
   await expect(navAbasGlobal.getByRole('link', { name: /Entregas/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Homologação/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Publicações/ })).toBeVisible()
-  await expect(navAbasGlobal.getByRole('link', { name: /Saúde e Erros/ })).toBeVisible()
-  await expect(navAbasGlobal.getByRole('link', { name: /Recursos/ })).toBeVisible()
+  await expect(navAbasGlobal.getByRole('link', { name: /Desenvolvimento/ })).toBeVisible()
+  await expect(navAbasGlobal.getByRole('link', { name: /Máquinas/ })).toBeVisible()
 
   // Checklist com Clientes concluído
   const listaChecklist = page.getByRole('list', { name: 'Configuração do projeto' })
