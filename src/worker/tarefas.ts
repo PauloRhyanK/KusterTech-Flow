@@ -5,6 +5,7 @@ import { sincronizarDeployments } from '@/modules/ambientes/deployments'
 import { calcularPresencas } from '@/modules/ambientes/presencas'
 import { obterFonteGitHub, type FonteGitHub } from '@/modules/github/fonte'
 import { processarEventosDeWebhook } from '@/modules/github/eventos'
+import { processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
@@ -56,6 +57,22 @@ export function criarTarefasDoCiclo(d: {
       async executar(agora) {
         // Os repositórios lidos e as contagens saem no log da própria sincronização.
         await sincronizarExecucoesWarren(d.obterFonte(), agora, d.intervaloMs)
+      },
+    },
+    {
+      nome: 'processar-fila-de-publicacao',
+      modulo: 'fila-de-publicacao',
+      async executar(agora) {
+        const { repositorios, ...contagens } = await processarFilaDePublicacao(
+          d.obterFonte(),
+          agora,
+        )
+        if (Object.values(contagens).some((n) => n > 0)) {
+          log.info(
+            { tarefa: 'processar-fila-de-publicacao', repositorios, ...contagens },
+            'fila de publicação processada',
+          )
+        }
       },
     },
     {
