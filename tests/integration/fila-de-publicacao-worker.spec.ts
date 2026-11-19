@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { db } from '@/lib/db'
-import { MOTIVOS } from '@/modules/fila-de-publicacao/model'
+import { MOTIVOS, verificacaoAtrasada } from '@/modules/fila-de-publicacao/model'
 import { commitNoAr, processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import type { ExecucaoDaFonte, FonteGitHub, RefRepositorio } from '@/modules/github/fonte'
@@ -24,6 +24,8 @@ const M5 = sha(0x105)
 const M6 = sha(0x106)
 const X1 = sha(0x1f1)
 const B1 = sha(0x1b1)
+// R1 é o main depois de um push forçado que apagou M3 em diante: R1 ← M2.
+const R1 = sha(0x1e1)
 // Outro repositório: S1 ← S2.
 const S1 = sha(0x201)
 const S2 = sha(0x202)
@@ -47,6 +49,7 @@ function criarFonteFalsa() {
     [X1, [M1]],
     [B1, [M1]],
     [M6, [M5, B1]],
+    [R1, [M2]],
     [S1, []],
     [S2, [S1]],
   ])
@@ -62,8 +65,9 @@ function criarFonteFalsa() {
   let proximoId = 9000
   let relogio = AGORA
   let falhar: (metodo: Metodo, args: unknown[]) => boolean = () => false
-  /** cria: o GitHub cria a execução; perde: cria e a resposta se perde; nada: não cria. */
-  let aoDisparar: 'cria' | 'perde' | 'nada' = 'cria'
+  /** cria: o GitHub cria a execução; perde: cria e a resposta se perde; nada: não cria;
+   * recusa: o GitHub recusa o disparo (workflow inexistente) e não cria. */
+  let aoDisparar: 'cria' | 'perde' | 'nada' | 'recusa' = 'cria'
 
   const ancestrais = (c: string): Set<string> => {
     if (!pais.has(c)) throw new ErroDeIntegracao('commit-desconhecido')
@@ -116,6 +120,7 @@ function criarFonteFalsa() {
       registrar('dispararWorkflow', [repo.nomeCompleto, workflow, ref, entradas])
       disparos.push({ repositorio: repo.nomeCompleto, workflow, ref, entradas })
       if (aoDisparar === 'nada') return
+      if (aoDisparar === 'recusa') throw new ErroDeIntegracao('sem-acesso')
       const id = BigInt(proximoId++)
       const commit = Object.values(entradas)[0] ?? ''
       execucoes.set(repo.nomeCompleto, [
@@ -158,7 +163,7 @@ function criarFonteFalsa() {
     set falhar(f: (metodo: Metodo, args: unknown[]) => boolean) {
       falhar = f
     },
-    set aoDisparar(m: 'cria' | 'perde' | 'nada') {
+    set aoDisparar(m: 'cria' | 'perde' | 'nada' | 'recusa') {
       aoDisparar = m
     },
     avancarMain(repositorio: string, commit: string) {
@@ -443,13 +448,73 @@ describe('processarFilaDePublicacao', () => {
     expect((await pedido(a)).atendidoPorId).toBe(b)
   })
 
-  test('GitHub fora ao ler a cabeça → nada muda e o outro repositório segue', async () => {
+  test('GitHub fora ao ler a cabeça → pedido da vez VERIFICANDO, nada dispara e o outro repositório segue', async () => {
     const a = await pedir(portalId, M2)
     await pedir(siteId, S2)
     f.falhar = (m, args) => m === 'lerCabecaDoBranchPadrao' && args[0] === PORTAL
     await ciclo()
-    expect((await pedido(a)).estado).toBe('NA_FILA')
+    expect((await pedido(a)).estado).toBe('VERIFICANDO')
     expect(f.disparos.map((d) => d.repositorio)).toEqual([SITE])
+  })
+
+  test('GitHub fora desde o primeiro ciclo → VERIFICANDO desde a primeira tentativa; 31 min depois a verificação está atrasada; quando volta, publica', async () => {
+    const id = await pedir(portalId, M2)
+    f.falhar = () => true
+    await ciclo()
+    const primeiro = await pedido(id)
+    expect(primeiro.estado).toBe('VERIFICANDO')
+    expect(primeiro.verificandoDesde).toEqual(AGORA)
+
+    await ciclo(minutos(10))
+    await ciclo(minutos(31))
+    const atrasado = await pedido(id)
+    expect(atrasado.estado).toBe('VERIFICANDO')
+    expect(atrasado.verificandoDesde).toEqual(AGORA)
+    expect(verificacaoAtrasada(atrasado.verificandoDesde!, minutos(31))).toBe(true)
+    expect(f.disparos).toHaveLength(0)
+
+    f.falhar = () => false
+    await ciclo(minutos(32))
+    expect((await pedido(id)).estado).toBe('PUBLICANDO')
+    expect(f.disparos.map((d) => d.entradas.commit)).toEqual([M2])
+  })
+
+  test('push forçado em main depois da pré-verificação → o pedido já verificado é RECUSADO "o commit não está em main" antes do disparo', async () => {
+    await publicar(portalId, PORTAL, M2, AGORA)
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { pausado: true },
+    })
+    const id = await pedir(portalId, M3, { criadoEm: minutos(5) })
+    await ciclo(minutos(6))
+    expect((await pedido(id)).verificadoContra).toBe(M2)
+
+    f.avancarMain(PORTAL, R1)
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { pausado: false },
+    })
+    const r = await ciclo(minutos(7))
+    expect(r.recusados).toBe(1)
+    const recusado = await pedido(id)
+    expect(recusado.estado).toBe('RECUSADO')
+    expect(recusado.motivo).toBe(MOTIVOS.foraDeMain)
+    expect(f.disparos).toHaveLength(1)
+  })
+
+  test('disparo recusado pelo GitHub → 10 min depois FALHOU e o conserto leva a mensagem do GitHub no trecho do log', async () => {
+    const id = await pedir(portalId, M2)
+    f.aoDisparar = 'recusa'
+    await ciclo()
+    expect((await pedido(id)).estado).toBe('PUBLICANDO')
+    await ciclo(minutos(11))
+    const falhou = await pedido(id)
+    expect(falhou.estado).toBe('FALHOU')
+    expect(falhou.motivo).toBe(MOTIVOS.execucaoNaoEncontrada)
+    const conserto = await db.pedidoDeConserto.findUniqueOrThrow({ where: { pedidoId: id } })
+    expect(conserto.trechoDoLog).toContain(MOTIVOS.execucaoNaoEncontrada)
+    expect(conserto.trechoDoLog).toContain(new ErroDeIntegracao('sem-acesso').message)
+    expect(f.disparos).toHaveLength(1)
   })
 
   test('falha da execução → FALHOU, fila CONSERTANDO, PedidoDeConserto ABERTO com trecho do log e link; outro repositório segue publicando', async () => {

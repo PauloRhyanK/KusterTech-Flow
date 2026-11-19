@@ -46,6 +46,7 @@ const SEM_NO_AR = 'inicio'
 const LIMITE_DO_LOG = 4000
 const MAXIMO_PARA_JUNTAR = 10
 const FOLGA_DA_BUSCA_MS = 60_000
+const PREFIXO_DO_DISPARO = 'o GitHub não confirmou o disparo: '
 
 const EM_ESPERA = ['NA_FILA', 'VERIFICANDO'] as const
 const PENDENTES = ['NA_FILA', 'VERIFICANDO', 'PUBLICANDO'] as const
@@ -152,13 +153,16 @@ class CicloDoRepositorio {
       where: { repositorioId: this.repo.id, estado: { in: [...PENDENTES] } },
     })
     if (pendentes === 0) return
+    const candidato = await db.pedidoDePublicacao.findFirst({
+      where: { repositorioId: this.repo.id, estado: 'PUBLICANDO', atendidoPorId: null },
+    })
+    // O relógio da verificação (30 min até "Espera você") começa antes de qualquer chamada ao
+    // GitHub: se ele estiver fora desde o início do ciclo, o pedido da vez já fica VERIFICANDO.
+    if (!candidato) await this.marcarAVez()
     await this.atualizarNoAr()
     await this.resolverCommits()
     await this.preVerificar()
     await this.lerChecks()
-    const candidato = await db.pedidoDePublicacao.findFirst({
-      where: { repositorioId: this.repo.id, estado: 'PUBLICANDO', atendidoPorId: null },
-    })
     if (candidato) {
       const terminou = await this.acompanhar(candidato)
       if (!terminou) return
@@ -338,6 +342,7 @@ class CicloDoRepositorio {
     disparoTentadoEm: Date | null
     iniciadoEm: Date | null
     consertoId: string | null
+    motivo: string | null
   }): Promise<boolean> {
     const commit = candidato.commit!
     let execucao: ExecucaoDaFonte | null
@@ -391,7 +396,7 @@ class CicloDoRepositorio {
     if (achada) {
       await db.pedidoDePublicacao.updateMany({
         where: { id: pedidoId, execucaoId: null },
-        data: { execucaoId: achada.id, execucaoUrl: achada.urlHtml },
+        data: { execucaoId: achada.id, execucaoUrl: achada.urlHtml, motivo: null },
       })
     }
     return achada
@@ -403,6 +408,7 @@ class CicloDoRepositorio {
       commit: string | null
       execucaoUrl: string | null
       consertoId: string | null
+      motivo: string | null
     },
     motivo: string | null,
     execucao: ExecucaoDaFonte | null,
@@ -419,7 +425,7 @@ class CicloDoRepositorio {
       ? ''
       : execucao
         ? await this.fonte.lerFimDoLog(this.ref, execucao.id, LIMITE_DO_LOG)
-        : (motivo ?? '')
+        : [motivo, candidato.motivo].filter(Boolean).join('\n')
 
     await comTrava(this.repo.id, async (tx) => {
       const { count } = await tx.pedidoDePublicacao.updateMany({
@@ -467,18 +473,16 @@ class CicloDoRepositorio {
     )
   }
 
-  /** Passo 6: sem candidato, escolhe o próximo, verifica, junta e dispara. */
-  private async escolherEDisparar() {
+  private async montarEscolha(comCommit: boolean) {
     const linhas = await db.pedidoDePublicacao.findMany({
       where: {
         repositorioId: this.repo.id,
         estado: { in: [...EM_ESPERA] },
         atendidoPorId: null,
-        commit: { not: null },
+        ...(comCommit ? { commit: { not: null } } : {}),
       },
       orderBy: [{ criadoEm: 'asc' }, { id: 'asc' }],
     })
-    if (linhas.length === 0) return
     const conserto = await db.pedidoDeConserto.findFirst({
       where: { repositorioId: this.repo.id, estado: { in: [...CONSERTO_ATIVO] } },
       orderBy: { abertoEm: 'desc' },
@@ -505,7 +509,31 @@ class CicloDoRepositorio {
       ultimoLoteEm: this.config.ultimoLoteEm,
       agora: this.agora,
     }
+    return { linhas, pedidos, entrada }
+  }
 
+  private async marcar(id: string): Promise<boolean> {
+    const { count } = await comTrava(this.repo.id, (tx) =>
+      tx.pedidoDePublicacao.updateMany({
+        where: { id, estado: 'NA_FILA', atendidoPorId: null },
+        data: { estado: 'VERIFICANDO', verificandoDesde: this.agora },
+      }),
+    )
+    return count > 0
+  }
+
+  /** Só com dados locais: marca o pedido da vez como VERIFICANDO. */
+  private async marcarAVez() {
+    const { linhas, entrada } = await this.montarEscolha(false)
+    if (linhas.length === 0) return
+    const escolha = escolherProximo(entrada)
+    if (escolha.tipo === 'publicar') await this.marcar(escolha.obrigatorioId ?? escolha.ids.at(-1)!)
+  }
+
+  /** Passo 6: sem candidato, escolhe o próximo, verifica, junta e dispara. */
+  private async escolherEDisparar() {
+    const { linhas, pedidos, entrada } = await this.montarEscolha(true)
+    if (linhas.length === 0) return
     let escolha = escolherProximo(entrada)
     let marcadorId: string
     if (escolha.tipo === 'continuar') {
@@ -522,13 +550,7 @@ class CicloDoRepositorio {
       }
     } else if (escolha.tipo === 'publicar') {
       marcadorId = escolha.obrigatorioId ?? escolha.ids.at(-1)!
-      const marcado = await comTrava(this.repo.id, (tx) =>
-        tx.pedidoDePublicacao.updateMany({
-          where: { id: marcadorId, estado: 'NA_FILA', atendidoPorId: null },
-          data: { estado: 'VERIFICANDO', verificandoDesde: this.agora },
-        }),
-      )
-      if (marcado.count === 0) return
+      if (!(await this.marcar(marcadorId))) return
     } else {
       return
     }
@@ -539,15 +561,12 @@ class CicloDoRepositorio {
       janela = [obrigatorioId, ...escolha.ids.slice(-(MAXIMO_PARA_JUNTAR - 1))]
     }
 
-    // Revalida contra o que está no ar agora.
+    // Revalida tudo com a cabeça de main deste ciclo, mesmo o já verificado contra o mesmo no ar:
+    // depois de um push forçado em main, um commit verificado antes pode não estar mais nela.
     const porId = new Map(linhas.map((p) => [p.id, p]))
     const aceitos: string[] = []
     for (const id of janela) {
       const p = porId.get(id)!
-      if (p.verificadoContra === this.marca) {
-        aceitos.push(id)
-        continue
-      }
       const estado = id === marcadorId ? 'VERIFICANDO' : 'NA_FILA'
       const r = await this.aplicar(id, estado, await this.avaliar(p.commit!))
       if (r === 'aceito') aceitos.push(id)
@@ -654,6 +673,11 @@ class CicloDoRepositorio {
       await this.buscarExecucao(candidatoId, commit, this.agora)
     } catch (erro) {
       if (!(erro instanceof ErroDeIntegracao)) throw erro
+      // Guarda a resposta do GitHub: se nenhuma execução aparecer, ela vai para o conserto.
+      await db.pedidoDePublicacao.updateMany({
+        where: { id: candidatoId, estado: 'PUBLICANDO', execucaoId: null },
+        data: { motivo: `${PREFIXO_DO_DISPARO}${erro.message}` },
+      })
       log.warn(
         {
           tarefa: 'processar-fila-de-publicacao',
