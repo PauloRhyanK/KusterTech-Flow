@@ -1,0 +1,63 @@
+name: Imagem
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: imagem-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGEM: ghcr.io/paulorhyank/kustertech-flow
+
+jobs:
+  publicar:
+    name: Construir, testar e publicar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build da imagem (local, para o teste de fumaça)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: flow:fumaca
+          labels: |
+            org.opencontainers.image.source=https://github.com/PauloRhyanK/KusterTech-Flow
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Teste de fumaça da imagem
+        run: bash scripts/fumaca-da-imagem.sh flow:fumaca
+
+      - name: Login no ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar a imagem
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGEM }}:main
+            ${{ env.IMAGEM }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/PauloRhyanK/KusterTech-Flow
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

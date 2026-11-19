@@ -29,10 +29,25 @@ Central de Operações da KusterTech: painel administrativo self-hosted para cli
 3. Crie o primeiro administrador (a senha será solicitada de forma oculta no terminal):
 
    ```bash
-   docker compose run --rm web node --import tsx scripts/criar-admin.ts --email admin@exemplo.com --nome "Administrador"
+   docker compose run --rm web node scripts/criar-admin.mjs --email admin@exemplo.com --nome "Administrador"
    ```
 
+   O comando `scripts/importar-cadastro.mjs` está na imagem da mesma forma (`docker compose run --rm web node scripts/importar-cadastro.mjs <arquivo.json> --email <admin>`).
+
 4. Acesse a aplicação em `http://localhost:3000/entrar` (ou na porta definida em `WEB_PORT`). O healthcheck está disponível em `GET /api/saude`.
+
+### Imagem de produção
+
+A imagem é enxuta: servidor Next `standalone` (`node server.js`), worker e scripts empacotados com esbuild (`pnpm build:worker` gera `dist/worker.mjs`, `dist/scripts/criar-admin.mjs` e `dist/scripts/importar-cadastro.mjs`) e só os pacotes de execução do Prisma. Não leva `src/`, `tsx`, devDependencies nem `.env`. Comandos dentro da imagem:
+
+- web: `node server.js` (usa `PORT` e `HOSTNAME`, já definidos na imagem)
+- worker: `node worker.mjs` (aceita `--uma-vez`)
+- migrations: `node node_modules/prisma/build/index.js migrate deploy`
+- scripts: `node scripts/criar-admin.mjs` e `node scripts/importar-cadastro.mjs`
+
+Para validar uma imagem construída: `docker build -t flow:local . && bash scripts/fumaca-da-imagem.sh flow:local` (sobe um Postgres temporário, roda migrations, criar-admin, o worker uma vez e confere `/api/saude` e `/entrar`).
+
+A cada push em `main`, o workflow `imagem.yml` constrói a imagem, roda o teste de fumaça e só então publica `ghcr.io/paulorhyank/kustertech-flow` com as etiquetas `main` e `sha-<commit>`.
 
 ### Requisitos de produção (HTTPS e Proxy Reverso)
 

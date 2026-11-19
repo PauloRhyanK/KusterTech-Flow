@@ -57,3 +57,6 @@ __pycache__/
 
 # dados reais do cadastro (o repositório é público)
 cadastro.json
+
+# worker e scripts empacotados (pnpm build:worker)
+/dist/

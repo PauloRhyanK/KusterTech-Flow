@@ -38,7 +38,7 @@ services:
     image: kustertech-flow:local
     pull_policy: never
     init: true
-    command: ['node', 'node_modules/next/dist/bin/next', 'start']
+    command: ['node', 'server.js']
     ports:
       - '${WEB_PORT:-3000}:3000'
     environment:
@@ -55,7 +55,7 @@ services:
     image: kustertech-flow:local
     pull_policy: never
     init: true
-    command: ['node', '--import', 'tsx', 'src/worker/main.ts']
+    command: ['node', 'worker.mjs']
     stop_grace_period: 10s
     environment:
       NODE_ENV: production
