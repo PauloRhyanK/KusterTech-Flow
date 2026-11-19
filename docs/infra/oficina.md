@@ -148,20 +148,20 @@ O [`docker-compose.oficina.yml`](../../docker-compose.oficina.yml) sobrepõe o c
 
 **Tamanho e consumo medidos** (build local arm64, `scripts/fumaca-da-imagem.sh`): a imagem tem 192,9 MB (192.939.884 bytes). Antes de empacotar o worker e podar as dependências, tinha 419,7 MB. Um minuto depois de subir, o web usava 64 MiB e o worker 147 MiB, bem abaixo dos limites acima.
 
-Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual: `docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d`. O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`.
+Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual, fixando a imagem acompanhada pelo atualizador: `FLOW_IMAGEM=ghcr.io/paulorhyank/kustertech-flow@$(cat .imagem-atual) docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d`. O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`.
 
 ### Atualização por puxada
 
 O timer `oficina-flow-atualizar.timer` roda a cada 5 minutos (`*:0/5`, com até 30 s de atraso aleatório) e chama [`atualizar-flow.sh`](../../scripts/infra/atualizar-flow.sh):
 
 1. Pega o digest de `:main` no registro. Sem rede, ou com o digest igual ao em uso (`~devops/flow/.imagem-atual`), sai sem mudar nada. Uma trava (`flock`) impede duas rodadas ao mesmo tempo.
-2. Puxa `repo@digest`, guarda a imagem em uso em `.imagem-anterior` e sobe a stack com `FLOW_IMAGEM=repo@digest`. O `migrate` roda antes do web.
-3. Confere `http://127.0.0.1:${WEB_PORT:-3000}/api/saude` com `"status":"ok"`, até 12 vezes, de 5 em 5 s. Se passar, grava `.imagem-atual`.
-4. Se não passar (inclusive migration que falha), sobe de novo a imagem anterior, puxando-a por digest caso a limpeza diária a tenha removido, mantém `.imagem-atual`, grava o digest em **`.imagem-recusada`** (a mesma imagem não é tentada outra vez; uma imagem nova volta a ser tentada) e acrescenta um aviso `tipo: "flow"`, severidade alta, em `/var/lib/oficina/alertas.jsonl`.
+2. Puxa `repo@digest`, guarda a imagem em uso em `.imagem-anterior` e sobe a stack com `FLOW_IMAGEM=repo@digest`. O `migrate` roda antes do web. Um marcador `.imagem-em-teste` guarda o digest durante o teste: se a rodada for interrompida, a rodada seguinte recusa essa imagem e avisa uma vez.
+3. Confere `http://127.0.0.1:<WEB_PORT>/api/saude` (a porta vem do `.env` do Flow; padrão 3000) com `"status":"ok"`, até 12 vezes, de 5 em 5 s. Se passar, grava `.imagem-atual`.
+4. Se não passar (inclusive migration que falha), sobe de novo a imagem anterior só com `web` e `worker` (`up -d --no-deps`, para o `migrate` antigo não rodar contra o banco já migrado), puxando-a por digest caso a limpeza diária a tenha removido, e confere a saúde de novo. Se não há `.imagem-atual` válido, a anterior é a imagem do web em execução. Mantém `.imagem-atual`, grava o digest em **`.imagem-recusada`** (a mesma imagem não é tentada outra vez; uma imagem nova volta a ser tentada) e acrescenta um aviso `tipo: "flow"`, severidade alta, em `/var/lib/oficina/alertas.jsonl`. O aviso diz "foi revertida" só quando a reversão ficou saudável; senão diz que a reversão também falhou e que o Flow pode estar fora do ar.
 
-Uma migration já aplicada **não é desfeita**: a imagem anterior roda sobre o banco novo. Quando o `migrate` tinha terminado antes da falha, o aviso diz isso. Para tentar de novo a imagem recusada, apague `.imagem-recusada`. Na primeira instalação não há imagem anterior; a falha só gera o aviso.
+Uma migration já aplicada **não é desfeita**: a imagem anterior roda sobre o banco novo. Quando o `migrate` tinha terminado antes da falha, o aviso diz isso. Para tentar de novo a imagem recusada, apague `.imagem-recusada`. Sem imagem anterior (nem registrada, nem em execução), a falha só gera o aviso.
 
-A unit roda como root (sem `User=`): só root escreve em `/var/lib/oficina` e usa o Docker sem `sudo`. Os arquivos de estado em `~devops/flow` ficam com dono `devops` (`FLOW_DONO`). A limpeza diária remove imagens sem uso há 72 h; a reversão não depende disso porque puxa a anterior por digest.
+A unit roda como root (sem `User=`): só root escreve em `/var/lib/oficina` e usa o Docker sem `sudo`. O `devops` está no grupo `docker` e tem `sudo` sem senha nesta máquina, então ele já é equivalente a root: rodar a unit como root é só simplicidade, sem fronteira de privilégio a proteger. Os arquivos de estado em `~devops/flow` ficam com dono `devops` (`FLOW_DONO`). A limpeza diária remove imagens sem uso há 72 h; a reversão não depende disso porque puxa a anterior por digest.
 
 **Instalação (uma vez, na máquina):**
 
