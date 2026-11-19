@@ -148,6 +148,26 @@ describe('montarResumoDaPublicacao', () => {
     expect(rodapeDoLote(comFalha)).toBe('3 no ar · 2 falharam · terminou 22:14')
   })
 
+  // O lote marcado para 22:00 que o worker só disparou às 22:02: o cabeçalho e o cartão mostram o
+  // início real (22:02), nunca uma hora anterior à de todos os itens.
+  test('último lote disparado depois da hora marcada → "quando" e a duração contam do início real', () => {
+    const lote = new Date('2026-11-19T01:00:00.000Z')
+    const inicio = new Date(lote.getTime() + 2 * 60_000)
+    const itens: ItemDoLote[] = [3, 9].map((m, i) => ({
+      id: `l${i}`,
+      titulo: `item ${i}`,
+      projeto: 'Projeto Alfa',
+      estado: 'publicado',
+      loteEm: lote,
+      iniciadoEm: inicio,
+      concluidoEm: new Date(lote.getTime() + m * 60_000),
+    }))
+    const r = montarResumoDaPublicacao([], itens, AGORA)
+    expect(r.ultimoLote.quando).toBe('ontem 22:02')
+    expect(r.ultimoLote.m).toBe('ontem 22:02 · 7 min · sem falha')
+    expect(rodapeDoLote(itens)).toBe('2 no ar · nenhuma voltou · terminou 22:09')
+  })
+
   test('nenhum lote → "—" / "nenhum lote ainda"; lote de hoje e de antes de ontem', () => {
     expect(montarResumoDaPublicacao([], [], AGORA).ultimoLote).toEqual({
       n: '—',

@@ -129,6 +129,8 @@ Authorization: Bearer <FLOW_PUBLICACAO_TOKEN>
 
 A resposta traz `estado`, `motivo`, `posicao` (quando na fila), `execucaoUrl` (o link da execução no GitHub), `checks` e `atendidoPor` (o pedido que publicou este, quando ele foi fundido a um mais novo). Consulte a cada 15 s ou mais; os estados finais são `publicado`, `recusado`, `dispensado`, `falhou` e `cancelado`. O `scripts/flow-publicar --esperar` faz exatamente isso.
 
+O `GET` só enxerga os pedidos feitos com o token da **mesma fonte de publicação**: o pedido de outra fonte (ou de outra pessoa pela tela) responde `404`, igual a um id que não existe. Consulte sempre com o token que fez o `POST`.
+
 ## O que cada estado significa
 
 | Estado | Significado | O que fazer |

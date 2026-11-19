@@ -36,7 +36,7 @@ export function UltimoLote({ quando, itens, rodape }: UltimoLoteProps) {
                 </span>
                 <span
                   title={item.projeto}
-                  className="min-w-0 max-w-[50%] truncate whitespace-nowrap rounded-[6px] bg-tonal-neutro px-2 py-0.5 text-xs text-neutro"
+                  className="min-w-0 max-w-[35%] truncate whitespace-nowrap rounded-[6px] bg-tonal-neutro px-2 py-0.5 text-xs text-neutro"
                 >
                   {item.projeto}
                 </span>

@@ -107,6 +107,8 @@ export interface ItemDoLote {
   projeto: string
   estado: 'publicado' | 'falhou' | 'publicando'
   loteEm: Date
+  /** quando o worker de fato disparou a publicação (pode ser depois de `loteEm`, a hora marcada) */
+  iniciadoEm?: Date | null
   concluidoEm: Date | null
 }
 
@@ -311,7 +313,8 @@ export function itensDoUltimoLote(itens: readonly ItemDoLote[]): ItemDoLote[] {
 }
 
 function contasDoLote(itens: readonly ItemDoLote[]) {
-  const inicio = Math.min(...itens.map((i) => i.loteEm.getTime()))
+  // o início real: a hora marcada (`loteEm`) pode ser anterior à de todos os itens
+  const inicio = Math.min(...itens.map((i) => (i.iniciadoEm ?? i.loteEm).getTime()))
   const fins = itens.flatMap((i) => (i.concluidoEm ? [i.concluidoEm.getTime()] : []))
   const fim = fins.length > 0 ? Math.max(...fins) : null
   const falharam = itens.filter((i) => i.estado === 'falhou').length

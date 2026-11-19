@@ -35,14 +35,17 @@ describe('UltimoLote', () => {
     expect(screen.getByText('2 no ar · nenhuma voltou · terminou 22:14')).toBeVisible()
   })
 
-  // Nome de projeto longo não pode empurrar o título para fora do cartão: a etiqueta encolhe.
-  test('a etiqueta do projeto trunca com o nome inteiro no title', () => {
+  // Nome de projeto longo não pode empurrar o título para fora do cartão: a etiqueta encolhe e fica
+  // com no máximo um terço da linha, para o título ter a prioridade (como no desenho 01-publicacao.png).
+  test('a etiqueta do projeto trunca com o nome inteiro no title e cede a prioridade ao título', () => {
     const longo = 'Projeto com um nome realmente comprido demais para a coluna'
     render(<UltimoLote quando="hoje 22:00" itens={[item('a', 0, 'Fuso', longo)]} rodape={null} />)
     const etiqueta = screen.getByText(longo)
     expect(etiqueta).toHaveAttribute('title', longo)
     expect(etiqueta).toHaveClass('truncate', 'min-w-0')
     expect(etiqueta).not.toHaveClass('shrink-0')
+    expect(etiqueta).toHaveClass('max-w-[35%]')
+    expect(etiqueta).not.toHaveClass('max-w-[50%]')
   })
 
   test('sem lote', () => {

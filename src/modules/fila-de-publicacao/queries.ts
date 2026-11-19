@@ -208,6 +208,7 @@ async function lerUltimoLote(repositorioIds: readonly string[]): Promise<ItemDoL
       descricao: true,
       estado: true,
       loteEm: true,
+      iniciadoEm: true,
       concluidoEm: true,
       repositorio: { select: { projeto: { select: { nome: true } } } },
     },
@@ -219,6 +220,7 @@ async function lerUltimoLote(repositorioIds: readonly string[]): Promise<ItemDoL
       projeto: p.repositorio.projeto?.nome ?? '—',
       estado: p.estado.toLowerCase() as ItemDoLote['estado'],
       loteEm: p.loteEm!,
+      iniciadoEm: p.iniciadoEm,
       concluidoEm: p.concluidoEm,
     })),
   )
