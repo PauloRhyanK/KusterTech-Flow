@@ -92,7 +92,7 @@ test.afterEach(async ({}, testInfo) => {
   await liberarRepositoriosNoBanco([repositorioDeAgentesE2E(testInfo.project.name)])
 })
 
-test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a seed e abre a execução concluída com a issue aberta @congelado', async ({
+test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a seed e abre a execução concluída com a issue aberta no GitHub', async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000)
@@ -179,15 +179,16 @@ test('admin acompanha o desenvolvimento: filtra, vê a intervenção, expande a 
   await capturar(page, nomeDoProjeto, 'jornada-e-4-execucao.png')
   if (mobile) expect(await semRolagemHorizontal(page)).toBe(true)
 
-  // 6. Link da issue #1 → a issue continua aberta na página da issue.
-  await page
+  // 6. Sem o módulo entregas, o link da issue #1 aponta para o GitHub, em nova aba.
+  const linkDaIssue = page
     .getByRole('region', { name: 'Issue no GitHub' })
     .getByRole('link', { name: /#1 ·/ })
-    .click()
-  await expect(page).toHaveURL(new RegExp(`/projetos/${projeto.id}/entregas/issues/`))
-  await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
-  await expect(page.getByText('Aberta', { exact: true }).first()).toBeVisible()
-  await capturar(page, nomeDoProjeto, 'jornada-e-5-issue.png')
+  await expect(linkDaIssue).toHaveAttribute(
+    'href',
+    new RegExp(`^https://github\\.com/${repositorioDeAgentesE2E(nomeDoProjeto)}/issues/1$`),
+  )
+  await expect(linkDaIssue).toHaveAttribute('target', '_blank')
+  await expect(linkDaIssue).toHaveAttribute('rel', /noreferrer/)
 
   expect((await obterExecucaoNoBanco(run1)).estado).toBe('CONCLUIDA')
   expect((await obterExecucaoNoBanco(run3)).estado).toBe('SEM_DADOS')

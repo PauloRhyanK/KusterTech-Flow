@@ -33,14 +33,7 @@ function seed(sobrepor: Partial<GrupoDeSeed> = {}): GrupoDeSeed {
 }
 
 function renderizar(grupos: GrupoDeProjeto[]) {
-  return render(
-    <ExecucoesAgrupadas
-      grupos={grupos}
-      acao="/projetos/p-1/desenvolvimento"
-      projetos={[{ id: 'p-1', nome: 'Automação' }]}
-      projetoId={null}
-    />,
-  )
+  return render(<ExecucoesAgrupadas grupos={grupos} />)
 }
 
 const PROJETO = { id: 'p-1', nome: 'Automação' }
@@ -106,5 +99,11 @@ describe('ExecucoesAgrupadas', () => {
     const { container } = renderizar([])
     expect(screen.getByText('Nenhuma execução do Warren encontrada.')).toBeInTheDocument()
     expect(container.querySelectorAll('[data-tom="sucesso"]')).toHaveLength(0)
+  })
+
+  test('o projeto vem da rota: sem campo Projeto nem botão Filtrar', () => {
+    renderizar([])
+    expect(screen.queryByLabelText('Projeto')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Filtrar' })).toBeNull()
   })
 })

@@ -4,7 +4,6 @@ import { fontesDeTeste, itemDeTeste } from './fixtures-de-teste'
 import { FilaDeDesenvolvimento } from './fila-de-desenvolvimento'
 
 const FILTROS = { projetoId: null, situacao: 'abertos', origem: 'todas' } as const
-const PROJETOS = [{ id: 'p-1', nome: 'Automação' }]
 
 function renderizar(props: Partial<React.ComponentProps<typeof FilaDeDesenvolvimento>> = {}) {
   return render(
@@ -14,7 +13,6 @@ function renderizar(props: Partial<React.ComponentProps<typeof FilaDeDesenvolvim
       total={1}
       filtros={FILTROS}
       acao="/projetos/p-1/desenvolvimento"
-      projetos={PROJETOS}
       {...props}
     />,
   )
@@ -60,6 +58,27 @@ describe('FilaDeDesenvolvimento', () => {
       'href',
       'https://github.com/kustertech-exemplo/automacao/pull/4',
     )
+    const link = screen.getByRole('link', { name: /Ajustar filtro de clientes/ })
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'))
+  })
+
+  test('item interno abre na mesma aba', () => {
+    renderizar({
+      itens: [
+        itemDeTeste({
+          id: 'e-1',
+          tipo: 'execucao',
+          origem: 'warren',
+          referencia: 'Execução',
+          href: '/desenvolvimento/execucoes/e-1',
+          externo: false,
+        }),
+      ],
+    })
+    const link = screen.getByRole('link', { name: /Ajustar filtro de clientes/ })
+    expect(link).toHaveAttribute('href', '/desenvolvimento/execucoes/e-1')
+    expect(link).not.toHaveAttribute('target')
   })
 
   test('falha do Warren mostra o motivo fixo e a data, sem esconder a lista', () => {
@@ -127,9 +146,10 @@ describe('FilaDeDesenvolvimento', () => {
     const comFiltro = renderizar({
       itens: [],
       total: 0,
-      filtros: { projetoId: 'p-1', situacao: 'abertos', origem: 'todas' },
+      filtros: { projetoId: 'p-1', situacao: 'todos', origem: 'todas' },
     })
     expect(screen.getByText('Nenhum item com estes filtros.')).toBeInTheDocument()
+    expect(screen.getByText('Altere a situação ou a origem.')).toBeInTheDocument()
     comFiltro.unmount()
 
     renderizar({ itens: [], total: 0 })
@@ -141,11 +161,10 @@ describe('FilaDeDesenvolvimento', () => {
     expect(screen.getByText('Mostrando 100 de 137 itens. Refine os filtros.')).toBeInTheDocument()
   })
 
-  test('com o projeto fixado pela rota (sem a lista de projetos) a fila vazia não culpa os filtros', () => {
+  test('com o projeto fixado pela rota a fila vazia não culpa os filtros', () => {
     renderizar({
       itens: [],
       total: 0,
-      projetos: undefined,
       filtros: { projetoId: 'p-1', situacao: 'abertos', origem: 'todas' },
     })
     expect(screen.getByText('Nenhuma issue, PR ou execução em aberto.')).toBeInTheDocument()

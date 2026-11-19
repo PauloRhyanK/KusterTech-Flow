@@ -12,6 +12,8 @@ export interface LinhaOperacional {
   indicador?: ReactNode
   acoes?: ReactNode
   href?: string
+  // Link para fora do app (GitHub, por exemplo): abre em nova aba.
+  externo?: boolean
 }
 
 export interface ListaOperacionalProps {
@@ -53,7 +55,16 @@ export function ListaOperacional({
           >
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <div className="truncate font-medium text-text-primary">
-                {linha.href ? (
+                {linha.href && linha.externo ? (
+                  <a
+                    href={linha.href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="transition-colors hover:underline"
+                  >
+                    {linha.nome}
+                  </a>
+                ) : linha.href ? (
                   <Link href={linha.href} className="transition-colors hover:underline">
                     {linha.nome}
                   </Link>

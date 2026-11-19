@@ -172,7 +172,16 @@ export function DetalheDaExecucao({ execucao }: DetalheDaExecucaoProps) {
                   key={i.id}
                   className="flex flex-wrap items-center justify-between gap-2 text-sm"
                 >
-                  {i.href ? (
+                  {i.href && i.externo ? (
+                    <a
+                      href={i.href}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="font-medium text-text-link hover:underline"
+                    >
+                      #{i.numero} · {i.titulo}
+                    </a>
+                  ) : i.href ? (
                     <Link href={i.href} className="font-medium text-text-link hover:underline">
                       #{i.numero} · {i.titulo}
                     </Link>

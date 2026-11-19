@@ -51,6 +51,7 @@ function execucao(sobrepor: Partial<ExecucaoDetalhada> = {}): ExecucaoDetalhada 
         titulo: 'Exportar relatório de entregas',
         estado: 'ABERTA',
         href: '/projetos/p-1/entregas/issues/i-1',
+        externo: false,
       },
     ],
     linhaDoTempo: [
@@ -80,6 +81,9 @@ describe('DetalheDaExecucao', () => {
     expect(
       screen.getByRole('link', { name: /#1 · Exportar relatório de entregas/ }),
     ).toHaveAttribute('href', '/projetos/p-1/entregas/issues/i-1')
+    expect(
+      screen.getByRole('link', { name: /#1 · Exportar relatório de entregas/ }),
+    ).not.toHaveAttribute('target')
     expect(screen.getByText('Aberta')).toBeInTheDocument()
     expect(screen.getByText('Em andamento')).toBeInTheDocument()
     expect(screen.getByText(/^US\$\s0,912$/)).toBeInTheDocument()
@@ -148,5 +152,28 @@ describe('DetalheDaExecucao', () => {
       screen.getByText('Não foi possível ler os dados do Warren em 1 repositório(s).'),
     ).toBeInTheDocument()
     expect(screen.getByText('run_exemplo0001')).toBeInTheDocument()
+  })
+
+  test('com entregas congelado, a issue abre no GitHub em nova aba', () => {
+    render(
+      <DetalheDaExecucao
+        execucao={execucao({
+          issuesDoGitHub: [
+            {
+              id: 'i-1',
+              numero: 1,
+              titulo: 'Exportar relatório de entregas',
+              estado: 'ABERTA',
+              href: 'https://github.com/kustertech-exemplo/automacao/issues/1',
+              externo: true,
+            },
+          ],
+        })}
+      />,
+    )
+    const link = screen.getByRole('link', { name: /#1 · Exportar relatório de entregas/ })
+    expect(link).toHaveAttribute('href', 'https://github.com/kustertech-exemplo/automacao/issues/1')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'))
   })
 })

@@ -3,9 +3,8 @@ import type { FiltrosDaFila as Filtros } from '@/modules/desenvolvimento/queries
 
 export interface FiltrosDaFilaProps {
   filtros: Filtros
+  // O projeto é fixado pela rota; o formulário filtra só situação e origem.
   acao: string
-  // Sem a lista, o projeto já está fixado pela rota e o campo não aparece.
-  projetos?: readonly { id: string; nome: string }[]
 }
 
 const SITUACOES: readonly { valor: Filtros['situacao']; rotulo: string }[] = [
@@ -24,33 +23,13 @@ const ORIGENS: readonly { valor: Filtros['origem']; rotulo: string }[] = [
 const CLASSE_CAMPO =
   'h-8 w-full max-w-full rounded-compacto border border-border bg-surface px-2 sm:w-auto sm:max-w-[16rem] text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 
-export function FiltrosDaFila({ filtros, acao, projetos }: FiltrosDaFilaProps) {
+export function FiltrosDaFila({ filtros, acao }: FiltrosDaFilaProps) {
   return (
     <form
       method="GET"
       action={acao}
       className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end"
     >
-      {projetos && (
-        <div className="space-y-1">
-          <label htmlFor="filtro-projeto" className="block text-xs font-medium text-text-secondary">
-            Projeto
-          </label>
-          <select
-            id="filtro-projeto"
-            name="projeto"
-            defaultValue={filtros.projetoId ?? ''}
-            className={CLASSE_CAMPO}
-          >
-            <option value="">Todos</option>
-            {projetos.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nome}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
       <div className="space-y-1">
         <label htmlFor="filtro-situacao" className="block text-xs font-medium text-text-secondary">
           Situação

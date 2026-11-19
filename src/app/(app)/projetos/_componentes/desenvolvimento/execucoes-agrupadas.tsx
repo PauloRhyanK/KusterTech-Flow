@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { apresentarEstadoDaExecucao, apresentarStatusDeSeed } from '@/modules/desenvolvimento/model'
@@ -12,10 +11,6 @@ import type {
 
 export interface ExecucoesAgrupadasProps {
   grupos: readonly GrupoDeProjeto[]
-  acao: string
-  // Sem a lista, o projeto já está fixado pela rota e o campo não aparece.
-  projetos?: readonly { id: string; nome: string }[]
-  projetoId?: string | null
 }
 
 const ESTADO_DO_PR: Record<string, string> = {
@@ -23,9 +18,6 @@ const ESTADO_DO_PR: Record<string, string> = {
   FECHADO: 'Fechado',
   MERGEADO: 'Mergeado',
 }
-
-const CLASSE_CAMPO =
-  'h-8 w-full max-w-full rounded-compacto border border-border bg-surface px-2 sm:w-auto sm:max-w-[16rem] text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 
 function plural(n: number): string {
   return n === 1 ? '1 execução' : `${n} execuções`
@@ -110,44 +102,9 @@ function Moldura({ children }: { children: ReactNode }) {
   )
 }
 
-export function ExecucoesAgrupadas({
-  grupos,
-  acao,
-  projetos,
-  projetoId = null,
-}: ExecucoesAgrupadasProps) {
+export function ExecucoesAgrupadas({ grupos }: ExecucoesAgrupadasProps) {
   return (
     <section aria-label="Execuções por projeto e issue" className="space-y-6">
-      <form method="GET" action={acao} className="flex flex-wrap items-end gap-3">
-        <input type="hidden" name="visao" value="execucoes" />
-        {projetos && (
-          <div className="space-y-1">
-            <label
-              htmlFor="filtro-projeto"
-              className="block text-xs font-medium text-text-secondary"
-            >
-              Projeto
-            </label>
-            <select
-              id="filtro-projeto"
-              name="projeto"
-              defaultValue={projetoId ?? ''}
-              className={CLASSE_CAMPO}
-            >
-              <option value="">Todos</option>
-              {projetos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        <Button type="submit" variant="secondary">
-          Filtrar
-        </Button>
-      </form>
-
       {grupos.length === 0 ? (
         <EstadoVazio
           tipo="nenhum-registro"

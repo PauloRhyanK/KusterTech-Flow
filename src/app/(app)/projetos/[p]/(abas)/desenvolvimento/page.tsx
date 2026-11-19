@@ -52,20 +52,12 @@ async function Fila({
   )
 }
 
-async function Agrupada({
-  sujeito,
-  projetoId,
-  acao,
-}: {
-  sujeito: Sujeito
-  projetoId: string
-  acao: string
-}) {
+async function Agrupada({ sujeito, projetoId }: { sujeito: Sujeito; projetoId: string }) {
   const { fontes, grupos } = await listarExecucoesAgrupadas(sujeito, projetoId)
   return (
     <>
       <SituacaoDasFontes fontes={fontes} />
-      <ExecucoesAgrupadas grupos={grupos} acao={acao} />
+      <ExecucoesAgrupadas grupos={grupos} />
     </>
   )
 }
@@ -130,7 +122,7 @@ export default async function PaginaDesenvolvimentoDoProjeto({
       {visao === 'fila' ? (
         <Fila sujeito={sessao.sujeito} filtros={filtros} acao={base} />
       ) : (
-        <Agrupada sujeito={sessao.sujeito} projetoId={p} acao={base} />
+        <Agrupada sujeito={sessao.sujeito} projetoId={p} />
       )}
     </div>
   )
