@@ -6,6 +6,7 @@ export const LIMITES = {
   decisoes: 50,
   fases: 20,
   raias: 50,
+  consertos: 20,
   /** título de decisão, aviso e `pausado` */
   textoLongo: 300,
   /** demais textos */
@@ -21,6 +22,8 @@ export const ESTADOS_DA_FILA = [
   'removido',
 ] as const
 export const ESTADOS_DA_RAIA = ['planejada', 'executando', 'concluida', 'falhou'] as const
+/** Os estados de um conserto de publicação que a Fábrica conta (`fabrica/scripts/consertos.py`). */
+export const ESTADOS_DO_CONSERTO = ['em_curso', 'com_pr', 'desistiu'] as const
 
 const texto = z.string().min(1).max(LIMITES.texto)
 const textoLongo = z.string().min(1).max(LIMITES.textoLongo)
@@ -73,6 +76,16 @@ const plano = z.strictObject({
   orquestradorAtivo: z.boolean(),
 })
 
+// O estado de um pedido de conserto da resposta, contado de volta pela Fábrica.
+const conserto = z.strictObject({
+  id: z.string().uuid(),
+  estado: z.enum(ESTADOS_DO_CONSERTO),
+  runId: texto.nullable(),
+  prUrl: urlGithub.nullable(),
+  motivo: textoLongo.nullable(),
+  em: instante,
+})
+
 export const retratoV1Schema = z.strictObject({
   versao: z.literal(1),
   geradoEm: instante,
@@ -88,6 +101,8 @@ export const retratoV1Schema = z.strictObject({
   warren: z.strictObject({ preparo: texto.nullable(), em: instante.nullable() }),
   planos: z.array(plano).max(LIMITES.planos),
   avisos: z.array(z.strictObject({ em: instante, mensagem: textoLongo })).max(LIMITES.avisos),
+  /** Opcional: o coordenador sem consertos (ou o antigo) manda o v1 de sempre. */
+  consertos: z.array(conserto).max(LIMITES.consertos).optional(),
 })
 
 export type RetratoV1 = z.infer<typeof retratoV1Schema>

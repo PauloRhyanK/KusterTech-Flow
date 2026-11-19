@@ -604,3 +604,175 @@ describe('escrita de issues', () => {
     }
   })
 })
+
+describe('publicação: cabeça, disparo, execuções e log', () => {
+  const R = '/repos/kustertech-exemplo/portal'
+  const SHA = 'ca00000000000000000000000000000000000004'
+  const corpoRun = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    status: 'completed',
+    conclusion: 'success',
+    html_url: `https://github.com/kustertech-exemplo/portal/actions/runs/${id}`,
+    display_title: `publicar ${SHA}`,
+    created_at: '2026-10-26T14:50:00Z',
+    updated_at: '2026-10-26T14:55:00Z',
+    ...extra,
+  })
+
+  test('lerCabecaDoBranchPadrao: GET /repos/o/r → default_branch, depois GET /repos/o/r/commits/main → sha', async () => {
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`GET ${R}`]: { corpo: { default_branch: 'main' } },
+      [`GET ${R}/commits/main`]: { corpo: { sha: SHA } },
+    })
+    expect(await fonte.lerCabecaDoBranchPadrao(repo)).toEqual({ branch: 'main', sha: SHA })
+    expect(chamadas.slice(1).map((c) => `${c.metodo} ${c.url.pathname}`)).toEqual([
+      `GET ${R}`,
+      `GET ${R}/commits/main`,
+    ])
+  })
+
+  test('dispararWorkflow: POST …/workflows/deploy.yml/dispatches com { ref: "main", inputs: { commit } }; 204 sem corpo resolve', async () => {
+    const chamadas: Chamada[] = []
+    // 204 não pode ter corpo: o json() do helper envia "{}", então usa Response direto.
+    const fetch204 = (async (entrada: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(entrada))
+      chamadas.push({
+        url,
+        metodo: init?.method ?? 'GET',
+        cabecalhos: init?.headers as Record<string, string>,
+        corpo: typeof init?.body === 'string' ? init.body : undefined,
+      })
+      if (url.pathname === '/app/installations/900001/access_tokens') {
+        return json({ status: 201, corpo: { token: TOKEN, expires_at: '2026-10-26T16:00:00Z' } })
+      }
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+    const f = criarFonteApp(
+      { appId: '123456', chavePrivada: privateKey, apiUrl: API },
+      fetch204,
+      () => AGORA,
+    )
+    await expect(
+      f.dispararWorkflow(repo, 'deploy.yml', 'main', { commit: SHA }),
+    ).resolves.toBeUndefined()
+    const c = chamadas.at(-1)!
+    expect(`${c.metodo} ${c.url.pathname}`).toBe(
+      `POST ${R}/actions/workflows/deploy.yml/dispatches`,
+    )
+    expect(JSON.parse(c.corpo!)).toEqual({ ref: 'main', inputs: { commit: SHA } })
+    expect(c.cabecalhos.Authorization).toBe(`Bearer ${TOKEN}`)
+  })
+
+  test('dispararWorkflow: 422 → resposta-invalida; 404 → sem-acesso', async () => {
+    for (const [status, categoria] of [
+      [422, 'resposta-invalida'],
+      [404, 'sem-acesso'],
+    ] as const) {
+      const { fonte } = criar({
+        [TOKEN_PATH]: tokenRota(),
+        [`POST ${R}/actions/workflows/deploy.yml/dispatches`]: { status, corpo: { message: 'x' } },
+      })
+      const erro = await fonte
+        .dispararWorkflow(repo, 'deploy.yml', 'main', { commit: SHA })
+        .catch((e: unknown) => e)
+      expect(erro).toBeInstanceOf(ErroDeIntegracao)
+      expect((erro as ErroDeIntegracao).categoria).toBe(categoria)
+    }
+  })
+
+  test('listarExecucoesDoWorkflow: GET …/workflows/deploy.yml/runs?event=workflow_dispatch&created=>=<ISO>&per_page=100 mapeia id, status, conclusion, html_url, display_title', async () => {
+    const desde = new Date('2026-10-26T14:00:00.000Z')
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`GET ${R}/actions/workflows/deploy.yml/runs`]: {
+        corpo: {
+          workflow_runs: [corpoRun(77), corpoRun(76, { conclusion: null, status: 'queued' })],
+        },
+      },
+    })
+    const r = await fonte.listarExecucoesDoWorkflow(repo, 'deploy.yml', desde)
+    expect(r.map((e) => e.id)).toEqual([BigInt(77), BigInt(76)])
+    expect(r[0]).toEqual({
+      id: BigInt(77),
+      status: 'completed',
+      conclusao: 'success',
+      urlHtml: 'https://github.com/kustertech-exemplo/portal/actions/runs/77',
+      titulo: `publicar ${SHA}`,
+      criadaEm: new Date('2026-10-26T14:50:00Z'),
+      atualizadaEm: new Date('2026-10-26T14:55:00Z'),
+    })
+    expect(r[1]!.conclusao).toBeNull()
+    const q = chamadas.at(-1)!.url.searchParams
+    expect(q.get('event')).toBe('workflow_dispatch')
+    expect(q.get('created')).toBe(`>=${desde.toISOString()}`)
+    expect(q.get('per_page')).toBe('100')
+  })
+
+  test('lerExecucao: 200 mapeia; 404 → null', async () => {
+    const ok = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`GET ${R}/actions/runs/77`]: { corpo: corpoRun(77) },
+    })
+    expect((await ok.fonte.lerExecucao(repo, BigInt(77)))?.id).toBe(BigInt(77))
+    const ausente = criar({ [TOKEN_PATH]: tokenRota() })
+    expect(await ausente.fonte.lerExecucao(repo, BigInt(78))).toBeNull()
+  })
+
+  test('lerFimDoLog: …/runs/<id>/jobs, primeiro job failure, …/jobs/<id>/logs como texto, últimos 4000 caracteres', async () => {
+    const log = 'x'.repeat(5000) + 'Error: build falhou'
+    const chamadas: Chamada[] = []
+    const fetchLog = (async (entrada: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(entrada))
+      chamadas.push({
+        url,
+        metodo: init?.method ?? 'GET',
+        cabecalhos: init?.headers as Record<string, string>,
+      })
+      if (url.pathname === '/app/installations/900001/access_tokens') {
+        return json({ status: 201, corpo: { token: TOKEN, expires_at: '2026-10-26T16:00:00Z' } })
+      }
+      if (url.pathname.endsWith('/runs/77/jobs')) {
+        return json({
+          corpo: {
+            jobs: [
+              { id: 1, conclusion: 'success' },
+              { id: 2, conclusion: 'failure' },
+            ],
+          },
+        })
+      }
+      if (url.pathname.endsWith('/jobs/2/logs')) {
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://blob.exemplo.test/log.txt' },
+        })
+      }
+      if (url.host === 'blob.exemplo.test') {
+        return new Response(log, { status: 200 })
+      }
+      return json({ status: 404 })
+    }) as typeof fetch
+    const f = criarFonteApp(
+      { appId: '123456', chavePrivada: privateKey, apiUrl: API },
+      fetchLog,
+      () => AGORA,
+    )
+    const fim = await f.lerFimDoLog(repo, BigInt(77), 4000)
+    expect(fim).toHaveLength(4000)
+    expect(fim.endsWith('Error: build falhou')).toBe(true)
+    const segundo = chamadas.at(-1)!
+    expect(segundo.url.host).toBe('blob.exemplo.test')
+    expect(segundo.cabecalhos?.Authorization).toBeUndefined()
+    const primeiro = chamadas.at(-2)!
+    expect(primeiro.cabecalhos.Authorization).toBe(`Bearer ${TOKEN}`)
+  })
+
+  test('lerFimDoLog: sem job falho → ""', async () => {
+    const { fonte } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`GET ${R}/actions/runs/77/jobs`]: { corpo: { jobs: [{ id: 1, conclusion: 'success' }] } },
+    })
+    expect(await fonte.lerFimDoLog(repo, BigInt(77), 4000)).toBe('')
+  })
+})

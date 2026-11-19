@@ -6,6 +6,7 @@ import { idsVisiveis, podeVerVisaoGlobal } from '@/modules/clientes/model'
 import type { RetratoV1 } from '@/modules/fabrica/contrato'
 import { planosEmCurso, retratoDesatualizado, type ResumoDoPlano } from '@/modules/fabrica/model'
 import { obterRetratoMaisRecente, type RetratoRecebido } from '@/modules/fabrica/queries'
+import { esperasDePublicacao } from '@/modules/fila-de-publicacao/queries'
 import { estadoDoRepositorio, resumirErroParaLog } from '@/modules/github/model'
 import { intervaloDaIntegracao } from '@/modules/github/service'
 import { avisosDaMaquina, type LeituraDaMaquina } from '@/modules/oficina/model'
@@ -330,6 +331,9 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
 
   // Fontes de lista simples: uma consulta por tipo, só com o módulo ativo e a permissão.
   const consultas: [TipoDeEspera, () => Promise<ItemDeEspera[]>][] = []
+  if (moduloAtivo('fila-de-publicacao') && pode('publicacao')) {
+    consultas.push(['publicacao', () => esperasDePublicacao(sujeito, agora)])
+  }
   if (moduloAtivo('github') && pode('integracao')) {
     consultas.push(['integracao', () => integracoesPendentes(sujeito, agora)])
   }

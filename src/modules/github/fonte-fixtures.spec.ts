@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { criarFonteFixtures } from './fonte-fixtures'
 import { resumirChecks } from './model'
+import { procurarExecucaoDoCommit } from '../fila-de-publicacao/model'
 
 describe('fonte de fixtures', () => {
   const fonte = criarFonteFixtures()
@@ -249,5 +250,73 @@ describe('fonte de fixtures', () => {
     expect(f.escritas).toEqual([
       { tipo: 'reabrir', repositorio: 'kustertech-exemplo/portal', numero: 4 },
     ])
+  })
+
+  describe('publicação', () => {
+    const BASE = (c: string) => `${c}${'0'.repeat(37)}`
+    const NOVO = `${BASE('ca')}2`.slice(0, 40)
+    test('cabeça de portal é QUEBRA; execução de NOVO é success, de QUEBRA é failure; disparar registra escrita', async () => {
+      const f = criarFonteFixtures()
+      const [portal, , site] = await f.listarRepositorios()
+      const quebra = `ca${'0'.repeat(37)}4`
+      expect(await f.lerCabecaDoBranchPadrao(portal!)).toEqual({ branch: 'main', sha: quebra })
+      expect((await f.lerCabecaDoBranchPadrao(site!)).sha).toBe(`cb${'0'.repeat(37)}4`)
+      const execs = await f.listarExecucoesDoWorkflow(portal!, 'deploy.yml', new Date(0))
+      expect(procurarExecucaoDoCommit(execs, `ca${'0'.repeat(37)}2`)?.conclusao).toBe('success')
+      const q = procurarExecucaoDoCommit(execs, quebra)
+      expect(q?.conclusao).toBe('failure')
+      expect((await f.lerExecucao(portal!, q!.id))?.titulo).toBe(`publicar ${quebra}`)
+      expect(await f.lerExecucao(portal!, BigInt(1))).toBeNull()
+      await f.dispararWorkflow(portal!, 'deploy.yml', 'main', { commit: NOVO })
+      expect(f.escritas).toEqual([
+        {
+          tipo: 'disparar',
+          repositorio: 'kustertech-exemplo/portal',
+          workflow: 'deploy.yml',
+          commit: NOVO,
+        },
+      ])
+    })
+
+    test('lerFimDoLog de QUEBRA contém "Error: build falhou"; de execução sem log é ""; respeita o limite', async () => {
+      const f = criarFonteFixtures()
+      const [portal] = await f.listarRepositorios()
+      const execs = await f.listarExecucoesDoWorkflow(portal!, 'deploy.yml', new Date(0))
+      const q = procurarExecucaoDoCommit(execs, `ca${'0'.repeat(37)}4`)!
+      expect(await f.lerFimDoLog(portal!, q.id, 4000)).toContain('Error: build falhou')
+      expect(await f.lerFimDoLog(portal!, q.id, 5)).toHaveLength(5)
+      expect(await f.lerFimDoLog(portal!, BigInt(9170001), 4000)).toBe('')
+    })
+
+    test('comparações: ANTIGO diverge de NOVO; QUEBRA contém NOVO; NOVO está atrás de BASE', async () => {
+      const f = criarFonteFixtures()
+      const [portal] = await f.listarRepositorios()
+      const h = (n: number) => `ca${'0'.repeat(37)}${n}`
+      expect((await f.compararCommits(portal!, h(2), h(3))).status).toBe('diverged')
+      expect((await f.compararCommits(portal!, h(3), h(2))).commits).toEqual([h(2)])
+      expect((await f.compararCommits(portal!, h(2), h(4))).status).toBe('ahead')
+      expect((await f.compararCommits(portal!, h(2), h(1))).status).toBe('behind')
+      for (const n of [1, 2, 3]) {
+        expect((await f.compararCommits(portal!, h(n), h(4))).status).toBe('ahead')
+      }
+      expect((await f.compararCommits(portal!, h(4), h(4))).status).toBe('identical')
+    })
+
+    test('registrarExecucao e registrarLog controlam o que a fonte devolve', async () => {
+      const f = criarFonteFixtures(() => new Date('2026-11-19T12:00:00Z'))
+      const [portal] = await f.listarRepositorios()
+      const commit = `ca${'0'.repeat(37)}9`
+      f.registrarExecucao(portal!.nomeCompleto, {
+        id: BigInt(5),
+        commit,
+        status: 'in_progress',
+        conclusao: null,
+      })
+      const execs = await f.listarExecucoesDoWorkflow(portal!, 'deploy.yml', new Date(0))
+      expect(execs[0]).toMatchObject({ id: BigInt(5), status: 'in_progress', conclusao: null })
+      expect(procurarExecucaoDoCommit(execs, commit)?.id).toBe(BigInt(5))
+      f.registrarLog(portal!.nomeCompleto, BigInt(5), 'fim')
+      expect(await f.lerFimDoLog(portal!, BigInt(5), 10)).toBe('fim')
+    })
   })
 })

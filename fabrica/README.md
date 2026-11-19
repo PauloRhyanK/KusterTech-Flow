@@ -196,6 +196,37 @@ O envio é `POST` com `Authorization: Bearer` e timeout de 10 s, e não segue re
 
 O retrato é cortado para caber no contrato e em 256 KB: saem primeiro os planos `removido` e `concluido` mais antigos, depois os avisos mais antigos, e nunca um plano ocupando vaga. Se ainda não couber, não envia e avisa. O `coordenador.py status` mostra se o envio está ligado, o último envio e o resultado.
 
+### Pedido de publicação depois do merge
+
+Quando uma seed de um plano é mergeada, o coordenador pede ao Flow que publique o projeto (`POST /api/publicacoes`, sem `commit`: o Flow publica a cabeça do branch padrão). Fica desligado enquanto não houver `FABRICA_CENTRAL_URL` e o token de uma fonte de publicação. Crie a fonte em Configurações → Publicação na Central, grave o token num arquivo só seu e acrescente ao `~/fabrica/coordenador.env`:
+
+```bash
+printf '%s\n' "<token>" > ~/.fabrica-publicacao-token && chmod 600 ~/.fabrica-publicacao-token
+```
+
+```ini
+FABRICA_PUBLICACAO_TOKEN_FILE=/home/<usuário>/.fabrica-publicacao-token
+```
+
+- A rota vem da `FABRICA_CENTRAL_URL` (mesmo host, caminho `/api/publicacoes`). O token é lido do arquivo a cada pedido e nunca aparece em log, erro ou aviso; a variável não entra no `plano.env`.
+- A primeira leitura de um plano só anota as seeds já mergeadas (linha de base), sem pedir. Depois, é um pedido por plano por ciclo, mesmo com várias seeds novas, com a descrição `<feature> · <seed>`. As seeds vistas ficam em `fila-estado.json`, em `publicacao.vistas`.
+- Falha transitória (Flow fora do ar, 5xx, 401, timeout) nunca para o coordenador nem o despachante: a seed não é marcada como vista, o próximo ciclo tenta de novo, o passo para no primeiro pedido que falhou e o aviso `Publicação:` sai só quando a categoria muda.
+- Recusa definitiva (404 repositório sem projeto, 409 "publicação não configurada", 422 pedido inválido): repetir não mudaria a resposta, então as seeds contam como vistas, sai um aviso `Publicação: o Flow recusou…` e o passo segue para o próximo plano. Configure a publicação no projeto antes da próxima seed mergeada.
+
+### Consertos de publicação
+
+Quando uma publicação falha na fila do Flow, a resposta do envio do retrato traz um pedido de conserto: repositório, commit, link da execução e fim do log. O coordenador roda **um** run do Warren com o papel `fixer` (o modelo de `modelos.fixer` em `fabrica/modelos/config.json`) no projeto do repositório em `fila.json`, com um prompt fixo: abrir um PR com a correção a partir de `main`, ou explicar por que não dá.
+
+- Diferente do fixer das seeds, esse run **ocupa uma vaga** de `capacidade.json` (chave `conserto:<id>`). Sem vaga, com pouca RAM ou com drenagem, o pedido espera o próximo ciclo.
+- O retrato seguinte leva o estado do conserto: `em_curso`, `com_pr` (com o link do PR) ou `desistiu` (com o motivo). O conserto nunca publica nada: a correção entra em `main` pelo caminho normal do repositório e a publicação é um pedido novo na fila.
+- Teto de 1 h: o motor não cancela run, então no teto o conserto `desistiu` e a vaga é solta, mas o run pode seguir no Warren até terminar sozinho.
+- Run perdido por infraestrutura (`sandbox_run_lost`, `preempted`): o Warren o refaz sozinho uma vez, e o conserto adota esse retry e segue `em_curso` com a vaga. Sem retry depois de 3 buscas e 5 min, desiste.
+- Com o envio à Central desligado, o coordenador segue acompanhando os consertos em andamento (teto e vaga), sem atender novos.
+- Repositório fora de `fila.json` desiste na hora. Sem `modelos.fixer`, nada é despachado e sai um aviso.
+- O estado fica em `fila-estado.json` (`consertos`), gravado antes do despacho. Um coordenador reiniciado acha o run pelo nonce do pedido e nunca despacha dois runs para o mesmo conserto.
+
+**Voltar o Flow para uma versão sem consertos.** Um Flow anterior aos consertos responde 400 a todo retrato que traga o campo `consertos`. Nesse caso o coordenador reenvia o mesmo retrato uma vez sem o campo, avisa uma vez (`Central: o Flow recusou o retrato com os consertos…`) e, com o retrato aceito, tira do estado os consertos já encerrados (`com_pr`, `desistiu`), que esse Flow não teria como receber. Os consertos em curso seguem até o fim (teto de 1 h e vaga), sem atender novos; quando terminam, saem do estado pelo mesmo caminho. O painel da Fábrica não congela e não há passo manual no rollback.
+
 ### Riscos conhecidos
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.

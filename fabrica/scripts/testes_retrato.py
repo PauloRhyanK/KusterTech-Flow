@@ -235,6 +235,32 @@ class TestesMontar(unittest.TestCase):
         for proibido in ("SEGREDO-DO-CORPO", "/home/devops", "warren/run_1", "arquivos", "src/**"):
             self.assertNotIn(proibido, texto)
 
+    def test_montar_sem_consertos_e_identico_ao_v1_de_hoje(self):
+        fila = [entrada(ID_A)]
+        hoje = montar(fila=fila)
+        self.assertNotIn("consertos", hoje)
+        for vazio in (None, []):
+            with self.subTest(consertos=vazio):
+                gerado = retrato.montar(
+                    agora=AGORA, fila_estado={"fila": fila, "avisos": [], "warren": {}}, capacidade=capacidade_com(), planos={}, mem_disponivel_mb=5120, consertos=vazio
+                )
+                self.assertEqual(gerado, hoje)
+
+    def test_montar_com_consertos_acrescenta_o_campo_limpo_e_no_maximo_20(self):
+        id_ = "0b6f3c2e-6a1d-4c8e-9f00-1a2b3c4d5e6f"
+        item = {"id": id_, "estado": "desistiu", "runId": "run-1", "prUrl": "https://exemplo.com/pr", "motivo": "falhou em /home/x/y " + "m" * 400, "em": "torto"}
+        tortos = [{"id": "x", "estado": "em_curso"}, {"id": id_, "estado": "despachando"}, "lixo"]
+        gerado = retrato.montar(
+            agora=AGORA, fila_estado={}, capacidade=capacidade_com(), planos={}, mem_disponivel_mb=None, consertos=[item] * 25 + tortos
+        )
+        self.assertEqual(len(gerado["consertos"]), 20)
+        limpo = gerado["consertos"][0]
+        self.assertEqual(sorted(limpo), ["em", "estado", "id", "motivo", "prUrl", "runId"])
+        self.assertIsNone(limpo["prUrl"])
+        self.assertEqual(limpo["em"], AGORA)
+        self.assertNotIn("/home", limpo["motivo"])
+        self.assertLessEqual(len(limpo["motivo"]), 300)
+
     def test_surrogate_solto_nao_quebra_a_serializacao(self):
         retrato_ = montar(avisos=[{"em": "2026-11-03T21:00:00Z", "mensagem": "ruim \ud800 fim"}])
         retrato.serializar(retrato_)
@@ -364,8 +390,8 @@ class TestesUrl(unittest.TestCase):
 class Central(http.server.ThreadingHTTPServer):
     """Central de mentira: responde com o `codigo`/`local` configurado e guarda o que recebeu."""
 
-    def __init__(self, codigo=200, local=None):
-        self.codigo, self.local, self.recebidos = codigo, local, []
+    def __init__(self, codigo=200, local=None, resposta=b""):
+        self.codigo, self.local, self.recebidos, self.resposta = codigo, local, [], resposta
         super().__init__(("127.0.0.1", 0), self.Tratador)
         self.thread = threading.Thread(target=self.serve_forever, daemon=True)
         self.thread.start()
@@ -381,8 +407,9 @@ class Central(http.server.ThreadingHTTPServer):
             self.send_response(self.server.codigo)
             if self.server.local:
                 self.send_header("Location", self.server.local)
-            self.send_header("Content-Length", "0")
+            self.send_header("Content-Length", str(len(self.server.resposta)))
             self.end_headers()
+            self.wfile.write(self.server.resposta)
 
         do_GET = do_POST
 
@@ -517,6 +544,19 @@ class TestesEnviar(unittest.TestCase):
         with self.assertRaises(retrato.FalhaDeEnvio) as ctx:
             retrato.enviar(b"{}", url="https://central.exemplo.com/x", token_file=None)
         self.assertIn("FABRICA_CENTRAL_TOKEN_FILE", str(ctx.exception))
+
+    def test_enviar_devolve_o_json_da_resposta(self):
+        corpo = {"resultado": "gravado", "consertos": []}
+        servidor = self.central(resposta=json.dumps(corpo).encode("utf-8"))
+        self.assertEqual(retrato.enviar(b"{}", url=servidor.url, token_file=self.token_file), corpo)
+
+    def test_enviar_com_resposta_invalida_devolve_none_sem_falhar(self):
+        grande = json.dumps({"resultado": "gravado", "x": "a" * retrato.LIMITE_DA_RESPOSTA}).encode("utf-8")
+        for nome, resposta in {"vazia": b"", "nao-json": b"<html>", "lista": b"[1]", "grande": grande, "binaria": b"\xff\xfe"}.items():
+            with self.subTest(nome=nome):
+                servidor = self.central(resposta=resposta)
+                self.assertIsNone(retrato.enviar(b"{}", url=servidor.url, token_file=self.token_file))
+        self.assertEqual(retrato.LIMITE_DA_RESPOSTA, 262_144)
 
     def test_url_recusada_nao_abre_conexao(self):
         def abrir(req, timeout):

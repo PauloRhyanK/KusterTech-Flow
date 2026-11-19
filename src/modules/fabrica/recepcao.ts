@@ -1,6 +1,11 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
+import {
+  aplicarConsertosDoRetrato,
+  consertosParaAFabrica,
+  type ConsertoParaAFabrica,
+} from '@/modules/fila-de-publicacao/consertos'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { retratoV1Schema } from './contrato'
 import {
@@ -10,7 +15,9 @@ import {
   LIMITE_DO_CORPO_DO_RETRATO,
 } from './model'
 
-export type RespostaDaRecepcao = { erro: string } | { resultado: 'gravado' | 'descartado' }
+// `consertos` são os pedidos de conserto de publicação ainda abertos; o kit antigo ignora o corpo.
+export type RespostaDaRecepcao =
+  { erro: string } | { resultado: 'gravado' | 'descartado'; consertos: ConsertoParaAFabrica[] }
 
 export interface EntradaDaRecepcao {
   authorization: string | null
@@ -109,10 +116,19 @@ export async function receberRetratoDaFabrica(
     if (decisao === 'futuro') return CORPO_INVALIDO
 
     await db.fonteDaFabrica.update({ where: { id: fonte.id }, data: { ultimoUsoEm: agora } })
-    if (decisao === 'descartar') return { status: 200, corpo: { resultado: 'descartado' } }
+    if (decisao === 'descartar') {
+      return {
+        status: 200,
+        corpo: { resultado: 'descartado', consertos: await consertosParaAFabrica() },
+      }
+    }
 
     const resultado = await gravarSeForMaisNovo(fonte.id, geradoEm, lido.data, agora)
-    return { status: 200, corpo: { resultado } }
+    // Um retrato atrasado nunca muda um conserto: só o gravado (o mais novo) conta.
+    if (resultado === 'gravado' && lido.data.consertos) {
+      await aplicarConsertosDoRetrato(lido.data.consertos, agora)
+    }
+    return { status: 200, corpo: { resultado, consertos: await consertosParaAFabrica() } }
   } catch (erro) {
     log.error({ erro: resumirErroParaLog(erro) }, 'recepção do retrato da Fábrica falhou')
     return { status: 500, corpo: { erro: 'Falha ao registrar o retrato.' } }

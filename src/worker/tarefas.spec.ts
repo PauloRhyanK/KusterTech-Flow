@@ -10,7 +10,7 @@ import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem três tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem quatro tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -18,15 +18,28 @@ describe('tarefas do worker', () => {
       'processar-eventos-de-webhook',
       'reconciliar-github',
       'sincronizar-execucoes-warren',
+      'processar-fila-de-publicacao',
     ])
   })
 
-  test('com todos os módulos ligados o ciclo tem as dez tarefas na ordem original', () => {
+  test('a tarefa processar-fila-de-publicacao some quando fila-de-publicacao não está ativo', () => {
+    const semFila = new Set(resolverModulosAtivos(undefined))
+    semFila.delete('fila-de-publicacao')
+    const tarefas = criarTarefasDoCiclo({ ...fonte, ativos: semFila })
+    expect(tarefas.map((t) => t.nome)).not.toContain('processar-fila-de-publicacao')
+    const comFila = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) })
+    expect(comFila.find((t) => t.nome === 'processar-fila-de-publicacao')?.modulo).toBe(
+      'fila-de-publicacao',
+    )
+  })
+
+  test('com todos os módulos ligados o ciclo tem as onze tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
       'reconciliar-github',
       'sincronizar-execucoes-warren',
+      'processar-fila-de-publicacao',
       'sincronizar-deployments',
       'calcular-presencas',
       'atualizar-fila-de-homologacao',

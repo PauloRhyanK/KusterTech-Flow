@@ -1,0 +1,160 @@
+#!/bin/sh
+# Pede ao KusterTech Flow a publicação do HEAD de origin/main deste repositório.
+# Uso: scripts/flow-publicar [--lote] [--descricao "<texto>"] [--esperar]
+#
+# Lê FLOW_URL (endereço do Flow) e FLOW_PUBLICACAO_TOKEN (token da fonte, criado em
+# Configurações → Publicação). O token nunca é impresso.
+# Saída: 0 = na fila, publicado ou dispensado; 1 = recusado, falhou, cancelado (ou o Flow
+# não respondeu); 2 = uso errado ou HTTP 401/404/413/415/422.
+# Guia: docs/guias/publicar-pela-fila.md
+set -u
+
+uso() {
+  echo "uso: scripts/flow-publicar [--lote] [--descricao \"<texto>\"] [--esperar]" >&2
+  exit 2
+}
+
+modo=imediato
+descricao=""
+esperar=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lote) modo=lote ;;
+    --esperar) esperar=1 ;;
+    --descricao)
+      [ $# -ge 2 ] || uso
+      descricao=$2
+      shift
+      ;;
+    -h | --help) uso ;;
+    *)
+      echo "opção desconhecida: $1" >&2
+      uso
+      ;;
+  esac
+  shift
+done
+
+if [ -z "${FLOW_URL:-}" ] || [ -z "${FLOW_PUBLICACAO_TOKEN:-}" ]; then
+  echo "defina FLOW_URL e FLOW_PUBLICACAO_TOKEN" >&2
+  exit 2
+fi
+base=${FLOW_URL%/}
+intervalo=${FLOW_PUBLICAR_INTERVALO:-15}
+teto=1800
+
+origem=$(git remote get-url origin 2>/dev/null) || {
+  echo "este diretório não é um repositório git com o remoto origin" >&2
+  exit 2
+}
+repositorio=$(printf '%s\n' "$origem" | sed -e 's#/*$##' -e 's#\.git$##' \
+  -e 's#^.*[:/]\([^/:][^/:]*\)/\([^/:][^/:]*\)$#\1/\2#')
+case "$repositorio" in
+  */*) ;;
+  *)
+    echo "não reconheci dono/repo no remoto origin: $origem" >&2
+    exit 2
+    ;;
+esac
+
+if ! git fetch -q origin main; then
+  echo "não consegui buscar origin/main" >&2
+  exit 2
+fi
+commit=$(git rev-parse origin/main) || exit 2
+
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' INT TERM
+
+json_texto() {
+  printf '%s' "$1" | tr '\n\r\t' '   ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+campo() {
+  sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p" "$tmp/resposta" | head -n 1
+}
+
+# O token vai por stdin (config do curl), nunca na linha de comando.
+chamar() {
+  printf 'header = "Authorization: Bearer %s"\n' "$FLOW_PUBLICACAO_TOKEN" |
+    curl -sS -K - -o "$tmp/resposta" -w '%{http_code}' "$@"
+}
+
+if [ -n "$descricao" ]; then
+  extra=",\"descricao\":\"$(json_texto "$descricao")\""
+else
+  extra=""
+fi
+printf '{"repositorio":"%s","commit":"%s","modo":"%s"%s}' \
+  "$repositorio" "$commit" "$modo" "$extra" >"$tmp/corpo"
+
+status=$(chamar -X POST -H 'Content-Type: application/json' \
+  --data-binary @"$tmp/corpo" "$base/api/publicacoes") || {
+  echo "não consegui falar com o Flow em $base" >&2
+  exit 1
+}
+
+relatar() {
+  estado=$(campo estado)
+  motivo=$(campo motivo)
+  echo "estado: $estado"
+  [ -n "$motivo" ] && echo "motivo: $motivo"
+  return 0
+}
+
+case "$status" in
+  200 | 201 | 409) ;;
+  401 | 404 | 413 | 415 | 422)
+    echo "o Flow respondeu $status: $(campo erro)" >&2
+    exit 2
+    ;;
+  *)
+    echo "o Flow respondeu $status: $(campo erro)" >&2
+    exit 1
+    ;;
+esac
+
+relatar
+id=$(campo id)
+echo "pedido: $id ($repositorio @ $commit)"
+
+saida_do_estado() {
+  case "$1" in
+    na_fila | publicado | dispensado) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$esperar" -eq 0 ] || [ "$estado" != na_fila ]; then
+  saida_do_estado "$estado"
+  exit $?
+fi
+
+limite=$(($(date +%s) + teto))
+while :; do
+  if [ "$(date +%s)" -ge "$limite" ]; then
+    echo "tempo esgotado (30 min) esperando o pedido $id; último estado: $estado" >&2
+    exit 1
+  fi
+  sleep "$intervalo"
+  status=$(chamar "$base/api/publicacoes/$id") || continue
+  case "$status" in
+    200) ;;
+    401 | 404)
+      echo "o Flow respondeu $status: $(campo erro)" >&2
+      exit 2
+      ;;
+    *) continue ;;
+  esac
+  anterior=$estado
+  estado=$(campo estado)
+  case "$estado" in
+    publicado | recusado | dispensado | falhou | cancelado)
+      relatar
+      saida_do_estado "$estado"
+      exit $?
+      ;;
+  esac
+  [ "$estado" != "$anterior" ] && echo "estado: $estado"
+done

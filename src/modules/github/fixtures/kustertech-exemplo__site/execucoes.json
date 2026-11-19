@@ -1,0 +1,46 @@
+[
+  {
+    "id": 9270001,
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/kustertech-exemplo/site/actions/runs/9270001",
+    "display_title": "publicar cb00000000000000000000000000000000000001",
+    "head_sha": "cb00000000000000000000000000000000000004",
+    "event": "workflow_dispatch",
+    "created_at": "2026-11-19T10:00:00Z",
+    "updated_at": "2026-11-19T10:05:00Z"
+  },
+  {
+    "id": 9270002,
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/kustertech-exemplo/site/actions/runs/9270002",
+    "display_title": "publicar cb00000000000000000000000000000000000002",
+    "head_sha": "cb00000000000000000000000000000000000004",
+    "event": "workflow_dispatch",
+    "created_at": "2026-11-19T10:00:00Z",
+    "updated_at": "2026-11-19T10:05:00Z"
+  },
+  {
+    "id": 9270003,
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/kustertech-exemplo/site/actions/runs/9270003",
+    "display_title": "publicar cb00000000000000000000000000000000000003",
+    "head_sha": "cb00000000000000000000000000000000000004",
+    "event": "workflow_dispatch",
+    "created_at": "2026-11-19T10:00:00Z",
+    "updated_at": "2026-11-19T10:05:00Z"
+  },
+  {
+    "id": 9270004,
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/kustertech-exemplo/site/actions/runs/9270004",
+    "display_title": "publicar cb00000000000000000000000000000000000004",
+    "head_sha": "cb00000000000000000000000000000000000004",
+    "event": "workflow_dispatch",
+    "created_at": "2026-11-19T10:00:00Z",
+    "updated_at": "2026-11-19T10:05:00Z"
+  }
+]

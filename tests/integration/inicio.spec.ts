@@ -91,3 +91,110 @@ test('com um retrato com uma decisão e um repositório indisponível, obterInic
   expect(inicio.oficina).toBeNull()
   expect(inicio.seusProjetos).toBeNull()
 })
+
+async function repositorioComPublicacao(
+  situacao: 'NORMAL' | 'CONSERTANDO' | 'PARADO',
+): Promise<string> {
+  const projeto = await criarProjeto(admin, { nome: 'Projeto Beta' })
+  const repositorio = await db.repositorioGitHub.create({
+    data: {
+      githubId: BigInt(9101),
+      instalacaoId: BigInt(900001),
+      nomeCompleto: 'kustertech-exemplo/beta',
+      urlHtml: 'https://github.com/kustertech-exemplo/beta',
+      privado: false,
+      projetoId: projeto.id,
+      vinculadoEm: AGORA,
+      catalogadoEm: AGORA,
+    },
+  })
+  await db.configuracaoDePublicacao.create({
+    data: {
+      repositorioId: repositorio.id,
+      workflow: 'deploy.yml',
+      situacao,
+      situacaoDesde: new Date(AGORA.getTime() - 5 * 60_000),
+      situacaoMotivo: situacao === 'PARADO' ? 'o agente não conseguiu consertar' : null,
+    },
+  })
+  return repositorio.id
+}
+
+test('fila PARADO aparece em "Espera você" com o tipo Publicação; sem desenvolvimento.ler não aparece', async () => {
+  await repositorioComPublicacao('PARADO')
+
+  const inicio = await obterInicio(admin, AGORA)
+  expect(inicio.espera.fontesComFalha).toEqual([])
+  expect(inicio.espera.itens.filter((i) => i.tipo === 'publicacao')).toEqual([
+    expect.objectContaining({
+      tipo: 'publicacao',
+      titulo: 'Projeto Beta parou: o agente não conseguiu consertar',
+      href: '/publicacao',
+      rotuloDoLink: 'Ver a publicação',
+      tom: 'erro',
+    }),
+  ])
+
+  const aprovador: Sujeito = {
+    usuarioId: admin.usuarioId,
+    papeis: [{ papel: 'APROVADOR', clienteId: null }],
+  }
+  const semLeitura = await obterInicio(aprovador, AGORA)
+  expect(semLeitura.espera.itens.some((i) => i.tipo === 'publicacao')).toBe(false)
+  expect(semLeitura.espera.fontesComFalha).toEqual([])
+})
+
+test('conserto COM_PR há mais de 1 h com o PR mergeado sem SHA do merge → "PR do conserto espera revisão" com o link do PR', async () => {
+  const repositorioId = await repositorioComPublicacao('CONSERTANDO')
+  const prUrl = 'https://github.com/kustertech-exemplo/beta/pull/31'
+  const falhou = await db.pedidoDePublicacao.create({
+    data: {
+      repositorioId,
+      commit: 'a'.repeat(40),
+      modo: 'IMEDIATO',
+      estado: 'FALHOU',
+      concluidoEm: new Date(AGORA.getTime() - 120 * 60_000),
+    },
+  })
+  await db.pedidoDeConserto.create({
+    data: {
+      repositorioId,
+      pedidoId: falhou.id,
+      commit: 'a'.repeat(40),
+      trechoDoLog: 'erro',
+      estado: 'COM_PR',
+      prUrl,
+      abertoEm: new Date(AGORA.getTime() - 120 * 60_000),
+      pegoEm: new Date(AGORA.getTime() - 110 * 60_000),
+    },
+  })
+  await db.pullRequestGitHub.create({
+    data: {
+      githubId: BigInt(77031),
+      repositorioId,
+      numero: 31,
+      titulo: 'Conserta o deploy',
+      estado: 'MERGEADO',
+      rascunho: false,
+      urlHtml: 'https://github.com/Kustertech-Exemplo/beta/pull/31',
+      branch: 'conserto',
+      shaHead: 'b'.repeat(40),
+      shaMerge: null,
+      atualizadoNoGitHub: AGORA,
+      sincronizadoEm: AGORA,
+      criadoNoGitHub: new Date(AGORA.getTime() - 90 * 60_000),
+    },
+  })
+
+  const inicio = await obterInicio(admin, AGORA)
+  expect(inicio.espera.itens.filter((i) => i.tipo === 'publicacao')).toEqual([
+    expect.objectContaining({
+      titulo: 'Projeto Beta: PR do conserto espera revisão',
+      contexto: 'PR #31 mergeado; o commit do merge ainda não chegou ao Flow',
+      href: prUrl,
+      externo: true,
+      rotuloDoLink: 'Ver o PR',
+      tom: 'atencao',
+    }),
+  ])
+})

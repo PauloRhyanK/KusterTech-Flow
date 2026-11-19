@@ -8,7 +8,9 @@ os limites abaixo repetem os de lá, e o `testes_retrato.py` prende os dois lado
   sem caminho da máquina, corpo de PR nem segredo (só os campos do contrato são copiados);
 - `ajustar` corta o retrato para caber no contrato e em 256 KB de UTF-8, sem nunca tirar plano ocupando vaga;
 - `enviar` faz o POST com Bearer, timeout de 10 s e sem seguir redirecionamento; qualquer falha vira
-  `FalhaDeEnvio`, cujo texto nunca traz o token nem o texto da exceção original.
+  `FalhaDeEnvio`, cujo texto nunca traz o token nem o texto da exceção original. Devolve o JSON da resposta
+  (que traz os pedidos de conserto abertos, lidos por `consertos.py`) ou `None`;
+- o campo `consertos` do retrato é opcional: sem consertos, o retrato é o v1 de sempre.
 
 Textos são contados em unidades UTF-16, como o Zod conta `.max()`.
 """
@@ -33,6 +35,9 @@ import motor_warren  # noqa: E402
 
 LIMITES = {"planos": 50, "avisos": 50, "decisoes": 50, "fases": 20, "raias": 50, "textoLongo": 300, "texto": 200}
 LIMITE_BYTES = 256 * 1024
+LIMITE_DA_RESPOSTA = 262_144
+LIMITE_CONSERTOS = 20
+ESTADOS_DO_CONSERTO = ("em_curso", "com_pr", "desistiu")
 TIMEOUT_S = 10
 ESTADOS_DA_RAIA = ("planejada", "executando", "concluida", "falhou")
 ENCERRADOS = ("removido", "concluido")
@@ -42,13 +47,23 @@ FORMATO_INSTANTE = "%Y-%m-%dT%H:%M:%SZ"
 
 # o formato de `fila.id_do_plano`: 4 partes `[a-z0-9]+(-[a-z0-9]+)*` separadas por `--`
 ID_DO_PLANO = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*(--[a-z0-9]+(-[a-z0-9]+)*){3}")
+# o id de um pedido de conserto do Flow: UUID canônico, minúsculo
+ID_DO_CONSERTO = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _INSTANTE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 # caminho absoluto (`/x/y`, `~/x`, `./x`) fora de URL e de palavra (`vagas/ram`, `https://…` ficam)
 _CAMINHO = re.compile(r"(?<![\w/:.~@-])(?:~|\.\.?)?/[^\s'\"<>|;,()\[\]{}]+")
 
 
 class FalhaDeEnvio(Exception):
-    """O envio falhou; o texto é uma categoria curta, segura para log e aviso (sem token nem URL)."""
+    """O envio falhou; o texto é uma categoria curta, segura para log e aviso (sem token nem URL).
+
+    `codigo` é o status HTTP quando a falha é uma resposta `HTTP <código>`; senão `None` (rede, timeout, …).
+    """
+
+    def __init__(self, texto: str = ""):
+        super().__init__(texto)
+        achado = re.fullmatch(r"HTTP ([0-9]{3})", texto) if isinstance(texto, str) else None
+        self.codigo = int(achado.group(1)) if achado else None
 
 
 # ---------------------------------------------------------------- textos
@@ -209,11 +224,27 @@ def _plano(entrada: dict, lidos: dict, agora: str) -> dict:
     }
 
 
-def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem_disponivel_mb) -> dict:
+def _conserto(item, agora: str):
+    item = _dict(item)
+    id_ = item.get("id")
+    if not isinstance(id_, str) or ID_DO_CONSERTO.fullmatch(id_) is None or item.get("estado") not in ESTADOS_DO_CONSERTO:
+        return None
+    return {
+        "id": id_,
+        "estado": item["estado"],
+        "runId": _texto(item.get("runId"), LIMITES["texto"]),
+        "prUrl": item["prUrl"] if url_do_github(item.get("prUrl")) else None,
+        "motivo": _texto(item.get("motivo"), LIMITES["textoLongo"]),
+        "em": _instante(item.get("em")) or agora,
+    }
+
+
+def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem_disponivel_mb, consertos=None) -> dict:
     """O retrato v1. Pura: tudo vem dos argumentos, já lidos.
 
     `fila_estado` é o `fila-estado.json`; `capacidade`, o `capacidade.json` já validado; `planos`, o
-    `{id: {"estado", "plano"}}` de `ler_planos` (id ausente conta como sem os dois arquivos).
+    `{id: {"estado", "plano"}}` de `ler_planos` (id ausente conta como sem os dois arquivos). `consertos` (de
+    `consertos.para_o_retrato`) vira o campo opcional `consertos`, com no máximo 20; vazio, o campo não vai.
     """
     fila_estado = _dict(fila_estado)
     preparado = _dict(_dict(fila_estado.get("warren")).get("preparado"))
@@ -224,7 +255,7 @@ def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem
         mensagem, em = _texto(aviso.get("mensagem"), LIMITES["textoLongo"]), _instante(aviso.get("em"))
         if mensagem and em:
             avisos.append({"em": em, "mensagem": mensagem})
-    return {
+    resultado = {
         "versao": 1,
         "geradoEm": agora,
         "vagas": {
@@ -240,6 +271,10 @@ def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem
         "planos": [_plano(e, _dict(_dict(planos).get(e["id"])), agora) for e in entradas],
         "avisos": avisos[-LIMITES["avisos"] :],
     }
+    limpos = [c for c in (_conserto(item, agora) for item in _lista(consertos)) if c is not None]
+    if limpos:
+        resultado["consertos"] = limpos[:LIMITE_CONSERTOS]
+    return resultado
 
 
 # ---------------------------------------------------------------- corte
@@ -306,8 +341,11 @@ def _ler_token(token_file) -> str:
     return token
 
 
-def enviar(corpo: bytes, *, url, token_file, abrir=None) -> None:
+def enviar(corpo: bytes, *, url, token_file, abrir=None) -> dict | None:
     """POST do retrato com Bearer, sem seguir redirecionamento (3xx é falha). Falha: `FalhaDeEnvio`.
+
+    Devolve o objeto JSON da resposta (lido até `LIMITE_DA_RESPOSTA` bytes); resposta vazia, maior, ilegível ou
+    que não é objeto vale `None`, sem ser falha de envio: o retrato chegou.
 
     O token é lido do arquivo a cada envio e só vai no cabeçalho; a mensagem de erro traz uma categoria
     (código HTTP, `timeout`, ou o nome da classe da exceção), nunca o texto dela.
@@ -316,13 +354,17 @@ def enviar(corpo: bytes, *, url, token_file, abrir=None) -> None:
     if not url_valida(url):
         raise FalhaDeEnvio("URL recusada: use https:// (ou http://localhost)")
     token = _ler_token(token_file)
+    lido = None
     try:
         req = urllib.request.Request(
             url, data=corpo, method="POST", headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}
         )
         with abrir(req, timeout=TIMEOUT_S) as resposta:
             codigo = resposta.status
-            resposta.read(1024)
+            try:
+                lido = resposta.read(LIMITE_DA_RESPOSTA + 1)
+            except Exception:  # noqa: BLE001 - o retrato chegou; sem resposta legível, nada de consertos
+                lido = None
     except FalhaDeEnvio:
         raise
     except TimeoutError:
@@ -338,3 +380,15 @@ def enviar(corpo: bytes, *, url, token_file, abrir=None) -> None:
         raise FalhaDeEnvio("falha no envio (%s)" % type(erro).__name__) from None
     if not 200 <= codigo < 300:
         raise FalhaDeEnvio("HTTP %d" % codigo)
+    return _ler_resposta(lido)
+
+
+def _ler_resposta(lido):
+    """O objeto JSON da resposta, ou `None` (vazia, maior que o limite, ilegível ou que não é objeto)."""
+    if not isinstance(lido, bytes) or not lido or len(lido) > LIMITE_DA_RESPOSTA:
+        return None
+    try:
+        dados = json.loads(lido.decode("utf-8"), parse_constant=lambda _: None)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    return dados if isinstance(dados, dict) else None

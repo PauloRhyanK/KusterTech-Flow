@@ -2,11 +2,12 @@ import {
   mapearCheck,
   mapearComparacao,
   mapearDeployment,
+  mapearExecucao,
   mapearIssue,
   mapearPullRequest,
   mapearRepositorio,
 } from './fonte'
-import type { FonteGitHub, RefRepositorio } from './fonte'
+import type { ExecucaoDaFonte, FonteGitHub, RefRepositorio } from './fonte'
 import { ErroDeIntegracao } from './erros'
 import checks1a from './fixtures/checks/1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'
 import checks1b from './fixtures/checks/1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json'
@@ -21,6 +22,12 @@ import pulls_portal from './fixtures/kustertech-exemplo__portal/pulls.json'
 import deployments_portal from './fixtures/kustertech-exemplo__portal/deployments.json'
 import statuses_portal from './fixtures/kustertech-exemplo__portal/deployment-statuses.json'
 import comparacoes_portal from './fixtures/kustertech-exemplo__portal/comparacoes.json'
+import cabeca_portal from './fixtures/kustertech-exemplo__portal/cabeca.json'
+import execucoes_portal from './fixtures/kustertech-exemplo__portal/execucoes.json'
+import logs_portal from './fixtures/kustertech-exemplo__portal/logs.json'
+import cabeca_site from './fixtures/kustertech-exemplo__site/cabeca.json'
+import execucoes_site from './fixtures/kustertech-exemplo__site/execucoes.json'
+import logs_site from './fixtures/kustertech-exemplo__site/logs.json'
 import issues_api from './fixtures/kustertech-exemplo__api/issues.json'
 import pulls_api from './fixtures/kustertech-exemplo__api/pulls.json'
 import deployments_api from './fixtures/kustertech-exemplo__api/deployments.json'
@@ -60,6 +67,9 @@ interface DadosDoRepositorio {
   deployments: { created_at: string; id: number }[]
   statuses: Record<string, unknown[]>
   comparacoes: Record<string, unknown>
+  cabeca?: { branch: string; sha: string }
+  execucoes?: unknown[]
+  logs?: Record<string, string>
 }
 
 const POR_REPOSITORIO: Record<string, DadosDoRepositorio> = {
@@ -69,6 +79,9 @@ const POR_REPOSITORIO: Record<string, DadosDoRepositorio> = {
     deployments: deployments_portal,
     statuses: statuses_portal,
     comparacoes: comparacoes_portal,
+    cabeca: cabeca_portal,
+    execucoes: execucoes_portal,
+    logs: logs_portal,
   },
   'kustertech-exemplo/api': {
     issues: issues_api,
@@ -83,6 +96,9 @@ const POR_REPOSITORIO: Record<string, DadosDoRepositorio> = {
     deployments: deployments_site,
     statuses: statuses_site,
     comparacoes: comparacoes_site,
+    cabeca: cabeca_site,
+    execucoes: execucoes_site,
+    logs: logs_site,
   },
   'kustertech-exemplo/app-mobile': {
     issues: issues_app_mobile,
@@ -126,18 +142,34 @@ function desdeFiltro<T extends { updated_at: string }>(itens: T[], desde: Date |
   return desde ? itens.filter((i) => new Date(i.updated_at) >= desde) : itens
 }
 
-export interface EscritaDaFonte {
-  tipo: 'reabrir' | 'criar'
-  repositorio: string
-  numero: number
+export type EscritaDaFonte =
+  | { tipo: 'reabrir' | 'criar'; repositorio: string; numero: number }
+  | { tipo: 'disparar'; repositorio: string; workflow: string; commit: string }
+
+export interface ExecucaoRegistrada {
+  id: bigint
+  commit: string
+  status: string
+  conclusao: string | null
 }
 
 // `escritas` só existe em memória: as listagens não enxergam o que foi escrito.
-export function criarFonteFixtures(
-  relogio: () => Date = () => new Date(),
-): FonteGitHub & { readonly escritas: readonly EscritaDaFonte[] } {
+// As execuções e os logs vêm das fixtures e não dependem de `desde` nem do disparo: o resultado é
+// o mesmo em qualquer ordem de chamadas. Os testes mudam o cenário com `registrarExecucao`/`registrarLog`.
+export function criarFonteFixtures(relogio: () => Date = () => new Date()): FonteGitHub & {
+  readonly escritas: readonly EscritaDaFonte[]
+  registrarExecucao(repositorio: string, execucao: ExecucaoRegistrada): void
+  registrarLog(repositorio: string, execucaoId: bigint, texto: string): void
+} {
   const escritas: EscritaDaFonte[] = []
+  const extras = new Map<string, ExecucaoDaFonte[]>()
+  const logsExtras = new Map<string, string>()
   let contador = 0
+
+  const execucoesDe = (repo: RefRepositorio): ExecucaoDaFonte[] => [
+    ...(extras.get(repo.nomeCompleto) ?? []),
+    ...(dados(repo).execucoes ?? []).map(mapearExecucao),
+  ]
 
   const dados = (repo: RefRepositorio) => {
     const d = POR_REPOSITORIO[repo.nomeCompleto]
@@ -150,6 +182,22 @@ export function criarFonteFixtures(
   return {
     tipo: 'fixtures',
     escritas,
+    registrarExecucao(repositorio, e) {
+      const agora = relogio().toISOString()
+      const execucao = mapearExecucao({
+        id: Number(e.id),
+        status: e.status,
+        conclusion: e.conclusao,
+        html_url: `https://github.com/${repositorio}/actions/runs/${e.id}`,
+        display_title: `publicar ${e.commit}`,
+        created_at: agora,
+        updated_at: agora,
+      })
+      extras.set(repositorio, [execucao, ...(extras.get(repositorio) ?? [])])
+    },
+    registrarLog(repositorio, execucaoId, texto) {
+      logsExtras.set(`${repositorio}#${execucaoId}`, texto)
+    },
     async listarRepositorios() {
       const instalacaoId = BigInt(instalacoes[0]!.id)
       return repositorios.repositories.map((r) => mapearRepositorio(r, instalacaoId))
@@ -186,6 +234,35 @@ export function criarFonteFixtures(
     async lerArquivo(repo, caminho) {
       dados(repo)
       return ARQUIVOS[repo.nomeCompleto]?.[caminho] ?? null
+    },
+    async lerCabecaDoBranchPadrao(repo) {
+      const cabeca = dados(repo).cabeca
+      if (!cabeca) {
+        throw new ErroDeIntegracao('sem-acesso')
+      }
+      return { ...cabeca }
+    },
+    async dispararWorkflow(repo, workflow, _ref, entradas) {
+      dados(repo)
+      escritas.push({
+        tipo: 'disparar',
+        repositorio: repo.nomeCompleto,
+        workflow,
+        commit: entradas.commit ?? '',
+      })
+    },
+    async listarExecucoesDoWorkflow(repo) {
+      return execucoesDe(repo)
+    },
+    async lerExecucao(repo, id) {
+      return execucoesDe(repo).find((e) => e.id === id) ?? null
+    },
+    async lerFimDoLog(repo, execucaoId, limite) {
+      const texto =
+        logsExtras.get(`${repo.nomeCompleto}#${execucaoId}`) ??
+        (dados(repo).logs as Record<string, string> | undefined)?.[String(execucaoId)] ??
+        ''
+      return limite > 0 ? texto.slice(-limite) : ''
     },
 
     async reabrirIssue(repo, numero) {

@@ -21,7 +21,9 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
 6. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
    rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
 7. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
-   mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo;
+   mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo. A resposta traz os pedidos de
+   conserto de publicação, atendidos por `consertos.py` com um run `fixer` numa vaga (o estado volta no retrato
+   seguinte);
 8. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
@@ -47,10 +49,12 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
+import consertos  # noqa: E402
 import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
 import motor as motor_  # noqa: E402
+import publicar  # noqa: E402
 import raias  # noqa: E402
 import retrato  # noqa: E402
 from despachante import ErroDeEntrada  # noqa: E402
@@ -83,7 +87,16 @@ VARIAVEIS_REPASSADAS = ("WARREN_API", "WARREN_TOKEN_FILE", "GH_TOKEN_FILE")
 # envio do retrato à Central: leitura própria, fora de VARIAVEIS_REPASSADAS (não vai para o plano.env)
 VARIAVEL_CENTRAL_URL = "FABRICA_CENTRAL_URL"
 VARIAVEL_CENTRAL_TOKEN = "FABRICA_CENTRAL_TOKEN_FILE"
+# pedido de publicação ao Flow (token de uma fonte de publicação): sem ele o passo fica desligado
+VARIAVEL_PUBLICACAO_TOKEN = "FABRICA_PUBLICACAO_TOKEN_FILE"
+LIMITE_DESCRICAO = 200
+# respostas do Flow ao pedido de publicação que não mudam se repetidas (sem projeto, não configurada, inválido)
+RECUSAS_DEFINITIVAS = (404, 409, 422)
 LIMITE_AVISOS = 50
+AVISO_FLOW_SEM_CONSERTOS = (
+    "Central: o Flow recusou o retrato com os consertos (HTTP 400) e o recebeu sem os consertos; "
+    "é um Flow sem suporte a consertos? Os consertos encerrados saem do estado"
+)
 AVISOS_NO_STATUS = 10
 LIMITE_MENSAGEM = 500
 LIMITE_SAIDA = 300
@@ -189,10 +202,14 @@ def configuracao_central(ambiente, raiz):
         arquivo = _ler_variaveis_do_env(raiz)
     except ErroDeEntrada:
         arquivo = {}
-    valores = {chave: (ambiente.get(chave) or arquivo.get(chave) or None) for chave in (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN)}
+    chaves = (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN, VARIAVEL_PUBLICACAO_TOKEN)
+    valores = {chave: (ambiente.get(chave) or arquivo.get(chave) or None) for chave in chaves}
     if not valores[VARIAVEL_CENTRAL_URL]:
         return None
-    return {"url": valores[VARIAVEL_CENTRAL_URL], "token_file": valores[VARIAVEL_CENTRAL_TOKEN]}
+    configuracao = {"url": valores[VARIAVEL_CENTRAL_URL], "token_file": valores[VARIAVEL_CENTRAL_TOKEN]}
+    if valores[VARIAVEL_PUBLICACAO_TOKEN]:
+        configuracao["publicacao_token_file"] = valores[VARIAVEL_PUBLICACAO_TOKEN]
+    return configuracao
 
 
 def _com_coordenador_env(ambiente, raiz) -> dict:
@@ -226,6 +243,12 @@ def ler_estado(raiz) -> dict:
             resultado[chave] = _padrao_do_estado()[chave]
     if not isinstance(resultado.get("central", {}), dict):
         del resultado["central"]
+    if not isinstance(resultado.get("publicacao", {}), dict):
+        del resultado["publicacao"]
+    if not isinstance(resultado.get("consertos", {}), dict):
+        resultado["consertos"] = {}
+    if not isinstance(resultado.get("consertosEncerrados", []), list):
+        resultado["consertosEncerrados"] = []
     if "entradaAplicada" in resultado:
         aplicados = resultado["entradaAplicada"]
         resultado["entradaAplicada"] = [n for n in aplicados if isinstance(n, str)] if isinstance(aplicados, list) else []
@@ -293,6 +316,7 @@ class Coordenador:
         segredos=(),
         central=None,
         enviar=None,
+        pedir_publicacao=None,
     ):
         self.raiz = pathlib.Path(raiz)
         self.forja = forja
@@ -313,6 +337,7 @@ class Coordenador:
         self.capacidade = self.raiz / ARQ_CAPACIDADE
         self.central = central  # {"url", "token_file"} ou None (envio desligado)
         self._enviar = enviar or retrato.enviar
+        self._pedir_publicacao = pedir_publicacao or publicar.pedir
         self._ciclos = 0
         self._ultimo_preparo = None
         self._sha_revertido = None
@@ -728,6 +753,7 @@ class Coordenador:
         self._separar_ids_invalidos()
         self._tentados = set()
         self._removendo = set()
+        self._config = None  # só o fila.json lido neste ciclo vale para os consertos
         eventos: list[dict] = []
         try:
             config = self._config = ler_config(self.raiz)
@@ -741,6 +767,7 @@ class Coordenador:
             self._passo_entrada(eventos)
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
+            self._passo_publicar()
             self._passo_orfaos(rodando, confiavel, eventos)
         finally:
             self._ciclos += 1
@@ -750,7 +777,7 @@ class Coordenador:
 
     # ------------------------------------------------------------ 7. Central
 
-    def _retrato(self) -> bytes:
+    def _retrato(self, com_consertos: bool = True) -> bytes:
         """O retrato do ciclo, já cortado, em JSON. `FalhaDeEnvio` se não dá para montar ou se não cabe."""
         try:
             cap = capacidade.ler(self.capacidade)
@@ -763,6 +790,7 @@ class Coordenador:
             capacidade=cap,
             planos=planos,
             mem_disponivel_mb=capacidade.mem_disponivel_mb(),
+            consertos=consertos.para_o_retrato(self.dados) if com_consertos else None,
         )
         cortado = retrato.ajustar(completo)
         if cortado is None:
@@ -770,16 +798,28 @@ class Coordenador:
         return retrato.serializar(cortado)
 
     def _passo_central(self) -> None:
-        """Envia o retrato (sem URL, nada). Nada daqui muda a fila, para o ciclo ou deixa uma exceção escapar.
+        """Envia o retrato (sem URL, só acompanha os consertos em andamento). Nada daqui muda a fila, para o ciclo ou deixa uma exceção escapar.
 
         Roda no `finally` do ciclo, então envia mesmo quando um passo falhou. A falha vira um aviso só quando a
         categoria muda (um envio bom zera isso); a categoria nunca traz o token nem o texto da exceção.
         """
         if not self.central:
+            # envio desligado com conserto em andamento: segue acompanhando o run (teto de 1 h e a vaga)
+            with contextlib.suppress(Exception):
+                self._passo_consertos(None)
             return
         with contextlib.suppress(Exception):
+            resposta, sem_consertos = None, False
+            destino = {"url": self.central.get("url"), "token_file": self.central.get("token_file")}
             try:
-                self._enviar(self._retrato(), url=self.central.get("url"), token_file=self.central.get("token_file"))
+                corpo = self._retrato()
+                try:
+                    resposta = self._enviar(corpo, **destino)
+                except retrato.FalhaDeEnvio as exc:
+                    if exc.codigo != 400 or "consertos" not in json.loads(corpo):
+                        raise
+                    # Flow de antes dos consertos (rollback): o esquema estrito recusa o campo. Vai uma vez sem ele.
+                    resposta, sem_consertos = self._enviar(self._retrato(com_consertos=False), **destino), True
                 falha = None
             except retrato.FalhaDeEnvio as exc:
                 falha = str(exc)
@@ -788,8 +828,104 @@ class Coordenador:
             self.dados["central"] = {"em": self._agora_texto(), "resultado": "enviado" if falha is None else "falhou: %s" % falha}
             if falha is None:
                 self._esquecer("central:envio")
+                if sem_consertos:
+                    self._aviso("central:consertos", AVISO_FLOW_SEM_CONSERTOS)
+                elif "consertos" in json.loads(corpo):
+                    self._esquecer("central:consertos")
             else:
                 self._aviso("central:envio", "Central: envio do retrato falhou (%s)" % falha)
+            if sem_consertos:
+                # esse Flow não conhece consertos: nada a reportar; os finais saem do estado, os em curso seguem até o fim
+                resposta = resposta if isinstance(resposta, dict) else {}
+            self._passo_consertos(resposta if falha is None else None)
+
+    def _passo_publicar(self) -> None:
+        """Pede ao Flow a publicação depois do merge de uma seed: um pedido por plano por ciclo. Nunca levanta.
+
+        Desligado sem `FABRICA_CENTRAL_URL` e `FABRICA_PUBLICACAO_TOKEN_FILE`. A primeira leitura de um plano só
+        grava as seeds já mergeadas (linha de base). Falha transitória (rede, timeout, 5xx) não marca a seed como
+        vista (tenta no ciclo seguinte) e encerra o passo; o aviso sai só quando a categoria muda, e um ciclo sem
+        falha o zera. Recusa definitiva (`RECUSAS_DEFINITIVAS`) marca as seeds como vistas, avisa e segue para o
+        próximo plano. Nada daqui muda a fila nem para o ciclo.
+        """
+        central = self.central or {}
+        if not central.get("url") or not central.get("publicacao_token_file"):
+            return
+        with contextlib.suppress(Exception):
+            try:
+                url = publicar.url_da_rota(central["url"])
+            except retrato.FalhaDeEnvio as exc:
+                self._aviso("publicacao:envio", "Publicação: pedido ao Flow falhou (%s)" % exc)
+                return
+            publicacao = self.dados.get("publicacao")
+            vistas = publicacao.get("vistas") if isinstance(publicacao, dict) else None
+            vistas = {k: [n for n in v if isinstance(n, str)] for k, v in vistas.items() if isinstance(v, list)} if isinstance(vistas, dict) else {}
+            falha = None
+            planos = _atuais(self.dados["fila"])
+            lidos = retrato.ler_planos(self.raiz / DIR_PLANOS, planos)
+            for id_ in planos:  # linha de base primeiro: a primeira falha abaixo não deixa plano sem ela
+                if id_ not in vistas and lidos[id_]["estado"] is not None:
+                    vistas[id_] = publicar.seeds_novas([], lidos[id_]["estado"])
+            for id_, entrada in planos.items():
+                novas = publicar.seeds_novas(vistas[id_], lidos[id_]["estado"]) if id_ in vistas else []
+                if not novas:
+                    continue
+                feature = entrada.get("feature") if isinstance(entrada.get("feature"), str) and entrada.get("feature") else id_
+                descricao = retrato._cortar("%s · %s" % (feature, novas[0]), LIMITE_DESCRICAO)
+                try:
+                    self._pedir_publicacao(repo=entrada.get("repo"), descricao=descricao, url=url, token_file=central["publicacao_token_file"])
+                except retrato.FalhaDeEnvio as exc:
+                    if exc.codigo in RECUSAS_DEFINITIVAS:
+                        # resposta determinística (sem projeto, publicação não configurada, pedido inválido):
+                        # repetir só gravaria outra recusa no Flow; as seeds contam como vistas e o passo segue
+                        self._aviso(
+                            "publicacao:recusa",
+                            "Publicação: o Flow recusou o pedido de %s (%s); confira a publicação no projeto" % (feature, exc),
+                        )
+                    else:
+                        falha = str(exc)
+                except Exception as exc:  # noqa: BLE001 - só a classe, nunca o texto
+                    falha = "falha inesperada (%s)" % type(exc).__name__
+                if falha is not None:
+                    break  # uma falha transitória custa no máximo um timeout por ciclo; os outros planos esperam o próximo
+                vistas[id_] = vistas[id_] + novas
+                self.dados["publicacao"] = {"vistas": vistas}
+                self._salvar()  # já gravado: queda depois do POST não repete o pedido
+            self.dados["publicacao"] = {"vistas": vistas}
+            if falha is None:
+                self._esquecer("publicacao:envio")
+            else:
+                self._aviso("publicacao:envio", "Publicação: pedido ao Flow falhou (%s)" % falha)
+            self._salvar()
+
+    def _passo_consertos(self, resposta) -> None:
+        """Atende os pedidos de conserto da resposta; sem resposta legível, só acompanha os que estão em andamento."""
+        if self._config is None:
+            return  # fila.json não foi lido neste ciclo: sem ele, todo repositório pareceria fora da fila
+        abertos = consertos.ler_da_resposta(resposta) if isinstance(resposta, dict) else None
+        if abertos is None and not consertos.chaves_ocupando(self.dados):
+            return
+        modelo = consertos.ler_modelo(self.kit)
+        eventos = consertos.passo(
+            self.dados,
+            abertos,
+            motor=self.motor,
+            capacidade_path=self.capacidade,
+            projetos={r["repo"].lower(): r["projeto"] for r in self._config["repos"]},
+            modelo=modelo,
+            agora=self._agora(),
+            mem_disponivel_mb=capacidade.mem_disponivel_mb(),
+            salvar=self._salvar,
+        )
+        if modelo is not None:
+            self._esquecer(consertos.CHAVE_AVISO_MODELO)
+        for evento in eventos:
+            if evento.get("evento") == "aviso":
+                self._aviso(evento["chave"], evento["mensagem"])
+            elif evento.get("evento") == "erro":
+                self._log_repetivel("%s:%s" % (evento["etapa"], evento["alvo"]), evento)
+            else:
+                self._log(evento)
 
     def _separar_ids_invalidos(self) -> None:
         validas, self._postas_de_lado = [], []
@@ -1196,8 +1332,9 @@ class Coordenador:
             except Exception as exc:  # noqa: BLE001 - um plano não derruba os outros
                 self._erro_de_etapa("refazer_ocupacao", id_, exc)
         try:
-            # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera
-            removidos = capacidade.limpar_orfaos(self.capacidade, ocupando)
+            # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera; um
+            # conserto em andamento segura a vaga dele (`conserto:<id>`) como um plano
+            removidos = capacidade.limpar_orfaos(self.capacidade, ocupando | consertos.chaves_ocupando(self.dados))
         except Exception as exc:  # noqa: BLE001
             self._erro_de_etapa("limpar_orfaos", "capacidade", exc)
             return

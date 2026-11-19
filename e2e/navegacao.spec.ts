@@ -1,12 +1,13 @@
 import { expect, test } from '@playwright/test'
 
 const GRUPOS = [
-  { rotulo: 'Trabalho', itens: ['Início', 'Fábrica'] },
+  { rotulo: 'Trabalho', itens: ['Início', 'Publicação', 'Fábrica'] },
   { rotulo: 'Cadastro', itens: ['Clientes', 'Projetos', 'Máquinas'] },
 ]
 const ITENS = GRUPOS.flatMap((g) => g.itens)
 const ROTAS: Record<string, string> = {
   Início: '/',
+  Publicação: '/publicacao',
   Fábrica: '/fabrica',
   Clientes: '/clientes',
   Projetos: '/projetos',
@@ -31,7 +32,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page).toHaveURL(/\/$/)
 })
 
-test('menu lateral mostra os grupos Trabalho e Cadastro, os cinco itens e Configurações no rodapé', async ({
+test('menu lateral mostra os grupos Trabalho e Cadastro, os seis itens e Configurações no rodapé', async ({
   page,
   isMobile,
 }) => {

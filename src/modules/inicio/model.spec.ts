@@ -11,6 +11,7 @@ import {
   agruparHomologacoes,
   esperasDaFabrica,
   esperasDaOficina,
+  esperasDaPublicacao,
   formatarIdade,
   indicadoresDeProjetos,
   montarEsperaVoce,
@@ -116,6 +117,7 @@ describe('tipos de espera', () => {
       'plano-pausado',
       'aviso-da-oficina',
       'fabrica-sem-noticias',
+      'publicacao',
       'integracao',
       'homologacao',
       'autorizacao-prod',
@@ -126,6 +128,7 @@ describe('tipos de espera', () => {
       'Plano pausado',
       'Oficina',
       'Fábrica',
+      'Publicação',
       'Integração',
       'Homologação',
       'Autorização',
@@ -135,6 +138,7 @@ describe('tipos de espera', () => {
       decisao: 'desenvolvimento.ler',
       'plano-pausado': 'desenvolvimento.ler',
       'fabrica-sem-noticias': 'desenvolvimento.ler',
+      publicacao: 'desenvolvimento.ler',
       'aviso-da-oficina': 'infraestrutura.ler',
       integracao: 'projetos.gerenciar',
       homologacao: 'clientes.ler',
@@ -142,6 +146,63 @@ describe('tipos de espera', () => {
       divergencia: 'publicacao.autorizar',
     })
     expect(LIMITE_DE_ESPERA).toBe(20)
+  })
+})
+
+describe('tipo publicacao', () => {
+  it('ORDEM_DOS_TIPOS tem publicacao logo depois de fabrica-sem-noticias e ROTULO_DO_TIPO.publicacao === "Publicação"', () => {
+    const i = ORDEM_DOS_TIPOS.indexOf('fabrica-sem-noticias')
+    expect(ORDEM_DOS_TIPOS[i + 1]).toBe('publicacao')
+    expect(ROTULO_DO_TIPO.publicacao).toBe('Publicação')
+  })
+
+  it('esperasDaPublicacao: aviso vira item que leva à tela Publicação; o do PR leva ao PR', () => {
+    const desde = new Date('2026-11-19T14:00:00Z')
+    const base = {
+      repositorioId: 'r1',
+      titulo: 'Projeto Beta parou: o agente não conseguiu consertar',
+      contexto: 'falhou ao publicar 9d2e41b',
+      href: 'https://github.com/kustertech-exemplo/beta/actions/runs/7',
+      externo: true,
+      tom: 'erro' as const,
+      desde,
+    }
+    expect(
+      esperasDaPublicacao([
+        { ...base, id: 'parado-r1' },
+        {
+          ...base,
+          id: 'pr-do-conserto-r2',
+          titulo: 'Projeto Alfa: PR do conserto espera revisão',
+          href: 'https://github.com/kustertech-exemplo/base/pull/212',
+          rotuloDoLink: 'Ver o PR',
+          tom: 'atencao',
+        },
+      ]),
+    ).toEqual([
+      {
+        id: 'publicacao:parado-r1',
+        tipo: 'publicacao',
+        titulo: 'Projeto Beta parou: o agente não conseguiu consertar',
+        contexto: 'falhou ao publicar 9d2e41b',
+        href: '/publicacao',
+        externo: false,
+        rotuloDoLink: 'Ver a publicação',
+        tom: 'erro',
+        desde,
+      },
+      {
+        id: 'publicacao:pr-do-conserto-r2',
+        tipo: 'publicacao',
+        titulo: 'Projeto Alfa: PR do conserto espera revisão',
+        contexto: 'falhou ao publicar 9d2e41b',
+        href: 'https://github.com/kustertech-exemplo/base/pull/212',
+        externo: true,
+        rotuloDoLink: 'Ver o PR',
+        tom: 'atencao',
+        desde,
+      },
+    ])
   })
 })
 
@@ -489,6 +550,18 @@ describe('invariante 9', () => {
         semNome,
       ),
       ...esperasDaOficina([{ tipo: 'arquivo', mensagem: 'Backup falhou', desde: data }], '/m'),
+      ...esperasDaPublicacao([
+        {
+          id: 'parado-r',
+          repositorioId: 'r',
+          titulo: 'Portal parou',
+          contexto: 'falhou',
+          href: '#r',
+          externo: false,
+          tom: 'erro',
+          desde: data,
+        },
+      ]),
       ...(['PENDENTE_DE_TESTE', 'AGUARDANDO_RETESTE', 'AGUARDANDO_DISPONIBILIZACAO'] as const).map(
         (estado) => agruparHomologacoes([linha({ estado })], ADMIN)[0] ?? null,
       ),

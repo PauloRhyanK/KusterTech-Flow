@@ -5,6 +5,7 @@ import type { TomDeEstado } from '@/lib/ui/badge-de-estado'
 import { minutosDeAtraso, retratoDesatualizado } from '@/modules/fabrica/model'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 import { apresentarEstado, type EstadoIntegracao } from '@/modules/github/model'
+import type { AvisoDePublicacao } from '@/modules/fila-de-publicacao/apresentacao'
 import type { AvisoDaMaquina } from '@/modules/oficina/model'
 
 export type TipoDeEspera =
@@ -12,6 +13,7 @@ export type TipoDeEspera =
   | 'plano-pausado'
   | 'aviso-da-oficina'
   | 'fabrica-sem-noticias'
+  | 'publicacao'
   | 'integracao'
   | 'homologacao'
   | 'autorizacao-prod'
@@ -22,6 +24,7 @@ export const ORDEM_DOS_TIPOS: readonly TipoDeEspera[] = [
   'plano-pausado',
   'aviso-da-oficina',
   'fabrica-sem-noticias',
+  'publicacao',
   'integracao',
   'homologacao',
   'autorizacao-prod',
@@ -33,6 +36,7 @@ export const ROTULO_DO_TIPO: Record<TipoDeEspera, string> = {
   'plano-pausado': 'Plano pausado',
   'aviso-da-oficina': 'Oficina',
   'fabrica-sem-noticias': 'Fábrica',
+  publicacao: 'Publicação',
   integracao: 'Integração',
   homologacao: 'Homologação',
   'autorizacao-prod': 'Autorização',
@@ -45,6 +49,7 @@ export const ACAO_DE_LEITURA: Record<TipoDeEspera, Acao> = {
   decisao: 'desenvolvimento.ler',
   'plano-pausado': 'desenvolvimento.ler',
   'fabrica-sem-noticias': 'desenvolvimento.ler',
+  publicacao: 'desenvolvimento.ler',
   'aviso-da-oficina': 'infraestrutura.ler',
   integracao: 'projetos.gerenciar',
   homologacao: 'clientes.ler',
@@ -105,6 +110,22 @@ export function montarEsperaVoce(fontes: readonly FonteDeEspera[]): EsperaVoce {
 }
 
 const MINUTO_MS = 60_000
+
+// Os avisos da fila de publicação levam à tela Publicação; o que traz link próprio (o PR do
+// conserto) leva a ele.
+export function esperasDaPublicacao(avisos: readonly AvisoDePublicacao[]): ItemDeEspera[] {
+  return avisos.map((aviso) => ({
+    id: `publicacao:${aviso.id}`,
+    tipo: 'publicacao',
+    titulo: aviso.titulo,
+    contexto: aviso.contexto,
+    ...(aviso.rotuloDoLink
+      ? { href: aviso.href, externo: aviso.externo, rotuloDoLink: aviso.rotuloDoLink }
+      : { href: '/publicacao', externo: false, rotuloDoLink: 'Ver a publicação' }),
+    tom: aviso.tom,
+    desde: aviso.desde,
+  }))
+}
 
 export function formatarIdade(desde: Date, agora: Date): string {
   const minutos = Math.floor((agora.getTime() - desde.getTime()) / MINUTO_MS)

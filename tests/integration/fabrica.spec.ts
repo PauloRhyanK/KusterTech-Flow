@@ -59,6 +59,13 @@ describe('POST /api/fabrica/estado — receberRetratoDaFabrica', () => {
     expect(JSON.stringify(fonte)).not.toContain(token)
   })
 
+  test('retrato válido → 200 { resultado: "gravado", consertos: [] }', async () => {
+    expect(await enviar(exemplo)).toEqual({
+      status: 200,
+      corpo: { resultado: 'gravado', consertos: [] },
+    })
+  })
+
   test('retrato válido grava e responde 200; token inválido ou revogado responde 401', async () => {
     expect((await enviar(exemplo)).status).toBe(200)
     const guardado = await db.retratoDaFabrica.findUniqueOrThrow({ where: { fonteId } })
@@ -86,7 +93,7 @@ describe('POST /api/fabrica/estado — receberRetratoDaFabrica', () => {
     const antigo = await enviar(com('2026-11-03T21:30:00Z'), {
       agora: new Date('2026-11-03T21:43:00Z'),
     })
-    expect(antigo).toEqual({ status: 200, corpo: { resultado: 'descartado' } })
+    expect(antigo).toEqual({ status: 200, corpo: { resultado: 'descartado', consertos: [] } })
 
     const linhas = await db.retratoDaFabrica.findMany()
     expect(linhas).toHaveLength(1)
