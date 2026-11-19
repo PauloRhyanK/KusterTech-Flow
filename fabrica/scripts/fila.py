@@ -159,7 +159,8 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
     Toda entrada cujo id foi descoberto guarda o `hash` do plano. `admitindo`, `ativo`, `pausado` e `concluido` não mudam
     em mais nada. Um `concluido` volta como entrada nova (`aguardando`, com outro `entrouEm`) só se o `hash`
     descoberto difere do guardado; um `concluido` antigo, sem `hash`, só ganha o hash. Um `removido` que
-    reaparece volta sempre. Entradas malformadas passam como estão e não entram em nenhuma decisão.
+    reaparece volta sempre, salvo o removido de propósito (`hashRemovido`): ele só volta, como entrada nova, se o
+    `hash` descoberto difere do `hashRemovido`. Um `aguardando` atualizado preserva `segurado`. Entradas malformadas passam como estão e não entram em nenhuma decisão.
     """
     if not _instante_valido(agora):
         raise ValueError(f"agora deve ser ISO 8601 em UTC com Z (AAAA-MM-DDTHH:MM:SSZ): {agora!r}")
@@ -175,6 +176,7 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
         if entrada["estado"] == "aguardando":
             if atual is None:
                 copia["estado"] = "removido"
+                copia.pop("segurado", None)
             else:
                 copia["arquivos"] = list(atual["arquivos"])
                 copia["caminho"] = atual["caminho"]
@@ -194,6 +196,8 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
                     continue
             elif anterior["estado"] != "removido":
                 continue
+            elif anterior.get("hashRemovido") == atual["hash"]:
+                continue
         nova.append({**atual, "entrouEm": agora, "estado": "aguardando"})
     return nova
 
@@ -210,9 +214,9 @@ def admitir(fila: list[dict]) -> list[str]:
 
     Um plano entra se não colide com nenhum `admitindo`, `ativo` ou `pausado`, nem com um `aguardando` mais antigo que
     continua esperando. Não passa na frente de quem colide com ele, mas passa na frente de quem não colide.
-    Entrada malformada não é admitida e não bloqueia ninguém.
+    Entrada malformada não é admitida e não bloqueia ninguém; `aguardando` com `segurado: True` também não.
     """
-    validas = [e for e in _lista(fila) if _entrada_valida(e)]
+    validas = [e for e in _lista(fila) if _entrada_valida(e) and not (e["estado"] == "aguardando" and e.get("segurado") is True)]
     ocupando = [e for e in validas if e["estado"] in OCUPANDO]
     esperando = sorted((e for e in validas if e["estado"] == "aguardando"), key=lambda e: e["entrouEm"])
     admitidos: list[str] = []
@@ -238,4 +242,47 @@ def marcar(fila: list[dict], id_: str, estado: str) -> list[dict]:
     nova = [_copia(e) for e in fila]
     if posicoes:
         nova[posicoes[-1]]["estado"] = estado
+    return nova
+
+
+def _posicao_mais_recente(fila: list, id_: str) -> int:
+    posicoes = [i for i, e in enumerate(fila) if _entrada_valida(e) and e["id"] == id_]
+    if not posicoes:
+        raise ValueError(f"id desconhecido na fila: {id_!r}")
+    return posicoes[-1]
+
+
+def segurar(fila: list[dict], id_: str, valor: bool) -> list[dict]:
+    """Uma cópia da fila com `segurado: True` (ou sem a chave, se `valor` é falso) na entrada válida mais recente do `id_`.
+
+    Segurar só vale para `aguardando`; outro estado levanta `ValueError`. Soltar numa entrada que não está
+    segurada devolve a cópia sem mudança. Id desconhecido levanta `ValueError`.
+    """
+    fila = _lista(fila)
+    posicao = _posicao_mais_recente(fila, id_)
+    nova = [_copia(e) for e in fila]
+    if valor:
+        if fila[posicao]["estado"] != "aguardando":
+            raise ValueError(f"só quem aguarda pode ser segurado: {id_!r} está {fila[posicao]['estado']!r}")
+        nova[posicao]["segurado"] = True
+    else:
+        nova[posicao].pop("segurado", None)
+    return nova
+
+
+def remover(fila: list[dict], id_: str, *, manter_arquivo: bool) -> list[dict]:
+    """Uma cópia da fila com `estado: "removido"` e sem `segurado` na entrada válida mais recente do `id_`.
+
+    Com `manter_arquivo`, grava `hashRemovido` (o `hash` da entrada) para `enfileirar` não trazê-la de volta
+    enquanto o plano descoberto for o mesmo. Id desconhecido levanta `ValueError`.
+    """
+    fila = _lista(fila)
+    posicao = _posicao_mais_recente(fila, id_)
+    nova = [_copia(e) for e in fila]
+    alvo = nova[posicao]
+    alvo["estado"] = "removido"
+    alvo.pop("segurado", None)
+    alvo.pop("hashRemovido", None)
+    if manter_arquivo and "hash" in alvo:
+        alvo["hashRemovido"] = alvo["hash"]
     return nova

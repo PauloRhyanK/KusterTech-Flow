@@ -6,15 +6,23 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
    na mesma cadência do despachante, e marca a drenagem no `capacidade.json` enquanto espera os runs;
 2. descobre os planos (`.fabrica/planos/*.json` e o legado `.fabrica/plano.json`) no branch padrão de cada
    repositório de `fila.json`; um plano inválido não entra e gera um aviso por mudança de conteúdo;
-3. aplica a fila (`fila.enfileirar` e `fila.admitir`): para cada admitido, clona o repositório, grava o
+3. lê a caixa de entrada (`<raiz>/entrada/*.json`, gravada por `segurar`, `soltar` e `remover` da CLI) antes da
+   fila: um plano segurado não é admitido, mesmo com vaga e trava livres; pedido torto ou desatualizado vira
+   aviso e o arquivo é apagado. Um `remover` (de plano `aguardando`, `admitindo`, `ativo` ou `pausado`) desliga
+   a unit, cancela os Plan Runs vivos (os do `estado.json` e os do projeto no Warren que apontam para os planos
+   Seeds do plano), espera o run do orquestrador terminar, fecha os PRs do orquestrador e, com a unit já
+   desligada, as issues de pausa e de decisão (comentário fixo), marca `removido` e solta reservas e trava.
+   Warren ou GitHub fora deixa o pedido na caixa e o ciclo seguinte refaz as etapas, todas idempotentes. Nunca
+   apaga código, branch, PR de seed nem a pasta do plano; `--manter-arquivo` impede o mesmo plano de reentrar;
+4. aplica a fila (`fila.enfileirar` e `fila.admitir`): para cada admitido, clona o repositório, grava o
    `plano.env`, roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
-4. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
+5. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
    concluído (`estado.plano_concluido`) tem a unit desligada, as reservas soltas e vira `concluido`;
-5. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
+6. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
    rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
-6. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
+7. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
    mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo;
-7. grava `fila-estado.json` de forma atômica.
+8. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
 meio não admite duas vezes nem roda `iniciar` de novo. Os tokens só vêm de arquivos e nunca são gravados.
@@ -42,6 +50,7 @@ import capacidade  # noqa: E402
 import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
+import motor as motor_  # noqa: E402
 import raias  # noqa: E402
 import retrato  # noqa: E402
 from despachante import ErroDeEntrada  # noqa: E402
@@ -53,11 +62,17 @@ ARQ_TRAVA = "coordenador.lock"
 ARQ_LOG = "log.jsonl"
 ARQ_COORDENADOR_ENV = "coordenador.env"
 DIR_PLANOS = "planos"
+DIR_ENTRADA = "entrada"
 DIR_PLANOS_NO_REPO = ".fabrica/planos"
 CAMINHO_LEGADO = ".fabrica/plano.json"
 KIT_PADRAO = pathlib.Path(__file__).resolve().parents[2]
 RAIZ_PADRAO = "~/fabrica"
 INTERVALO_PADRAO = 60
+LIMITE_ENTRADA_APLICADA = 200
+COMANDOS_DA_CAIXA = ("segurar", "soltar", "remover")
+REMOVIVEIS = ("aguardando", "admitindo", "ativo", "pausado")
+COMENTARIO_REMOCAO = "Plano removido da fila pelo coordenador."
+UNIT_INEXISTENTE = ("not loaded", "does not exist")
 
 CODIGO_ERRO = 1
 CODIGO_ENTRADA = 2
@@ -211,6 +226,9 @@ def ler_estado(raiz) -> dict:
             resultado[chave] = _padrao_do_estado()[chave]
     if not isinstance(resultado.get("central", {}), dict):
         del resultado["central"]
+    if "entradaAplicada" in resultado:
+        aplicados = resultado["entradaAplicada"]
+        resultado["entradaAplicada"] = [n for n in aplicados if isinstance(n, str)] if isinstance(aplicados, list) else []
     return resultado
 
 
@@ -301,6 +319,7 @@ class Coordenador:
         self._repetidos = {}
         self.dados = _padrao_do_estado()
         self._tentados = set()
+        self._removendo = set()  # remoção pedida e ainda não concluída: nem admitido nem observado neste ciclo
         self._postas_de_lado = []  # entradas com id fora do formato: ficam no arquivo, fora de toda decisão
         self._config = None
 
@@ -395,6 +414,287 @@ class Coordenador:
         despachante.gravar_json_atomico(caminho, dados)
         return "repositório %s registrado (projeto %s)" % (repo, projeto)
 
+    def pedir(self, comando: str, id_: str, **opcoes) -> str:
+        """Valida o pedido contra o `fila-estado.json` atual e o grava na caixa; o próximo ciclo o aplica."""
+        if comando not in COMANDOS_DA_CAIXA:
+            raise ErroDeEntrada(["comando desconhecido: %r" % despachante._cortar(str(comando), 100)])
+        entrada = _atuais(ler_estado(self.raiz)["fila"]).get(id_)
+        if entrada is None:
+            raise ErroDeEntrada(["plano desconhecido na fila: %r" % despachante._cortar(str(id_), 200)])
+        if comando == "segurar" and entrada.get("estado") != "aguardando":
+            raise ErroDeEntrada(["só quem aguarda pode ser segurado: %s está %s" % (id_, entrada.get("estado"))])
+        if comando == "soltar" and not entrada.get("segurado"):
+            raise ErroDeEntrada(["%s não está segurado" % id_])
+        if comando == "remover":
+            return self._pedir_remocao(entrada, manter_arquivo=bool(opcoes.get("manter_arquivo")), simular=bool(opcoes.get("simular")))
+        despachante.enfileirar_pedido(self.raiz, {"comando": comando, "id": id_, **opcoes})
+        return "pedido %s de %s gravado; aplicado no próximo ciclo" % (comando, id_)
+
+    def _pedir_remocao(self, entrada: dict, *, manter_arquivo: bool, simular: bool) -> str:
+        """Valida a remoção; com `simular`, só lê e devolve as etapas que rodariam (nada é gravado)."""
+        id_ = entrada["id"]
+        if entrada.get("estado") == "removido":
+            return "%s já está removido" % id_
+        if entrada.get("estado") not in REMOVIVEIS:
+            raise ErroDeEntrada(["só sai da fila um plano aguardando, admitindo, ativo ou pausado: %s está %s" % (id_, entrada.get("estado"))])
+        repo, caminho = entrada["repo"], entrada["caminho"]
+        if not manter_arquivo and self.forja.arquivo(repo, self.forja.branch_padrao(repo), caminho) is not None:
+            raise ErroDeEntrada(["o arquivo %s continua no branch padrão: apague-o ou use --manter-arquivo" % caminho])
+        if simular:
+            return self._simular_remocao(entrada, manter_arquivo)
+        despachante.enfileirar_pedido(self.raiz, {"comando": "remover", "id": id_, "manterArquivo": manter_arquivo})
+        return "pedido remover de %s gravado; aplicado no próximo ciclo" % id_
+
+    def _simular_remocao(self, entrada: dict, manter_arquivo: bool) -> str:
+        id_ = entrada["id"]
+        etapas = []
+        if entrada["estado"] != "aguardando":
+            etapas.append("desligar e desabilitar %s" % self._unit(id_))
+        try:
+            estado, plano = self._ler_para_remover(entrada)
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            estado, plano = None, None
+            etapas.append("estado.json ilegível: Plan Runs, PRs e issues ficam para conferência manual")
+        if estado is not None:
+            try:
+                alvos = self._alvos_da_remocao(entrada, estado, plano)
+            except Exception as exc:  # noqa: BLE001 - a simulação só mostra o que não deu para ler
+                etapas.append("não foi possível ler o Warren ou o GitHub agora: %s" % self._erro(exc))
+            else:
+                etapas.extend("cancelar o Plan Run %s" % p for p in alvos["planos"])
+                if alvos["runOrquestrador"]:
+                    etapas.append("esperar o run do orquestrador %s terminar" % alvos["runOrquestrador"])
+                etapas.extend("fechar o PR do orquestrador %s" % u for u in alvos["prs"])
+                etapas.extend("fechar a issue %s" % u for u in alvos["issues"])
+                etapas.extend("%s (404): ignorado" % nome for nome in alvos["ausentes"])
+        etapas.append("marcar %s como removido%s e soltar as reservas e a trava" % (id_, " (o arquivo fica, sem reentrar)" if manter_arquivo else ""))
+        return "simulação: remover %s (nada foi gravado)\n%s" % (id_, "\n".join("  - %s" % e for e in etapas))
+
+    # ------------------------------------------------------------ caixa de entrada
+
+    def _passo_entrada(self, eventos: list) -> None:
+        pasta = self.raiz / DIR_ENTRADA
+        if not pasta.is_dir():
+            return
+        pedidos = sorted(p for p in pasta.iterdir() if p.name.endswith(".json") and not p.name.startswith(".") and p.is_file())
+        for caminho in pedidos:
+            chave = "entrada:%s" % caminho.name
+            if caminho.name in self.dados.get("entradaAplicada", []):
+                self._descartar(caminho, chave)  # já aplicado e o arquivo não saiu: só tenta apagar de novo
+                continue
+            try:
+                pedido = despachante._json_estrito(caminho.read_text(encoding="utf-8"))
+                if not isinstance(pedido, dict):
+                    raise ValueError("não é um objeto")
+            except (OSError, ValueError, RecursionError):
+                self._aviso(chave, "pedido inválido em %s/%s descartado" % (DIR_ENTRADA, caminho.name))
+                self._descartar(caminho, chave)
+                continue
+            comando, id_ = pedido.get("comando"), pedido.get("id")
+            if comando not in COMANDOS_DA_CAIXA or not isinstance(id_, str):
+                self._aviso(chave, "pedido desconhecido em %s/%s descartado: %r" % (DIR_ENTRADA, caminho.name, comando))
+                self._descartar(caminho, chave)
+                continue
+            try:
+                if comando == "remover":
+                    if not self._remover(pedido, chave, eventos):
+                        self._removendo.add(id_)  # o pedido fica: o ciclo seguinte refaz as etapas
+                        continue
+                else:
+                    self._segurar(id_, comando == "segurar", chave, eventos)
+            except Exception as exc:  # noqa: BLE001 - o pedido fica para o próximo ciclo
+                self._erro_de_etapa("pedido", caminho.name, exc)
+                if comando == "remover":
+                    self._removendo.add(id_)
+                continue
+            self._descartar(caminho, chave)
+
+    # ------------------------------------------------------------ remover
+
+    def _ler_para_remover(self, entrada: dict):
+        """`(estado, plano)` do plano; `(None, None)` para quem aguarda sem `estado.json` (nada a desfazer).
+
+        `estado.json` ausente (fora de `aguardando`), ilegível ou que não é um objeto levanta `ValueError`;
+        um `plano.json` ilegível vale `None` (só deixa de achar os Plan Runs pelos planos Seeds).
+        """
+        pasta = self._pasta(entrada["id"])
+        if entrada["estado"] == "aguardando" and not (pasta / despachante.ARQ_ESTADO).exists():
+            return None, None
+        estado = despachante._ler_json(pasta / despachante.ARQ_ESTADO)
+        if not isinstance(estado, dict):
+            raise ValueError("estado.json ausente ou não é um objeto")
+        try:
+            plano = despachante._ler_json(pasta / despachante.ARQ_PLANO)
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            plano = None
+        return estado, plano if isinstance(plano, dict) else None
+
+    @staticmethod
+    def _ou_ausente(nome: str, ausentes: list, ler):
+        """`ler()`, ou `None` quando o Warren ou o GitHub responde 404 (anotado em `ausentes`).
+
+        Só o 404 explícito (`despachante._eh_404`) ou o 410 Gone (issue apagada no GitHub) vira "nada a fazer"; falha de rede, timeout e outro HTTP levantam.
+        """
+        try:
+            return ler()
+        except Exception as exc:  # noqa: BLE001 - o que não é 404 sobe para o chamador
+            if despachante._eh_falha_de_rede(exc) or not (despachante._eh_404(exc) or re.search(r"HTTP 410\s*$", str(exc))):
+                raise
+            ausentes.append(nome)
+            return None
+
+    def _alvos_da_remocao(self, entrada: dict, estado: dict, plano) -> dict:
+        """Só leituras: os Plan Runs vivos, o run do orquestrador em curso, os PRs do orquestrador e as issues abertas.
+
+        Plan Run, run, PR ou issue com 404 fica de fora e entra em `ausentes` ("Plan Run X", "issue URL"...).
+        """
+        ausentes = []
+        projeto = {r["repo"].lower(): r["projeto"] for r in (self._config or ler_config(self.raiz))["repos"]}.get(entrada["repo"].lower())
+        projeto = projeto or (estado.get("projeto") if despachante._texto(estado.get("projeto")) else None)
+        estados_dos_planos = {}
+        seeds = {r.get("planoSeeds") for r in despachante._lista(despachante._dict(plano).get("raias")) if isinstance(r, dict)}
+        seeds.discard(None)
+        if projeto and seeds:
+            for item in self.motor.planos_do_projeto(projeto):
+                if item.get("planId") in seeds:
+                    estados_dos_planos[item["id"]] = item.get("estado")
+        for raia in despachante._dict(estado.get("raias")).values():
+            plan_run = despachante._dict(raia).get("planRunId")
+            if despachante._texto(plan_run) and plan_run not in estados_dos_planos:
+                lido = self._ou_ausente("Plan Run %s não encontrado" % plan_run, ausentes, lambda p=plan_run: self.motor.plano(p))
+                if lido is not None:
+                    estados_dos_planos[plan_run] = lido.get("estado")
+        planos = sorted(i for i, e in estados_dos_planos.items() if e not in motor_.TERMINAIS_DE_PLANO)
+        orquestrador = despachante._dict(estado.get("orquestrador"))
+        prs = [u for u in despachante._lista(estado.get("prsOrquestrador")) if despachante._texto(u)]
+        run_vivo = None
+        if despachante._texto(orquestrador.get("runId")):
+            run_id = orquestrador["runId"]
+            run = self._ou_ausente("run do orquestrador %s não encontrado" % run_id, ausentes, lambda: self.motor.run(run_id))
+            if run is not None and run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+                run_vivo = run_id
+            elif run is not None and despachante._texto(run.get("prUrl")):
+                prs.append(run["prUrl"])
+        issues = [despachante._dict(estado.get("decisaoPausa")).get("url")]
+        issues += [despachante._dict(d).get("url") for d in despachante._lista(estado.get("decisoes"))]
+        issues.append(despachante._dict(orquestrador.get("bloqueio")).get("url"))
+        prs_abertos = []
+        for url in dict.fromkeys(prs):
+            lido = self._ou_ausente("PR %s não encontrado" % url, ausentes, lambda u=url: self.forja.pr(u))
+            if lido is not None and lido.get("aberto"):
+                prs_abertos.append(url)
+        abertas = []
+        for url in dict.fromkeys(i for i in issues if despachante._texto(i)):
+            lido = self._ou_ausente("issue %s não encontrada" % url, ausentes, lambda u=url: self.forja.decisao(u))
+            if lido is not None and not lido.get("fechada"):
+                abertas.append(url)
+        return {"planos": planos, "runOrquestrador": run_vivo, "prs": prs_abertos, "issues": abertas, "ausentes": ausentes}
+
+    def _remover(self, pedido: dict, chave: str = "", eventos=None) -> bool:
+        """Aplica um pedido de remoção. True: concluiu (ou não há o que fazer) e o pedido sai da caixa.
+
+        Etapas, cada uma idempotente: desliga a unit, cancela os Plan Runs vivos, espera o run do orquestrador,
+        fecha os PRs do orquestrador e as issues do plano (depois da unit desligada), marca `removido` e solta as
+        reservas e a trava. Uma falha no Warren ou no GitHub devolve False: o ciclo seguinte refaz tudo.
+        """
+        id_ = pedido["id"]
+        chave = chave or "remover:%s" % id_
+        entrada = _atuais(self.dados["fila"]).get(id_)
+        if entrada is None:
+            self._aviso(chave, "pedido remover de %s recusado: plano desconhecido" % id_)
+            return True
+        if entrada.get("estado") == "removido":
+            return True  # pedido repetido: sem efeito
+        if entrada.get("estado") not in REMOVIVEIS:
+            self._aviso(chave, "pedido remover de %s recusado: o plano está %s" % (id_, entrada.get("estado")))
+            return True
+        manter_arquivo = pedido.get("manterArquivo") is True
+        progresso = "remover:%s" % id_
+        if entrada["estado"] != "aguardando":
+            unit = self._unit(id_)
+            codigo, saida = self.systemd("disable", "--now", unit)
+            if codigo != 0 and not any(t in (saida or "") for t in UNIT_INEXISTENTE):
+                self._aviso(
+                    progresso,
+                    "%s: systemctl --user disable --now %s saiu com %s, remoção adiada: %s" % (id_, unit, codigo, self._seguro(saida, LIMITE_SAIDA)),
+                )
+                return False
+        try:
+            estado, plano = self._ler_para_remover(entrada)
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            estado, plano = None, None
+            self._aviso(
+                "removido:%s:ilegivel" % id_,
+                "%s removido com estado.json ilegível: confira à mão os Plan Runs no Warren e os PRs do orquestrador" % id_,
+            )
+        if estado is not None:
+            try:
+                alvos = self._alvos_da_remocao(entrada, estado, plano)
+                ausentes = alvos["ausentes"]
+                for plan_run in alvos["planos"]:
+                    self._ou_ausente("Plan Run %s não encontrado" % plan_run, ausentes, lambda p=plan_run: self.motor.cancelar_plano(p))
+                if alvos["runOrquestrador"]:
+                    self._aviso(progresso, "%s: esperando o run do orquestrador terminar para remover" % id_)
+                    return False
+                for url in alvos["prs"]:
+                    self._ou_ausente("PR %s não encontrado" % url, ausentes, lambda u=url: self.forja.fechar_pr(u, COMENTARIO_REMOCAO))
+                for url in alvos["issues"]:
+                    self._ou_ausente("issue %s não encontrada" % url, ausentes, lambda u=url: self.forja.fechar_decisao(u, COMENTARIO_REMOCAO))
+                for nome in dict.fromkeys(ausentes):
+                    self._aviso("remover:%s:404:%s" % (id_, nome), "%s: %s (404), ignorado na remoção" % (id_, nome))
+            except Exception as exc:  # noqa: BLE001 - Warren ou GitHub fora: o ciclo seguinte refaz
+                self._aviso(progresso, "não foi possível remover %s agora, tento de novo no próximo ciclo: %s" % (id_, self._erro(exc)))
+                return False
+        capacidade.sincronizar(self.capacidade, id_, set())
+        capacidade.soltar_orquestrador(self.capacidade, entrada["repo"], id_)
+        self.dados["fila"] = fila.remover(self.dados["fila"], id_, manter_arquivo=manter_arquivo)
+        self._salvar()
+        for velha in (progresso, "unit:%s" % id_, "pausa:%s" % id_, "admitir:%s" % id_, "ocupacao:%s" % id_):
+            self._esquecer(velha)
+        self._log({"evento": "removido", "id": id_, "manterArquivo": manter_arquivo})
+        self._aviso("removido:%s" % id_, "%s removido da fila" % id_)
+        if eventos is not None:
+            eventos.append({"evento": "removido", "id": id_})
+        return True
+
+    def _segurar(self, id_: str, valor: bool, chave: str, eventos: list) -> None:
+        comando = "segurar" if valor else "soltar"
+        entrada = _atuais(self.dados["fila"]).get(id_)
+        if entrada is None:
+            self._aviso(chave, "pedido %s de %s recusado: plano desconhecido" % (comando, id_))
+            return
+        if valor and entrada.get("segurado"):
+            return  # já segurado: nada a fazer, nem aviso
+        if valor and entrada.get("estado") != "aguardando":
+            self._aviso(chave, "pedido segurar de %s recusado: o plano está %s" % (id_, entrada.get("estado")))
+            return
+        if not valor and not entrada.get("segurado"):
+            self._aviso(chave, "pedido soltar de %s recusado: o plano não está segurado" % id_)
+            return
+        self.dados["fila"] = fila.segurar(self.dados["fila"], id_, valor)
+        self._salvar()
+        if valor:
+            self._aviso(chave, "%s segurado na fila (coordenador.py soltar %s para liberar)" % (id_, id_))
+        else:
+            self._aviso(chave, "%s solto na fila" % id_)
+        self._log({"evento": "segurado" if valor else "solto", "id": id_})
+        eventos.append({"evento": "segurado" if valor else "solto", "id": id_})
+
+    def _descartar(self, caminho: pathlib.Path, chave: str) -> None:
+        """Marca o pedido como concluído (nunca é reaplicado, mesmo se o arquivo não sair) e apaga o arquivo."""
+        aplicados = self.dados.get("entradaAplicada", [])
+        if caminho.name not in aplicados:
+            self.dados["entradaAplicada"] = (aplicados + [caminho.name])[-LIMITE_ENTRADA_APLICADA:]
+            self._salvar()
+        try:
+            caminho.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            self._aviso("%s:apagar" % chave, "não foi possível apagar o pedido %s/%s (%s)" % (DIR_ENTRADA, caminho.name, type(exc).__name__))
+            return
+        self._esquecer(chave)
+
     # ------------------------------------------------------------ laço
 
     def rodar(self, *, intervalo: int = INTERVALO_PADRAO, ciclos: int | None = None, dormir=time.sleep) -> None:
@@ -420,13 +720,14 @@ class Coordenador:
                     capacidade.definir_drenagem(self.capacidade, None)
 
     def ciclo(self) -> list[dict]:
-        """Os 6 passos, nesta ordem. Devolve os eventos do ciclo.
+        """Os passos, nesta ordem. Devolve os eventos do ciclo.
 
         `fila.json` ou `fila-estado.json` ilegível levanta `ErroDeEntrada` (o `rodar` deixa sair com 2).
         """
         self.dados = ler_estado(self.raiz)
         self._separar_ids_invalidos()
         self._tentados = set()
+        self._removendo = set()
         eventos: list[dict] = []
         try:
             config = self._config = ler_config(self.raiz)
@@ -437,6 +738,7 @@ class Coordenador:
                     self._erro_de_etapa("drenagem_herdada", "capacidade", exc)
             self._passo_preparar(eventos)
             descobertos, falhos = self._passo_descobrir(config)
+            self._passo_entrada(eventos)
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
             self._passo_orfaos(rodando, confiavel, eventos)
@@ -711,6 +1013,8 @@ class Coordenador:
         self.dados["fila"] = nova
         self._salvar()
         for id_ in fila.admitir(self.dados["fila"]):
+            if id_ in self._removendo:
+                continue
             self._tentar_admitir(_atuais(self.dados["fila"])[id_], eventos)
 
     def _tentar_admitir(self, entrada: dict, eventos: list) -> bool:
@@ -795,8 +1099,8 @@ class Coordenador:
         """Devolve `(ids com unit rodando, se o systemd respondeu por todos)`."""
         rodando, confiavel = set(), True
         for id_, entrada in sorted(_atuais(self.dados["fila"]).items()):
-            if entrada["estado"] not in fila.OCUPANDO:
-                continue
+            if entrada["estado"] not in fila.OCUPANDO or id_ in self._removendo:
+                continue  # remoção em curso: a unit já foi desligada de propósito
             try:
                 if not self._observar(id_, entrada, rodando, eventos):
                     confiavel = False
@@ -952,7 +1256,7 @@ def status(raiz, central=None) -> str:
     atuais = sorted(_atuais(dados["fila"]).values(), key=lambda e: (str(e.get("entrouEm")), e["id"]))
     if atuais:
         linhas.append("fila:")
-        linhas.extend("  %s: %s (entrou em %s)" % (e["id"], e["estado"], e.get("entrouEm")) for e in atuais)
+        linhas.extend("  %s: %s%s (entrou em %s)" % (e["id"], e["estado"], " (segurado)" if e.get("segurado") else "", e.get("entrouEm")) for e in atuais)
     else:
         linhas.append("fila vazia")
     try:
@@ -1086,6 +1390,12 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="fila, vagas, reservas, travas e avisos")
     registrar = sub.add_parser("registrar", help="registra um repositório (dono/repo) na fila")
     registrar.add_argument("repo")
+    for nome, ajuda in (("segurar", "segura um plano aguardando (não é admitido até soltar)"), ("soltar", "solta um plano segurado")):
+        sub.add_parser(nome, help=ajuda).add_argument("id")
+    remover = sub.add_parser("remover", help="tira um plano aguardando, ativo ou pausado da fila (aplicado no próximo ciclo)")
+    remover.add_argument("id")
+    remover.add_argument("--manter-arquivo", action="store_true", help="o arquivo do plano fica no branch padrão sem reentrar")
+    remover.add_argument("--simular", action="store_true", help="só mostra as etapas, sem gravar nada")
     vagas = sub.add_parser("vagas", help="define as vagas (e limpa o OOM)")
     vagas.add_argument("n", type=int)
     vagas.add_argument("--ram-minima-mb", type=int, default=None)
@@ -1121,7 +1431,7 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, dor
     args = _parser().parse_args(argv)
     raiz = pathlib.Path(args.raiz).expanduser()
     try:
-        if args.comando in ("registrar", "status", "vagas"):
+        if args.comando in ("registrar", "status", "vagas", *COMANDOS_DA_CAIXA):
             # a CLI roda na shell, sem o EnvironmentFile da unit: lê o mesmo coordenador.env
             ambiente = _com_coordenador_env(ambiente, raiz)
         if args.comando == "status":
@@ -1129,6 +1439,12 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, dor
             return 0
         if args.comando == "vagas":
             print(_vagas(raiz, args.n, args.ram_minima_mb), file=saida)
+            return 0
+        if args.comando == "remover":
+            print(construir(ambiente, raiz).pedir("remover", args.id, manter_arquivo=args.manter_arquivo, simular=args.simular), file=saida)
+            return 0
+        if args.comando in COMANDOS_DA_CAIXA:
+            print(construir(ambiente, raiz).pedir(args.comando, args.id), file=saida)
             return 0
         if args.comando == "registrar":
             print(construir(ambiente, raiz).registrar(args.repo), file=saida)
