@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Container } from '@/modules/oficina/model'
 import { ContainersDaMaquina } from './containers-da-maquina'
 
@@ -61,5 +61,16 @@ describe('ContainersDaMaquina', () => {
   it('sem retrato mostra "Sem dados"', () => {
     render(<ContainersDaMaquina agora={AGORA} containers={null} />)
     expect(screen.getByText('Sem dados')).toBeVisible()
+  })
+
+  it('dois contêineres com o mesmo nome aparecem sem chave repetida', () => {
+    const erro = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      render(<ContainersDaMaquina agora={AGORA} containers={[c('flow-web'), c('flow-web')]} />)
+      expect(screen.getAllByRole('row').slice(1)).toHaveLength(2)
+      expect(erro).not.toHaveBeenCalled()
+    } finally {
+      erro.mockRestore()
+    }
   })
 })

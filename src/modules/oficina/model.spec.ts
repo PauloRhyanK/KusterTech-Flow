@@ -325,6 +325,20 @@ describe('servicoDoFlow', () => {
     expect(r).toEqual({ total: 2, noAr: 2, memoriaBytes: 500 * 1024 ** 2 })
   })
 
+  it('o migrate (roda e termina) fica fora da contagem e da memória', () => {
+    const r = servicoDoFlow([
+      container('kustertech-flow-web-1', { memoriaBytes: 300 * 1024 ** 2 }),
+      container('kustertech-flow-worker-1', { memoriaBytes: 200 * 1024 ** 2 }),
+      container('kustertech-flow-migrate-1', { estado: 'parado', memoriaBytes: null }),
+      container('flow-migrate-1', { memoriaBytes: 50 * 1024 ** 2 }),
+    ])
+    expect(r).toEqual({ total: 2, noAr: 2, memoriaBytes: 500 * 1024 ** 2 })
+  })
+
+  it('só o migrate do Flow: sem serviço', () => {
+    expect(servicoDoFlow([container('kustertech-flow-migrate-1', { estado: 'parado' })])).toBeNull()
+  })
+
   it('reconhece o projeto do compose, kustertech-flow-*, sem pegar nome parecido', () => {
     const r = servicoDoFlow([
       container('kustertech-flow-web-1', { memoriaBytes: 300 * 1024 ** 2 }),

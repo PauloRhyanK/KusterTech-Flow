@@ -86,8 +86,8 @@ export function ContainersDaMaquina({ containers, agora }: ContainersDaMaquinaPr
               <table className="w-full border-collapse">
                 <Cabecalho />
                 <tbody>
-                  {ordenados.slice(0, VISIVEIS).map((c) => (
-                    <Linha key={c.nome} c={c} agora={agora} />
+                  {ordenados.slice(0, VISIVEIS).map((c, i) => (
+                    <Linha key={`${c.nome}-${i}`} c={c} agora={agora} />
                   ))}
                 </tbody>
               </table>
@@ -104,8 +104,8 @@ export function ContainersDaMaquina({ containers, agora }: ContainersDaMaquinaPr
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse" aria-label="Demais containers">
                     <tbody>
-                      {resto.map((c) => (
-                        <Linha key={c.nome} c={c} agora={agora} />
+                      {resto.map((c, i) => (
+                        <Linha key={`${c.nome}-${VISIVEIS + i}`} c={c} agora={agora} />
                       ))}
                     </tbody>
                   </table>

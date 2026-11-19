@@ -4,6 +4,7 @@ Description=Amostra de desempenho da oficina (RAM, swap, PSI, OOM, CPU, raias e 
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -I /opt/oficina/metricas_oficina.py coletar
-ExecStart=/usr/bin/python3 -I /opt/oficina/metricas_oficina.py retrato
+# O "-" faz a falha de um passo não impedir o outro.
+ExecStart=-/usr/bin/python3 -I /opt/oficina/metricas_oficina.py coletar
+ExecStart=-/usr/bin/python3 -I /opt/oficina/metricas_oficina.py retrato
 Nice=5

@@ -37,6 +37,10 @@ cenario() { # prepara diretórios e dublês padrão
   SAUDE_GERAL=sim
   N_SUBIR=0
   N_SAUDE=0
+  NOAR_1=sim # saúde da stack no início da rodada
+  NOAR_2=sim # saúde depois de subir de novo a imagem atual
+  N_NOAR=0
+  MARCAR_RC=0
   digest_remoto() { [[ "$REMOTO" == falha ]] && return 1; echo "$REMOTO"; }
   digest_local() { [[ -f "$FLOW_DIR/.imagem-atual" ]] && cat "$FLOW_DIR/.imagem-atual"; return 0; }
   subir() {
@@ -54,6 +58,11 @@ cenario() { # prepara diretórios e dublês padrão
   imagem_em_execucao() { [[ -n "$RODANDO" ]] && echo "$RODANDO"; }
   migrate_concluida() { [[ "$MIGROU" == sim ]]; }
   puxar() { echo "puxar $1" >>"$CHAMADAS"; }
+  flow_no_ar() {
+    N_NOAR=$((N_NOAR + 1))
+    if [[ "$N_NOAR" -eq 1 ]]; then [[ "$NOAR_1" == sim ]]; else [[ "$NOAR_2" == sim ]]; fi
+  }
+  marcar_main() { echo "marcar $1" >>"$CHAMADAS"; return "$MARCAR_RC"; }
   travar() { return 0; }
   log() { :; }
   agora() { echo "2026-11-19T10:00:00-03:00"; }
@@ -67,6 +76,11 @@ print("sim" if ok and ('"$2"') else "nao")' <"$OFICINA_DIR_ESTADO/alertas.jsonl"
 }
 msg() { python3 -c 'import json,sys; print(json.loads(sys.stdin.readlines()[0])["mensagem"])' <"$OFICINA_DIR_ESTADO/alertas.jsonl"; }
 n_subir() { grep -c '^subir' "$CHAMADAS"; }
+n_alertas() { if [[ -f "$OFICINA_DIR_ESTADO/alertas.jsonl" ]]; then wc -l <"$OFICINA_DIR_ESTADO/alertas.jsonl" | tr -d ' '; else echo 0; fi; }
+existe() { [[ -e "$FLOW_DIR/$1" ]] && echo sim || echo nao; }
+A="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+B="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+C="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
 # (a) digest igual
 cenario
@@ -288,6 +302,112 @@ echo 'export WEB_PORT=3141' >"$FLOW_DIR/.env"
 confere "n: com export" 3141 "$(porta_web)"
 echo 'WEB_PORT=abc' >"$FLOW_DIR/.env"
 confere "n: não numérica" 3000 "$(unset WEB_PORT; porta_web)"
+
+# (p) a imagem rastreada recebe a tag :main local
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"
+atualizar_flow
+confere "p: marca :main com o digest novo" "marcar $B" "$(grep '^marcar' "$CHAMADAS")"
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; echo "$C" >"$FLOW_DIR/.imagem-em-teste"; WEB_DIGEST="$C"
+atualizar_flow
+confere "p: marcador promovido também marca :main" "marcar $C" "$(grep '^marcar' "$CHAMADAS")"
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; SAUDE_1=nao
+atualizar_flow
+confere "p: falha não marca :main" "" "$(grep '^marcar' "$CHAMADAS")"
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; MARCAR_RC=1
+atualizar_flow; rc=$?
+confere "p: tag que falha não desfaz a atualização" "0 $B" "$rc $(cat "$FLOW_DIR/.imagem-atual")"
+confere "p: tag que falha não gera aviso" 0 "$(n_alertas)"
+
+# (q) auto-recuperação no início da rodada (digest remoto igual ao atual)
+recuperacao() {
+  cenario
+  echo "$A" >"$FLOW_DIR/.imagem-atual"
+  REMOTO="$A"
+}
+# q1: doente, volta ao subir de novo a imagem atual -> sem aviso
+recuperacao; NOAR_1=nao; NOAR_2=sim
+atualizar_flow; rc=$?
+confere "q1: sai 0" 0 "$rc"
+confere "q1: sobe de novo a atual sem dependências" "subir ghcr.io/exemplo/flow@$A --no-deps web worker" "$(grep '^subir' "$CHAMADAS")"
+confere "q1: sem aviso" 0 "$(n_alertas)"
+confere "q1: sem estado de fora do ar" nao "$(existe .aviso-fora-do-ar)"
+# q2: doente e continua doente -> um aviso só em duas rodadas seguidas
+recuperacao; NOAR_1=nao; NOAR_2=nao
+atualizar_flow
+confere "q2: um aviso" 1 "$(n_alertas)"
+confere "q2: json com os cinco campos e diz fora do ar" sim "$(alerta_json 1 '"fora do ar" in d["mensagem"] and "aaaaaaaaaaaa" in d["mensagem"]')"
+confere "q2: não diz que voltou" nao "$(msg | grep -qi 'voltou\|revertida\|saudável' && echo sim || echo nao)"
+confere "q2: estado de fora do ar gravado" sim "$(existe .aviso-fora-do-ar)"
+N_NOAR=0
+atualizar_flow
+confere "q2: segunda rodada não repete o aviso" 1 "$(n_alertas)"
+confere "q2: segunda rodada tenta subir de novo" 2 "$(n_subir)"
+# q3: saudável -> remove o estado, sem subir
+recuperacao; echo "2026-11-19T09:00:00-03:00" >"$FLOW_DIR/.aviso-fora-do-ar"
+atualizar_flow
+confere "q3: estado removido" nao "$(existe .aviso-fora-do-ar)"
+confere "q3: sem subir" 0 "$(n_subir)"
+confere "q3: sem aviso" 0 "$(n_alertas)"
+# q4: recupera depois de um aviso -> estado removido; nova queda avisa de novo
+recuperacao; echo "2026-11-19T09:00:00-03:00" >"$FLOW_DIR/.aviso-fora-do-ar"; NOAR_1=nao; NOAR_2=sim
+atualizar_flow
+confere "q4: recuperou e removeu o estado" nao "$(existe .aviso-fora-do-ar)"
+N_NOAR=0; NOAR_2=nao
+atualizar_flow
+confere "q4: nova queda gera um aviso" 1 "$(n_alertas)"
+# q5: sem .imagem-atual válido não há o que subir de novo
+cenario
+REMOTO="$B"; echo "$B" >"$FLOW_DIR/.imagem-recusada"; NOAR_1=nao
+atualizar_flow
+confere "q5: sem subir" 0 "$(n_subir)"
+confere "q5: sem aviso" 0 "$(n_alertas)"
+# q6: a atualização seguinte segue mesmo com a stack doente
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; NOAR_1=nao; NOAR_2=nao
+atualizar_flow
+confere "q6: tenta a imagem nova depois" "subir ghcr.io/exemplo/flow@$B" "$(grep '^subir' "$CHAMADAS" | sed -n 2p)"
+confere "q6: atualizada" "$B" "$(cat "$FLOW_DIR/.imagem-atual")"
+confere "q6: atualização saudável remove o estado" nao "$(existe .aviso-fora-do-ar)"
+# q7: reversão que falha já avisou "fora do ar": a rodada seguinte não repete
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; SAUDE_1=nao; SAUDE_2=nao
+atualizar_flow
+confere "q7: aviso da reversão" 1 "$(n_alertas)"
+confere "q7: estado de fora do ar gravado" sim "$(existe .aviso-fora-do-ar)"
+N_NOAR=0; NOAR_1=nao; NOAR_2=nao
+atualizar_flow
+confere "q7: rodada seguinte sem aviso repetido" 1 "$(n_alertas)"
+# q8: reversão saudável não deixa estado de fora do ar
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; echo "x" >"$FLOW_DIR/.aviso-fora-do-ar"; SAUDE_1=nao
+atualizar_flow
+confere "q8: revertida remove o estado" nao "$(existe .aviso-fora-do-ar)"
+
+# (r) registro inacessível por 12 rodadas seguidas (1 hora) -> um aviso só
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; REMOTO=falha
+for _ in 1 2 3 4 5 6 7 8 9 10 11; do atualizar_flow; done
+confere "r: 11 falhas sem aviso" 0 "$(n_alertas)"
+atualizar_flow
+confere "r: 12a falha avisa" 1 "$(n_alertas)"
+confere "r: json com os cinco campos e diz 1 hora" sim "$(alerta_json 1 '"registro de imagens" in d["mensagem"] and "1 hora" in d["mensagem"]')"
+confere "r: não diz que o Flow está bem" nao "$(msg | grep -qi 'saudável\|no ar' && echo sim || echo nao)"
+for _ in 1 2 3; do atualizar_flow; done
+confere "r: não repete o aviso" 1 "$(n_alertas)"
+REMOTO="$A"
+atualizar_flow
+confere "r: sucesso zera o contador" nao "$(existe .falhas-do-registro)"
+REMOTO=falha
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do atualizar_flow; done
+confere "r: nova hora sem registro avisa de novo" 2 "$(n_alertas)"
+cenario
+echo "$A" >"$FLOW_DIR/.imagem-atual"; echo "lixo" >"$FLOW_DIR/.falhas-do-registro"; REMOTO=falha
+atualizar_flow
+confere "r: contador inválido recomeça" 1 "$(cat "$FLOW_DIR/.falhas-do-registro")"
 
 # (o) pasta do usuário não resolvida
 cenario

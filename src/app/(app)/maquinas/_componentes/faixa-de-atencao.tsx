@@ -17,7 +17,7 @@ export function FaixaDeAtencao({ avisos }: { avisos: readonly AvisoDaMaquina[] }
     >
       <ul className="space-y-1">
         {avisos.map((aviso, i) => (
-          <li key={`${aviso.tipo}-${i}`}>
+          <li key={`${aviso.tipo}-${i}`} className="[overflow-wrap:anywhere]">
             <b className="font-[650] text-atencao">{TITULO_DO_AVISO[aviso.tipo]}:</b>{' '}
             {aviso.mensagem}
           </li>

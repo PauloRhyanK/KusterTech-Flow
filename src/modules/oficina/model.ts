@@ -251,11 +251,14 @@ export function diaEHora(em: Date, agora: Date): { dia: string; hora: string } {
 }
 
 // Os contêineres do próprio Flow: nome com prefixo "flow-" ou "kustertech-flow-" (projeto do compose).
+// O migrate roda e termina a cada subida: não é serviço, fica fora da contagem e da memória.
 export function servicoDoFlow(
   cs: Container[],
 ): { total: number; noAr: number; memoriaBytes: number } | null {
   const doFlow = cs.filter(
-    (c) => c.nome.startsWith('flow-') || c.nome.startsWith('kustertech-flow-'),
+    (c) =>
+      (c.nome.startsWith('flow-') || c.nome.startsWith('kustertech-flow-')) &&
+      !/-migrate(-|$)/.test(c.nome),
   )
   if (doFlow.length === 0) return null
   const noAr = doFlow.filter((c) => c.estado === 'rodando')
