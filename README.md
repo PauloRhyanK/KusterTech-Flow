@@ -1,10 +1,12 @@
 # KusterTech Flow
 
-Central de Operações da KusterTech: painel administrativo self-hosted para clientes, projetos, entregas, homologação, infraestrutura e desenvolvimento com agentes.
+Central de Operações da KusterTech: painel administrativo self-hosted para clientes, projetos, máquinas e desenvolvimento com agentes. Entregas, ambientes, homologação e publicação estão congelados (ver [Módulos](#módulos)).
 
 ## Documentos
 
-- [Decisões Aprovadas (D13–D69, Invariantes e Aceites)](docs/decisoes-aprovadas.md)
+- [Decisões Aprovadas (D13–D75, Invariantes e Aceites; a emenda de 18/11/2026 está na seção 7)](docs/decisoes-aprovadas.md)
+- [Spec da base enxuta](docs/superpowers/specs/2026-11-18-base-enxuta-no-ar-design.md)
+- [Oficina: máquina interna e publicação do Flow](docs/infra/oficina.md)
 - [Blueprint UX/UI — Central de Operações](docs/blueprint-ux-ui.md)
 - [Identidade Visual — KusterTech Flow](docs/identidade-visual.md)
 - [Proposta Técnica e Plano Incremental do MVP](docs/superpowers/specs/2026-10-23-central-de-operacoes-plano-tecnico-mvp.md)
@@ -45,7 +47,11 @@ A imagem é enxuta: servidor Next `standalone` (`node server.js`), worker e scri
 - migrations: `node node_modules/prisma/build/index.js migrate deploy`
 - scripts: `node scripts/criar-admin.mjs` e `node scripts/importar-cadastro.mjs`
 
+Tamanho medido (build local arm64): 192,9 MB, contra 419,7 MB antes de empacotar o worker. Um minuto depois de subir, o web usava 64 MiB e o worker 147 MiB.
+
 Para validar uma imagem construída: `docker build -t flow:local . && bash scripts/fumaca-da-imagem.sh flow:local` (sobe um Postgres temporário, roda migrations, criar-admin, o worker uma vez e confere `/api/saude` e `/entrar`).
+
+O workflow `ci.yml` (formatação, lint, tipos e testes) está desativado nas configurações do GitHub; rode `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` antes de cada commit.
 
 A cada push em `main`, o workflow `imagem.yml` constrói a imagem, roda o teste de fumaça e só então publica `ghcr.io/paulorhyank/kustertech-flow` com as etiquetas `main` e `sha-<commit>`.
 
@@ -95,6 +101,8 @@ O Incremento 2 espelha issues, pull requests e resultado de checks dos repositó
 
 ## Entregas e milestones
 
+> Módulo congelado: não aparece nem roda por padrão. Ver [Módulos](#módulos).
+
 O Incremento 3 organiza as issues espelhadas em milestones do próprio painel e acompanha o desenvolvimento por entrega. O progresso é de desenvolvimento (issues fechadas), nunca de QA, aprovação ou entrega ao cliente.
 
 - **Criar milestone:** em `Entregas` do projeto, "Nova milestone" pede título (até 120 caracteres, único no projeto) e aceita descrição, prazo e clientes. Nada disso é obrigatório além do título: a milestone nasce sem clientes e sem issues ("Nenhuma issue vinculada"). Milestone arquiva, não se exclui.
@@ -107,6 +115,8 @@ O Incremento 3 organiza as issues espelhadas em milestones do próprio painel e 
 - **Verificação:** `e2e/jornada-b.spec.ts` percorre este fluxo no desktop e no mobile e grava capturas em `e2e/capturas/<desktop|mobile>/` (ignoradas pelo git).
 
 ## Ambientes e evidência
+
+> Módulo congelado: não aparece nem roda por padrão. Ver [Módulos](#módulos).
 
 O Incremento 4 mostra em que versão cada ambiente (DEV, QA e PROD) está e se cada issue já chegou nele. Fechar uma issue no GitHub não prova presença: sem evidência a issue aparece como "Sem evidência" ou "Verificação necessária".
 
@@ -147,6 +157,8 @@ O Incremento 4 mostra em que versão cada ambiente (DEV, QA e PROD) está e se c
 
 ## Homologação
 
+> Módulo congelado: não aparece nem roda por padrão. Ver [Módulos](#módulos).
+
 O Incremento 5a leva as issues que já estão na versão corrente de QA até a decisão do cliente: histórico por cliente e versão, três ações explícitas na issue e uma fila do projeto.
 
 - **Entrada automática:** a tarefa `atualizar-fila-de-homologacao` do worker (parte do ciclo de `pnpm worker` e `pnpm worker:uma-vez`, depois de `calcular-presencas`) cria um item "Aguardando disponibilização" para cada cliente da milestone quando a issue está no escopo e tem presença confirmada (por evidência ou confirmação manual) na versão corrente de QA. Issue fechada sem essa presença não entra. A tarefa só cria; nunca altera item existente, então rodar de novo não duplica nada.
@@ -172,6 +184,8 @@ O Incremento 5a leva as issues que já estão na versão corrente de QA até a d
 
 ## Homologação: reteste, triagem e aprovação
 
+> Módulo congelado: não aparece nem roda por padrão. Ver [Módulos](#módulos).
+
 O Incremento 5b fecha o ciclo correção → triagem → reteste → aprovação da milestone, sem apagar histórico.
 
 - **Triagem (admin):** a solicitação de correção de um cliente aguarda triagem na issue dele. São três decisões: **reabrir a issue** no GitHub, **criar uma issue de correção vinculada** (herda a milestone e entra no progresso; o título e a descrição não levam dados do cliente, e o formulário avisa quando o repositório é público) ou **responder sem abrir tarefa** (a resposta pode ser interna ou compartilhável). Reabrir e criar não chamam o GitHub na hora: gravam uma tarefa pendente, que só o worker executa. Nenhuma issue é aberta automaticamente.
@@ -182,6 +196,8 @@ O Incremento 5b fecha o ciclo correção → triagem → reteste → aprovação
 - **Verificação:** `e2e/triagem.spec.ts`, `e2e/reteste.spec.ts` e `e2e/aprovacao-de-milestone.spec.ts` cobrem cada parte; `e2e/jornada-c.spec.ts` percorre a Jornada C com dois clientes e uma correção, no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
 
 ## Publicação
+
+> Módulo congelado: não aparece nem roda por padrão. Ver [Módulos](#módulos).
 
 O Incremento 6 separa, por repositório, quatro estados que variam de forma independente: homologação QA, autorização PROD, deploy em PROD e verificação em produção. A página fica em `/projetos/[p]/publicacoes` (aba global do projeto; o contexto de cliente não a mostra). **Autorizar PROD não publica nada:** o deploy continua com o pipeline do projeto.
 
@@ -205,95 +221,81 @@ O Incremento 6 separa, por repositório, quatro estados que variam de forma inde
 - **Worker:** `calcular-composicoes` e `detectar-divergencias` fazem parte do ciclo de `pnpm worker` e `pnpm worker:uma-vez`.
 - **Verificação:** `e2e/publicacoes.spec.ts` cobre a página e o isolamento por POST forjado; `e2e/jornada-c-publicacao.spec.ts` percorre o fim da Jornada C (autorizar, ver o deploy, verificar e a divergência), no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
 
-## Infraestrutura e alertas
+## Início
 
-O Incremento 8 entrega um **inventário manual** de recursos (servidor, container, banco, storage, outro) e uma **fila única de alertas**. Só o administrador lê e altera essa área; os demais perfis veem "Sem permissão para esta área.".
+`/` mostra, nesta ordem, o que espera o administrador, o que a Fábrica está fazendo, a máquina local e um resumo do cadastro. É só leitura. O perfil escopado por cliente vê apenas o resumo dos seus projetos.
 
-- **O que o inventário é:** o cadastro de cada recurso, com identidade única (nome normalizado e identificador externo opcional), vínculo N:N com projetos, hospedagem em um servidor e atalhos para Beszel, GlitchTip, host Docker e para os repositórios GitHub dos projetos associados. Recurso é arquivado, nunca apagado.
-- **O que não é:** não há descoberta automática, métricas, terminal nem logs. CPU, memória, disco, estado do container e prévia de logs aparecem como "Sem dados", em tom neutro: ausência de alerta não prova que o recurso está saudável.
-- **Um registro por alerta:** o mesmo alerta (`/infraestrutura/alertas/<id>`) aparece na fila, no recurso e na aba Saúde e Erros de cada projeto associado, sempre com o mesmo link.
+- **Espera por você:** decisões e planos pausados da Fábrica, avisos da máquina local, a Fábrica sem notícias e a integração com o GitHub indisponível. A lista ordena por tipo e, dentro do tipo, pelo que espera há mais tempo quando a fonte traz data. O retrato da Fábrica não traz data por decisão, então as decisões ficam na ordem em que ele as lista. Mostra até 20 itens e informa quantos ficaram de fora. Pendências de módulos congelados não aparecem.
+- **Sem falso verde:** nenhum indicador usa o tom de sucesso. Fonte sem dados aparece como "Sem dados"; fonte que falhou é nomeada, e o resto da página segue.
+- **Código:** `src/modules/inicio`.
 
-### Como criar uma fonte de alertas
+## Fábrica
 
-Em **Infraestrutura → Alertas → Fontes de alertas → Criar fonte**, informe um nome. O token (`fa_…`) aparece **uma única vez**; no banco fica só o hash SHA-256. Guarde-o no sistema que vai notificar. Revogar a fonte faz o webhook responder 401. Nunca coloque o token em repositório, log ou URL.
+`/fabrica` mostra o retrato que a Fábrica de agentes envia ao Flow: planos em curso, vagas de raias e decisões abertas. `/fabrica/avisos` lista os avisos. A ligação (`FABRICA_CENTRAL_URL` e o token de recebimento) está em [`fabrica/README.md`](fabrica/README.md) e a página de configuração em `/configuracoes/fabrica`. Retrato antigo é marcado como desatualizado. O Flow só lê: nunca comanda a Fábrica.
 
-### Webhook `POST /api/alertas`
+## Máquinas
 
-```sh
-curl -X POST "$URL_DA_CENTRAL/api/alertas" \
-  -H "Authorization: Bearer $TOKEN_DA_FONTE" \
-  -H "Content-Type: application/json" \
-  -d '{"chave":"disco-cheio-vps-1","titulo":"Disco acima de 90%","severidade":"alta"}'
+`/maquinas` é o cadastro de máquinas (servidor, contêiner, banco, storage, outro). Cada máquina tem vínculo N:N com projetos e pode ficar hospedada em outra. Só o administrador lê e altera; máquina é arquivada, nunca apagada. O cadastro não descobre nada sozinho: o que não vem de arquivo local aparece como "Sem dados".
+
+### Máquina local
+
+Quando o Flow roda na oficina, a página da máquina local mostra memória, CPU, disco, contêineres, histórico e limpezas, lidos de arquivos. O módulo `src/modules/oficina` lê o diretório `OFICINA_DIR` (padrão `/oficina`; no compose da oficina é `/var/lib/oficina` montado só para leitura). `FLOW_MAQUINA_LOCAL` recebe o identificador externo do registro da máquina que representa a máquina local. Sem essa variável, nenhuma máquina é tratada como local.
+
+Os formatos estão em `src/modules/oficina/contrato.ts` e os exemplos em `src/modules/oficina/exemplos/`. Quem grava cada arquivo está em [`docs/infra/oficina.md`](docs/infra/oficina.md):
+
+| Arquivo               | Quem grava                                    | Conteúdo                                                          |
+| --------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
+| `metricas.jsonl`      | `metricas_oficina.py coletar`, por minuto     | amostras de memória, CPU, disco e carga                           |
+| `cpu.estado`          | `metricas_oficina.py coletar`                 | contadores de CPU da amostra anterior                             |
+| `retrato.json`        | `metricas_oficina.py retrato`, por minuto     | contêineres, estado da Fábrica e runners                          |
+| `disco-por-dono.json` | `metricas_oficina.py disco`, por hora         | bytes de Docker, Fábrica, runners, backups e outros               |
+| `alertas.jsonl`       | métricas (OOM), limpeza, backup e atualização | avisos da máquina; viram "avisos locais", não uma fila de alertas |
+| `limpezas.jsonl`      | `limpar-oficina.sh`, por rodada               | histórico das limpezas e o espaço liberado                        |
+| `limpeza-ultima.json` | `limpar-oficina.sh`                           | resumo da última limpeza                                          |
+
+Arquivo ausente ou ilegível vira aviso na tela. Limpeza concluída, contêiner no ar e serviço ativo usam o tom neutro, porque o arquivo não prova saúde.
+
+## Módulos
+
+`src/lib/modulos.ts` é o catálogo único de módulos. Menu, rotas, `/api/evidencias/*`, Server Actions e tarefas do worker consultam esse catálogo.
+
+| Módulo            | Padrão    | Depende de              |
+| ----------------- | --------- | ----------------------- |
+| `clientes`        | ativo     | -                       |
+| `projetos`        | ativo     | -                       |
+| `github`          | ativo     | `projetos`              |
+| `desenvolvimento` | ativo     | `github`                |
+| `fabrica`         | ativo     | -                       |
+| `maquinas`        | ativo     | -                       |
+| `entregas`        | congelado | `github`                |
+| `ambientes`       | congelado | `github`                |
+| `homologacao`     | congelado | `entregas`, `ambientes` |
+| `publicacao`      | congelado | `homologacao`           |
+
+Módulo congelado não aparece no menu, nem nas abas, nem no Resumo do projeto, nem no Início. Suas páginas mostram a tela de "não encontrado", `/api/evidencias/*` responde 404, as tarefas dele não rodam no worker e as Server Actions dele são barradas. O código, as tabelas, as migrations e os testes unitários continuam no repositório.
+
+Para religar um módulo, liste-o em `FLOW_MODULOS_EXTRAS`, separado por vírgula (por exemplo `FLOW_MODULOS_EXTRAS=entregas,ambientes`), e reinicie web e worker. Nome desconhecido, ou módulo cuja dependência não está ativa, faz o catálogo lançar um erro com a mensagem do problema na primeira consulta. Ao religar, os testes de ponta a ponta do módulo precisam rodar antes.
+
+## Importar o cadastro
+
+Um arquivo JSON cria ou atualiza clientes, projetos e máquinas de uma vez. Há um exemplo com dados fictícios em `cadastro.exemplo.json`.
+
+```bash
+pnpm importar-cadastro cadastro.json --simular --email admin@exemplo.com   # só mostra o que faria
+pnpm importar-cadastro cadastro.json --email admin@exemplo.com
 ```
 
-Corpo mínimo: `chave`, `titulo` e `severidade`. Campos aceitos:
+Na imagem: `docker compose run --rm web node scripts/importar-cadastro.mjs <arquivo.json> [--simular] --email <admin>`.
 
-| Campo        | Obrigatório | Regra                                                                                                             |
-| ------------ | ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| `chave`      | sim         | Texto de 1 a 200 caracteres; identifica o alerta na fonte (nunca é truncada).                                     |
-| `titulo`     | sim         | Texto não vazio; gravado com até 200 caracteres.                                                                  |
-| `severidade` | sim         | `critica`, `alta`, `media` ou `baixa`.                                                                            |
-| `situacao`   | não         | `ativo` (padrão) ou `resolvido`.                                                                                  |
-| `recurso`    | não         | Identificador externo ou nome do recurso (até 120 caracteres); desconhecido grava sem recurso e devolve um aviso. |
-| `ocorridoEm` | não         | Data ISO 8601 com fuso; ausente ou mais de 5 minutos no futuro vale o momento do recebimento.                     |
-| `detalhe`    | não         | Texto gravado com até 2000 caracteres.                                                                            |
-
-**Descartado:** qualquer outro campo do corpo (por exemplo `token`, `senha`, `html`) é ignorado e nunca chega ao banco.
-
-| Status | Significado                                                                                               |
-| ------ | --------------------------------------------------------------------------------------------------------- |
-| `201`  | Alerta criado (`"resultado":"criado"`).                                                                   |
-| `200`  | Repetição, reabertura, resolução ou nenhuma mudança (`repetido`, `reaberto`, `resolvido`, `sem-mudanca`). |
-| `202`  | Resolução de uma chave desconhecida: ignorada, nada é gravado (`ignorado`).                               |
-| `400`  | Corpo inválido; `campos` lista os campos com erro.                                                        |
-| `401`  | Token ausente, desconhecido ou de fonte revogada (`{"erro":"Token inválido."}`).                          |
-| `413`  | Corpo maior que 16 KB.                                                                                    |
-| `415`  | `Content-Type` diferente de `application/json`.                                                           |
-
-Falha inesperada responde `500` com mensagem fixa. Nenhuma resposta ou log inclui o token, o cabeçalho ou o corpo.
-
-### Deduplicação e reconhecer ≠ resolver
-
-- **Deduplicação:** a identidade do alerta é `<fonte>:<chave>`; duas fontes com a mesma `chave` não se misturam. Repetir a chave soma `ocorrencias` ("Recebido 2 vezes") e atualiza título, severidade e detalhe; não cria outro alerta. Uma resolução anterior à última ocorrência não fecha o alerta, e uma ocorrência anterior à resolução não o reabre.
-- **Reconhecer ≠ resolver:** reconhecer é uma decisão humana ("estou vendo"); o alerta continua entre os não resolvidos, no projeto e no resumo, e a tela diz "O alerta foi reconhecido, mas continua ativo na origem.". Alerta de webhook só é resolvido pela fonte (`"situacao":"resolvido"`); alerta registrado à mão é resolvido por "Registrar resolução", que grava quem resolveu.
-- **Verificação:** `e2e/webhook-alertas.spec.ts` cobre o contrato do webhook; `e2e/jornada-d.spec.ts` percorre a Jornada D (alerta no projeto, mesmo registro na Infraestrutura, no recurso e na VPS, reconhecer e resolver), no desktop e no mobile, e grava capturas em `e2e/capturas/` (ignoradas pelo git).
-
-## Visão Geral
-
-A página `/` mostra, em ordem de prioridade, o que exige intervenção de quem está logado, com um link ao registro único no contexto certo, e dois resumos (Projetos e Infraestrutura). É só leitura: não há tabela, migration nem formulário; a fila de homologação continua no projeto.
-
-### Tipos de pendência, regra e destino
-
-Os grupos aparecem sempre nesta ordem; um tipo sem pendências não gera grupo.
-
-| Ordem | Tipo               | O que é pendente                                                                                                        | Quem lê                | Destino                                                                                 |
-| ----- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
-| 1     | `homologacao`      | Item a testar, retestar, disponibilizar ou triar, agregado por homologação e natureza; só clientes e milestones ativos  | ver "Escopo"           | 1 item: a issue em `/clientes/<c>/projetos/<p>/…`; vários: a milestone, aba Homologação |
-| 2     | `autorizacao-prod` | Composição mais recente de cada repositório sem autorização vigente e cuja versão alvo não tem deploy `SUCESSO` em PROD | `publicacao.autorizar` | `/projetos/<p>/publicacoes?versao=<id>`                                                 |
-| 3     | `divergencia`      | Deploy em PROD sem autorização registrada e ainda não reconhecida                                                       | `publicacao.autorizar` | `/projetos/<p>/publicacoes#divergencia-<id>`                                            |
-| 4     | `alerta`           | Alerta `ATIVO` (o reconhecido sai das pendências e conta só no resumo de Infraestrutura)                                | `infraestrutura.ler`   | `/infraestrutura/alertas#alerta-<id>`, a mesma linha da fila única                      |
-| 5     | `integracao`       | Projeto com repositório `indisponível` ou com dados desatualizados; só quando a GitHub App está configurada             | `projetos.gerenciar`   | `/projetos/<p>/configuracao#repositorios`                                               |
-| 6     | `configuracao`     | Projeto ativo com item pendente no checklist (a falha de GitHub já é da integração; "ainda não disponível" não conta)   | `projetos.gerenciar`   | `/projetos/<p>` (Resumo com o checklist)                                                |
-
-**Ordem dentro do grupo:** peso (só alertas: crítica, alta, média, baixa), depois a pendência que espera há mais tempo, depois o id.
-
-### Limites
-
-Cada grupo mostra até 5 pendências. Com mais, "Ver todas (N)" abre `/?grupo=<tipo>` com até 50 ("Mostrando 50 de N." quando passar) e "Mostrar menos" recolhe; só um grupo fica expandido por vez e um `?grupo` inválido ou de tipo não visível é ignorado. Alertas nunca expandem na Visão Geral: "Ver os N alertas ativos" leva à fila. Cada tipo faz um número fixo de consultas (no máximo duas), qualquer que seja o volume, e uma consulta que falhe marca só o seu grupo.
-
-### Escopo
-
-- **Administrador:** os seis grupos e os dois resumos.
-- **Perfil escopado por cliente** (testador, aprovador): só o grupo de homologação dos seus clientes (testar e retestar) e o resumo "Seus projetos". A seção Infraestrutura não é renderizada e nenhuma consulta de outro tipo roda para ele.
-- **Sem falso verde:** nenhuma pendência nem indicador usa o tom de sucesso. Sem pendências, a página diz "Nenhuma pendência nas fontes disponíveis."; fontes não configuradas aparecem em "Fontes sem dados"; indicador sem fonte mostra "Sem dados".
-
-### Verificação
-
-`e2e/visao-geral.spec.ts` monta uma pendência de cada tipo, confere a ordem dos grupos, o destino de cada link (e que voltar preserva `?grupo`), o que o testador do cliente A vê e o layout dos resumos, no desktop e no mobile, com capturas em `e2e/capturas/` (ignoradas pelo git).
+- **Quem roda:** o e-mail precisa ser de um administrador. Toda escrita passa pelos mesmos serviços da interface.
+- **Formato:** listas `clientes`, `projetos` e `maquinas`. O projeto cita seus clientes pelo nome e seus repositórios por `dono/nome`. A máquina cita o projeto e a máquina que a hospeda pelo nome. Campo desconhecido invalida o arquivo.
+- **Pode repetir:** nomes são comparados sem diferenciar caixa, acentos e espaços; o que já existe é atualizado, não duplicado.
+- **Simulação:** `--simular` mostra as ações e os erros, e não grava nada. Com erros, nada é gravado.
+- **Repositórios:** só são vinculados os que a GitHub App enxerga. Os demais saem em "Ainda não visíveis para a GitHub App". Instale a App neles ([`docs/github-app.md`](docs/github-app.md) §10) e rode a importação de novo.
 
 ## Central de Desenvolvimento
 
-`/desenvolvimento` junta, numa fila só, issues e PRs dos repositórios vinculados e as execuções do Warren, com filtros por projeto, situação e origem. A visão "Por projeto e issue" (`?visao=execucoes`) agrupa as execuções por projeto e seed, e `/desenvolvimento/execucoes/<id>` mostra uma execução. Só leitura: não há formulário de escrita.
+É a aba **Desenvolvimento** do projeto (`/projetos/<p>/desenvolvimento`), ao lado de **Resumo** e **Máquinas** (as abas de módulos religados voltam a aparecer). Junta, numa fila só, issues e PRs dos repositórios vinculados ao projeto e as execuções do Warren, com filtros por situação e origem. `/desenvolvimento/execucoes/<id>` mostra uma execução. A rota global `/desenvolvimento` existe, mas o menu não a lista. Só leitura: não há formulário de escrita.
 
 ### De onde vêm os dados do Warren
 

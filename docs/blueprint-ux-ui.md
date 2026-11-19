@@ -1,3 +1,7 @@
+> **Nota (18/11/2026):** a emenda em [`decisoes-aprovadas.md`](decisoes-aprovadas.md) (seção 7) e a spec [`base enxuta`](superpowers/specs/2026-11-18-base-enxuta-no-ar-design.md) alteraram o menu, o Início (antiga Visão Geral) e a Infraestrutura descritos aqui.
+> As jornadas C e D estão suspensas enquanto os módulos de homologação, publicação e alertas estiverem congelados.
+> Onde este texto e a emenda divergirem, vale a emenda.
+
 # Blueprint UX/UI — Central de Operações
 
 **Versão:** 0.1 — Consolidação das decisões aprovadas até a Decisão 61  

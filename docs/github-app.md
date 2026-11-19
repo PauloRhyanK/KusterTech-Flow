@@ -122,3 +122,13 @@ Webhooks deixam issues, pull requests e checks atualizarem em até um tique do w
 7. **Trocar o segredo:** altere nos dois lados; entre uma troca e outra as entregas dão 401 e a reconciliação cobre. **Desativar:** desmarque Active na App e remova a variável.
 
 404 nas entregas do GitHub: o segredo não está no `.env` da web.
+
+## 10. Instalar a App nos repositórios do cadastro
+
+A importação do cadastro (`pnpm importar-cadastro`) vincula ao projeto só os repositórios que a GitHub App já enxerga. Os demais aparecem no fim da saída, em "Ainda não visíveis para a GitHub App". Para liberá-los:
+
+1. No GitHub, abra Settings → Applications → Installed GitHub Apps, escolha a App e clique em Configure.
+2. Em Repository access, selecione os repositórios que faltam e salve.
+3. Espere um ciclo do worker (ele cataloga os repositórios da instalação) ou rode `worker --uma-vez` (`pnpm worker:uma-vez`; na imagem, `node worker.mjs --uma-vez`).
+4. Rode a importação de novo. O que já existe não é duplicado; os repositórios agora visíveis são vinculados.
+

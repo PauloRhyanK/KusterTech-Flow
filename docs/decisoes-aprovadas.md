@@ -1,6 +1,7 @@
 # Central de Operações — Registro das decisões aprovadas
 
 **Estado:** descoberta funcional e UX/UI encerrada na **Decisão 69**  
+**Emenda:** ver a seção 7 (18/11/2026), que suspende, revoga e altera decisões listadas abaixo.  
 **Data de consolidação:** 23/10/2026  
 **Finalidade:** complementar o documento existente **“Blueprint UX/UI — Central de Operações”** no repositório. Este registro preserva decisões e limites do produto; **não prescreve arquitetura nem implementação**.
 
@@ -164,3 +165,30 @@ Estas **não são decisões funcionais abertas para redescoberta**. São pontos 
 ---
 
 **Fim da fase de descoberta.** Este documento é um **registro complementar de decisões**, não um pedido para recriar o produto ou elaborar uma arquitetura extensa antes de entregar valor.
+
+## 7. Emenda de 18/11/2026 — base enxuta
+
+Este documento prevalece sobre os demais, então a mudança fica registrada aqui, numa seção nova, sem apagar o texto original das seções 1 a 6. A spec está em [`docs/superpowers/specs/2026-11-18-base-enxuta-no-ar-design.md`](superpowers/specs/2026-11-18-base-enxuta-no-ar-design.md).
+
+**Suspensas até existir cliente homologando** (os módulos estão congelados): D16 a D33, D35, D36, D41 a D46, D48, D62 a D65, D68, D69. Critérios A03 a A10 e A12.
+
+**Revogadas:** D54 (alertas centralizados). De D51 a D53 e D55, a parte que trata de métricas vindas de ferramentas externas, containers como registros, descoberta assistida e atalhos para Beszel e GlitchTip. O inventário unificado e a página por recurso continuam.
+
+**Alteradas:**
+
+- **D49** (menu): passa a ser Trabalho (Início, Fábrica) e Cadastro (Clientes, Projetos, Máquinas).
+- **D50** (Visão Geral): passa a ser o Início, que mostra primeiro o que espera o Paulo.
+- **D56** (fila unificada): deixa de ser módulo global e vira aba do projeto.
+- **D60** (prioridade do MVP): o núcleo deixa de ser GitHub → entregas → QA → homologação → autorização, e passa a ser demanda → Fábrica → publicação.
+- **D47** e **D61**: o Resumo e o checklist do projeto mostram só o que é de módulo ativo.
+
+**Novas:**
+
+- **D70 — Só GitHub e Fábrica.** O Flow conversa com o GitHub e com a Fábrica, e lê arquivos locais da máquina onde roda. Qualquer outra integração exige decisão nova.
+- **D71 — Módulos congelados não aparecem nem rodam.** Uma lista única define os módulos ativos; menu, rotas, API e worker a obedecem.
+- **D72 — Início pelo que espera o Paulo.** Decisões e avisos primeiro, depois o que a Fábrica está fazendo, depois a oficina.
+- **D73 — Avisos locais, não fila de alertas.** Os avisos da máquina local vêm de arquivo gravado pelos scripts da oficina.
+- **D74 — Tela desenhada antes, conferida depois.** Toda tela nova tem desenho aprovado pelo Paulo antes do desenvolvimento e é conferida no navegador, com capturas, antes da entrega.
+- **D75 — Etapas de demanda são modelo, não regra fixa.** Vale a partir do produto 3.
+
+**Invariantes:** 1, 4, 8, 9 e 10 seguem valendo para tudo. 2, 3, 5, 6 e 7 seguem valendo para os módulos congelados e voltam a ser exercitados quando eles forem religados.

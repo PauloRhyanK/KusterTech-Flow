@@ -47,7 +47,7 @@ systemctl --user status fabrica-fila 'fabrica-plano@*'
 journalctl --user -u 'fabrica-plano@<id>' -n 100
 ```
 
-O retrato também aparece no Flow, em `/desenvolvimento/fabrica`, quando `FABRICA_CENTRAL_URL` está configurada. A operação completa está em [`fabrica/README.md`](../../fabrica/README.md).
+O retrato também aparece no Flow, em `/fabrica`, quando `FABRICA_CENTRAL_URL` está configurada. A operação completa está em [`fabrica/README.md`](../../fabrica/README.md).
 
 > O plano `paulorhyank--caisv2--telas-crm-cais--461d19` está pausado de propósito (issue #40 do CAISv2). Não rode `retomar`, não feche a #40 e não religue o despachante dele sem decisão do Paulo.
 
@@ -145,6 +145,8 @@ O [`docker-compose.oficina.yml`](../../docker-compose.oficina.yml) sobrepõe o c
 - publica o web e o Postgres só em `127.0.0.1`;
 - monta `/var/lib/oficina` somente leitura em `/oficina` no web (`OFICINA_DIR=/oficina`, `FLOW_MAQUINA_LOCAL`), de onde ele lê o retrato da máquina;
 - limita a memória: postgres 512 MB, web 768 MB, worker 384 MB e migrate 384 MB, com o heap do Node abaixo do limite.
+
+**Tamanho e consumo medidos** (build local arm64, `scripts/fumaca-da-imagem.sh`): a imagem tem 192,9 MB (192.939.884 bytes). Antes de empacotar o worker e podar as dependências, tinha 419,7 MB. Um minuto depois de subir, o web usava 64 MiB e o worker 147 MiB, bem abaixo dos limites acima.
 
 Os arquivos ficam em `~devops/flow`: `docker-compose.yml`, `docker-compose.oficina.yml` e o `.env` (só na máquina). Subida manual: `docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d`. O HTTPS dentro da tailnet vem de `sudo tailscale serve --bg --https=443 http://127.0.0.1:3000`.
 
