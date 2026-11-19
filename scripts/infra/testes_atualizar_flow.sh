@@ -33,6 +33,8 @@ cenario() { # prepara diretórios e dublês padrão
   SAUDE_1=sim
   SAUDE_2=sim
   RODANDO=""
+  WEB_DIGEST=""
+  SAUDE_GERAL=sim
   N_SUBIR=0
   N_SAUDE=0
   digest_remoto() { [[ "$REMOTO" == falha ]] && return 1; echo "$REMOTO"; }
@@ -48,6 +50,7 @@ cenario() { # prepara diretórios e dublês padrão
     N_SAUDE=$((N_SAUDE + 1))
     if [[ "$N_SAUDE" -eq 1 ]]; then [[ "$SAUDE_1" == sim ]]; else [[ "$SAUDE_2" == sim ]]; fi
   }
+  web_usa_digest() { [[ "$1" == "$WEB_DIGEST" ]]; }
   imagem_em_execucao() { [[ -n "$RODANDO" ]] && echo "$RODANDO"; }
   migrate_concluida() { [[ "$MIGROU" == sim ]]; }
   puxar() { echo "puxar $1" >>"$CHAMADAS"; }
@@ -200,24 +203,91 @@ confere "l: diz que não havia anterior" "sim" "$(msg | grep -q 'não havia imag
 confere "l: recusada gravada" "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$(cat "$FLOW_DIR/.imagem-recusada")"
 confere "l: json" sim "$(alerta_json 1 'True')"
 
-# (m) marcador esquecido por rodada interrompida
+# (m) marcador de rodada interrompida
+marcador() { # com imagem anterior válida
+  cenario
+  echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >"$FLOW_DIR/.imagem-atual"
+  echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" >"$FLOW_DIR/.imagem-em-teste"
+}
+sem_marcador() { [[ -e "$FLOW_DIR/.imagem-em-teste" ]] && echo sim || echo nao; }
+
+# m1: saudável e com a imagem do marcador -> promovida, sem aviso nem subir
+marcador; WEB_DIGEST="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+atualizar_flow; rc=$?
+confere "m1: sai 0" 0 "$rc"
+confere "m1: sem subir" 0 "$(n_subir)"
+confere "m1: promovida" "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" "$(cat "$FLOW_DIR/.imagem-atual")"
+confere "m1: sem aviso" nao "$([[ -s "$OFICINA_DIR_ESTADO/alertas.jsonl" ]] && echo sim || echo nao)"
+confere "m1: marcador removido" nao "$(sem_marcador)"
+confere "m1: não recusada" nao "$([[ -e "$FLOW_DIR/.imagem-recusada" ]] && echo sim || echo nao)"
+
+# m2: não saudável, anterior válida -> reversão sem dependências, "revertida"
+marcador; SAUDE_1=nao; SAUDE_2=sim
+atualizar_flow
+confere "m2: rollback sem dependências" "subir ghcr.io/exemplo/flow@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --no-deps web worker" "$(grep '^subir' "$CHAMADAS" | sed -n 1p)"
+confere "m2: uma subida" 1 "$(n_subir)"
+confere "m2: diz revertida" sim "$(msg | grep -q 'foi revertida' && echo sim || echo nao)"
+confere "m2: recusada" "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" "$(cat "$FLOW_DIR/.imagem-recusada")"
+confere "m2: atual intacto" "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$(cat "$FLOW_DIR/.imagem-atual")"
+confere "m2: marcador removido" nao "$(sem_marcador)"
+confere "m2: json" sim "$(alerta_json 1 'True')"
+atualizar_flow
+confere "m2: segunda rodada não repete o aviso" 1 "$(wc -l <"$OFICINA_DIR_ESTADO/alertas.jsonl" | tr -d ' ')"
+
+# m3: a reversão falha
+marcador; SAUDE_1=nao; SUBIR_RC_1=1
+atualizar_flow
+confere "m3: diz que a reversão também falhou" sim "$(msg | grep -q 'reversão também falhou' && echo sim || echo nao)"
+confere "m3: não afirma revertida" nao "$(msg | grep -q 'foi revertida' && echo sim || echo nao)"
+confere "m3: json" sim "$(alerta_json 1 'True')"
+
+# m4: sem imagem anterior
+cenario
+echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" >"$FLOW_DIR/.imagem-em-teste"
+SAUDE_1=nao
+atualizar_flow
+confere "m4: nenhuma subida" 0 "$(n_subir)"
+confere "m4: diz sem anterior e fora do ar" sim "$(msg | grep -q 'não havia imagem anterior.*fora do ar' && echo sim || echo nao)"
+confere "m4: recusada" "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" "$(cat "$FLOW_DIR/.imagem-recusada")"
+confere "m4: marcador removido" nao "$(sem_marcador)"
+confere "m4: json" sim "$(alerta_json 1 'True')"
+
+# m5: marcador inválido -> ignorado e removido; segue o fluxo normal (digest remoto igual: nada)
+cenario
+echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >"$FLOW_DIR/.imagem-atual"; REMOTO="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+echo "lixo" >"$FLOW_DIR/.imagem-em-teste"
+atualizar_flow
+confere "m5: marcador removido" nao "$(sem_marcador)"
+confere "m5: sem aviso" nao "$([[ -s "$OFICINA_DIR_ESTADO/alertas.jsonl" ]] && echo sim || echo nao)"
+confere "m5: sem subir" 0 "$(n_subir)"
+
+# m6: marcador igual ao .imagem-atual -> sem aviso
+cenario
+echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >"$FLOW_DIR/.imagem-atual"; REMOTO="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >"$FLOW_DIR/.imagem-em-teste"
+atualizar_flow
+confere "m6: marcador removido" nao "$(sem_marcador)"
+confere "m6: sem aviso" nao "$([[ -s "$OFICINA_DIR_ESTADO/alertas.jsonl" ]] && echo sim || echo nao)"
+
+# a ordem no sucesso: marcador some antes de .imagem-atual ser gravado
 cenario
 echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >"$FLOW_DIR/.imagem-atual"
-echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" >"$FLOW_DIR/.imagem-em-teste"
-atualizar_flow; rc=$?
-confere "m: sai 0" 0 "$rc"
-confere "m: nenhuma subida" 0 "$(n_subir)"
-confere "m: recusada" "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" "$(cat "$FLOW_DIR/.imagem-recusada")"
-confere "m: marcador removido" "nao" "$([[ -e "$FLOW_DIR/.imagem-em-teste" ]] && echo sim || echo nao)"
-confere "m: um aviso json" sim "$(alerta_json 1 'True')"
+saudavel() { [[ -e "$FLOW_DIR/.imagem-em-teste" ]]; }
 atualizar_flow
-confere "m: segunda rodada não repete o aviso" 1 "$(wc -l <"$OFICINA_DIR_ESTADO/alertas.jsonl" | tr -d ' ')"
+confere "sucesso: marcador removido" nao "$(sem_marcador)"
+confere "sucesso: atual novo" "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$(cat "$FLOW_DIR/.imagem-atual")"
 
 # (n) WEB_PORT lida do .env
 cenario
 confere "n: padrão 3000" 3000 "$(unset WEB_PORT; porta_web)"
 echo 'WEB_PORT="3055"' >"$FLOW_DIR/.env"
 confere "n: do .env" 3055 "$(porta_web)"
+echo 'WEB_PORT=3000 # x' >"$FLOW_DIR/.env"
+confere "n: comentário no fim" 3000 "$(porta_web)"
+echo 'export WEB_PORT=3141' >"$FLOW_DIR/.env"
+confere "n: com export" 3141 "$(porta_web)"
+echo 'WEB_PORT=abc' >"$FLOW_DIR/.env"
+confere "n: não numérica" 3000 "$(unset WEB_PORT; porta_web)"
 
 # (o) pasta do usuário não resolvida
 cenario

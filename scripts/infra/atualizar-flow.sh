@@ -51,9 +51,12 @@ subir() { # ref [argumentos extras do "up -d"]
 porta_web() {
   local p=""
   if [[ -f "$FLOW_DIR/.env" ]]; then
-    p="$(grep -E '^WEB_PORT=' "$FLOW_DIR/.env" | tail -1 | cut -d= -f2- | tr -d "\"' \r")"
+    p="$(grep -E '^[[:space:]]*(export[[:space:]]+)?WEB_PORT=' "$FLOW_DIR/.env" | tail -1 | cut -d= -f2- |
+      sed -e 's/[[:space:]]#.*$//' | tr -d "\"' \r")"
   fi
-  echo "${p:-${WEB_PORT:-3000}}"
+  p="${p:-${WEB_PORT:-3000}}"
+  [[ "$p" =~ ^[0-9]+$ ]] || p=3000
+  echo "$p"
 }
 
 saudavel() {
@@ -73,6 +76,15 @@ imagem_em_execucao() {
   local cid
   cid="$(compose ps -q web 2>/dev/null | head -1)"
   [[ -n "$cid" ]] && docker inspect -f '{{.Image}}' "$cid" 2>/dev/null
+}
+
+# o contêiner web em execução usa a imagem com este digest do repositório?
+web_usa_digest() {
+  local cid img
+  cid="$(compose ps -q web 2>/dev/null | head -1)"
+  [[ -n "$cid" ]] || return 1
+  img="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null)" || return 1
+  docker image inspect -f '{{join .RepoDigests " "}}' "$img" 2>/dev/null | grep -q "@$1"
 }
 
 # o migrate do compose terminou com sucesso? (decide se o aviso fala de migration já aplicada)
@@ -97,6 +109,42 @@ avisar() { # mensagem (sem aspas duplas nem barras)
 
 DIGEST_RE='^sha256:[0-9a-f]{64}$'
 
+# Volta para a imagem anterior (só web e worker: o migrate antigo não roda contra o banco já migrado),
+# confere a saúde, grava .imagem-recusada, remove o marcador e acrescenta o aviso.
+# Argumentos: digest recusado, referência anterior ("" se não há), 1/0 se o migrate dele terminou.
+reverter_e_avisar() {
+  local digest="$1" anterior_ref="$2" migrou="$3" curto aviso
+  curto="${digest#sha256:}"
+  curto="${curto:0:12}"
+  if [[ -z "$anterior_ref" ]]; then
+    aviso="Atualização do Flow falhou e não havia imagem anterior para reverter; o Flow pode estar fora do ar ($curto)."
+  else
+    if [[ "$anterior_ref" == "$FLOW_REPO_IMAGEM@"* ]]; then
+      puxar "$anterior_ref" || log "pull da anterior falhou; tentando com a cópia local"
+    fi
+    if subir "$anterior_ref" --no-deps web worker && saudavel; then
+      aviso="Atualização do Flow falhou e foi revertida ($curto)."
+    else
+      aviso="Atualização do Flow falhou e a reversão também falhou; o Flow pode estar fora do ar ($curto)."
+    fi
+  fi
+  if [[ "$migrou" == 1 ]]; then aviso="$aviso A migration já aplicada não foi desfeita."; fi
+  gravar_estado .imagem-recusada "$digest"
+  rm -f "$FLOW_DIR/.imagem-em-teste"
+  avisar "$aviso"
+}
+
+# digest guardado em um arquivo de estado, ou vazio se ausente ou inválido
+ler_digest() {
+  local v
+  v="$(cat "$FLOW_DIR/$1" 2>/dev/null || true)"
+  if [[ -n "$v" && ! "$v" =~ $DIGEST_RE ]]; then
+    log "$1 inválido; tratando como ausente"
+    v=""
+  fi
+  echo "$v"
+}
+
 atualizar_flow() {
   if [[ -z "$FLOW_DIR" ]]; then
     log "não achei a pasta do usuário $FLOW_DONO; defina FLOW_DIR"
@@ -105,14 +153,25 @@ atualizar_flow() {
   mkdir -p "$FLOW_DIR"
   travar || { log "outra atualização em andamento"; return 0; }
 
-  local digest atual recusada ref anterior_ref curto aviso migrou emteste
-  # rodada anterior interrompida no meio de um teste: a imagem em teste é recusada, uma vez só
-  emteste="$(cat "$FLOW_DIR/.imagem-em-teste" 2>/dev/null || true)"
-  if [[ -n "$emteste" ]]; then
-    gravar_estado .imagem-recusada "$emteste"
-    rm -f "$FLOW_DIR/.imagem-em-teste"
-    curto="${emteste#sha256:}"
-    avisar "Atualização do Flow foi interrompida durante o teste e a imagem foi recusada (${curto:0:12})."
+  local digest atual recusada ref anterior_ref migrou emteste
+  atual="$(ler_digest .imagem-atual)"
+
+  # rodada anterior interrompida durante um teste
+  if [[ -e "$FLOW_DIR/.imagem-em-teste" ]]; then
+    emteste="$(ler_digest .imagem-em-teste)"
+    if [[ -z "$emteste" || "$emteste" == "$atual" ]]; then
+      rm -f "$FLOW_DIR/.imagem-em-teste"
+    elif saudavel && web_usa_digest "$emteste"; then
+      log "teste interrompido, mas a imagem $emteste está no ar e saudável; promovendo"
+      rm -f "$FLOW_DIR/.imagem-em-teste"
+      gravar_estado .imagem-atual "$emteste"
+    else
+      log "teste de $emteste interrompido e a stack não está saudável com ela; revertendo"
+      migrate_concluida && migrou=1 || migrou=0
+      anterior_ref=""
+      [[ -n "$atual" ]] && anterior_ref="$FLOW_REPO_IMAGEM@$atual"
+      reverter_e_avisar "$emteste" "$anterior_ref" "$migrou"
+    fi
     return 0
   fi
 
@@ -148,34 +207,16 @@ atualizar_flow() {
   gravar_estado .imagem-em-teste "$digest"
 
   if subir "$ref" && saudavel; then
-    gravar_estado .imagem-atual "$digest"
+    # o marcador sai antes: uma interrupção entre os dois passos nunca gera falso "interrompida"
     rm -f "$FLOW_DIR/.imagem-em-teste"
+    gravar_estado .imagem-atual "$digest"
     log "Flow atualizado para $digest"
     return 0
   fi
   # lido já, antes de qualquer reversão: depois dela o contêiner migrate seria outro
   migrate_concluida && migrou=1 || migrou=0
-
   log "imagem $digest não ficou saudável; revertendo"
-  curto="${digest#sha256:}"
-  curto="${curto:0:12}"
-  if [[ -z "$anterior_ref" ]]; then
-    aviso="Atualização do Flow falhou e não havia imagem anterior para reverter; o Flow pode estar fora do ar ($curto)."
-  else
-    if [[ -n "${atual:-}" && "$anterior_ref" == "$FLOW_REPO_IMAGEM@"* ]]; then
-      puxar "$anterior_ref" || log "pull da anterior falhou; tentando com a cópia local"
-    fi
-    # sem dependências: o migrate da imagem antiga não roda contra o banco já migrado
-    if subir "$anterior_ref" --no-deps web worker && saudavel; then
-      aviso="Atualização do Flow falhou e foi revertida ($curto)."
-    else
-      aviso="Atualização do Flow falhou e a reversão também falhou; o Flow pode estar fora do ar ($curto)."
-    fi
-  fi
-  if [[ "$migrou" == 1 ]]; then aviso="$aviso A migration já aplicada não foi desfeita."; fi
-  gravar_estado .imagem-recusada "$digest"
-  rm -f "$FLOW_DIR/.imagem-em-teste"
-  avisar "$aviso"
+  reverter_e_avisar "$digest" "$anterior_ref" "$migrou"
   return 0
 }
 
