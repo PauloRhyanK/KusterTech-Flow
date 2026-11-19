@@ -113,6 +113,55 @@ describe('contrato do retrato v1', () => {
     expect(retratoV1Schema.safeParse(decisoes).success).toBe(false)
   })
 
+  test('retrato sem consertos continua válido (retrato-exemplo.json)', () => {
+    expect('consertos' in exemplo).toBe(false)
+    expect(retratoV1Schema.safeParse(exemplo).success).toBe(true)
+  })
+
+  // Os itens que `fabrica/scripts/retrato.py` (`_conserto`) monta: os mesmos campos, nesta forma.
+  const conserto = (extra: Record<string, unknown> = {}) => ({
+    id: '0b6f3c2e-6a1d-4c8e-9f00-1a2b3c4d5e6f',
+    estado: 'com_pr',
+    runId: 'run-1',
+    prUrl: 'https://github.com/kustertech-exemplo/portal/pull/9',
+    motivo: null,
+    em: '2026-11-03T21:39:00Z',
+    ...extra,
+  })
+
+  test('consertos no formato do kit → válido; os três estados e os nulos', () => {
+    const r = clone()
+    r.consertos = [
+      conserto(),
+      conserto({ estado: 'em_curso', prUrl: null }),
+      conserto({ estado: 'desistiu', runId: null, prUrl: null, motivo: 'teto de 1 h' }),
+    ]
+    expect(retratoV1Schema.safeParse(r).success).toBe(true)
+    r.consertos = []
+    expect(retratoV1Schema.safeParse(r).success).toBe(true)
+  })
+
+  test('consertos com estado "resolvido", prUrl fora do github ou 21 itens → inválido', () => {
+    const invalidos = [
+      [conserto({ estado: 'resolvido' })],
+      [conserto({ estado: 'despachando' })],
+      [conserto({ prUrl: 'https://exemplo.com/pr/9' })],
+      [conserto({ id: 'nao-e-uuid' })],
+      [conserto({ extra: 1 })],
+      [conserto({ em: '2026-11-03T21:39:00.000Z' })],
+      [conserto({ motivo: 'm'.repeat(LIMITES.textoLongo + 1) })],
+      Array.from({ length: 21 }, () => conserto()),
+    ]
+    for (const consertos of invalidos) {
+      const r = clone()
+      r.consertos = consertos
+      expect(retratoV1Schema.safeParse(r).success).toBe(false)
+    }
+    const vinte = clone()
+    vinte.consertos = Array.from({ length: 20 }, () => conserto())
+    expect(retratoV1Schema.safeParse(vinte).success).toBe(true)
+  })
+
   test('não tem campo de corpo de PR, prompt, caminho ou segredo', () => {
     const chaves =
       JSON.stringify(Object.keys(retratoV1Schema.shape)) +

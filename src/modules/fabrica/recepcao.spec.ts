@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-const { mockDb } = vi.hoisted(() => ({
+const { mockDb, mockConsertos } = vi.hoisted(() => ({
+  mockConsertos: { consertosParaAFabrica: vi.fn(), aplicarConsertosDoRetrato: vi.fn() },
   mockDb: {
     fonteDaFabrica: { findUnique: vi.fn(), update: vi.fn() },
     retratoDaFabrica: { findUnique: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
@@ -9,6 +10,7 @@ const { mockDb } = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => ({ db: mockDb }))
 vi.mock('@/lib/log', () => ({ log: { error: vi.fn() } }))
+vi.mock('@/modules/fila-de-publicacao/consertos', () => mockConsertos)
 
 import exemplo from './retrato-exemplo.json'
 import { hashDoTokenDaFabrica } from './model'
@@ -44,7 +46,17 @@ beforeEach(() => {
   mockDb.fonteDaFabrica.findUnique.mockResolvedValue({ id: 'f-1', revogadaEm: null })
   mockDb.retratoDaFabrica.findUnique.mockResolvedValue(null)
   mockDb.retratoDaFabrica.updateMany.mockResolvedValue({ count: 0 })
+  mockConsertos.consertosParaAFabrica.mockResolvedValue([])
 })
+
+const CONSERTO = {
+  id: '0b6f3c2e-6a1d-4c8e-9f00-1a2b3c4d5e6f',
+  estado: 'com_pr',
+  runId: 'run-1',
+  prUrl: 'https://github.com/kustertech-exemplo/portal/pull/9',
+  motivo: null,
+  em: '2026-11-03T21:39:00Z',
+}
 
 describe('fabrica / recepcao (db simulado)', () => {
   test('consulta a fonte pelo hash do token, nunca pelo token', async () => {
@@ -114,7 +126,7 @@ describe('fabrica / recepcao (db simulado)', () => {
 
   test('sem retrato guardado, cria e responde 200', async () => {
     const r = await enviar(exemplo)
-    expect(r).toEqual({ status: 200, corpo: { resultado: 'gravado' } })
+    expect(r).toEqual({ status: 200, corpo: { resultado: 'gravado', consertos: [] } })
     expect(mockDb.retratoDaFabrica.create).toHaveBeenCalledTimes(1)
     expect(mockDb.retratoDaFabrica.create.mock.calls[0]?.[0].data).toMatchObject({
       fonteId: 'f-1',
@@ -129,7 +141,7 @@ describe('fabrica / recepcao (db simulado)', () => {
     })
     mockDb.retratoDaFabrica.updateMany.mockResolvedValue({ count: 1 })
     const r = await enviar(exemplo)
-    expect(r.corpo).toEqual({ resultado: 'gravado' })
+    expect(r.corpo).toEqual({ resultado: 'gravado', consertos: [] })
     expect(mockDb.retratoDaFabrica.updateMany.mock.calls[0]?.[0].data.recebidoEm).toBe(AGORA)
     expect(mockDb.retratoDaFabrica.create).not.toHaveBeenCalled()
   })
@@ -139,7 +151,7 @@ describe('fabrica / recepcao (db simulado)', () => {
       geradoEm: new Date('2026-11-03T21:41:00Z'),
     })
     const r = await enviar(exemplo)
-    expect(r).toEqual({ status: 200, corpo: { resultado: 'descartado' } })
+    expect(r).toEqual({ status: 200, corpo: { resultado: 'descartado', consertos: [] } })
     expect(mockDb.retratoDaFabrica.updateMany).not.toHaveBeenCalled()
     expect(mockDb.retratoDaFabrica.create).not.toHaveBeenCalled()
   })
@@ -153,7 +165,32 @@ describe('fabrica / recepcao (db simulado)', () => {
       .mockResolvedValueOnce({ count: 0 })
       .mockResolvedValueOnce({ count: 0 })
     const r = await enviar(exemplo)
-    expect(r.corpo).toEqual({ resultado: 'descartado' })
+    expect(r.corpo).toEqual({ resultado: 'descartado', consertos: [] })
+  })
+
+  test('retrato gravado com consertos aplica os estados e responde os abertos', async () => {
+    const aberto = {
+      id: CONSERTO.id,
+      repositorio: 'kustertech-exemplo/portal',
+      commit: 'a'.repeat(40),
+      execucaoUrl: null,
+      trechoDoLog: 'Error',
+      abertoEm: '2026-11-03T21:00:00Z',
+    }
+    mockConsertos.consertosParaAFabrica.mockResolvedValue([aberto])
+    const r = await enviar({ ...exemplo, consertos: [CONSERTO] })
+    expect(mockConsertos.aplicarConsertosDoRetrato).toHaveBeenCalledWith([CONSERTO], AGORA)
+    expect(r).toEqual({ status: 200, corpo: { resultado: 'gravado', consertos: [aberto] } })
+  })
+
+  test('retrato sem consertos ou descartado não aplica consertos', async () => {
+    await enviar(exemplo)
+    mockDb.retratoDaFabrica.findUnique.mockResolvedValue({
+      geradoEm: new Date('2026-11-03T21:41:00Z'),
+    })
+    const r = await enviar({ ...exemplo, consertos: [CONSERTO] })
+    expect(r.corpo).toEqual({ resultado: 'descartado', consertos: [] })
+    expect(mockConsertos.aplicarConsertosDoRetrato).not.toHaveBeenCalled()
   })
 
   test('falha inesperada → 500 genérico', async () => {

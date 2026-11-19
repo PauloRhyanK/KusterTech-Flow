@@ -9,6 +9,7 @@ import type {
   RefRepositorio,
 } from '@/modules/github/fonte'
 import { resumirChecks, resumirErroParaLog } from '@/modules/github/model'
+import { avancarConsertosComPr } from './consertos'
 import {
   aposFalha,
   avaliarPedido,
@@ -762,15 +763,21 @@ export async function processarFilaDePublicacao(
       },
     },
   })
-  for (const { repositorio, ...config } of configuracoes) {
+  for (const { repositorio } of configuracoes) {
     try {
       if (repositorio.projetoId === null || repositorio.removidoDaInstalacaoEm !== null) {
         await cancelarPendentes(repositorio.id, agora)
         continue
       }
       resumo.repositorios += 1
+      // Antes do ciclo, o pedido da correção mergeada já entra na vez; depois, a publicação
+      // recém-terminada encerra o conserto. Só o banco: o PR vem do sincronismo do GitHub.
+      resumo.parados += await avancarConsertosComPr(repositorio.id, agora)
       if (fonte !== null) {
-        await new CicloDoRepositorio(fonte, repositorio, agora, resumo, config).executar()
+        // A configuração relida: o passo do conserto pode ter mudado a situação da fila.
+        const atual = await lerConfiguracao(repositorio.id)
+        await new CicloDoRepositorio(fonte, repositorio, agora, resumo, atual).executar()
+        resumo.parados += await avancarConsertosComPr(repositorio.id, agora)
       }
       await vigiarConsertos(repositorio.id, agora, resumo)
     } catch (erro) {
