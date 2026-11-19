@@ -1,0 +1,8 @@
+# Amostra de desempenho da oficina. Relatório: python3 -I /opt/oficina/metricas_oficina.py relatorio
+[Unit]
+Description=Amostra de desempenho da oficina (RAM, swap, PSI, OOM, raias e jobs de CI)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/oficina/metricas_oficina.py coletar
+Nice=5

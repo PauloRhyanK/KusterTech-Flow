@@ -1,0 +1,12 @@
+# Limpeza diária da oficina. Instalação e regras: docs/infra/oficina.md.
+[Unit]
+Description=Limpeza diária de disco da oficina (runners, Docker, caches, workspaces da Fábrica)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/oficina/limpar-oficina.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h
