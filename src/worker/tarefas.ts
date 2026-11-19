@@ -1,4 +1,5 @@
 import { log } from '@/lib/log'
+import { modulosAtivos, type ModuloId } from '@/lib/modulos'
 import { sincronizarExecucoesWarren } from '@/modules/desenvolvimento/sincronizacao'
 import { sincronizarDeployments } from '@/modules/ambientes/deployments'
 import { calcularPresencas } from '@/modules/ambientes/presencas'
@@ -14,16 +15,20 @@ import { detectarDivergencias } from '@/modules/publicacao/divergencias'
 
 export interface TarefaDoWorker {
   nome: string
+  modulo: ModuloId
   executar(agora: Date): Promise<void>
 }
 
 export function criarTarefasDoCiclo(d: {
   obterFonte: () => FonteGitHub | null
   intervaloMs: number
+  ativos?: ReadonlySet<ModuloId>
 }): readonly TarefaDoWorker[] {
-  return [
+  const ativos = d.ativos ?? modulosAtivos()
+  const tarefas: readonly TarefaDoWorker[] = [
     {
       nome: 'processar-eventos-de-webhook',
+      modulo: 'github',
       async executar(agora) {
         // Só marca repositórios e catálogo; a reconciliação seguinte lê o estado atual do GitHub.
         const resumo = await processarEventosDeWebhook(agora)
@@ -34,6 +39,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'reconciliar-github',
+      modulo: 'github',
       async executar(agora) {
         const resultado = await executarCiclo(d.obterFonte(), agora, d.intervaloMs)
         if (resultado.catalogo || resultado.repositorios > 0) {
@@ -46,6 +52,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'sincronizar-execucoes-warren',
+      modulo: 'desenvolvimento',
       async executar(agora) {
         // Os repositórios lidos e as contagens saem no log da própria sincronização.
         await sincronizarExecucoesWarren(d.obterFonte(), agora, d.intervaloMs)
@@ -53,6 +60,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'sincronizar-deployments',
+      modulo: 'ambientes',
       async executar(agora) {
         const resumo = await sincronizarDeployments(d.obterFonte(), agora, d.intervaloMs)
         if (resumo.repositorios > 0) {
@@ -62,6 +70,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'calcular-presencas',
+      modulo: 'ambientes',
       async executar(agora) {
         const resumo = await calcularPresencas(d.obterFonte(), agora, d.intervaloMs)
         if (resumo.repositorios > 0) {
@@ -72,6 +81,7 @@ export function criarTarefasDoCiclo(d: {
     tarefaAtualizarFila,
     {
       nome: 'executar-tarefas-github',
+      modulo: 'homologacao',
       async executar(agora) {
         const resumo = await executarTarefasGitHub(d.obterFonte(), agora)
         if (resumo.concluidas + resumo.adiadas + resumo.falhas > 0) {
@@ -81,6 +91,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'detectar-retestes',
+      modulo: 'homologacao',
       async executar(agora) {
         const resumo = await detectarRetestes(agora)
         if (resumo.retestes > 0) {
@@ -90,6 +101,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'calcular-composicoes',
+      modulo: 'publicacao',
       async executar(agora) {
         const resumo = await calcularComposicoes(d.obterFonte(), agora)
         if (resumo.calculadas + resumo.revogadas + resumo.falhas > 0) {
@@ -99,6 +111,7 @@ export function criarTarefasDoCiclo(d: {
     },
     {
       nome: 'detectar-divergencias',
+      modulo: 'publicacao',
       async executar(agora) {
         const resumo = await detectarDivergencias(agora)
         if (resumo.novas > 0) {
@@ -110,6 +123,7 @@ export function criarTarefasDoCiclo(d: {
       },
     },
   ]
+  return tarefas.filter((t) => ativos.has(t.modulo))
 }
 
 export const TAREFAS_DO_CICLO: readonly TarefaDoWorker[] = criarTarefasDoCiclo({
