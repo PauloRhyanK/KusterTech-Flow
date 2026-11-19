@@ -7,8 +7,8 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { rotuloDoTipo } from '@/modules/infra/model'
-import { listarAlertasDoRecurso, obterRecursoDaPagina } from '@/modules/infra/queries'
-import { DetalheDoRecurso } from '../../_componentes/detalhe-do-recurso'
+import { obterRecursoDaPagina } from '@/modules/infra/queries'
+import { DetalheDoRecurso } from '../_componentes/detalhe-do-recurso'
 
 export interface PaginaRecursoProps {
   params: Promise<{ r: string }>
@@ -18,13 +18,13 @@ export async function generateMetadata({ params }: PaginaRecursoProps): Promise<
   const { r } = await params
   const sessao = await obterSessao()
   if (!sessao) {
-    return { title: 'Recurso' }
+    return { title: 'Máquina' }
   }
   try {
     const recurso = await obterRecursoDaPagina(sessao.sujeito, r)
     return { title: recurso.nome }
   } catch {
-    return { title: 'Recurso' }
+    return { title: 'Máquina' }
   }
 }
 
@@ -44,8 +44,8 @@ export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
       return (
         <div className="space-y-6">
           <CabecalhoDePagina
-            trilhas={[{ rotulo: 'Infraestrutura', href: '/infraestrutura' }, { rotulo: 'Recurso' }]}
-            titulo="Recurso"
+            trilhas={[{ rotulo: 'Máquinas', href: '/maquinas' }, { rotulo: 'Máquina' }]}
+            titulo="Máquina"
           />
           <SemPermissao />
         </div>
@@ -57,21 +57,21 @@ export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
     throw erro
   }
 
-  const alertas = await listarAlertasDoRecurso(sessao.sujeito, r)
-
   return (
     <div className="space-y-6">
       <CabecalhoDePagina
-        trilhas={[{ rotulo: 'Infraestrutura', href: '/infraestrutura' }, { rotulo: recurso.nome }]}
+        trilhas={[{ rotulo: 'Máquinas', href: '/maquinas' }, { rotulo: recurso.nome }]}
         titulo={recurso.nome}
         situacao={
           <div className="flex flex-wrap items-center gap-1.5">
             <BadgeDeEstado tom="neutro">{rotuloDoTipo(recurso.tipo)}</BadgeDeEstado>
-            <BadgeDeEstado tom={recurso.situacao.tom}>{recurso.situacao.texto}</BadgeDeEstado>
+            {recurso.situacao && (
+              <BadgeDeEstado tom={recurso.situacao.tom}>{recurso.situacao.texto}</BadgeDeEstado>
+            )}
           </div>
         }
       />
-      <DetalheDoRecurso recurso={recurso} alertas={alertas} />
+      <DetalheDoRecurso recurso={recurso} />
     </div>
   )
 }

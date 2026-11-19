@@ -16,16 +16,17 @@ export interface ValoresDoRecurso {
   nome: string
   identificadorExterno: string | null
   descricao: string | null
-  urlBeszel: string | null
-  urlGlitchTip: string | null
-  urlHostDocker: string | null
+  provedor: string | null
+  endereco: string | null
+  especificacao: string | null
+  custoMensal: string | null
   hospedadoEmId: string | null
 }
 
 export interface FormularioRecursoProps {
   action: (estado: EstadoFormularioRecurso, form: FormData) => Promise<EstadoFormularioRecurso>
   hospedeiros: readonly { id: string; nome: string }[]
-  rotuloDoBotao: 'Cadastrar recurso' | 'Salvar alterações'
+  rotuloDoBotao: 'Cadastrar máquina' | 'Salvar alterações'
   // Presente só na edição: o tipo não muda depois do cadastro.
   recurso?: ValoresDoRecurso
 }
@@ -153,33 +154,52 @@ export function FormularioRecurso({
           </Campo>
         )}
 
-        <Campo id="urlBeszel" rotulo="Endereço do Beszel">
+        <Campo id="provedor" rotulo="Provedor" ajuda="Opcional. Por exemplo, Hetzner ou Própria.">
           <input
-            id="urlBeszel"
-            name="urlBeszel"
-            type="url"
-            maxLength={500}
-            defaultValue={recurso?.urlBeszel ?? ''}
+            id="provedor"
+            name="provedor"
+            type="text"
+            maxLength={80}
+            aria-describedby="ajuda-provedor"
+            defaultValue={recurso?.provedor ?? ''}
             className={CLASSE_CAMPO}
           />
         </Campo>
-        <Campo id="urlGlitchTip" rotulo="Endereço do GlitchTip">
+        <Campo id="endereco" rotulo="Endereço" ajuda="Opcional. Nome na rede ou IP.">
           <input
-            id="urlGlitchTip"
-            name="urlGlitchTip"
-            type="url"
-            maxLength={500}
-            defaultValue={recurso?.urlGlitchTip ?? ''}
+            id="endereco"
+            name="endereco"
+            type="text"
+            maxLength={120}
+            aria-describedby="ajuda-endereco"
+            defaultValue={recurso?.endereco ?? ''}
             className={CLASSE_CAMPO}
           />
         </Campo>
-        <Campo id="urlHostDocker" rotulo="Endereço do host Docker">
+        <Campo
+          id="especificacao"
+          rotulo="Especificação"
+          ajuda="Opcional. Por exemplo, 2 vCPU · 4 GB."
+        >
           <input
-            id="urlHostDocker"
-            name="urlHostDocker"
-            type="url"
-            maxLength={500}
-            defaultValue={recurso?.urlHostDocker ?? ''}
+            id="especificacao"
+            name="especificacao"
+            type="text"
+            maxLength={200}
+            aria-describedby="ajuda-especificacao"
+            defaultValue={recurso?.especificacao ?? ''}
+            className={CLASSE_CAMPO}
+          />
+        </Campo>
+        <Campo id="custoMensal" rotulo="Custo mensal (R$)" ajuda="Opcional. Por exemplo, 48,50.">
+          <input
+            id="custoMensal"
+            name="custoMensal"
+            type="text"
+            inputMode="decimal"
+            maxLength={12}
+            aria-describedby="ajuda-custoMensal"
+            defaultValue={recurso?.custoMensal ?? ''}
             className={CLASSE_CAMPO}
           />
         </Campo>

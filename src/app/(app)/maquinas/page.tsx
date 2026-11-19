@@ -10,26 +10,21 @@ import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { rotuloDoTipo } from '@/modules/infra/model'
-import {
-  contarAlertasNaoResolvidos,
-  lerFiltrosDoInventario,
-  listarRecursos,
-} from '@/modules/infra/queries'
+import { lerFiltrosDoInventario, listarRecursos } from '@/modules/infra/queries'
 import { FiltrosDoInventario } from './_componentes/filtros-do-inventario'
-import { NavegacaoDeInfraestrutura } from './_componentes/navegacao-de-infraestrutura'
 
 export const metadata: Metadata = {
-  title: 'Infraestrutura',
+  title: 'Máquinas',
 }
 
-export interface PaginaInfraestruturaProps {
+export interface PaginaMaquinasProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>
 }
 
-const TRILHAS = [{ rotulo: 'Infraestrutura' }]
-const CONTEXTO = 'Inventário, recursos, alertas e diagnóstico'
+const TRILHAS = [{ rotulo: 'Máquinas' }]
+const CONTEXTO = 'Inventário de servidores, containers, bancos e storage'
 
-export default async function PaginaInfraestrutura({ searchParams }: PaginaInfraestruturaProps) {
+export default async function PaginaMaquinas({ searchParams }: PaginaMaquinasProps) {
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -38,23 +33,20 @@ export default async function PaginaInfraestrutura({ searchParams }: PaginaInfra
   if (!autorizar(sessao.sujeito, 'infraestrutura.ler')) {
     return (
       <div className="space-y-6">
-        <CabecalhoDePagina trilhas={TRILHAS} titulo="Infraestrutura" contexto={CONTEXTO} />
+        <CabecalhoDePagina trilhas={TRILHAS} titulo="Máquinas" contexto={CONTEXTO} />
         <SemPermissao />
       </div>
     )
   }
 
   const filtros = lerFiltrosDoInventario(await searchParams)
-  const [{ recursos, total, projetos }, naoResolvidos] = await Promise.all([
-    listarRecursos(sessao.sujeito, filtros),
-    contarAlertasNaoResolvidos(sessao.sujeito),
-  ])
+  const { recursos, total, projetos } = await listarRecursos(sessao.sujeito, filtros)
   const comFiltros =
     filtros.tipo !== null || filtros.projetoId !== null || filtros.situacao !== 'todas'
 
   const acaoCadastrar = autorizar(sessao.sujeito, 'infraestrutura.gerenciar') ? (
-    <Link href="/infraestrutura/recursos/novo" className={buttonVariants({ variant: 'default' })}>
-      Cadastrar recurso
+    <Link href="/maquinas/nova" className={buttonVariants({ variant: 'default' })}>
+      Cadastrar máquina
     </Link>
   ) : null
 
@@ -65,9 +57,11 @@ export default async function PaginaInfraestrutura({ searchParams }: PaginaInfra
     return {
       id: r.id,
       nome: r.nome,
-      href: `/infraestrutura/recursos/${r.id}`,
+      href: `/maquinas/${r.id}`,
       contexto: partes.join(' · '),
-      estado: <BadgeDeEstado tom={r.situacao.tom}>{r.situacao.texto}</BadgeDeEstado>,
+      estado: r.situacao ? (
+        <BadgeDeEstado tom={r.situacao.tom}>{r.situacao.texto}</BadgeDeEstado>
+      ) : undefined,
     }
   })
 
@@ -75,11 +69,10 @@ export default async function PaginaInfraestrutura({ searchParams }: PaginaInfra
     <div className="space-y-6">
       <CabecalhoDePagina
         trilhas={TRILHAS}
-        titulo="Infraestrutura"
+        titulo="Máquinas"
         contexto={CONTEXTO}
         acoes={acaoCadastrar}
       />
-      <NavegacaoDeInfraestrutura ativo="inventario" alertasNaoResolvidos={naoResolvidos} />
 
       <div className="flex flex-wrap items-center gap-3 rounded-padrao border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
         <BadgeDeEstado tom="neutro">Inventário manual</BadgeDeEstado>

@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest'
 import type { RecursoDetalhado } from '@/modules/infra/queries'
 import { DetalheDoRecurso } from './detalhe-do-recurso'
 
-vi.mock('@/app/(app)/infraestrutura/actions', () => ({
+vi.mock('@/app/(app)/maquinas/actions', () => ({
   alternarArquivamentoDeRecursoAction: vi.fn(),
   associarProjetoAoRecursoAction: vi.fn(),
   desassociarProjetoDoRecursoAction: vi.fn(),
@@ -15,16 +15,16 @@ const base: RecursoDetalhado = {
   nome: 'VPS Produção',
   identificadorExterno: null,
   descricao: null,
-  urlBeszel: null,
-  urlGlitchTip: null,
-  urlHostDocker: null,
+  provedor: null,
+  endereco: null,
+  especificacao: null,
+  custoMensal: null,
   arquivadoEm: null,
   hospedadoEm: null,
   hospedados: [],
   projetos: [],
   projetosDisponiveis: [],
-  ferramentas: [],
-  situacao: { chave: 'sem-dados', texto: 'Sem dados', tom: 'neutro' },
+  situacao: null,
 }
 
 describe('DetalheDoRecurso', () => {
@@ -36,7 +36,7 @@ describe('DetalheDoRecurso', () => {
       expect(termo.nextElementSibling).toHaveTextContent('Sem dados')
     }
     expect(screen.getByText('Nenhuma fonte de métricas configurada.')).toBeInTheDocument()
-    expect(screen.getByText('Nenhum alerta aberto para este recurso.')).toBeInTheDocument()
+    expect(screen.queryByText('Problemas prioritários')).toBeNull()
     expect(screen.getByText('Nenhum recurso hospedado neste servidor.')).toBeInTheDocument()
     expect(container.querySelector('[data-tom="sucesso"]')).toBeNull()
   })
@@ -57,36 +57,41 @@ describe('DetalheDoRecurso', () => {
     expect(screen.getByText('Prévia de logs indisponível.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'VPS Produção' })).toHaveAttribute(
       'href',
-      '/infraestrutura/recursos/r-0',
+      '/maquinas/r-0',
     )
     expect(screen.queryByText('CPU')).toBeNull()
   })
 
-  test('links de ferramenta com target _blank e rel "noopener noreferrer"; sem URL, "Nenhuma ferramenta configurada para este recurso."', () => {
+  test('cadastro lista provedor, endereço, especificação e custo mensal em pares; vazio mostra traço', () => {
     const { unmount } = render(
       <DetalheDoRecurso
         recurso={{
           ...base,
-          ferramentas: [
-            { rotulo: 'Beszel', href: 'https://beszel.exemplo.test/vps' },
-            { rotulo: 'GitHub · kustertech-exemplo/portal', href: 'https://github.com/x/portal' },
-          ],
+          provedor: 'Hetzner',
+          endereco: 'vps-01.exemplo.test',
+          especificacao: '2 vCPU · 4 GB',
+          custoMensal: '48.50',
         }}
       />,
     )
-    for (const nome of ['Beszel', 'GitHub · kustertech-exemplo/portal']) {
-      const link = screen.getByRole('link', { name: nome })
-      expect(link).toHaveAttribute('target', '_blank')
-      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-    }
+    const cadastro = screen.getByRole('region', { name: 'Cadastro' })
+    const valorDe = (rotulo: string) =>
+      within(cadastro).getByText(rotulo, { selector: 'dt' }).nextElementSibling
+    expect(valorDe('Provedor')).toHaveTextContent('Hetzner')
+    expect(valorDe('Endereço')).toHaveTextContent('vps-01.exemplo.test')
+    expect(valorDe('Especificação')).toHaveTextContent('2 vCPU · 4 GB')
+    expect(valorDe('Custo mensal')).toHaveTextContent('R$ 48,50')
     unmount()
 
     render(<DetalheDoRecurso recurso={base} />)
-    expect(
-      screen.getByText('Nenhuma ferramenta configurada para este recurso.'),
-    ).toBeInTheDocument()
+    const vazio = screen.getByRole('region', { name: 'Cadastro' })
+    for (const rotulo of ['Provedor', 'Endereço', 'Especificação', 'Custo mensal']) {
+      expect(
+        within(vazio).getByText(rotulo, { selector: 'dt' }).nextElementSibling,
+      ).toHaveTextContent('—')
+    }
     for (const link of screen.getAllByRole('link', { name: 'Editar recurso' })) {
-      expect(link).toHaveAttribute('href', '/infraestrutura/recursos/r-1/editar')
+      expect(link).toHaveAttribute('href', '/maquinas/r-1/editar')
     }
   })
 

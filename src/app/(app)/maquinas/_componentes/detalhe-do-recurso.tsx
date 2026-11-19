@@ -3,17 +3,40 @@ import { buttonVariants } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { rotuloDoTipo } from '@/modules/infra/model'
-import type { AlertaNaLista, RecursoDetalhado } from '@/modules/infra/queries'
+import type { RecursoDetalhado } from '@/modules/infra/queries'
 import { ArquivamentoDoRecurso } from './arquivamento-do-recurso'
-import { ListaDeAlertas } from './lista-de-alertas'
 import { ProjetosDoRecurso } from './projetos-do-recurso'
 
 export interface DetalheDoRecursoProps {
   recurso: RecursoDetalhado
-  alertas?: readonly AlertaNaLista[]
 }
 
 const SECAO = 'space-y-3 rounded-padrao border border-border bg-surface p-4'
+
+const REAIS = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
+
+function formatarCusto(custo: string | null): string | null {
+  return custo === null ? null : REAIS.format(Number(custo))
+}
+
+function ParDoCadastro({
+  rotulo,
+  valor,
+  quebra = false,
+}: {
+  rotulo: string
+  valor: string | null
+  quebra?: boolean
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-2 first:pt-0 last:pb-0">
+      <dt className="text-text-secondary">{rotulo}</dt>
+      <dd className={`text-right text-text-primary ${quebra ? 'break-all' : 'break-words'}`}>
+        {valor ?? '—'}
+      </dd>
+    </div>
+  )
+}
 
 function DadoSemFonte({ rotulo }: { rotulo: string }) {
   return (
@@ -27,28 +50,13 @@ function DadoSemFonte({ rotulo }: { rotulo: string }) {
 }
 
 // Sem fonte de métricas, logs ou saúde (decisão 1): tudo que depende de fonte aparece como "Sem dados".
-export function DetalheDoRecurso({ recurso, alertas = [] }: DetalheDoRecursoProps) {
-  const urlDeEdicao = `/infraestrutura/recursos/${recurso.id}/editar`
+export function DetalheDoRecurso({ recurso }: DetalheDoRecursoProps) {
+  const urlDeEdicao = `/maquinas/${recurso.id}/editar`
   const arquivado = recurso.arquivadoEm !== null
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
       <div className="min-w-0 space-y-6">
-        <section className={SECAO}>
-          <h2 className="text-[15px] font-[600] text-text-primary">Problemas prioritários</h2>
-          <ListaDeAlertas
-            rotulo="Problemas prioritários do recurso"
-            alertas={alertas}
-            vazio={
-              <EstadoVazio
-                tipo="nenhum-registro"
-                titulo="Nenhum alerta aberto para este recurso."
-                descricao="Isso não confirma que o recurso está saudável."
-              />
-            }
-          />
-        </section>
-
         {recurso.tipo === 'SERVIDOR' && (
           <>
             <section className={SECAO}>
@@ -74,10 +82,7 @@ export function DetalheDoRecurso({ recurso, alertas = [] }: DetalheDoRecursoProp
                 <ul aria-label="Recursos hospedados" className="divide-y divide-border">
                   {recurso.hospedados.map((h) => (
                     <li key={h.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                      <Link
-                        href={`/infraestrutura/recursos/${h.id}`}
-                        className="text-text-link hover:underline"
-                      >
+                      <Link href={`/maquinas/${h.id}`} className="text-text-link hover:underline">
                         {h.nome}
                       </Link>
                       <span className="flex items-center gap-1.5 text-text-secondary">
@@ -103,7 +108,7 @@ export function DetalheDoRecurso({ recurso, alertas = [] }: DetalheDoRecursoProp
               <EstadoVazio
                 tipo="nao-configurado"
                 titulo="Prévia de logs indisponível."
-                descricao="Nenhuma fonte segura de logs está configurada. Use o host Docker ou o GlitchTip para investigar."
+                descricao="Nenhuma fonte segura de logs está configurada."
               />
             </section>
           </>
@@ -133,7 +138,7 @@ export function DetalheDoRecurso({ recurso, alertas = [] }: DetalheDoRecursoProp
             <h2 className="text-[15px] font-[600] text-text-primary">Hospedado em</h2>
             {recurso.hospedadoEm ? (
               <Link
-                href={`/infraestrutura/recursos/${recurso.hospedadoEm.id}`}
+                href={`/maquinas/${recurso.hospedadoEm.id}`}
                 className="text-sm text-text-link hover:underline"
               >
                 {recurso.hospedadoEm.nome}
@@ -144,33 +149,16 @@ export function DetalheDoRecurso({ recurso, alertas = [] }: DetalheDoRecursoProp
           </section>
         )}
 
-        <section className={SECAO}>
-          <h2 className="text-[15px] font-[600] text-text-primary">Ferramentas</h2>
-          {recurso.ferramentas.length === 0 ? (
-            <div className="space-y-2 text-sm">
-              <p className="text-text-secondary">
-                Nenhuma ferramenta configurada para este recurso.
-              </p>
-              <Link href={urlDeEdicao} className="text-text-link hover:underline">
-                Editar recurso
-              </Link>
-            </div>
-          ) : (
-            <ul className="space-y-1.5 text-sm">
-              {recurso.ferramentas.map((f) => (
-                <li key={`${f.rotulo}-${f.href}`}>
-                  <a
-                    href={f.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="break-words text-text-link hover:underline"
-                  >
-                    {f.rotulo}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
+        <section aria-labelledby="cadastro-da-maquina" className={SECAO}>
+          <h2 id="cadastro-da-maquina" className="text-[15px] font-[600] text-text-primary">
+            Cadastro
+          </h2>
+          <dl className="divide-y divide-border text-sm">
+            <ParDoCadastro rotulo="Provedor" valor={recurso.provedor} />
+            <ParDoCadastro rotulo="Endereço" valor={recurso.endereco} quebra />
+            <ParDoCadastro rotulo="Especificação" valor={recurso.especificacao} />
+            <ParDoCadastro rotulo="Custo mensal" valor={formatarCusto(recurso.custoMensal)} />
+          </dl>
         </section>
 
         <ProjetosDoRecurso

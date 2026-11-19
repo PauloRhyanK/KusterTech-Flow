@@ -6,8 +6,8 @@ import { ErroDeDominio } from '@/lib/erros'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { listarHospedeirosDisponiveis, obterRecursoDaPagina } from '@/modules/infra/queries'
-import { FormularioRecurso } from '../../../_componentes/formulario-recurso'
-import { editarRecursoAction } from '../../../actions'
+import { FormularioRecurso } from '../../_componentes/formulario-recurso'
+import { editarRecursoAction } from '../../actions'
 
 export interface PaginaEditarRecursoProps {
   params: Promise<{ r: string }>
@@ -35,10 +35,7 @@ export default async function PaginaEditarRecurso({ params }: PaginaEditarRecurs
       return (
         <div className="space-y-6">
           <CabecalhoDePagina
-            trilhas={[
-              { rotulo: 'Infraestrutura', href: '/infraestrutura' },
-              { rotulo: 'Editar recurso' },
-            ]}
+            trilhas={[{ rotulo: 'Máquinas', href: '/maquinas' }, { rotulo: 'Editar recurso' }]}
             titulo="Editar recurso"
           />
           <SemPermissao />
@@ -60,8 +57,8 @@ export default async function PaginaEditarRecurso({ params }: PaginaEditarRecurs
     <div className="space-y-6">
       <CabecalhoDePagina
         trilhas={[
-          { rotulo: 'Infraestrutura', href: '/infraestrutura' },
-          { rotulo: recurso.nome, href: `/infraestrutura/recursos/${recurso.id}` },
+          { rotulo: 'Máquinas', href: '/maquinas' },
+          { rotulo: recurso.nome, href: `/maquinas/${recurso.id}` },
           { rotulo: 'Editar' },
         ]}
         titulo="Editar recurso"
@@ -77,9 +74,10 @@ export default async function PaginaEditarRecurso({ params }: PaginaEditarRecurs
           nome: recurso.nome,
           identificadorExterno: recurso.identificadorExterno,
           descricao: recurso.descricao,
-          urlBeszel: recurso.urlBeszel,
-          urlGlitchTip: recurso.urlGlitchTip,
-          urlHostDocker: recurso.urlHostDocker,
+          provedor: recurso.provedor,
+          endereco: recurso.endereco,
+          especificacao: recurso.especificacao,
+          custoMensal: recurso.custoMensal,
           hospedadoEmId: recurso.hospedadoEm?.id ?? null,
         }}
       />

@@ -5,11 +5,11 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { listarHospedeirosDisponiveis } from '@/modules/infra/queries'
-import { FormularioRecurso } from '../../_componentes/formulario-recurso'
-import { cadastrarRecursoAction } from '../../actions'
+import { FormularioRecurso } from '../_componentes/formulario-recurso'
+import { cadastrarRecursoAction } from '../actions'
 
 export const metadata: Metadata = {
-  title: 'Novo recurso',
+  title: 'Nova máquina',
 }
 
 export default async function PaginaNovoRecurso() {
@@ -18,15 +18,12 @@ export default async function PaginaNovoRecurso() {
     redirect('/entrar')
   }
 
-  const trilhas = [
-    { rotulo: 'Infraestrutura', href: '/infraestrutura' },
-    { rotulo: 'Novo recurso' },
-  ]
+  const trilhas = [{ rotulo: 'Máquinas', href: '/maquinas' }, { rotulo: 'Nova máquina' }]
 
   if (!autorizar(sessao.sujeito, 'infraestrutura.gerenciar')) {
     return (
       <div className="space-y-6">
-        <CabecalhoDePagina trilhas={trilhas} titulo="Novo recurso" />
+        <CabecalhoDePagina trilhas={trilhas} titulo="Nova máquina" />
         <SemPermissao />
       </div>
     )
@@ -38,13 +35,13 @@ export default async function PaginaNovoRecurso() {
     <div className="space-y-6">
       <CabecalhoDePagina
         trilhas={trilhas}
-        titulo="Novo recurso"
+        titulo="Nova máquina"
         contexto="Cadastre um servidor, container, banco ou storage no inventário"
       />
       <FormularioRecurso
         action={cadastrarRecursoAction}
         hospedeiros={hospedeiros}
-        rotuloDoBotao="Cadastrar recurso"
+        rotuloDoBotao="Cadastrar máquina"
       />
     </div>
   )

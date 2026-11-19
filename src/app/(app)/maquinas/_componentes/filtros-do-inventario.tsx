@@ -10,8 +10,6 @@ export interface FiltrosDoInventarioProps {
 const TIPOS: readonly TipoRecurso[] = ['SERVIDOR', 'CONTAINER', 'BANCO', 'STORAGE', 'OUTRO']
 const SITUACOES: readonly { valor: Filtros['situacao']; rotulo: string }[] = [
   { valor: 'todas', rotulo: 'Todas' },
-  { valor: 'com-alerta', rotulo: 'Com alerta' },
-  { valor: 'sem-dados', rotulo: 'Sem dados' },
   { valor: 'arquivados', rotulo: 'Arquivados' },
 ]
 
@@ -22,7 +20,7 @@ export function FiltrosDoInventario({ filtros, projetos }: FiltrosDoInventarioPr
   return (
     <form
       method="GET"
-      action="/infraestrutura"
+      action="/maquinas"
       className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end"
     >
       <div className="space-y-1">

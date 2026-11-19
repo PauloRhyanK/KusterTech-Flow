@@ -16,7 +16,7 @@ describe('navegacao', () => {
       '/',
       '/clientes',
       '/projetos',
-      '/infraestrutura',
+      '/maquinas',
       '/desenvolvimento',
     ])
     expect(MODULOS.map((m) => m.icone)).toEqual([
@@ -49,8 +49,8 @@ describe('navegacao', () => {
     expect(itemAtivo('/clientes/acme')?.rotulo).toBe('Clientes')
     expect(itemAtivo('/projetos')?.rotulo).toBe('Projetos')
     expect(itemAtivo('/projetos/abc')?.rotulo).toBe('Projetos')
-    expect(itemAtivo('/infraestrutura')?.rotulo).toBe('Infraestrutura')
-    expect(itemAtivo('/infraestrutura/servidores')?.rotulo).toBe('Infraestrutura')
+    expect(itemAtivo('/maquinas')?.rotulo).toBe('Infraestrutura')
+    expect(itemAtivo('/maquinas/servidores')?.rotulo).toBe('Infraestrutura')
     expect(itemAtivo('/desenvolvimento')?.rotulo).toBe('Central de Desenvolvimento')
     expect(itemAtivo('/desenvolvimento/execucoes')?.rotulo).toBe('Central de Desenvolvimento')
     expect(itemAtivo('/configuracoes')?.rotulo).toBe('Configurações')

@@ -49,7 +49,7 @@ describe('QuadroDaOficina', () => {
   it('disco livre com barra, última limpeza neutra e link da máquina', () => {
     render(
       <QuadroDaOficina
-        oficina={{ hrefDaMaquina: '/infraestrutura/recursos/r1', leitura: leitura() }}
+        oficina={{ hrefDaMaquina: '/maquinas/r1', leitura: leitura() }}
         agora={AGORA}
       />,
     )
@@ -65,7 +65,7 @@ describe('QuadroDaOficina', () => {
     expect(screen.getByText('Concluída')).toHaveAttribute('data-tom', 'neutro')
     expect(screen.getByRole('link', { name: 'Ver a máquina' })).toHaveAttribute(
       'href',
-      '/infraestrutura/recursos/r1',
+      '/maquinas/r1',
     )
     expect(document.querySelector('[data-tom="sucesso"]')).toBeNull()
   })

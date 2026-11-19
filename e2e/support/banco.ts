@@ -3,7 +3,6 @@ import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
 import { normalizarNome, validarNomeDeCliente } from '@/modules/clientes/model'
-import { chaveDedupeManual, hashDoTokenDeAlertas } from '@/modules/infra/model'
 import { assinaturaDaEntrada, prsMergeadosDaIssue } from '@/modules/ambientes/model'
 import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
 import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
@@ -969,9 +968,10 @@ export async function criarRecursoNoBanco(d: {
   tipo: 'SERVIDOR' | 'CONTAINER' | 'BANCO' | 'STORAGE' | 'OUTRO'
   nome: string
   hospedadoEmId?: string
-  urlBeszel?: string
-  urlGlitchTip?: string
-  urlHostDocker?: string
+  provedor?: string
+  endereco?: string
+  especificacao?: string
+  custoMensal?: string
   projetosIds?: string[]
 }): Promise<{ id: string; nome: string }> {
   return db.recurso.create({
@@ -980,9 +980,10 @@ export async function criarRecursoNoBanco(d: {
       nome: d.nome,
       nomeNormalizado: normalizarNome(d.nome),
       hospedadoEmId: d.hospedadoEmId ?? null,
-      urlBeszel: d.urlBeszel ?? null,
-      urlGlitchTip: d.urlGlitchTip ?? null,
-      urlHostDocker: d.urlHostDocker ?? null,
+      provedor: d.provedor ?? null,
+      endereco: d.endereco ?? null,
+      especificacao: d.especificacao ?? null,
+      custoMensal: d.custoMensal ?? null,
       projetos: d.projetosIds?.length
         ? { create: d.projetosIds.map((projetoId) => ({ projetoId })) }
         : undefined,
@@ -1004,114 +1005,6 @@ export async function obterRecursoNoBanco(
   nome: string,
 ): Promise<{ id: string; nome: string } | null> {
   return db.recurso.findFirst({ where: { nome }, select: { id: true, nome: true } })
-}
-
-// Fonte de alertas criada como o service cria: o token é devolvido uma vez e só o hash vai ao banco.
-export async function criarFonteDeAlertasNoBanco(
-  nome: string,
-): Promise<{ id: string; token: string }> {
-  const criadaPorId = process.env.E2E_ADMIN_ID
-  if (!criadaPorId) {
-    throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
-  }
-  const token = `fa_${randomBytes(32).toString('base64url')}`
-  const fonte = await db.fonteDeAlertas.create({
-    data: { nome, tokenHash: hashDoTokenDeAlertas(token), criadaPorId },
-    select: { id: true },
-  })
-  return { id: fonte.id, token }
-}
-
-export async function obterFonteNoBanco(
-  id: string,
-): Promise<{ tokenHash: string; revogadaEm: Date | null; ultimoUsoEm: Date | null }> {
-  return db.fonteDeAlertas.findUniqueOrThrow({
-    where: { id },
-    select: { tokenHash: true, revogadaEm: true, ultimoUsoEm: true },
-  })
-}
-
-export async function obterFontePorNomeNoBanco(
-  nome: string,
-): Promise<{ id: string; tokenHash: string; revogadaEm: Date | null } | null> {
-  return db.fonteDeAlertas.findFirst({
-    where: { nome },
-    select: { id: true, tokenHash: true, revogadaEm: true },
-  })
-}
-
-// Todo alerta de E2E tem título começando por "E2E " (limpeza do globalSetup).
-export async function criarAlertaNoBanco(d: {
-  titulo: string
-  severidade: 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAIXA'
-  recursoId?: string
-  projetoId?: string
-  origem?: 'MANUAL' | 'WEBHOOK'
-  fonteId?: string
-  chave?: string
-}): Promise<{ id: string }> {
-  const id = crypto.randomUUID()
-  const agora = new Date()
-  const origem = d.origem ?? 'MANUAL'
-  await db.alerta.create({
-    data: {
-      id,
-      chaveDedupe:
-        origem === 'WEBHOOK'
-          ? `${d.fonteId ?? 'sem-fonte'}:${d.chave ?? id}`
-          : chaveDedupeManual(id),
-      origem,
-      titulo: d.titulo,
-      severidade: d.severidade,
-      estado: 'ATIVO',
-      recursoId: d.recursoId ?? null,
-      projetoId: d.projetoId ?? null,
-      fonteId: d.fonteId ?? null,
-      primeiraOcorrenciaEm: agora,
-      ultimaOcorrenciaEm: agora,
-      ocorrencias: 1,
-    },
-  })
-  await db.eventoDeAlerta.create({ data: { alertaId: id, tipo: 'CRIADO' } })
-  return { id }
-}
-
-export async function obterAlertaNoBanco(id: string): Promise<{
-  estado: 'ATIVO' | 'RECONHECIDO' | 'RESOLVIDO_NA_ORIGEM'
-  resolvidoPorId: string | null
-}> {
-  return db.alerta.findUniqueOrThrow({
-    where: { id },
-    select: { estado: true, resolvidoPorId: true },
-  })
-}
-
-export async function obterAlertaPorTituloNoBanco(
-  titulo: string,
-): Promise<{ id: string; estado: 'ATIVO' | 'RECONHECIDO' | 'RESOLVIDO_NA_ORIGEM' } | null> {
-  return db.alerta.findFirst({ where: { titulo }, select: { id: true, estado: true } })
-}
-
-export async function contarAlertas(): Promise<number> {
-  return db.alerta.count()
-}
-
-// Volta o alerta a ATIVO para repetir uma requisição capturada contra o mesmo estado.
-export async function reativarAlertaNoBanco(id: string): Promise<void> {
-  await db.alerta.update({
-    where: { id },
-    data: { estado: 'ATIVO', reconhecidoPorId: null, reconhecidoEm: null },
-  })
-}
-
-// Alertas de webhook cuja chave (sem o prefixo da fonte) é `chave`.
-export async function obterAlertasPorChaveNoBanco(
-  chave: string,
-): Promise<{ id: string; ocorrencias: number }[]> {
-  return db.alerta.findMany({
-    where: { chaveDedupe: { endsWith: `:${chave}` } },
-    select: { id: true, ocorrencias: true },
-  })
 }
 
 export async function contarEventosDeWebhook(deliveryId: string): Promise<number> {

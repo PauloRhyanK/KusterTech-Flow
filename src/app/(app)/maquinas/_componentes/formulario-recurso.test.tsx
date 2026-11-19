@@ -13,7 +13,7 @@ describe('FormularioRecurso', () => {
       <FormularioRecurso
         action={action}
         hospedeiros={hospedeiros}
-        rotuloDoBotao="Cadastrar recurso"
+        rotuloDoBotao="Cadastrar máquina"
       />,
     )
 
@@ -26,16 +26,16 @@ describe('FormularioRecurso', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('')
     expect(screen.getByRole('alert')).toHaveTextContent('')
-    const botao = screen.getByRole('button', { name: 'Cadastrar recurso' })
+    const botao = screen.getByRole('button', { name: 'Cadastrar máquina' })
     expect(botao).toHaveAttribute('aria-busy', 'false')
 
     await userEvent.type(screen.getByLabelText('Nome'), 'VPS 02')
     await userEvent.click(botao)
-    expect(screen.getByRole('button', { name: 'Cadastrar recurso' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Cadastrar máquina' })).toHaveAttribute(
       'aria-busy',
       'true',
     )
-    expect(screen.getByRole('button', { name: 'Cadastrar recurso' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Cadastrar máquina' })).toBeEnabled()
 
     concluir({ erro: 'Já existe um recurso com este nome.' })
     expect(await screen.findByText('Já existe um recurso com este nome.')).toBeInTheDocument()
@@ -54,9 +54,10 @@ describe('FormularioRecurso', () => {
           nome: 'api',
           identificadorExterno: 'abc123',
           descricao: 'API pública',
-          urlBeszel: null,
-          urlGlitchTip: null,
-          urlHostDocker: null,
+          provedor: 'Hetzner',
+          endereco: 'api.exemplo.test',
+          especificacao: '2 vCPU',
+          custoMensal: '48.50',
           hospedadoEmId: 'r-0',
         }}
       />,
@@ -65,6 +66,10 @@ describe('FormularioRecurso', () => {
     expect(screen.queryByLabelText('Tipo')).toBeNull()
     expect(screen.getByLabelText('Nome')).toHaveValue('api')
     expect(screen.getByLabelText('Hospedado em')).toHaveValue('r-0')
+    expect(screen.getByLabelText('Provedor')).toHaveValue('Hetzner')
+    expect(screen.getByLabelText('Endereço')).toHaveValue('api.exemplo.test')
+    expect(screen.getByLabelText('Especificação')).toHaveValue('2 vCPU')
+    expect(screen.getByLabelText('Custo mensal (R$)')).toHaveValue('48.50')
     expect(document.querySelector('input[name="recursoId"]')).toHaveValue('r-9')
   })
 })

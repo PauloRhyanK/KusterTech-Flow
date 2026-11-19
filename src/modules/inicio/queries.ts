@@ -29,8 +29,8 @@ import {
 } from './model'
 
 const ID_INTEGRACAO = 'github'
-// Até a Task 8 a página da máquina é a do inventário de Infraestrutura.
-const ROTA_DAS_MAQUINAS = '/infraestrutura/recursos'
+// Rota do inventário de máquinas; a página de cada máquina é `/maquinas/<id>`.
+const ROTA_DAS_MAQUINAS = '/maquinas'
 
 export interface ResumoDeProjetos {
   indicadores: Indicador[]

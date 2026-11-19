@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 export interface LinhaOperacional {
   id: string
-  // Âncora (`id` do elemento) para links que apontam para esta linha, como `#alerta-<id>`.
+  // Âncora (`id` do elemento) para links que apontam para esta linha, como `#item-<id>`.
   ancora?: string
   nome: ReactNode
   contexto?: ReactNode

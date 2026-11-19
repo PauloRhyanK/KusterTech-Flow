@@ -36,9 +36,9 @@ export const MODULOS: readonly ItemDeNavegacao[] = [
   },
   {
     rotulo: 'Infraestrutura',
-    href: '/infraestrutura',
+    href: '/maquinas',
     icone: Server,
-    descricao: 'Inventário, recursos, alertas e diagnóstico',
+    descricao: 'Inventário, recursos e diagnóstico',
   },
   {
     rotulo: 'Central de Desenvolvimento',

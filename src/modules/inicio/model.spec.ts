@@ -281,13 +281,13 @@ describe('esperasDaOficina', () => {
         { tipo: 'disco', mensagem: 'Disco em 91%, acima do limite de 80%.', desde },
         { tipo: 'limpeza', mensagem: 'Nenhuma limpeza registrada.', desde: null },
       ],
-      '/infraestrutura/recursos/r1',
+      '/maquinas/r1',
     )
     expect(itens).toHaveLength(2)
     expect(itens[0]).toMatchObject({
       tipo: 'aviso-da-oficina',
       titulo: 'Disco em 91%, acima do limite de 80%.',
-      href: '/infraestrutura/recursos/r1',
+      href: '/maquinas/r1',
       externo: false,
       rotuloDoLink: 'Ver a máquina',
       desde,

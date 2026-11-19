@@ -55,9 +55,11 @@ export default async function PaginaMaquinasProjeto({ params }: PaginaMaquinasPr
   const linhas = recursos.map((r) => ({
     id: r.id,
     nome: r.nome,
-    href: `/infraestrutura/recursos/${r.id}`,
+    href: `/maquinas/${r.id}`,
     contexto: rotuloDoTipo(r.tipo),
-    estado: <BadgeDeEstado tom={r.situacao.tom}>{r.situacao.texto}</BadgeDeEstado>,
+    estado: r.situacao ? (
+      <BadgeDeEstado tom={r.situacao.tom}>{r.situacao.texto}</BadgeDeEstado>
+    ) : undefined,
   }))
 
   return (
@@ -70,7 +72,7 @@ export default async function PaginaMaquinasProjeto({ params }: PaginaMaquinasPr
           titulo="Nenhuma máquina associada a este projeto."
           descricao="Associe máquinas na página de cada máquina do inventário."
           acao={
-            <Link href="/infraestrutura" className="text-sm text-text-link hover:underline">
+            <Link href="/maquinas" className="text-sm text-text-link hover:underline">
               Abrir inventário
             </Link>
           }
