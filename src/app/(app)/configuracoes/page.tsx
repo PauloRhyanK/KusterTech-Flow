@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { moduloAtivo } from '@/lib/modulos'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 
@@ -60,6 +61,19 @@ export default async function PaginaConfiguracoes() {
             </span>
             <span className="text-sm text-text-secondary">
               Tokens que a máquina de agentes usa para enviar o estado à Central.
+            </span>
+          </Link>
+        )}
+        {podeGerenciarConfiguracoes && moduloAtivo('fila-de-publicacao') && (
+          <Link
+            href="/configuracoes/publicacao"
+            className="flex flex-col gap-1 rounded-padrao border border-border bg-surface p-5 transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          >
+            <span className="text-[15px] font-[600] leading-[1.4] text-text-primary">
+              Publicação
+            </span>
+            <span className="text-sm text-text-secondary">
+              Tokens que a Fábrica e as sessões usam para pedir publicações.
             </span>
           </Link>
         )}
