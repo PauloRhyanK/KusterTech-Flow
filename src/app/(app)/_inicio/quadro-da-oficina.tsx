@@ -4,7 +4,7 @@ import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { QuadroDeMetrica } from '@/lib/ui/quadro-de-metrica'
 import type { Inicio } from '@/modules/inicio/queries'
 import { LIMITES_DA_OFICINA, formatarBytes, leituraVelha } from '@/modules/oficina/model'
-import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from './titulo-de-secao'
+import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 
 export interface QuadroDaOficinaProps {
   oficina: Inicio['oficina']

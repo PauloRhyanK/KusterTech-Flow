@@ -1,4 +1,4 @@
-import { CLASSE_DO_CARTAO, TituloDeSecao } from '@/app/(app)/_inicio/titulo-de-secao'
+import { CLASSE_DO_CARTAO, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 import { formatarDataHora } from '@/lib/data'
 import { formatarBytes, pontosDoGrafico, type PontoDoHistorico } from '@/modules/oficina/model'
 

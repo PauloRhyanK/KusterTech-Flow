@@ -86,7 +86,7 @@ O Incremento 1 entrega o domínio operacional de clientes e projetos com preserv
 - **Clientes (`/clientes`):** cadastro, listagem operacional com busca, detalhe (`/clientes/[c]`) e edição, além de arquivamento reversível com confirmação em duas etapas (D67). Nomes são únicos sob normalização insensível a caixa, acentos e espaços múltiplos.
 - **Projetos e checklist (`/projetos`):** criação progressiva do projeto sem travas prévias (UX-03). O Resumo inicial (`/projetos/[p]`) guia a preparação por meio do checklist de configuração (`/projetos/[p]/configuracao`), distinguindo honestamente itens pendentes de integrações ainda indisponíveis (D61, invariante 9).
 - **Associação N:N sem duplicação:** projetos compartilhados entre múltiplos clientes mantêm registro único no banco e em todas as telas (D34, A02, UX-02).
-- **Contexto de cliente e visão global (D37, D39):** rotas espelhadas sob `/clientes/[c]/projetos/[p]` apresentam o projeto no contexto daquele cliente (três abas, sem abas técnicas). A visão global sob `/projetos/[p]` (cinco abas) é reservada a quem possui visibilidade total.
+- **Contexto de cliente e visão global (D37, D39):** rotas espelhadas sob `/clientes/[c]/projetos/[p]` apresentam o projeto no contexto daquele cliente, sem abas técnicas: com os módulos padrão, só Resumo. A visão global sob `/projetos/[p]`, com os módulos padrão, tem Resumo, Desenvolvimento e Máquinas, e é reservada a quem possui visibilidade total. Abas de módulos congelados (Entregas, Homologação, Publicações) só aparecem quando o módulo é religado (ver [Módulos](#módulos)).
 - **Autorização no servidor e papéis escopados (A16):** papéis de `APROVADOR` e `TESTADOR` podem ser vinculados a um cliente. Tentativas de acesso a clientes não permitidos são barradas no servidor com `ErroDeAutorizacao`, sem expor informações restritas (invariante 10).
 
 ## Integração GitHub
@@ -241,17 +241,15 @@ O Incremento 6 separa, por repositório, quatro estados que variam de forma inde
 
 Quando o Flow roda na oficina, a página da máquina local mostra memória, CPU, disco, contêineres, histórico e limpezas, lidos de arquivos. O módulo `src/modules/oficina` lê o diretório `OFICINA_DIR` (padrão `/oficina`; no compose da oficina é `/var/lib/oficina` montado só para leitura). `FLOW_MAQUINA_LOCAL` recebe o identificador externo do registro da máquina que representa a máquina local. Sem essa variável, nenhuma máquina é tratada como local.
 
-Os formatos estão em `src/modules/oficina/contrato.ts` e os exemplos em `src/modules/oficina/exemplos/`. Quem grava cada arquivo está em [`docs/infra/oficina.md`](docs/infra/oficina.md):
+Os formatos estão em `src/modules/oficina/contrato.ts` e os exemplos em `src/modules/oficina/exemplos/`. A tabela lista o que o Flow lê; os scripts também gravam `cpu.estado` e `limpeza-ultima.json`, que o Flow não lê. Quem grava cada arquivo está em [`docs/infra/oficina.md`](docs/infra/oficina.md):
 
 | Arquivo               | Quem grava                                    | Conteúdo                                                          |
 | --------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
 | `metricas.jsonl`      | `metricas_oficina.py coletar`, por minuto     | amostras de memória, CPU, disco e carga                           |
-| `cpu.estado`          | `metricas_oficina.py coletar`                 | contadores de CPU da amostra anterior                             |
 | `retrato.json`        | `metricas_oficina.py retrato`, por minuto     | contêineres, estado da Fábrica e runners                          |
 | `disco-por-dono.json` | `metricas_oficina.py disco`, por hora         | bytes de Docker, Fábrica, runners, backups e outros               |
 | `alertas.jsonl`       | métricas (OOM), limpeza, backup e atualização | avisos da máquina; viram "avisos locais", não uma fila de alertas |
 | `limpezas.jsonl`      | `limpar-oficina.sh`, por rodada               | histórico das limpezas e o espaço liberado                        |
-| `limpeza-ultima.json` | `limpar-oficina.sh`                           | resumo da última limpeza                                          |
 
 Arquivo ausente ou ilegível vira aviso na tela. Limpeza concluída, contêiner no ar e serviço ativo usam o tom neutro, porque o arquivo não prova saúde.
 

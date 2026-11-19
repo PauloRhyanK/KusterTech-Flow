@@ -43,12 +43,21 @@ test('POST /api/evidencias/deploy responde 404 e não grava evidência', async (
     data: {},
   })
   expect(r.status()).toBe(404)
+  expect(r.headers()['content-type']).toMatch(/^application\/json/)
+  expect(await r.json()).toEqual({ erro: 'Não encontrado.' })
   expect(await contarEvidenciasDeDeploy()).toBe(antes)
 })
 
-test('POST /api/evidencias/verificacao responde 404', async ({ request }) => {
+test('POST /api/evidencias/verificacao responde 404 igual a uma rota de API inexistente', async ({
+  request,
+}) => {
   const r = await request.post('/api/evidencias/verificacao', { data: {} })
+  const inexistente = await request.post('/api/rota-que-nao-existe', { data: {} })
   expect(r.status()).toBe(404)
+  expect(inexistente.status()).toBe(404)
+  expect(r.headers()['content-type']).toBe(inexistente.headers()['content-type'])
+  expect(await r.json()).toEqual({ erro: 'Não encontrado.' })
+  expect(await inexistente.json()).toEqual({ erro: 'Não encontrado.' })
 })
 
 test('o projeto mostra só as abas Resumo, Desenvolvimento e Máquinas', async ({ page }) => {

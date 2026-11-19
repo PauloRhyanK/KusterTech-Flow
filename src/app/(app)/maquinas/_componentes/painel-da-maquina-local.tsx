@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { CLASSE_DO_CARTAO } from '@/app/(app)/_inicio/titulo-de-secao'
+import { CLASSE_DO_CARTAO } from '@/lib/ui/titulo-de-secao'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { QuadroDeMetrica } from '@/lib/ui/quadro-de-metrica'
 import type { Amostra, Limpeza } from '@/modules/oficina/contrato'

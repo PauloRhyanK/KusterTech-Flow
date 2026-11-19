@@ -4,7 +4,7 @@ import { minutosDeAtraso } from '@/modules/fabrica/model'
 import type { Inicio, PlanoNoInicio } from '@/modules/inicio/queries'
 import { formatarBytes } from '@/modules/oficina/model'
 import { FaixaDeRaias } from './faixa-de-raias'
-import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from './titulo-de-secao'
+import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 
 export interface FabricaAgoraProps {
   fabrica: Inicio['fabrica']

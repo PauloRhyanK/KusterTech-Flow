@@ -6,7 +6,7 @@ import {
   type EsperaVoce as Espera,
   type ItemDeEspera,
 } from '@/modules/inicio/model'
-import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from './titulo-de-secao'
+import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 
 export interface EsperaVoceProps {
   espera: Espera

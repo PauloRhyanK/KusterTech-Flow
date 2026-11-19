@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { ResumoDeProjetos } from '@/modules/inicio/queries'
-import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from './titulo-de-secao'
+import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 
 export interface SeusProjetosProps {
   // Nulo quando a consulta falhou.
