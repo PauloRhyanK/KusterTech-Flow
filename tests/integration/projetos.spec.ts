@@ -1,6 +1,7 @@
-import { afterAll, beforeEach, describe, expect, test } from 'vitest'
+import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { resolverModulosAtivos } from '@/lib/modulos'
 import { ErroDeDominio } from '@/lib/erros'
 import {
   arquivarMilestone,
@@ -29,6 +30,17 @@ import {
 } from '@/modules/projetos/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
+
+// Permite ligar os módulos congelados só nas asserções que os cobrem; o padrão segue o do catálogo.
+const { modulosAtivosMock } = vi.hoisted(() => ({ modulosAtivosMock: vi.fn() }))
+
+vi.mock('@/lib/modulos', async (importarOriginal) => {
+  const original = await importarOriginal<typeof import('@/lib/modulos')>()
+  modulosAtivosMock.mockImplementation(original.modulosAtivos)
+  return { ...original, modulosAtivos: modulosAtivosMock }
+})
+
+const todosOsModulos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
 
 let adminSujeito: Sujeito
 
@@ -102,8 +114,13 @@ describe('projetos (integração)', () => {
         projetoId,
       },
     })
-    // Sem milestone ativa o checklist segue pendente; só deixa de estar com clientes, repositório,
-    // milestone e os três ambientes
+    // Com os módulos padrão o checklist tem só Clientes e GitHub: clientes e repositório bastam
+    const telaPadrao = await listarProjetosParaTela(adminSujeito)
+    expect(telaPadrao[0]?.configuracaoPendente).toBe(false)
+
+    // Com entregas e ambientes ligados, sem milestone ativa o checklist segue pendente; só deixa de
+    // estar com clientes, repositório, milestone e os três ambientes
+    modulosAtivosMock.mockReturnValue(todosOsModulos)
     const telaComRepositorio = await listarProjetosParaTela(adminSujeito)
     expect(telaComRepositorio[0]?.configuracaoPendente).toBe(true)
 
@@ -119,6 +136,7 @@ describe('projetos (integração)', () => {
     await salvarAmbiente(adminSujeito, projetoId, 'PROD', { nomeNoGitHub: 'production', url: '' })
     const telaCompleta = await listarProjetosParaTela(adminSujeito)
     expect(telaCompleta[0]?.configuracaoPendente).toBe(false)
+    modulosAtivosMock.mockReturnValue(resolverModulosAtivos(undefined))
 
     // 5. listarProjetosParaTela com projeto sem clientes devolve configuracaoPendente = true
     const { id: projSemClientesId } = await criarProjeto(adminSujeito, {

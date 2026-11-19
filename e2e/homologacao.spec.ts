@@ -52,7 +52,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
-test('admin disponibiliza repoUm #2 para Acme; timeline mostra "Disponibilizada ao cliente" no grupo "Versão atual em QA: E2E qa-1"; item de Beta segue AGUARDANDO_DISPONIBILIZACAO no banco', async ({
+test('admin disponibiliza repoUm #2 para Acme; timeline mostra "Disponibilizada ao cliente" no grupo "Versão atual em QA: E2E qa-1"; item de Beta segue AGUARDANDO_DISPONIBILIZACAO no banco @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -84,7 +84,7 @@ test('admin disponibiliza repoUm #2 para Acme; timeline mostra "Disponibilizada 
   expect(beta?.estado).toBe('AGUARDANDO_DISPONIBILIZACAO')
 })
 
-test('com #2 disponibilizada por disponibilizarNoBanco, aprovador de Acme aprova pelo painel de contexto e vê "Aprovação registrada para <Acme>."', async ({
+test('com #2 disponibilizada por disponibilizarNoBanco, aprovador de Acme aprova pelo painel de contexto e vê "Aprovação registrada para <Acme>." @congelado', async ({
   browser,
   page,
 }, testInfo) => {
@@ -120,7 +120,7 @@ test('com #2 disponibilizada por disponibilizarNoBanco, aprovador de Acme aprova
   }
 })
 
-test('com #1 disponibilizada por disponibilizarNoBanco, testador de Acme não vê "Testado e aprovado"; POST de aprovação de #1 capturado do aprovador de Acme com page.route (abortado) e reenviado pelo testador e pelo aprovador de Beta não muda o item; reenviado pelo aprovador de Acme aprova (controle positivo)', async ({
+test('com #1 disponibilizada por disponibilizarNoBanco, testador de Acme não vê "Testado e aprovado"; POST de aprovação de #1 capturado do aprovador de Acme com page.route (abortado) e reenviado pelo testador e pelo aprovador de Beta não muda o item; reenviado pelo aprovador de Acme aprova (controle positivo) @congelado', async ({
   browser,
   page,
 }, testInfo) => {
@@ -196,7 +196,7 @@ test('com #1 disponibilizada por disponibilizarNoBanco, testador de Acme não v�
   }
 })
 
-test('aprovador de Beta abre a issue em /clientes/<acme>/…: "Sem permissão para esta área."', async ({
+test('aprovador de Beta abre a issue em /clientes/<acme>/…: "Sem permissão para esta área." @congelado', async ({
   browser,
   page,
 }, testInfo) => {
@@ -218,7 +218,7 @@ test('aprovador de Beta abre a issue em /clientes/<acme>/…: "Sem permissão pa
   }
 })
 
-test('fila global abre em "Requer minha ação (4)" agrupada em E2E Release 1; Cliente=Acme mostra (2); abre #2, disponibiliza, "Voltar à fila" volta a /projetos/<p>/homologacao com filtro=requer-minha-acao e cliente=<acme>, e #item-<id> está no viewport', async ({
+test('fila global abre em "Requer minha ação (4)" agrupada em E2E Release 1; Cliente=Acme mostra (2); abre #2, disponibiliza, "Voltar à fila" volta a /projetos/<p>/homologacao com filtro=requer-minha-acao e cliente=<acme>, e #item-<id> está no viewport @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -262,7 +262,9 @@ test('fila global abre em "Requer minha ação (4)" agrupada em E2E Release 1; C
   await expect(page.locator(`#item-${item!.id}`)).toBeInViewport()
 })
 
-test('retorno=https://mal.example não mostra "Voltar à fila"', async ({ page }, testInfo) => {
+test('retorno=https://mal.example não mostra "Voltar à fila" @congelado', async ({
+  page,
+}, testInfo) => {
   const admin = obterAdmin()
   await fazerLogin(page, admin.email, admin.senha)
   const c = await prepararCenarioDeHomologacaoE2E(testInfo.project.name, admin.id)
@@ -279,7 +281,7 @@ test('retorno=https://mal.example não mostra "Voltar à fila"', async ({ page }
   await expect(page.getByRole('link', { name: 'Voltar à fila' })).toHaveAttribute('href', valido)
 })
 
-test('mobile: fila e issue sem rolagem horizontal (scrollWidth ≤ innerWidth)', async ({
+test('mobile: fila e issue sem rolagem horizontal (scrollWidth ≤ innerWidth) @congelado', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Só no projeto mobile.')
@@ -299,7 +301,7 @@ test('mobile: fila e issue sem rolagem horizontal (scrollWidth ≤ innerWidth)',
   expect(await semRolagem()).toBe(true)
 })
 
-test('após disponibilizar #1 para Acme: aba Homologação global mostra Acme "1 pendente de teste · 1 aguardando disponibilização" e Beta "2 aguardando disponibilização"; Entregas mostra "Homologação: 2 clientes · …"; /clientes/<acme> lista E2E Release 1 em Homologações pendentes; Resumo do Projeto lista a pendência', async ({
+test('após disponibilizar #1 para Acme: aba Homologação global mostra Acme "1 pendente de teste · 1 aguardando disponibilização" e Beta "2 aguardando disponibilização"; Entregas mostra "Homologação: 2 clientes · …"; /clientes/<acme> lista E2E Release 1 em Homologações pendentes; Resumo do Projeto lista a pendência @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()

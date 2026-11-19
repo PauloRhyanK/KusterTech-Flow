@@ -66,7 +66,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
-test('Jornada C até a solicitação de correção: entrada pelo worker, disponibilizar, aprovar, solicitar correção com retorno à fila e isolamento de Beta', async ({
+test('Jornada C até a solicitação de correção: entrada pelo worker, disponibilizar, aprovar, solicitar correção com retorno à fila e isolamento de Beta @congelado', async ({
   browser,
   page,
 }, testInfo) => {
@@ -261,7 +261,7 @@ test('Jornada C até a solicitação de correção: entrada pelo worker, disponi
   }
 })
 
-test('Jornada C com dois clientes e uma correção: solicitar, triar, criar a correção, reteste, aprovar issue e milestone por cliente', async ({
+test('Jornada C com dois clientes e uma correção: solicitar, triar, criar a correção, reteste, aprovar issue e milestone por cliente @congelado', async ({
   browser,
   page,
 }, testInfo) => {

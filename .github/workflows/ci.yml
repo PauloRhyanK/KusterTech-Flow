@@ -106,4 +106,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build da imagem Docker
-        run: docker build .
+        run: docker build -t flow:ci .
+
+      - name: Teste de fumaça da imagem
+        run: bash scripts/fumaca-da-imagem.sh flow:ci

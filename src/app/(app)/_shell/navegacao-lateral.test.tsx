@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { NavegacaoLateral } from './navegacao-lateral'
-import { MODULOS } from '@/lib/ui/navegacao'
+import { GRUPOS_DE_NAVEGACAO } from '@/lib/ui/navegacao'
 
 let pathnameMock = '/'
 
@@ -22,14 +22,17 @@ describe('NavegacaoLateral', () => {
     const navPrincipal = screen.getByRole('navigation', { name: 'Navegação principal' })
     expect(navPrincipal).toBeInTheDocument()
 
-    for (const modulo of MODULOS) {
-      const link = screen.getByRole('link', { name: modulo.rotulo })
-      expect(link).toBeInTheDocument()
-      expect(link).toHaveAttribute('href', modulo.href)
+    for (const grupo of GRUPOS_DE_NAVEGACAO) {
+      expect(screen.getByText(grupo.rotulo)).toBeInTheDocument()
+      for (const item of grupo.itens) {
+        const link = screen.getByRole('link', { name: item.rotulo })
+        expect(link).toBeInTheDocument()
+        expect(link).toHaveAttribute('href', item.href)
+      }
     }
 
-    const linkVisaoGeral = screen.getByRole('link', { name: 'Visão Geral' })
-    expect(linkVisaoGeral).toHaveAttribute('aria-current', 'page')
+    const linkInicio = screen.getByRole('link', { name: 'Início' })
+    expect(linkInicio).toHaveAttribute('aria-current', 'page')
 
     const linkProjetos = screen.getByRole('link', { name: 'Projetos' })
     expect(linkProjetos).not.toHaveAttribute('aria-current')
@@ -39,8 +42,8 @@ describe('NavegacaoLateral', () => {
     pathnameMock = '/projetos/novo'
     render(<NavegacaoLateral usuario={usuario} />)
 
-    const linkVisaoGeral = screen.getByRole('link', { name: 'Visão Geral' })
-    expect(linkVisaoGeral).not.toHaveAttribute('aria-current')
+    const linkInicio = screen.getByRole('link', { name: 'Início' })
+    expect(linkInicio).not.toHaveAttribute('aria-current')
 
     const linkProjetos = screen.getByRole('link', { name: 'Projetos' })
     expect(linkProjetos).toHaveAttribute('aria-current', 'page')

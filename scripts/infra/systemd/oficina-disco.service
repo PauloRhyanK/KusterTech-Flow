@@ -1,0 +1,11 @@
+# Quem ocupa o disco (docker, fábrica, runners, backups). Instalação: docs/infra/oficina.md.
+[Unit]
+Description=Disco da oficina por dono (Docker, Fábrica, runners, backups)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/oficina/metricas_oficina.py disco
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min

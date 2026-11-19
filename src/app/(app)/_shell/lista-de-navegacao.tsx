@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { ENTRADAS_SECUNDARIAS, MODULOS, itemAtivo } from '@/lib/ui/navegacao'
+import { ENTRADAS_SECUNDARIAS, GRUPOS_DE_NAVEGACAO, itemAtivo } from '@/lib/ui/navegacao'
 import { cn } from '@/lib/utils'
 
 export interface ListaDeNavegacaoProps {
@@ -26,24 +26,36 @@ export function ListaDeNavegacao({ aoNavegar }: ListaDeNavegacaoProps) {
 
   return (
     <>
-      <nav aria-label="Navegação principal" className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {MODULOS.map((modulo) => {
-          const ehAtivo = ativo?.href === modulo.href
+      <nav aria-label="Navegação principal" className="flex-1 overflow-y-auto px-3 py-2">
+        {GRUPOS_DE_NAVEGACAO.map((grupo) => (
+          <div key={grupo.rotulo} className="space-y-1 pb-2">
+            <p className="px-3 pb-1 pt-3 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+              {grupo.rotulo}
+            </p>
+            {grupo.itens.map((item) => {
+              const ehAtivo = ativo?.href === item.href
 
-          return (
-            <Link
-              key={modulo.href}
-              href={modulo.href}
-              onClick={aoNavegar}
-              aria-current={ehAtivo ? 'page' : undefined}
-              style={ehAtivo ? ESTILO_ATIVO : undefined}
-              className={cn(CLASSE_BASE_ITEM, ehAtivo ? CLASSE_ATIVO : CLASSE_INATIVO)}
-            >
-              <modulo.icone size={18} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
-              <span>{modulo.rotulo}</span>
-            </Link>
-          )
-        })}
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={aoNavegar}
+                  aria-current={ehAtivo ? 'page' : undefined}
+                  style={ehAtivo ? ESTILO_ATIVO : undefined}
+                  className={cn(CLASSE_BASE_ITEM, ehAtivo ? CLASSE_ATIVO : CLASSE_INATIVO)}
+                >
+                  <item.icone
+                    size={18}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                    className="shrink-0"
+                  />
+                  <span>{item.rotulo}</span>
+                </Link>
+              )
+            })}
+          </div>
+        ))}
       </nav>
 
       <div className="shrink-0 space-y-1 border-t border-border px-3 pt-3">

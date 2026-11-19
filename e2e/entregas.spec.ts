@@ -42,7 +42,7 @@ test.beforeEach(async ({}, testInfo) => {
   await liberarRepositoriosNoBanco(repositoriosDoProjetoE2E(testInfo.project.name))
 })
 
-test('Entregas lista as issues abertas dos dois repositórios, filtra por fechadas e por repositório, busca #2', async ({
+test('Entregas lista as issues abertas dos dois repositórios, filtra por fechadas e por repositório, busca #2 @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -79,7 +79,7 @@ test('Entregas lista as issues abertas dos dois repositórios, filtra por fechad
   await expect(lista.getByText('1 PR')).toBeVisible()
 })
 
-test('issue #2 mostra o PR mergeado com checks Sucesso e "Ambientes não configurados"; desktop em duas colunas, mobile em uma sem rolagem horizontal', async ({
+test('issue #2 mostra o PR mergeado com checks Sucesso e "Ambientes não configurados"; desktop em duas colunas, mobile em uma sem rolagem horizontal @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -108,7 +108,7 @@ test('issue #2 mostra o PR mergeado com checks Sucesso e "Ambientes não configu
   }
 })
 
-test('situação forçada para 31 min atrás mostra "Os dados do GitHub podem estar desatualizados" e mantém a lista', async ({
+test('situação forçada para 31 min atrás mostra "Os dados do GitHub podem estar desatualizados" e mantém a lista @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -132,7 +132,7 @@ test('situação forçada para 31 min atrás mostra "Os dados do GitHub podem es
   ).toHaveCount(6)
 })
 
-test('testador escopado em /projetos/<p>/entregas e na issue vê "Sem permissão"', async ({
+test('testador escopado em /projetos/<p>/entregas e na issue vê "Sem permissão" @congelado', async ({
   page,
   browser,
 }, testInfo) => {

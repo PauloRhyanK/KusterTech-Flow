@@ -3,13 +3,13 @@ import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
 import { normalizarNome, validarNomeDeCliente } from '@/modules/clientes/model'
-import { chaveDedupeManual, hashDoTokenDeAlertas } from '@/modules/infra/model'
 import { assinaturaDaEntrada, prsMergeadosDaIssue } from '@/modules/ambientes/model'
 import { atualizarFilaDeHomologacao } from '@/modules/homologacao/fila'
 import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
 import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
+import { MAQUINA_LOCAL_E2E } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { gravarHomologacaoDePublicacao } from '../../tests/support/homologacao-de-publicacao'
 import {
@@ -95,6 +95,14 @@ export async function contarProjetos(): Promise<number> {
   return db.projeto.count()
 }
 
+// Revoga toda fonte da Fábrica ainda ativa, para que nenhum retrato antigo apareça na Central.
+export async function revogarFontesDaFabricaNoBanco(): Promise<void> {
+  await db.fonteDaFabrica.updateMany({
+    where: { revogadaEm: null },
+    data: { revogadaEm: new Date() },
+  })
+}
+
 export async function definirTemaNoBanco(usuarioId: string, tema: Tema): Promise<void> {
   await db.usuario.update({
     where: { id: usuarioId },
@@ -170,6 +178,15 @@ export async function limparExecucoesDosRepositoriosNoBanco(
 // Tira o projeto de teste das consultas de projetos ativos (Visão Geral, checklist de configuração).
 export async function arquivarProjetoNoBanco(projetoId: string): Promise<void> {
   await db.projeto.updateMany({ where: { id: projetoId }, data: { arquivadoEm: new Date() } })
+}
+
+// Arquiva os projetos ativos com repositório vinculado, para que nenhum repositório indisponível
+// deixado por outros arquivos apareça como integração em "Espera você".
+export async function arquivarProjetosComRepositorioNoBanco(): Promise<void> {
+  await db.projeto.updateMany({
+    where: { arquivadoEm: null, repositorios: { some: {} } },
+    data: { arquivadoEm: new Date() },
+  })
 }
 
 export function repositorioDeAgentesE2E(projectName: string): string {
@@ -325,6 +342,10 @@ export async function removerAmbientesNoBanco(projetoId: string): Promise<void> 
 
 export async function contarAmbientes(projetoId: string): Promise<number> {
   return db.ambiente.count({ where: { projetoId } })
+}
+
+export async function contarEvidenciasDeDeploy(): Promise<number> {
+  return db.evidenciaDeploy.count()
 }
 
 export async function contarEvidencias(projetoId: string): Promise<number> {
@@ -948,9 +969,10 @@ export async function criarRecursoNoBanco(d: {
   tipo: 'SERVIDOR' | 'CONTAINER' | 'BANCO' | 'STORAGE' | 'OUTRO'
   nome: string
   hospedadoEmId?: string
-  urlBeszel?: string
-  urlGlitchTip?: string
-  urlHostDocker?: string
+  provedor?: string
+  endereco?: string
+  especificacao?: string
+  custoMensal?: string
   projetosIds?: string[]
 }): Promise<{ id: string; nome: string }> {
   return db.recurso.create({
@@ -959,9 +981,10 @@ export async function criarRecursoNoBanco(d: {
       nome: d.nome,
       nomeNormalizado: normalizarNome(d.nome),
       hospedadoEmId: d.hospedadoEmId ?? null,
-      urlBeszel: d.urlBeszel ?? null,
-      urlGlitchTip: d.urlGlitchTip ?? null,
-      urlHostDocker: d.urlHostDocker ?? null,
+      provedor: d.provedor ?? null,
+      endereco: d.endereco ?? null,
+      especificacao: d.especificacao ?? null,
+      custoMensal: d.custoMensal ?? null,
       projetos: d.projetosIds?.length
         ? { create: d.projetosIds.map((projetoId) => ({ projetoId })) }
         : undefined,
@@ -983,328 +1006,6 @@ export async function obterRecursoNoBanco(
   nome: string,
 ): Promise<{ id: string; nome: string } | null> {
   return db.recurso.findFirst({ where: { nome }, select: { id: true, nome: true } })
-}
-
-// Fonte de alertas criada como o service cria: o token é devolvido uma vez e só o hash vai ao banco.
-export async function criarFonteDeAlertasNoBanco(
-  nome: string,
-): Promise<{ id: string; token: string }> {
-  const criadaPorId = process.env.E2E_ADMIN_ID
-  if (!criadaPorId) {
-    throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
-  }
-  const token = `fa_${randomBytes(32).toString('base64url')}`
-  const fonte = await db.fonteDeAlertas.create({
-    data: { nome, tokenHash: hashDoTokenDeAlertas(token), criadaPorId },
-    select: { id: true },
-  })
-  return { id: fonte.id, token }
-}
-
-export async function obterFonteNoBanco(
-  id: string,
-): Promise<{ tokenHash: string; revogadaEm: Date | null; ultimoUsoEm: Date | null }> {
-  return db.fonteDeAlertas.findUniqueOrThrow({
-    where: { id },
-    select: { tokenHash: true, revogadaEm: true, ultimoUsoEm: true },
-  })
-}
-
-export async function obterFontePorNomeNoBanco(
-  nome: string,
-): Promise<{ id: string; tokenHash: string; revogadaEm: Date | null } | null> {
-  return db.fonteDeAlertas.findFirst({
-    where: { nome },
-    select: { id: true, tokenHash: true, revogadaEm: true },
-  })
-}
-
-// Todo alerta de E2E tem título começando por "E2E " (limpeza do globalSetup).
-export async function criarAlertaNoBanco(d: {
-  titulo: string
-  severidade: 'CRITICA' | 'ALTA' | 'MEDIA' | 'BAIXA'
-  recursoId?: string
-  projetoId?: string
-  origem?: 'MANUAL' | 'WEBHOOK'
-  fonteId?: string
-  chave?: string
-}): Promise<{ id: string }> {
-  const id = crypto.randomUUID()
-  const agora = new Date()
-  const origem = d.origem ?? 'MANUAL'
-  await db.alerta.create({
-    data: {
-      id,
-      chaveDedupe:
-        origem === 'WEBHOOK'
-          ? `${d.fonteId ?? 'sem-fonte'}:${d.chave ?? id}`
-          : chaveDedupeManual(id),
-      origem,
-      titulo: d.titulo,
-      severidade: d.severidade,
-      estado: 'ATIVO',
-      recursoId: d.recursoId ?? null,
-      projetoId: d.projetoId ?? null,
-      fonteId: d.fonteId ?? null,
-      primeiraOcorrenciaEm: agora,
-      ultimaOcorrenciaEm: agora,
-      ocorrencias: 1,
-    },
-  })
-  await db.eventoDeAlerta.create({ data: { alertaId: id, tipo: 'CRIADO' } })
-  return { id }
-}
-
-export async function obterAlertaNoBanco(id: string): Promise<{
-  estado: 'ATIVO' | 'RECONHECIDO' | 'RESOLVIDO_NA_ORIGEM'
-  resolvidoPorId: string | null
-}> {
-  return db.alerta.findUniqueOrThrow({
-    where: { id },
-    select: { estado: true, resolvidoPorId: true },
-  })
-}
-
-export async function obterAlertaPorTituloNoBanco(
-  titulo: string,
-): Promise<{ id: string; estado: 'ATIVO' | 'RECONHECIDO' | 'RESOLVIDO_NA_ORIGEM' } | null> {
-  return db.alerta.findFirst({ where: { titulo }, select: { id: true, estado: true } })
-}
-
-export async function contarAlertas(): Promise<number> {
-  return db.alerta.count()
-}
-
-// Volta o alerta a ATIVO para repetir uma requisição capturada contra o mesmo estado.
-export async function reativarAlertaNoBanco(id: string): Promise<void> {
-  await db.alerta.update({
-    where: { id },
-    data: { estado: 'ATIVO', reconhecidoPorId: null, reconhecidoEm: null },
-  })
-}
-
-// Alertas de webhook cuja chave (sem o prefixo da fonte) é `chave`.
-export async function obterAlertasPorChaveNoBanco(
-  chave: string,
-): Promise<{ id: string; ocorrencias: number }[]> {
-  return db.alerta.findMany({
-    where: { chaveDedupe: { endsWith: `:${chave}` } },
-    select: { id: true, ocorrencias: true },
-  })
-}
-
-// Visão Geral (Incremento 7)
-
-const PREFIXO_DA_VISAO_GERAL = 'E2E Visão Geral'
-const PREFIXO_DE_EMAIL_DA_VISAO_GERAL = 'e2e+vg-'
-// Todo registro do cenário "espera desde" esta data, para ficar entre os 5 primeiros de cada grupo
-// apesar do que outros arquivos deixam no banco.
-const DESDE_DA_VISAO_GERAL = new Date('2000-01-01T00:00:00Z')
-
-export interface CenarioE2E {
-  projetoId: string
-  projetoNome: string
-  projetoQId: string
-  projetoQNome: string
-  clienteA: { id: string; nome: string }
-  clienteB: { id: string; nome: string }
-  milestoneId: string
-  issue1: { id: string; titulo: string }
-  repoUm: string
-  repoDois: string
-  versaoAlvo: { id: string; rotulo: string }
-  divergenciaId: string
-  alerta: { id: string; titulo: string }
-  testador: { email: string; senha: string }
-}
-
-// Cenário com uma pendência de cada tipo para o administrador e uma só (homologação do cliente A)
-// para o testador escopado. Pressupõe `limparCenarioDaVisaoGeral` no `beforeEach`.
-export async function criarCenarioDaVisaoGeral(projectName: string): Promise<CenarioE2E> {
-  const [repoUm, repoDois] = repositoriosDoProjetoE2E(projectName)
-  const tituloDaIssue = repoUm.endsWith('/site') ? 'Item 1 de site' : 'Item 1 de portal'
-
-  const clienteA = await criarClienteNoBanco(nomeDeTeste('Visão Geral Cliente A'))
-  const clienteB = await criarClienteNoBanco(nomeDeTeste('Visão Geral Cliente B'))
-  const projeto = await criarProjetoNoBanco(nomeDeTeste('Visão Geral Projeto P'), [
-    clienteA.id,
-    clienteB.id,
-  ])
-  const projetoQ = await criarProjetoNoBanco(nomeDeTeste('Visão Geral Projeto Q'))
-  for (const ambiente of ['DEV', 'QA', 'PROD'] as const) {
-    await db.ambiente.create({ data: { projetoId: projeto.id, tipo: ambiente } })
-  }
-  await vincularNoBanco(projeto.id, repoUm)
-  await vincularNoBanco(projeto.id, repoDois)
-  rodarWorkerUmaVez()
-
-  const issue1 = await obterIssueNoBanco(repoUm, 1)
-  const repositorioUm = await obterRepositorioNoBanco(repoUm)
-  const milestone = await criarMilestoneNoBanco(projeto.id, nomeDeTeste('Visão Geral Milestone'), [
-    clienteA.id,
-    clienteB.id,
-  ])
-  await vincularIssuesNoBanco(milestone.id, [issue1.id])
-
-  const homologacao = async (
-    clienteId: string,
-    estado: 'PENDENTE_DE_TESTE' | 'AGUARDANDO_RETESTE',
-  ) => {
-    const h = await db.homologacao.create({ data: { clienteId, milestoneId: milestone.id } })
-    await db.homologacaoItem.create({
-      data: { homologacaoId: h.id, issueId: issue1.id, estado, atualizadoEm: DESDE_DA_VISAO_GERAL },
-    })
-  }
-  await homologacao(clienteA.id, 'PENDENTE_DE_TESTE')
-  await homologacao(clienteB.id, 'AGUARDANDO_RETESTE')
-
-  const criarVersao = (rotulo: string) => {
-    const commitSha = randomBytes(20).toString('hex')
-    return db.versao.create({
-      data: { projetoId: projeto.id, repositorioId: repositorioUm.id, commitSha, rotulo },
-      select: { id: true, rotulo: true, commitSha: true },
-    })
-  }
-  const versaoAlvo = await criarVersao('E2E v1.4.0')
-  const versaoEmProd = await criarVersao('E2E v1.3.9')
-  await db.composicaoDePublicacao.create({
-    data: {
-      projetoId: projeto.id,
-      repositorioId: repositorioUm.id,
-      versaoAlvoId: versaoAlvo.id,
-      commitBase: randomBytes(20).toString('hex'),
-      commitAlvo: versaoAlvo.commitSha,
-      origemDaBase: 'SEM_BASE',
-      hashComposicao: `hash-e2e-${versaoAlvo.id}`,
-      estado: 'IDENTIFICADA',
-      itens: [],
-      calculadaEm: DESDE_DA_VISAO_GERAL,
-    },
-  })
-  const prod = await db.ambiente.findUniqueOrThrow({
-    where: { projetoId_tipo: { projetoId: projeto.id, tipo: 'PROD' } },
-    select: { id: true },
-  })
-  const agora = new Date()
-  const evidencia = await db.evidenciaDeploy.create({
-    data: {
-      ambienteId: prod.id,
-      versaoId: versaoEmProd.id,
-      origem: 'MANUAL',
-      situacao: 'SUCESSO',
-      ocorridaEm: agora,
-      registradaEm: agora,
-      autorId: process.env.E2E_ADMIN_ID ?? null,
-    },
-    select: { id: true },
-  })
-  const divergencia = await db.divergenciaDeDeploy.create({
-    data: {
-      evidenciaId: evidencia.id,
-      versaoId: versaoEmProd.id,
-      detectadaEm: DESDE_DA_VISAO_GERAL,
-    },
-    select: { id: true },
-  })
-
-  const tituloDoAlerta = nomeDeTeste('Visão Geral alerta')
-  const alertaId = crypto.randomUUID()
-  await db.alerta.create({
-    data: {
-      id: alertaId,
-      chaveDedupe: chaveDedupeManual(alertaId),
-      origem: 'MANUAL',
-      titulo: tituloDoAlerta,
-      severidade: 'CRITICA',
-      estado: 'ATIVO',
-      projetoId: projeto.id,
-      primeiraOcorrenciaEm: DESDE_DA_VISAO_GERAL,
-      ultimaOcorrenciaEm: agora,
-      ocorrencias: 3,
-    },
-  })
-  await db.eventoDeAlerta.create({ data: { alertaId, tipo: 'CRIADO' } })
-
-  await definirSituacaoDoRepositorio(repoDois, {
-    sincronizadoEm: DESDE_DA_VISAO_GERAL,
-    ultimaFalhaEm: agora,
-    ultimaFalhaMotivo: 'Não foi possível falar com o GitHub.',
-  })
-
-  const testador = {
-    email: `${PREFIXO_DE_EMAIL_DA_VISAO_GERAL}${projectName}-${Date.now()}@local.test`,
-    senha: randomBytes(24).toString('base64url'),
-  }
-  await criarUsuarioNoBanco({
-    email: testador.email,
-    nome: 'Testador Visão Geral',
-    senha: testador.senha,
-    papel: 'TESTADOR',
-    clienteId: clienteA.id,
-  })
-
-  return {
-    projetoId: projeto.id,
-    projetoNome: projeto.nome,
-    projetoQId: projetoQ.id,
-    projetoQNome: projetoQ.nome,
-    clienteA,
-    clienteB,
-    milestoneId: milestone.id,
-    issue1: { id: issue1.id, titulo: tituloDaIssue },
-    repoUm,
-    repoDois,
-    versaoAlvo: { id: versaoAlvo.id, rotulo: versaoAlvo.rotulo },
-    divergenciaId: divergencia.id,
-    alerta: { id: alertaId, titulo: tituloDoAlerta },
-    testador,
-  }
-}
-
-// Apaga o cenário na ordem das FKs. Composições, autorizações, divergências, evidências e versões
-// dos repositórios são estado compartilhado: a composição do cenário precisa ser a mais recente
-// do repositório, então saem todas.
-export async function limparCenarioDaVisaoGeral(projectName: string): Promise<void> {
-  const doCenario = { nome: { startsWith: PREFIXO_DA_VISAO_GERAL } }
-  const projetos = await db.projeto.findMany({
-    where: doCenario,
-    select: { id: true, repositorios: { select: { nomeCompleto: true } } },
-  })
-  const projetosIds = projetos.map((p) => p.id)
-  const repositorios = [
-    ...new Set([
-      ...repositoriosDoProjetoE2E(projectName),
-      ...projetos.flatMap((p) => p.repositorios.map((r) => r.nomeCompleto)),
-    ]),
-  ]
-
-  // Autorizações, composições, divergências, evidências, homologação, presenças e versões.
-  await limparImplantacaoDosRepositoriosNoBanco(repositorios)
-  const dosProjetos = { projetoId: { in: projetosIds } }
-  await db.milestoneIssue.deleteMany({ where: { milestone: dosProjetos } })
-  await db.milestoneCliente.deleteMany({ where: { milestone: dosProjetos } })
-  await db.milestone.deleteMany({ where: dosProjetos })
-  await db.evidenciaDeploy.deleteMany({ where: { ambiente: dosProjetos } })
-  await db.ambiente.deleteMany({ where: dosProjetos })
-  await db.alerta.deleteMany({
-    where: { OR: [{ titulo: { startsWith: PREFIXO_DA_VISAO_GERAL } }, dosProjetos] },
-  })
-  await liberarRepositoriosNoBanco(repositorios)
-
-  await db.projetoCliente.deleteMany({
-    where: { OR: [{ projetoId: { in: projetosIds } }, { cliente: doCenario }] },
-  })
-  await db.projeto.deleteMany({ where: { id: { in: projetosIds } } })
-  // Projetos de outros arquivos continuam ativos e sem configuração; como cada grupo da Visão Geral
-  // mostra só 5 pendências, eles empurrariam o Projeto Q para fora do grupo "configuracao".
-  await db.projeto.updateMany({
-    where: { nome: { startsWith: 'E2E ' }, arquivadoEm: null },
-    data: { arquivadoEm: new Date() },
-  })
-  await db.usuario.deleteMany({
-    where: { email: { startsWith: PREFIXO_DE_EMAIL_DA_VISAO_GERAL, endsWith: '@local.test' } },
-  })
-  await db.cliente.deleteMany({ where: doCenario })
 }
 
 export async function contarEventosDeWebhook(deliveryId: string): Promise<number> {
@@ -1337,5 +1038,25 @@ export async function envelhecerIssueNoBanco(
   await db.repositorioGitHub.update({
     where: { id: repositorio.id },
     data: { cursorIssues: null },
+  })
+}
+
+// A máquina cujo identificador externo é o FLOW_MAQUINA_LOCAL do E2E. O nome "E2E " a
+// coloca na limpeza do setup global.
+export async function garantirMaquinaLocalNoBanco(): Promise<{ id: string }> {
+  const nome = 'E2E Oficina local'
+  return db.recurso.upsert({
+    where: { identificadorExterno: MAQUINA_LOCAL_E2E },
+    update: {},
+    create: {
+      tipo: 'SERVIDOR',
+      nome,
+      nomeNormalizado: normalizarNome(nome),
+      identificadorExterno: MAQUINA_LOCAL_E2E,
+      provedor: 'Própria',
+      endereco: 'oficina.exemplo.test',
+      especificacao: 'i5 · 8 GB · SSD 120 GB',
+    },
+    select: { id: true },
   })
 }

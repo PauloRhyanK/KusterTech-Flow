@@ -105,7 +105,11 @@ describe('fila de desenvolvimento (integração)', () => {
     expect(itens.map(resumo).slice(3, 4)).toEqual(['P|automacao|PR #5'])
     expect(itens.some((i) => i.repositorio.endsWith('/api'))).toBe(false)
     const issue = itens.find((i) => i.referencia === 'Issue #1' && i.projeto.nome === 'P')
-    expect(issue?.href).toMatch(new RegExp(`^/projetos/${projetoP.id}/entregas/issues/`))
+    // Sem o módulo entregas, a issue abre no GitHub.
+    expect(issue).toMatchObject({
+      href: 'https://github.com/kustertech-exemplo/automacao/issues/1',
+      externo: true,
+    })
     expect(issue?.estado).toEqual({ texto: 'Aberta', tom: 'informacao' })
     expect(itens.some((i) => i.estado.tom === 'sucesso' || i.checks?.tom === 'sucesso')).toBe(false)
   })
@@ -162,8 +166,8 @@ describe('fila de desenvolvimento (integração)', () => {
     })
   })
 
-  test('fontes: execucoesPorEstado { CONCLUIDA: 2, EXECUTANDO: 1 } e zeros; automacao lido com 1 linha inválida; portal sem-seeds; projeto arquivado sai da fila e da lista de projetos', async () => {
-    const { fontes, projetos } = await listarFilaDeDesenvolvimento(admin, padrao, t0)
+  test('fontes: execucoesPorEstado { CONCLUIDA: 2, EXECUTANDO: 1 } e zeros; automacao lido com 1 linha inválida; portal sem-seeds; projeto arquivado sai da fila', async () => {
+    const { fontes } = await listarFilaDeDesenvolvimento(admin, padrao, t0)
 
     expect(fontes.execucoesPorEstado).toEqual({
       NA_FILA: 0,
@@ -193,14 +197,9 @@ describe('fila de desenvolvimento (integração)', () => {
         linhasInvalidas: 0,
       },
     ])
-    expect(projetos).toEqual([
-      { id: projetoP.id, nome: 'P' },
-      { id: projetoQ.id, nome: 'Q' },
-    ])
 
     await db.projeto.update({ where: { id: projetoQ.id }, data: { arquivadoEm: t0 } })
     const depois = await listarFilaDeDesenvolvimento(admin, padrao, t0)
-    expect(depois.projetos).toEqual([{ id: projetoP.id, nome: 'P' }])
     expect(depois.total).toBe(4)
     expect(depois.itens.every((i) => i.projeto.nome === 'P')).toBe(true)
     expect(depois.fontes.repositorios.map((r) => r.repositorio)).toEqual([
@@ -341,9 +340,10 @@ describe('execuções agrupadas e detalhe da execução (integração)', () => {
     })
     expect(d.issuesDoGitHub).toHaveLength(1)
     expect(d.issuesDoGitHub[0]).toMatchObject({ numero: 1, estado: 'ABERTA' })
-    expect(d.issuesDoGitHub[0]?.href).toMatch(
-      new RegExp(`^/projetos/${projetoP.id}/entregas/issues/`),
-    )
+    expect(d.issuesDoGitHub[0]).toMatchObject({
+      href: 'https://github.com/kustertech-exemplo/automacao/issues/1',
+      externo: true,
+    })
     expect(d.linhaDoTempo.map((e) => e.titulo)).toEqual([
       'Execução registrada no Seeds',
       'PR #3 aberta pelo Warren',

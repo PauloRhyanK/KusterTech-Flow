@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { nomeDeTeste } from './support/banco'
+import { nomeDeTeste, revogarFontesDaFabricaNoBanco } from './support/banco'
 import { enviarRetratoDaFabrica, retratoDeTeste } from './support/fabrica'
 
 function obterAdmin(): { email: string; senha: string } {
@@ -9,6 +9,22 @@ function obterAdmin(): { email: string; senha: string } {
     throw new Error('E2E_ADMIN_EMAIL e E2E_ADMIN_SENHA não configuradas pelo setup.')
   }
   return { email, senha }
+}
+
+async function criarFonte(page: Page, nome: string): Promise<string> {
+  await page.goto('/configuracoes/fabrica')
+  await page.getByLabel('Nome').fill(nome)
+  await page.getByRole('button', { name: 'Criar token' }).click()
+  await expect(page.getByText('Token criado.')).toBeVisible()
+  return (await page.locator('code').first().textContent())?.trim() ?? ''
+}
+
+async function revogarFonte(page: Page, nome: string): Promise<void> {
+  await page.goto('/configuracoes/fabrica')
+  const linha = page.getByRole('listitem').filter({ hasText: nome })
+  await linha.getByRole('button', { name: 'Revogar' }).click()
+  await linha.getByRole('button', { name: 'Confirmar revogação' }).click()
+  await expect(page.getByText('Token revogado.')).toBeVisible()
 }
 
 async function entrarComoAdmin(page: Page): Promise<void> {
@@ -39,9 +55,8 @@ test('admin cria token em Configurações, a máquina envia um retrato e a Centr
   const envio = await enviarRetratoDaFabrica(request, token, retratoDeTeste(feature))
   expect(envio.status).toBe(200)
 
-  await page.goto('/desenvolvimento')
-  await page.getByRole('link', { name: 'Fábrica de agentes', exact: true }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Fábrica de agentes' })).toBeVisible()
+  await page.goto('/fabrica')
+  await expect(page.getByRole('heading', { level: 1, name: 'Fábrica', exact: true })).toBeVisible()
   await expect(page.getByText(feature)).toBeVisible()
   await expect(page.getByRole('region', { name: 'Vagas e memória' })).toContainText('5120 MB')
   await expect(page.getByText(/Dados recebidos em/)).toBeVisible()
@@ -59,4 +74,38 @@ test('admin cria token em Configurações, a máquina envia um retrato e a Centr
 
   const depois = await enviarRetratoDaFabrica(request, token, retratoDeTeste(feature))
   expect(depois.status).toBe(401)
+})
+
+test('a aba Avisos mostra os avisos do retrato e o contador', async ({ page, request }) => {
+  await entrarComoAdmin(page)
+  const nomeDaFonte = nomeDeTeste('Fonte dos avisos')
+  const token = await criarFonte(page, nomeDaFonte)
+  const mensagem = nomeDeTeste('Vaga reduzida por falta de memória')
+  const retrato = {
+    ...retratoDeTeste(nomeDeTeste('Plano dos avisos')),
+    avisos: [{ em: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), mensagem }],
+  }
+  expect((await enviarRetratoDaFabrica(request, token, retrato)).status).toBe(200)
+
+  await page.goto('/fabrica')
+  const abas = page.getByRole('navigation', { name: 'Seções da Fábrica' })
+  await expect(abas.getByRole('link', { name: 'Avisos' })).toContainText('1')
+  await abas.getByRole('link', { name: 'Avisos' }).click()
+  await expect(page).toHaveURL(/\/fabrica\/avisos$/)
+  await expect(page.getByText(mensagem)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Planos na fila' })).toHaveCount(0)
+
+  await revogarFonte(page, nomeDaFonte)
+})
+
+test('sem retrato, /fabrica e /fabrica/avisos mostram que a Fábrica ainda não enviou o estado', async ({
+  page,
+}) => {
+  await revogarFontesDaFabricaNoBanco()
+  await entrarComoAdmin(page)
+
+  for (const rota of ['/fabrica', '/fabrica/avisos']) {
+    await page.goto(rota)
+    await expect(page.getByText('A Fábrica ainda não enviou o estado.')).toBeVisible()
+  }
 })

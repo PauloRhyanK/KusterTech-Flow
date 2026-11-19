@@ -53,7 +53,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
-test('Jornada B de ponta a ponta: milestone, issues, correção, contexto de Acme com ida e volta e isolamento de Beta', async ({
+test('Jornada B de ponta a ponta: milestone, issues, correção, contexto de Acme com ida e volta e isolamento de Beta @congelado', async ({
   page,
   browser,
 }, testInfo) => {

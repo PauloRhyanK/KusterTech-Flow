@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { MAQUINA_LOCAL_E2E, PASTA_DA_OFICINA } from './e2e/support/oficina'
 import { SEGREDO_DE_WEBHOOK_E2E } from './e2e/support/webhook'
 
 if (!process.env.DATABASE_URL_TEST && typeof process.loadEnvFile === 'function') {
@@ -19,6 +20,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  grepInvert: process.env.FLOW_MODULOS_EXTRAS ? undefined : /@congelado/,
   reporter: [['list'], ['html', { open: 'never' }]],
   globalSetup: './e2e/support/global-setup.ts',
   use: {
@@ -54,6 +56,10 @@ export default defineConfig({
       ...process.env,
       DATABASE_URL: urlBancoTeste,
       GITHUB_WEBHOOK_SECRET: SEGREDO_DE_WEBHOOK_E2E,
+      // Painel da máquina local: as specs gravam o cenário que precisam nesta pasta e
+      // voltam ao 'vazia' (setup global) ao terminar.
+      OFICINA_DIR: PASTA_DA_OFICINA,
+      FLOW_MAQUINA_LOCAL: MAQUINA_LOCAL_E2E,
     },
   },
 })

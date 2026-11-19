@@ -15,36 +15,51 @@ export interface ItemDeNavegacao {
   descricao: string
 }
 
-export const MODULOS: readonly ItemDeNavegacao[] = [
+export interface GrupoDeNavegacao {
+  rotulo: string
+  itens: readonly ItemDeNavegacao[]
+}
+
+export const GRUPOS_DE_NAVEGACAO: readonly GrupoDeNavegacao[] = [
   {
-    rotulo: 'Visão Geral',
-    href: '/',
-    icone: LayoutDashboard,
-    descricao: 'Pendências prioritárias; resumos de projetos e infraestrutura',
+    rotulo: 'Trabalho',
+    itens: [
+      {
+        rotulo: 'Início',
+        href: '/',
+        icone: LayoutDashboard,
+        descricao: 'O que espera você e o resumo dos projetos',
+      },
+      {
+        rotulo: 'Fábrica',
+        href: '/fabrica',
+        icone: Bot,
+        descricao: 'Agentes, fila e execuções',
+      },
+    ],
   },
   {
-    rotulo: 'Clientes',
-    href: '/clientes',
-    icone: Building2,
-    descricao: 'Acompanhamento dos clientes e seus projetos',
-  },
-  {
-    rotulo: 'Projetos',
-    href: '/projetos',
-    icone: FolderKanban,
-    descricao: 'Gestão global de projetos, entregas e homologações',
-  },
-  {
-    rotulo: 'Infraestrutura',
-    href: '/infraestrutura',
-    icone: Server,
-    descricao: 'Inventário, recursos, alertas e diagnóstico',
-  },
-  {
-    rotulo: 'Central de Desenvolvimento',
-    href: '/desenvolvimento',
-    icone: Bot,
-    descricao: 'Issues, PRs e execuções de agentes',
+    rotulo: 'Cadastro',
+    itens: [
+      {
+        rotulo: 'Clientes',
+        href: '/clientes',
+        icone: Building2,
+        descricao: 'Acompanhamento dos clientes e seus projetos',
+      },
+      {
+        rotulo: 'Projetos',
+        href: '/projetos',
+        icone: FolderKanban,
+        descricao: 'Gestão global de projetos, entregas e homologações',
+      },
+      {
+        rotulo: 'Máquinas',
+        href: '/maquinas',
+        icone: Server,
+        descricao: 'Inventário, recursos e diagnóstico',
+      },
+    ],
   },
 ]
 
@@ -58,7 +73,7 @@ export const ENTRADAS_SECUNDARIAS: readonly ItemDeNavegacao[] = [
 ]
 
 export function itemAtivo(pathname: string): ItemDeNavegacao | undefined {
-  const todosOsItens = [...MODULOS, ...ENTRADAS_SECUNDARIAS]
+  const todosOsItens = [...GRUPOS_DE_NAVEGACAO.flatMap((g) => g.itens), ...ENTRADAS_SECUNDARIAS]
   return todosOsItens.find((item) => {
     if (item.href === '/') {
       return pathname === '/'

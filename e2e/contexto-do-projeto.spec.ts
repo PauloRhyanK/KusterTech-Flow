@@ -24,7 +24,7 @@ async function fazerLogin(page: Page, email: string, senha: string): Promise<voi
   await expect(page).toHaveURL(/\/$/)
 }
 
-test('admin: /projetos/<P> mostra seis abas, trilha Projetos › P e checklist com Clientes concluído; /clientes/<A>/projetos/<P> mostra três abas, trilha Clientes › A › P, o mesmo nome, "contexto de A" e "Ver na visão global" com href /projetos/<P>', async ({
+test('admin: /projetos/<P> mostra seis abas, trilha Projetos › P e checklist com Clientes concluído; /clientes/<A>/projetos/<P> mostra três abas, trilha Clientes › A › P, o mesmo nome, "contexto de A" e "Ver na visão global" com href /projetos/<P> @congelado', async ({
   page,
 }) => {
   const { email, senha } = obterAdmin()
@@ -54,8 +54,8 @@ test('admin: /projetos/<P> mostra seis abas, trilha Projetos › P e checklist c
   await expect(navAbasGlobal.getByRole('link', { name: /Entregas/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Homologação/ })).toBeVisible()
   await expect(navAbasGlobal.getByRole('link', { name: /Publicações/ })).toBeVisible()
-  await expect(navAbasGlobal.getByRole('link', { name: /Saúde e Erros/ })).toBeVisible()
-  await expect(navAbasGlobal.getByRole('link', { name: /Recursos/ })).toBeVisible()
+  await expect(navAbasGlobal.getByRole('link', { name: /Desenvolvimento/ })).toBeVisible()
+  await expect(navAbasGlobal.getByRole('link', { name: /Máquinas/ })).toBeVisible()
 
   // Checklist com Clientes concluído
   const listaChecklist = page.getByRole('list', { name: 'Configuração do projeto' })
@@ -92,7 +92,7 @@ test('admin: /projetos/<P> mostra seis abas, trilha Projetos › P e checklist c
   await expect(linkVerGlobal).toHaveAttribute('href', `/projetos/${projetoP.id}`)
 })
 
-test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "Associar clientes" → /projetos/<p>/configuracao; GitHub, Milestones e Ambientes pendentes; editar e associar funcionam (UX-03, A13)', async ({
+test('admin: projeto novo sem clientes: checklist com Clientes pendente e link "Associar clientes" → /projetos/<p>/configuracao; GitHub, Milestones e Ambientes pendentes; editar e associar funcionam (UX-03, A13) @congelado', async ({
   page,
 }) => {
   const { email, senha } = obterAdmin()
@@ -196,7 +196,7 @@ test('testador de A: /clientes/<A>/projetos/<P> abre sem "Ver na visão global" 
   ).toBeVisible()
 })
 
-test('no mobile (390 px), as abas cabem sem rolagem horizontal da página e são navegáveis por teclado; a aba ativa tem aria-current', async ({
+test('no mobile (390 px), as abas cabem sem rolagem horizontal da página e são navegáveis por teclado; a aba ativa tem aria-current @congelado', async ({
   page,
 }) => {
   const { email, senha } = obterAdmin()

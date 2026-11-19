@@ -6,9 +6,12 @@ import {
   LIMITE_DO_CORPO_DO_RETRATO,
   minutosDeAtraso,
   PREFIXO_DO_TOKEN_DA_FABRICA,
+  planosEmCurso,
+  resumirPlano,
   retratoDesatualizado,
   validarNomeDaFonteDaFabrica,
 } from './model'
+import type { RetratoV1 } from './contrato'
 
 const AGORA = new Date('2026-11-03T12:00:00Z')
 const em = (iso: string): Date => new Date(iso)
@@ -80,5 +83,76 @@ describe('fabrica / model', () => {
     expect(minutosDeAtraso(em('2026-11-03T11:58:30Z'), AGORA)).toBe(1)
     expect(minutosDeAtraso(em('2026-11-03T11:53:00Z'), AGORA)).toBe(7)
     expect(minutosDeAtraso(em('2026-11-03T12:01:00Z'), AGORA)).toBe(0)
+  })
+})
+
+type PlanoDoRetrato = RetratoV1['planos'][number]
+type EstadoDaRaia = PlanoDoRetrato['fases'][number]['raias'][number]['estado']
+
+const fase = (id: string, raias: EstadoDaRaia[]): PlanoDoRetrato['fases'][number] => ({
+  id,
+  raias: raias.map((estado, i) => ({ id: `${id}-r${i}`, estado })),
+})
+
+function plano(sobrepor: Partial<PlanoDoRetrato> = {}): PlanoDoRetrato {
+  return {
+    id: 'p1',
+    repo: 'kustertech-exemplo/automacao',
+    feature: 'Exemplo',
+    estado: 'ativo',
+    entrouEm: '2026-11-03T10:00:00Z',
+    faseAtual: null,
+    fases: [],
+    pausado: null,
+    decisoes: [],
+    orquestradorAtivo: true,
+    ...sobrepor,
+  }
+}
+
+describe('fabrica / resumo dos planos', () => {
+  test('resumirPlano soma as raias de todas as fases', () => {
+    const r = resumirPlano(
+      plano({
+        fases: [
+          fase('f1', ['concluida', 'concluida']),
+          fase('f2', ['executando', 'falhou', 'planejada']),
+        ],
+        faseAtual: 'f2',
+        decisoes: [{ titulo: 'a', url: 'https://github.com/x/y/issues/1' }],
+        pausado: 'sem vaga',
+      }),
+    )
+    expect(r.raias).toEqual({ concluidas: 2, executando: 1, falharam: 1, planejadas: 1, total: 5 })
+    expect(r.indiceDaFase).toBe(2)
+    expect(r.totalDeFases).toBe(2)
+    expect(r.decisoes).toBe(1)
+    expect(r.pausado).toBe('sem vaga')
+    expect(r.id).toBe('p1')
+    expect(r.estado).toBe('ativo')
+  })
+
+  test('faseAtual que não existe nas fases dá índice nulo', () => {
+    expect(
+      resumirPlano(plano({ fases: [fase('f1', [])], faseAtual: 'zzz' })).indiceDaFase,
+    ).toBeNull()
+    expect(
+      resumirPlano(plano({ fases: [fase('f1', [])], faseAtual: null })).indiceDaFase,
+    ).toBeNull()
+  })
+
+  test('planosEmCurso deixa de fora concluido e removido, e ordena ativo, admitindo, pausado, aguardando', () => {
+    const retrato = {
+      planos: [
+        plano({ id: 'a', estado: 'aguardando', entrouEm: '2026-11-03T09:00:00Z' }),
+        plano({ id: 'c', estado: 'concluido' }),
+        plano({ id: 'p', estado: 'pausado' }),
+        plano({ id: 'r', estado: 'removido' }),
+        plano({ id: 'x2', estado: 'ativo', entrouEm: '2026-11-03T11:00:00Z' }),
+        plano({ id: 'd', estado: 'admitindo' }),
+        plano({ id: 'x1', estado: 'ativo', entrouEm: '2026-11-03T08:00:00Z' }),
+      ],
+    } as RetratoV1
+    expect(planosEmCurso(retrato).map((p) => p.id)).toEqual(['x1', 'x2', 'd', 'p', 'a'])
   })
 })

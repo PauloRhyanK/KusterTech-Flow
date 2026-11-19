@@ -121,7 +121,7 @@ function secao(page: Page, nomeCompleto: string) {
   return page.getByRole('region', { name: nomeCompleto })
 }
 
-test('seção de repoUm: base pela evidência, composição identificada, #2 com QA aprovado e aviso de Beta; autoriza sem disparar deploy', async ({
+test('seção de repoUm: base pela evidência, composição identificada, #2 com QA aprovado e aviso de Beta; autoriza sem disparar deploy @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -161,7 +161,7 @@ test('seção de repoUm: base pela evidência, composição identificada, #2 com
   expect(evidenciasAntes).toBe(1)
 })
 
-test('projeto sem ambientes mostra "O ambiente PROD não está configurado." com link para a configuração', async ({
+test('projeto sem ambientes mostra "O ambiente PROD não está configurado." com link para a configuração @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -181,7 +181,7 @@ test('projeto sem ambientes mostra "O ambiente PROD não está configurado." com
   )
 })
 
-test('testador escopado de Acme vê "Sem permissão para esta área."; POST de autorizar do admin reenviado pelo testador e por um aprovador global não grava; pelo admin grava', async ({
+test('testador escopado de Acme vê "Sem permissão para esta área."; POST de autorizar do admin reenviado pelo testador e por um aprovador global não grava; pelo admin grava @congelado', async ({
   page,
   browser,
 }, testInfo) => {
@@ -249,7 +249,7 @@ test('testador escopado de Acme vê "Sem permissão para esta área."; POST de a
   expect(await contarAutorizacoesProd(c.repoUm)).toBe(1)
 })
 
-test('repoDois: a seção mostra uma divergência de <Dn curto> com "Deploy em PROD sem autorização registrada"; nenhum "bloque" na seção; reconhecer → "Reconhecida por Admin E2E em"; contarAutorizacoesProd(repoDois) = 0', async ({
+test('repoDois: a seção mostra uma divergência de <Dn curto> com "Deploy em PROD sem autorização registrada"; nenhum "bloque" na seção; reconhecer → "Reconhecida por Admin E2E em"; contarAutorizacoesProd(repoDois) = 0 @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -276,7 +276,7 @@ test('repoDois: a seção mostra uma divergência de <Dn curto> com "Deploy em P
   expect((await obterDivergenciasNoBanco(c.repoDois))[0]?.reconhecidaEm).not.toBeNull()
 })
 
-test('repoUm autorizado, registrarDeployProdNoBanco(Mn) e worker: "Em PROD" mostra <Mn curto>, nenhuma divergência; registra verificação → "Verificação registrada." e "Verificada manualmente em produção"', async ({
+test('repoUm autorizado, registrarDeployProdNoBanco(Mn) e worker: "Em PROD" mostra <Mn curto>, nenhuma divergência; registra verificação → "Verificação registrada." e "Verificada manualmente em produção" @congelado', async ({
   page,
 }, testInfo) => {
   const admin = obterAdmin()
@@ -313,7 +313,7 @@ test('repoUm autorizado, registrarDeployProdNoBanco(Mn) e worker: "Em PROD" most
   expect(await contarVerificacoesProd(c.repoUm)).toBe(1)
 })
 
-test('testador escopado reenvia o POST de reconhecer capturado do admin (desfeito antes pelo banco): reconhecidaEm continua nulo', async ({
+test('testador escopado reenvia o POST de reconhecer capturado do admin (desfeito antes pelo banco): reconhecidaEm continua nulo @congelado', async ({
   page,
   browser,
 }, testInfo) => {

@@ -470,3 +470,30 @@ export function motivoDeEsperaDaSeed(
   }
   return null
 }
+
+export interface DestinoDaIssue {
+  href: string
+  externo: boolean
+}
+
+// Com o módulo entregas congelado, a página da issue não existe: o link vai para o GitHub.
+export function destinoDaIssue(
+  issue: { id: string; urlHtml: string },
+  projetoId: string,
+  entregasAtivo: boolean,
+): DestinoDaIssue
+export function destinoDaIssue(
+  issue: { id: string; urlHtml: string },
+  projetoId: string | null,
+  entregasAtivo: boolean,
+): DestinoDaIssue | null
+export function destinoDaIssue(
+  issue: { id: string; urlHtml: string },
+  projetoId: string | null,
+  entregasAtivo: boolean,
+): DestinoDaIssue | null {
+  if (!entregasAtivo) return { href: issue.urlHtml, externo: true }
+  return projetoId
+    ? { href: `/projetos/${projetoId}/entregas/issues/${issue.id}`, externo: false }
+    : null
+}

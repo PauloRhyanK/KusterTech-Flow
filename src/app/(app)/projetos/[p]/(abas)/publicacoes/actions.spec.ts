@@ -4,6 +4,11 @@ import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import type { SessaoAtual } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 
+// Módulo congelado: o teste roda com ele ligado.
+vi.hoisted(() => {
+  process.env.FLOW_MODULOS_EXTRAS = 'entregas,ambientes,homologacao,publicacao'
+})
+
 const {
   redirectMock,
   revalidatePathMock,

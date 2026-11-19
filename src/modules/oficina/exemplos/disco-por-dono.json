@@ -1,0 +1,25 @@
+{
+  "em": "2026-11-18T10:00:00-03:00",
+  "donos": [
+    {
+      "nome": "docker",
+      "bytes": 21474836480
+    },
+    {
+      "nome": "fabrica",
+      "bytes": 8589934592
+    },
+    {
+      "nome": "runners",
+      "bytes": 4294967296
+    },
+    {
+      "nome": "backups",
+      "bytes": 2147483648
+    },
+    {
+      "nome": "outros",
+      "bytes": 11811160064
+    }
+  ]
+}

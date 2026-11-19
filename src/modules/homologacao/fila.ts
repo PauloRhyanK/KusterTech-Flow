@@ -131,6 +131,7 @@ export async function atualizarFilaDeHomologacao(agora: Date): Promise<{ itensCr
 
 export const tarefaAtualizarFila: TarefaDoWorker = {
   nome: 'atualizar-fila-de-homologacao',
+  modulo: 'homologacao',
   async executar(agora) {
     const { itensCriados } = await atualizarFilaDeHomologacao(agora)
     if (itensCriados > 0) {

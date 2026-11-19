@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
+import { respostaDeApiNaoEncontrada } from '@/lib/api-nao-encontrada'
 import { log } from '@/lib/log'
+import { moduloAtivo } from '@/lib/modulos'
 import {
   LIMITE_DO_CORPO_DO_ENDPOINT,
   registrarEvidenciaPorToken,
@@ -34,6 +36,7 @@ async function lerCorpoLimitado(request: Request): Promise<string | null> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!moduloAtivo('ambientes')) return respostaDeApiNaoEncontrada()
   const declarado = Number(request.headers.get('content-length') ?? 0)
   if (declarado > LIMITE_DO_CORPO_DO_ENDPOINT) {
     return NextResponse.json(CORPO_GRANDE, { status: 413 })

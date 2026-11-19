@@ -1,0 +1,42 @@
+import { render, screen, within } from '@testing-library/react'
+import { describe, expect, test } from 'vitest'
+import { FiltrosDaFila } from './filtros-da-fila'
+
+describe('FiltrosDaFila', () => {
+  test('formulário GET com Situação e Origem refletindo os filtros atuais', () => {
+    render(
+      <FiltrosDaFila
+        acao="/projetos/p-2/desenvolvimento"
+        filtros={{ projetoId: 'p-2', situacao: 'intervencao', origem: 'warren' }}
+      />,
+    )
+
+    expect(screen.getByLabelText('Situação')).toHaveValue('intervencao')
+    expect(screen.getByLabelText('Origem')).toHaveValue('warren')
+    const situacao = within(screen.getByLabelText('Situação'))
+    expect(situacao.getByRole('option', { name: 'Todos' })).toHaveValue('todos')
+    expect(screen.getByRole('option', { name: 'Em aberto' })).toHaveValue('abertos')
+    expect(screen.getByRole('option', { name: 'Requer intervenção' })).toHaveValue('intervencao')
+    expect(screen.getByRole('option', { name: 'Encerrados' })).toHaveValue('encerrados')
+    expect(screen.getByRole('button', { name: 'Filtrar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Filtrar' }).closest('form')).toHaveAttribute(
+      'method',
+      'GET',
+    )
+  })
+
+  test('não mostra o campo Projeto (fixado pela rota) e envia o formulário para a ação dada', () => {
+    render(
+      <FiltrosDaFila
+        acao="/projetos/p-2/desenvolvimento"
+        filtros={{ projetoId: 'p-2', situacao: 'abertos', origem: 'todas' }}
+      />,
+    )
+    expect(screen.queryByLabelText('Projeto')).toBeNull()
+    expect(screen.getByLabelText('Situação')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Filtrar' }).closest('form')).toHaveAttribute(
+      'action',
+      '/projetos/p-2/desenvolvimento',
+    )
+  })
+})

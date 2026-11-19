@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { prepararPastaDaOficina } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { garantirBancoDeTeste } from '../../tests/support/banco-de-teste-compartilhado'
 
@@ -23,6 +24,9 @@ export default async function globalSetup(): Promise<void> {
 
   process.env.DATABASE_URL = urlTeste
 
+  // A oficina começa vazia: sem leitura, nenhum aviso chega ao Início.
+  prepararPastaDaOficina('vazia')
+
   await garantirBancoDeTeste(urlTeste)
 
   execFileSync('pnpm', ['prisma', 'migrate', 'deploy'], {
@@ -38,10 +42,6 @@ export default async function globalSetup(): Promise<void> {
 
   const { db } = await import('@/lib/db')
   try {
-    // Importado aqui porque `banco.ts` carrega o cliente do banco, que precisa da URL de teste já definida.
-    const { limparCenarioDaVisaoGeral } = await import('./banco')
-    await limparCenarioDaVisaoGeral('desktop')
-    await limparCenarioDaVisaoGeral('mobile')
     const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
     await db.repositorioGitHub.updateMany({
       where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
@@ -105,18 +105,6 @@ export default async function globalSetup(): Promise<void> {
     })
     // Sem esta linha o worker considera o catálogo recente e não recataloga os repositórios apagados.
     await db.integracaoGitHub.deleteMany({})
-
-    // Alertas e fontes antes dos recursos e projetos (FK RESTRICT em recursoId); eventos em cascata.
-    await db.alerta.deleteMany({
-      where: {
-        OR: [
-          { titulo: { startsWith: 'E2E ' } },
-          { recurso: { nome: { startsWith: 'E2E ' } } },
-          { projeto: { nome: { startsWith: 'E2E ' } } },
-        ],
-      },
-    })
-    await db.fonteDeAlertas.deleteMany({ where: { nome: { startsWith: 'E2E ' } } })
 
     // Infraestrutura: vínculos e hospedagem antes dos recursos (FK RESTRICT em hospedadoEmId).
     await db.recursoProjeto.deleteMany({

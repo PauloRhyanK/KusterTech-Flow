@@ -1,0 +1,12 @@
+# Backup externo diário da oficina. Instalação e restauração: docs/infra/oficina.md.
+[Unit]
+Description=Backup externo diário da oficina (Postgres da KusterTech e configuração da Fábrica)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/oficina/backup-oficina.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h

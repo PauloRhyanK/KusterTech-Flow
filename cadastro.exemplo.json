@@ -1,0 +1,51 @@
+{
+  "clientes": [
+    { "nome": "Cliente Exemplo Um", "observacoes": "Cliente fictício para demonstração." },
+    { "nome": "Cliente Exemplo Dois" }
+  ],
+  "projetos": [
+    {
+      "nome": "Projeto Aurora",
+      "descricao": "Projeto fictício compartilhado entre dois clientes.",
+      "clientes": ["Cliente Exemplo Um", "Cliente Exemplo Dois"],
+      "repositorios": ["exemplo-org/aurora-web"]
+    },
+    {
+      "nome": "Projeto Boreal",
+      "descricao": "Projeto fictício de um único cliente.",
+      "clientes": ["Cliente Exemplo Um"],
+      "repositorios": []
+    },
+    {
+      "nome": "Projeto Interno Exemplo",
+      "descricao": "Projeto fictício sem cliente.",
+      "clientes": [],
+      "repositorios": []
+    }
+  ],
+  "maquinas": [
+    {
+      "nome": "Servidor Exemplo",
+      "tipo": "SERVIDOR",
+      "provedor": "Provedor Exemplo",
+      "endereco": "192.0.2.10",
+      "especificacao": "4 vCPU, 8 GB de RAM",
+      "custoMensal": 40,
+      "projetos": ["Projeto Aurora"]
+    },
+    {
+      "nome": "Banco Exemplo",
+      "tipo": "BANCO",
+      "hospedadaEm": "Servidor Exemplo",
+      "projetos": ["Projeto Aurora", "Projeto Boreal"]
+    },
+    {
+      "nome": "Armazenamento Exemplo",
+      "tipo": "STORAGE",
+      "identificadorExterno": "bucket-exemplo",
+      "provedor": "Provedor Exemplo",
+      "custoMensal": 5.5,
+      "projetos": ["Projeto Interno Exemplo"]
+    }
+  ]
+}

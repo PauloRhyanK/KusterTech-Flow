@@ -39,11 +39,6 @@ model Usuario {
   autorizacoesProd         AutorizacaoProd[]
   verificacoesProd         VerificacaoProd[]
   divergenciasReconhecidas DivergenciaDeDeploy[]
-  fontesDeAlertasCriadas   FonteDeAlertas[]
-  alertasCriados           Alerta[]                @relation("AlertaCriadoPor")
-  alertasReconhecidos      Alerta[]                @relation("AlertaReconhecidoPor")
-  alertasResolvidos        Alerta[]                @relation("AlertaResolvidoPor")
-  eventosDeAlerta          EventoDeAlerta[]
   fontesDaFabricaCriadas   FonteDaFabrica[]
 }
 
@@ -114,7 +109,6 @@ model Projeto {
   composicoesDePublicacao ComposicaoDePublicacao[]
   autorizacoesProd        AutorizacaoProd[]
   recursos                RecursoProjeto[]
-  alertas                 Alerta[]
 }
 
 model ProjetoCliente {
@@ -719,33 +713,6 @@ enum TipoRecurso {
   OUTRO
 }
 
-// A ordem dos valores é a ordem da fila de alertas (orderBy do Prisma segue a declaração do enum).
-enum EstadoAlerta {
-  ATIVO
-  RECONHECIDO
-  RESOLVIDO_NA_ORIGEM
-}
-
-enum OrigemAlerta {
-  WEBHOOK
-  MANUAL
-}
-
-// A ordem dos valores é a ordem da fila de alertas.
-enum SeveridadeAlerta {
-  CRITICA
-  ALTA
-  MEDIA
-  BAIXA
-}
-
-enum TipoEventoAlerta {
-  CRIADO
-  RECONHECIDO
-  RESOLVIDO
-  REABERTO
-}
-
 // Recurso é arquivado, nunca apagado; só um SERVIDOR hospeda (hospedadoEmId).
 model Recurso {
   id                   String           @id @default(uuid())
@@ -754,9 +721,10 @@ model Recurso {
   nomeNormalizado      String           @unique
   identificadorExterno String?          @unique
   descricao            String?
-  urlBeszel            String?
-  urlGlitchTip         String?
-  urlHostDocker        String?
+  provedor             String?
+  endereco             String?
+  especificacao        String?
+  custoMensal          Decimal?         @db.Decimal(10, 2)
   hospedadoEmId        String?
   arquivadoEm          DateTime?
   criadoEm             DateTime         @default(now())
@@ -764,7 +732,6 @@ model Recurso {
   hospedadoEm          Recurso?         @relation("RecursoHospedado", fields: [hospedadoEmId], references: [id], onDelete: Restrict)
   hospedados           Recurso[]        @relation("RecursoHospedado")
   projetos             RecursoProjeto[]
-  alertas              Alerta[]
 
   @@index([tipo])
   @@index([hospedadoEmId])
@@ -779,19 +746,6 @@ model RecursoProjeto {
 
   @@id([recursoId, projetoId])
   @@index([projetoId])
-}
-
-// O token é mostrado uma única vez; no banco só o hash.
-model FonteDeAlertas {
-  id          String    @id @default(uuid())
-  nome        String
-  tokenHash   String    @unique
-  criadoEm    DateTime  @default(now())
-  revogadaEm  DateTime?
-  criadaPorId String
-  ultimoUsoEm DateTime?
-  criadaPor   Usuario   @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
-  alertas     Alerta[]
 }
 
 // O token (prefixo ff_) é mostrado uma única vez; no banco só o hash.
@@ -814,51 +768,6 @@ model RetratoDaFabrica {
   recebidoEm DateTime
   conteudo   Json
   fonte      FonteDaFabrica @relation(fields: [fonteId], references: [id], onDelete: Cascade)
-}
-
-model Alerta {
-  id                   String           @id @default(uuid())
-  chaveDedupe          String           @unique
-  origem               OrigemAlerta
-  titulo               String
-  severidade           SeveridadeAlerta
-  estado               EstadoAlerta
-  recursoId            String?
-  projetoId            String?
-  primeiraOcorrenciaEm DateTime
-  ultimaOcorrenciaEm   DateTime
-  ocorrencias          Int
-  reconhecidoPorId     String?
-  reconhecidoEm        DateTime?
-  resolvidoEm          DateTime?
-  detalhe              String?
-  fonteId              String?
-  criadoPorId          String?
-  resolvidoPorId       String?
-  recurso              Recurso?         @relation(fields: [recursoId], references: [id], onDelete: Restrict)
-  projeto              Projeto?         @relation(fields: [projetoId], references: [id], onDelete: SetNull)
-  reconhecidoPor       Usuario?         @relation("AlertaReconhecidoPor", fields: [reconhecidoPorId], references: [id], onDelete: Restrict)
-  fonte                FonteDeAlertas?  @relation(fields: [fonteId], references: [id], onDelete: Restrict)
-  criadoPor            Usuario?         @relation("AlertaCriadoPor", fields: [criadoPorId], references: [id], onDelete: Restrict)
-  resolvidoPor         Usuario?         @relation("AlertaResolvidoPor", fields: [resolvidoPorId], references: [id], onDelete: Restrict)
-  eventos              EventoDeAlerta[]
-
-  @@index([estado, severidade])
-  @@index([recursoId])
-  @@index([projetoId])
-}
-
-// Só inserção (invariante 4); autorId nulo = sistema.
-model EventoDeAlerta {
-  id       String           @id @default(uuid())
-  alertaId String
-  tipo     TipoEventoAlerta
-  autorId  String?
-  criadoEm DateTime         @default(now())
-  alerta   Alerta           @relation(fields: [alertaId], references: [id], onDelete: Cascade)
-  autor    Usuario?         @relation(fields: [autorId], references: [id], onDelete: Restrict)
-
-  @@index([alertaId, criadoEm])
 }
 
 enum EstadoExecucao {

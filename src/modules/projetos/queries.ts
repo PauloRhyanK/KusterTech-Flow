@@ -1,5 +1,6 @@
 import { cache } from 'react'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { modulosAtivos } from '@/lib/modulos'
 import { contarAmbientesPorProjeto } from '@/modules/ambientes/queries'
 import {
   contarMilestonesAtivasPorProjeto,
@@ -28,7 +29,7 @@ export async function listarProjetosParaTela(
       milestones: milestonesPorProjeto.get(projeto.id) ?? 0,
     }
     // Só o estado "pendente" interessa aqui; o estado da integração não o altera.
-    const checklist = calcularChecklist(contagens, null, 'nao-configurada')
+    const checklist = calcularChecklist(contagens, null, 'nao-configurada', null, modulosAtivos())
     const configuracaoPendente = checklist.some((item) => item.estado === 'pendente')
 
     return {

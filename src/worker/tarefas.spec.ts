@@ -4,16 +4,26 @@ vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
 
 import { log } from '@/lib/log'
-import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
+import { resolverModulosAtivos } from '@/lib/modulos'
+import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
+
+const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('processar-eventos-de-webhook é a primeira tarefa e reconciliar-github a segunda', () => {
-    expect(TAREFAS_DO_CICLO[0]?.nome).toBe('processar-eventos-de-webhook')
-    expect(TAREFAS_DO_CICLO[1]?.nome).toBe('reconciliar-github')
+  test('com os módulos padrão o ciclo tem três tarefas, nesta ordem', () => {
+    const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
+      (t) => t.nome,
+    )
+    expect(nomes).toEqual([
+      'processar-eventos-de-webhook',
+      'reconciliar-github',
+      'sincronizar-execucoes-warren',
+    ])
   })
 
-  test('TAREFAS_DO_CICLO tem sincronizar-execucoes-warren logo depois de reconciliar-github e termina com calcular-composicoes e detectar-divergencias, depois de calcular-presencas e detectar-retestes', () => {
-    expect(TAREFAS_DO_CICLO.map((t) => t.nome)).toEqual([
+  test('com todos os módulos ligados o ciclo tem as dez tarefas na ordem original', () => {
+    const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
+    expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
       'reconciliar-github',
       'sincronizar-execucoes-warren',
@@ -25,32 +35,20 @@ describe('tarefas do worker', () => {
       'calcular-composicoes',
       'detectar-divergencias',
     ])
-    const nomes = TAREFAS_DO_CICLO.map((t) => t.nome)
-    expect(nomes.indexOf('calcular-composicoes')).toBeGreaterThan(
-      nomes.indexOf('calcular-presencas'),
-    )
-    expect(nomes.indexOf('calcular-composicoes')).toBeGreaterThan(
-      nomes.indexOf('detectar-retestes'),
-    )
-    expect(nomes.indexOf('detectar-divergencias')).toBeGreaterThan(
-      nomes.indexOf('sincronizar-deployments'),
-    )
-    expect(nomes.indexOf('detectar-divergencias')).toBeGreaterThan(
-      nomes.indexOf('calcular-composicoes'),
-    )
   })
 
   test('executarTarefas: a segunda lança Error("segredo ghs_x"), a terceira roda; resultado [ok, falha, ok]; log.error recebe { tarefa: "b", erro: { tipo: "Error" } } e nenhum argumento contém "ghs_x"', async () => {
     const executadas: string[] = []
     const tarefas = [
-      { nome: 'a', executar: async () => void executadas.push('a') },
+      { nome: 'a', modulo: 'github' as const, executar: async () => void executadas.push('a') },
       {
         nome: 'b',
+        modulo: 'github' as const,
         executar: async () => {
           throw new Error('segredo ghs_x')
         },
       },
-      { nome: 'c', executar: async () => void executadas.push('c') },
+      { nome: 'c', modulo: 'github' as const, executar: async () => void executadas.push('c') },
     ]
 
     const resultado = await executarTarefas(tarefas, new Date('2026-10-27T12:00:00.000Z'))

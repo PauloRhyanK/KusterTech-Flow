@@ -7,6 +7,7 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { exigirModulo } from '@/lib/modulos-rota'
 import { lerPrazo } from '@/modules/entregas/model'
 import {
   adicionarIssuesAMilestone,
@@ -123,6 +124,7 @@ export async function criarMilestoneAction(
   _estado: EstadoEntregas,
   form: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -158,6 +160,7 @@ export async function editarMilestoneAction(
   _estado: EstadoEntregas,
   form: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -187,6 +190,7 @@ export async function alternarArquivamentoDaMilestoneAction(
   estadoOuForm: EstadoEntregas | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -221,6 +225,7 @@ export async function associarClienteAMilestoneAction(
   _estado: EstadoEntregas,
   form: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -248,6 +253,7 @@ export async function removerClienteDaMilestoneAction(
   estadoOuForm: EstadoEntregas | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -276,6 +282,7 @@ export async function adicionarIssuesAMilestoneAction(
   _estado: EstadoEntregas,
   form: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -312,6 +319,7 @@ export async function removerIssueDaMilestoneAction(
   estadoOuForm: EstadoEntregas | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -340,6 +348,7 @@ export async function registrarCorrecaoAction(
   _estado: EstadoEntregas,
   form: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -378,6 +387,7 @@ export async function marcarForaDoEscopoAction(
   _estado: EstadoEntregas,
   form: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -410,6 +420,7 @@ export async function voltarAoEscopoAction(
   estadoOuForm: EstadoEntregas | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoEntregas> {
+  exigirModulo('entregas')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')

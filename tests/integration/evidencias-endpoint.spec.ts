@@ -1,10 +1,15 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { POST } from '@/app/api/evidencias/deploy/route'
 import { gerarTokenDeEvidencia, salvarAmbiente } from '@/modules/ambientes/service'
 import { criarProjeto } from '@/modules/projetos/service'
 import { limparBanco } from './banco-de-teste'
+
+// Módulos congelados: o teste roda com eles ligados.
+vi.hoisted(() => {
+  process.env.FLOW_MODULOS_EXTRAS = 'entregas,ambientes,homologacao,publicacao'
+})
 
 const admin: Sujeito = { usuarioId: 'u-admin', papeis: [{ papel: 'ADMIN', clienteId: null }] }
 const V2 = `1${'e'.repeat(39)}`

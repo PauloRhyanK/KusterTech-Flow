@@ -1,9 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
-import { sincronizarCatalogo } from '@/modules/github/reconciliacao'
-import { vincularRepositorio } from '@/modules/github/service'
 import { lerFiltrosDoInventario, listarRecursos, obterRecurso } from '@/modules/infra/queries'
 import {
   alternarArquivamentoDeRecurso,
@@ -89,10 +86,17 @@ describe('inventário de infraestrutura (integração)', () => {
     await expect(
       cadastrarRecurso(admin, {
         tipo: 'OUTRO',
-        nome: 'Url ruim',
-        urlBeszel: 'javascript:alert(1)',
+        nome: 'Custo ruim',
+        custoMensal: '-5',
       }),
-    ).rejects.toThrow('O endereço do Beszel')
+    ).rejects.toThrow('Custo mensal inválido.')
+    await expect(
+      cadastrarRecurso(admin, {
+        tipo: 'OUTRO',
+        nome: 'Provedor longo',
+        provedor: 'x'.repeat(81),
+      }),
+    ).rejects.toThrow('O provedor deve ter até 80 caracteres.')
     expect(await db.recurso.count()).toBe(1)
   })
 
@@ -179,14 +183,14 @@ describe('inventário de infraestrutura (integração)', () => {
     expect(await db.projeto.count()).toBe(2)
   })
 
-  test('listarRecursos: filtro tipo CONTAINER devolve 1 de 3; filtro projeto devolve só os associados; arquivado só aparece com situacao=arquivados; situacao de recurso sem alerta é "Sem dados"', async () => {
+  test('listarRecursos: filtro tipo CONTAINER devolve 1 de 3; filtro projeto devolve só os associados; arquivado só aparece com situacao=arquivados; recurso ativo não tem selo', async () => {
     const servidor = await cadastrarRecurso(admin, { tipo: 'SERVIDOR', nome: 'VPS 01' })
     const container = await cadastrarRecurso(admin, {
       tipo: 'CONTAINER',
       nome: 'api',
       hospedadoEmId: servidor.id,
     })
-    const banco = await cadastrarRecurso(admin, { tipo: 'BANCO', nome: 'Postgres' })
+    await cadastrarRecurso(admin, { tipo: 'BANCO', nome: 'Postgres' })
     const velho = await cadastrarRecurso(admin, { tipo: 'STORAGE', nome: 'Bucket antigo' })
     await alternarArquivamentoDeRecurso(admin, velho.id, true)
     const { id: projetoId } = await criarProjeto(admin, { nome: 'Projeto A' })
@@ -200,7 +204,7 @@ describe('inventário de infraestrutura (integração)', () => {
     expect(linhaContainer).toMatchObject({
       hospedadoEm: { id: servidor.id, nome: 'VPS 01' },
       totalDeProjetos: 1,
-      situacao: { chave: 'sem-dados', texto: 'Sem dados', tom: 'neutro' },
+      situacao: null,
     })
 
     const soContainers = await listarRecursos(admin, { ...todas, tipo: 'CONTAINER' })
@@ -212,36 +216,9 @@ describe('inventário de infraestrutura (integração)', () => {
 
     const arquivados = await listarRecursos(admin, { ...todas, situacao: 'arquivados' })
     expect(arquivados.recursos.map((r) => r.id)).toEqual([velho.id])
-    expect(arquivados.recursos[0]?.situacao.chave).toBe('arquivado')
+    expect(arquivados.recursos[0]?.situacao?.chave).toBe('arquivado')
 
-    const semDados = await listarRecursos(admin, { ...todas, situacao: 'sem-dados' })
-    expect(semDados.recursos).toHaveLength(3)
-    const comAlerta = await listarRecursos(admin, { ...todas, situacao: 'com-alerta' })
-    expect(comAlerta.recursos).toHaveLength(0)
-
-    await db.alerta.create({
-      data: {
-        chaveDedupe: 'manual:1',
-        origem: 'MANUAL',
-        titulo: 'Disco',
-        severidade: 'ALTA',
-        estado: 'ATIVO',
-        recursoId: banco.id,
-        primeiraOcorrenciaEm: new Date(),
-        ultimaOcorrenciaEm: new Date(),
-        ocorrencias: 1,
-      },
-    })
-    const comAlertaAgora = await listarRecursos(admin, { ...todas, situacao: 'com-alerta' })
-    expect(comAlertaAgora.recursos.map((r) => r.id)).toEqual([banco.id])
-    expect(comAlertaAgora.recursos[0]?.situacao).toMatchObject({
-      chave: 'com-alerta',
-      texto: '1 alerta',
-      tom: 'erro',
-    })
-    expect(
-      (await listarRecursos(admin, { ...todas, situacao: 'sem-dados' })).recursos,
-    ).toHaveLength(2)
+    expect(lerFiltrosDoInventario({ situacao: 'com-alerta' }).situacao).toBe('todas')
 
     expect(lerFiltrosDoInventario({ tipo: 'CONTAINER', situacao: 'lixo', projeto: 'x' })).toEqual({
       tipo: 'CONTAINER',
@@ -255,38 +232,42 @@ describe('inventário de infraestrutura (integração)', () => {
     })
   })
 
-  test('obterRecurso: ferramentas = Beszel + "GitHub · kustertech-exemplo/portal" (repositório vinculado ao projeto associado, catálogo de fixtures); editar não altera o tipo', async () => {
-    await sincronizarCatalogo(criarFonteFixtures(), new Date())
+  test('obterRecurso devolve os quatro campos do cadastro; editar não altera o tipo e troca o custo', async () => {
     const { id: projetoId } = await criarProjeto(admin, { nome: 'Projeto A' })
-    const portal = await db.repositorioGitHub.findFirstOrThrow({
-      where: { nomeCompleto: 'kustertech-exemplo/portal' },
-    })
-    await vincularRepositorio(admin, projetoId, portal.id)
-
     const servidor = await cadastrarRecurso(admin, {
       tipo: 'SERVIDOR',
       nome: 'VPS 01',
-      urlBeszel: 'https://beszel.exemplo.test/vps',
+      provedor: ' Hetzner ',
+      endereco: 'vps-01.exemplo.test',
+      especificacao: '2 vCPU · 4 GB',
+      custoMensal: '48,5',
     })
     const container = await cadastrarRecurso(admin, {
       tipo: 'CONTAINER',
       nome: 'api',
       hospedadoEmId: servidor.id,
-      urlBeszel: 'https://beszel.exemplo.test/api',
     })
     await associarProjetoAoRecurso(admin, container.id, projetoId)
     await associarProjetoAoRecurso(admin, servidor.id, projetoId)
     const outro = await criarProjeto(admin, { nome: 'Projeto B' })
 
     const detalhe = await obterRecurso(admin, container.id)
-    expect(detalhe.ferramentas).toEqual([
-      { rotulo: 'Beszel', href: 'https://beszel.exemplo.test/api' },
-      { rotulo: 'GitHub · kustertech-exemplo/portal', href: portal.urlHtml },
-    ])
+    expect(detalhe).toMatchObject({
+      provedor: null,
+      endereco: null,
+      especificacao: null,
+      custoMensal: null,
+    })
+    expect(await obterRecurso(admin, servidor.id)).toMatchObject({
+      provedor: 'Hetzner',
+      endereco: 'vps-01.exemplo.test',
+      especificacao: '2 vCPU · 4 GB',
+      custoMensal: '48.50',
+    })
     expect(detalhe.hospedadoEm).toEqual({ id: servidor.id, nome: 'VPS 01' })
     expect(detalhe.projetos).toEqual([{ id: projetoId, nome: 'Projeto A', arquivado: false }])
     expect(detalhe.projetosDisponiveis).toEqual([{ id: outro.id, nome: 'Projeto B' }])
-    expect(detalhe.situacao.chave).toBe('sem-dados')
+    expect(detalhe.situacao).toBeNull()
 
     const doServidor = await obterRecurso(admin, servidor.id)
     expect(doServidor.hospedados).toEqual([
@@ -297,6 +278,7 @@ describe('inventário de infraestrutura (integração)', () => {
       nome: 'api v2',
       descricao: '  Serviço público  ',
       hospedadoEmId: servidor.id,
+      custoMensal: 12,
     })
     const editado = await db.recurso.findUniqueOrThrow({ where: { id: container.id } })
     expect(editado).toMatchObject({
@@ -304,8 +286,9 @@ describe('inventário de infraestrutura (integração)', () => {
       nome: 'api v2',
       nomeNormalizado: 'api v2',
       descricao: 'Serviço público',
-      urlBeszel: null,
+      provedor: null,
     })
+    expect(editado.custoMensal?.toFixed(2)).toBe('12.00')
 
     await expect(obterRecurso(admin, 'inexistente')).rejects.toThrow('Recurso não encontrado.')
   })

@@ -2,9 +2,9 @@ import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { autorizar, ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { moduloAtivo } from '@/lib/modulos'
 import { ErroDeDominio } from '@/lib/erros'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
-import { obterResumoDeSaudeDoProjeto } from '@/modules/infra/queries'
 import { obterEntregasParaResumo } from '@/modules/entregas/queries'
 import { pendenciasDoProjeto, resumoDeHomologacaoPorMilestone } from '@/modules/homologacao/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
@@ -37,17 +37,17 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
   const { p } = await params
 
   let projetoComContagens: Awaited<ReturnType<typeof obterProjetoParaResumo>>
-  let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>>
-  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>>
-  let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>>
-  let saude: Awaited<ReturnType<typeof obterResumoDeSaudeDoProjeto>> | undefined
+  let entregas: Awaited<ReturnType<typeof obterEntregasParaResumo>> | undefined
+  let homologacao: Awaited<ReturnType<typeof resumoDeHomologacaoPorMilestone>> | undefined
+  let pendencias: Awaited<ReturnType<typeof pendenciasDoProjeto>> | undefined
   try {
     projetoComContagens = await obterProjetoParaResumo(sessao.sujeito, p, null)
-    entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'global' })
-    homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, { tipo: 'global' })
-    pendencias = await pendenciasDoProjeto(sessao.sujeito, p, { tipo: 'global' })
-    if (autorizar(sessao.sujeito, 'infraestrutura.ler')) {
-      saude = await obterResumoDeSaudeDoProjeto(sessao.sujeito, p)
+    if (moduloAtivo('entregas')) {
+      entregas = await obterEntregasParaResumo(sessao.sujeito, p, { tipo: 'global' })
+    }
+    if (moduloAtivo('homologacao')) {
+      homologacao = await resumoDeHomologacaoPorMilestone(sessao.sujeito, p, { tipo: 'global' })
+      pendencias = await pendenciasDoProjeto(sessao.sujeito, p, { tipo: 'global' })
     }
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
@@ -69,7 +69,6 @@ export default async function PaginaProjeto({ params }: PaginaProjetoProps) {
       estadoGitHub={projetoComContagens.estadoGitHub}
       homologacao={homologacao}
       pendencias={pendencias}
-      saude={saude}
       contexto={{ tipo: 'global' }}
       podeGerenciar={podeGerenciar}
     />

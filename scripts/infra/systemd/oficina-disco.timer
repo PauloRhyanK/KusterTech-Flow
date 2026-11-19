@@ -1,0 +1,9 @@
+[Unit]
+Description=Disco da oficina por dono, a cada hora
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

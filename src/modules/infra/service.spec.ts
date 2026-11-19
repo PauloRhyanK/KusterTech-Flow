@@ -11,7 +11,6 @@ const { mockDb } = vi.hoisted(() => ({
     },
     recursoProjeto: { createMany: vi.fn(), deleteMany: vi.fn() },
     projeto: { findUnique: vi.fn(), findMany: vi.fn() },
-    alerta: { findMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }))

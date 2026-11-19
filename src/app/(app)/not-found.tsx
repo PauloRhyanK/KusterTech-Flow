@@ -18,7 +18,7 @@ export default function NaoEncontrado() {
         descricao="Volte para a lista e tente de novo."
         acao={
           <Link href="/" className={buttonVariants({ variant: 'default' })}>
-            Ir para a Visão Geral
+            Ir para o Início
           </Link>
         }
       />

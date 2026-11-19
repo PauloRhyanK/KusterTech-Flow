@@ -308,7 +308,10 @@ describe('sincronizar-execucoes-warren', () => {
     const erroSilencioso = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const resultado = await executarTarefas(
-      [warren, { nome: 'depois', executar: async () => void executadas.push('depois') }],
+      [
+        warren,
+        { nome: 'depois', modulo: 'github', executar: async () => void executadas.push('depois') },
+      ],
       t0,
     )
     erroSilencioso.mockRestore()

@@ -55,7 +55,7 @@ test.beforeEach(async ({}, testInfo) => {
   await limparImplantacaoDosRepositoriosNoBanco(repositorios)
 })
 
-test('admin preenche dev, qa e production, vincula os repositórios, roda o worker: "Deployments de <repoUm>: última leitura em" visível; Resumo com Ambientes Concluído "DEV, QA e PROD configurados"', async ({
+test('admin preenche dev, qa e production, vincula os repositórios, roda o worker: "Deployments de <repoUm>: última leitura em" visível; Resumo com Ambientes Concluído "DEV, QA e PROD configurados" @congelado', async ({
   page,
 }, testInfo) => {
   const [repoUm, repoDois] = repositoriosDoProjetoE2E(testInfo.project.name)
@@ -94,7 +94,7 @@ test('admin preenche dev, qa e production, vincula os repositórios, roda o work
   await expect(ambientes.getByText('Concluído')).toBeVisible()
 })
 
-test('Gerar token na região QA mostra o token uma vez; recarregar não mostra; request.post("/api/evidencias/deploy") com ele e commitSha V2 de repoUm → 201; após "Revogar token" e confirmar → 401 "Token de evidência inválido."', async ({
+test('Gerar token na região QA mostra o token uma vez; recarregar não mostra; request.post("/api/evidencias/deploy") com ele e commitSha V2 de repoUm → 201; após "Revogar token" e confirmar → 401 "Token de evidência inválido." @congelado', async ({
   page,
   request,
 }, testInfo) => {
@@ -155,7 +155,7 @@ test('Gerar token na região QA mostra o token uma vez; recarregar não mostra; 
   expect(await contarEvidencias(projeto.id)).toBe(2)
 })
 
-test('mesmo nome "qa" em DEV mostra "Outro ambiente deste projeto já usa este nome do GitHub." em role=alert', async ({
+test('mesmo nome "qa" em DEV mostra "Outro ambiente deste projeto já usa este nome do GitHub." em role=alert @congelado', async ({
   page,
 }, testInfo) => {
   const [repoUm] = repositoriosDoProjetoE2E(testInfo.project.name)
@@ -178,7 +178,7 @@ test('mesmo nome "qa" em DEV mostra "Outro ambiente deste projeto já usa este n
   expect(await contarAmbientes(projeto.id)).toBe(3)
 })
 
-test('testador escopado: /projetos/<p>/configuracao mostra "Sem permissão para esta área."; POST forjado de salvar ambiente (capturado do admin) → contarAmbientes(projeto) inalterado', async ({
+test('testador escopado: /projetos/<p>/configuracao mostra "Sem permissão para esta área."; POST forjado de salvar ambiente (capturado do admin) → contarAmbientes(projeto) inalterado @congelado', async ({
   page,
   browser,
 }) => {

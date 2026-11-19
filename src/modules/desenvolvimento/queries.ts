@@ -2,6 +2,7 @@ import type { EstadoExecucao, Prisma, StatusDeSeed } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import { moduloAtivo } from '@/lib/modulos'
 import type { TomDeEstado } from '@/lib/ui/badge-de-estado'
 import {
   estadoDoProjeto,
@@ -11,6 +12,7 @@ import {
 import { intervaloDaIntegracao } from '@/modules/github/service'
 import {
   apresentarEstadoDaExecucao,
+  destinoDaIssue,
   ehPrDoWarren,
   linhaDoTempoDaExecucao,
   motivoDeEsperaDaSeed,
@@ -188,11 +190,9 @@ function filtrar(item: ItemParaSituacao, filtros: FiltrosDaFila): SituacaoNaFila
   }
 }
 
-async function carregarFontes(
-  agora: Date,
-): Promise<{ fontes: SituacaoDasFontes; projetos: { id: string; nome: string }[] }> {
+async function carregarFontes(agora: Date): Promise<SituacaoDasFontes> {
   const intervalo = intervaloDaIntegracao()
-  const [integracao, repositorios, projetos, porEstado] = await Promise.all([
+  const [integracao, repositorios, porEstado] = await Promise.all([
     db.integracaoGitHub.findUnique({ where: { id: 'github' } }),
     db.repositorioGitHub.findMany({
       where: REPOSITORIO_VISIVEL,
@@ -210,11 +210,6 @@ async function carregarFontes(
         seedsLinhasInvalidas: true,
       },
     }),
-    db.projeto.findMany({
-      where: { arquivadoEm: null, repositorios: { some: {} } },
-      orderBy: { nome: 'asc' },
-      select: { id: true, nome: true },
-    }),
     db.execucaoAgente.groupBy({
       by: ['estado'],
       where: { repositorio: REPOSITORIO_VISIVEL },
@@ -229,7 +224,7 @@ async function carregarFontes(
   >
   for (const g of porEstado) execucoesPorEstado[g.estado] = g._count._all
 
-  const fontes: SituacaoDasFontes = {
+  return {
     githubConfigurado: configurada,
     github: estadoDoProjeto(
       repositorios.map((r) => ({
@@ -245,8 +240,6 @@ async function carregarFontes(
     repositorios: repositorios.map((r) => leituraDoWarren(r, agora, intervalo)),
     execucoesPorEstado,
   }
-
-  return { fontes, projetos }
 }
 
 export async function listarFilaDeDesenvolvimento(
@@ -255,7 +248,6 @@ export async function listarFilaDeDesenvolvimento(
   agora: Date = new Date(),
 ): Promise<{
   fontes: SituacaoDasFontes
-  projetos: { id: string; nome: string }[]
   itens: ItemDaFila[]
   total: number
 }> {
@@ -269,7 +261,7 @@ export async function listarFilaDeDesenvolvimento(
   const whereExecucao = lerWarren ? condicaoDeExecucao(filtros.situacao) : null
   const doRepositorio = { repositorio: { ...REPOSITORIO_VISIVEL, ...doProjeto } }
 
-  const { fontes, projetos } = await carregarFontes(agora)
+  const fontes = await carregarFontes(agora)
 
   const [issues, prs, execucoes, totalIssues, totalPrs, totalExecucoes] = await Promise.all([
     whereIssue
@@ -315,6 +307,7 @@ export async function listarFilaDeDesenvolvimento(
     seedsDasExecucoes.map((s) => [`${s.repositorioId}/${s.seedId}`, s.titulo]),
   )
 
+  const entregasAtivo = moduloAtivo('entregas')
   const candidatos: { chave: ItemParaSituacao; item: ItemDaFila }[] = []
   for (const i of issues) {
     const projeto = i.repositorio.projeto
@@ -339,8 +332,7 @@ export async function listarFilaDeDesenvolvimento(
         checks: null,
         ...situacaoNaFila(item),
         abertaPeloWarren: false,
-        href: `/projetos/${projeto.id}/entregas/issues/${i.id}`,
-        externo: false,
+        ...destinoDaIssue(i, projeto.id, entregasAtivo),
         atualizadoEm: i.atualizadaNoGitHub,
       },
     })
@@ -411,7 +403,6 @@ export async function listarFilaDeDesenvolvimento(
 
   return {
     fontes,
-    projetos,
     itens: candidatos.slice(0, LIMITE_DE_LINHAS).map((c) => c.item),
     total: totalIssues + totalPrs + totalExecucoes,
   }
@@ -462,7 +453,6 @@ export async function listarExecucoesAgrupadas(
   agora: Date = new Date(),
 ): Promise<{
   fontes: SituacaoDasFontes
-  projetos: { id: string; nome: string }[]
   grupos: GrupoDeProjeto[]
 }> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
@@ -471,7 +461,7 @@ export async function listarExecucoesAgrupadas(
     ...REPOSITORIO_VISIVEL,
     ...(projetoId ? { projetoId } : {}),
   }
-  const [{ fontes, projetos: projetosDoFiltro }, seeds, execucoes] = await Promise.all([
+  const [fontes, seeds, execucoes] = await Promise.all([
     carregarFontes(agora),
     db.seedDoRepositorio.findMany({
       where: { ausenteDesde: null, repositorio: doRepositorio },
@@ -588,7 +578,7 @@ export async function listarExecucoesAgrupadas(
       semSeed: (semSeedPorProjeto.get(projeto.id) ?? []).sort(maisRecentePrimeiro),
     }))
 
-  return { fontes, projetos: projetosDoFiltro, grupos }
+  return { fontes, grupos }
 }
 
 export interface ExecucaoDetalhada extends ExecucaoResumida {
@@ -618,6 +608,7 @@ export interface ExecucaoDetalhada extends ExecucaoResumida {
     titulo: string
     estado: 'ABERTA' | 'FECHADA'
     href: string | null
+    externo: boolean
   }[]
   linhaDoTempo: EventoDaExecucao[]
 }
@@ -698,13 +689,17 @@ export async function obterExecucao(
           branch: pr.branch,
         }
       : null,
-    issuesDoGitHub: issues.map((i) => ({
-      id: i.id,
-      numero: i.numero,
-      titulo: i.titulo,
-      estado: i.estado,
-      href: projeto ? `/projetos/${projeto.id}/entregas/issues/${i.id}` : null,
-    })),
+    issuesDoGitHub: issues.map((i) => {
+      const destino = destinoDaIssue(i, projeto?.id ?? null, moduloAtivo('entregas'))
+      return {
+        id: i.id,
+        numero: i.numero,
+        titulo: i.titulo,
+        estado: i.estado,
+        href: destino?.href ?? null,
+        externo: destino?.externo ?? false,
+      }
+    }),
     linhaDoTempo: linhaDoTempoDaExecucao({
       iniciadaEm: e.iniciadaEm,
       pr: pr

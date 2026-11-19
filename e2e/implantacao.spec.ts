@@ -63,7 +63,7 @@ function linhaDoAmbiente(page: Page, tipo: 'DEV' | 'QA' | 'PROD'): Locator {
     .filter({ hasText: new RegExp(`^${tipo}`) })
 }
 
-test('issue #2: DEV e QA "Presença confirmada" com v1.4.0, PROD "Sem evidência"; issue #4 fechada: "Verificação necessária" em QA (A04); desktop em duas colunas, mobile em uma sem rolagem horizontal', async ({
+test('issue #2: DEV e QA "Presença confirmada" com v1.4.0, PROD "Sem evidência"; issue #4 fechada: "Verificação necessária" em QA (A04); desktop em duas colunas, mobile em uma sem rolagem horizontal @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -103,7 +103,7 @@ test('issue #2: DEV e QA "Presença confirmada" com v1.4.0, PROD "Sem evidência
   expect(texto).not.toMatch(/pronta para teste|testar|entregue/i)
 })
 
-test('admin confirma #4 em QA: "Confirmação manual" e "Confirmada manualmente por Admin E2E em"; o botão some', async ({
+test('admin confirma #4 em QA: "Confirmação manual" e "Confirmada manualmente por Admin E2E em"; o botão some @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -129,7 +129,7 @@ test('admin confirma #4 em QA: "Confirmação manual" e "Confirmada manualmente 
   await expect(linhaDoAmbiente(page, 'QA')).toContainText('Confirmação manual')
 })
 
-test('lista de issues da milestone (global e contexto do cliente): #2 com QA "Presença confirmada", #4 com "Verificação necessária"', async ({
+test('lista de issues da milestone (global e contexto do cliente): #2 com QA "Presença confirmada", #4 com "Verificação necessária" @congelado', async ({
   page,
 }, testInfo) => {
   const { email, senha } = obterAdmin()
@@ -152,7 +152,7 @@ test('lista de issues da milestone (global e contexto do cliente): #2 com QA "Pr
   }
 })
 
-test('testador escopado no contexto do cliente vê a coluna QA e a lateral sem SHA e sem botão; POST forjado de confirmar presença de #4 → linha continua VERIFICACAO_NECESSARIA', async ({
+test('testador escopado no contexto do cliente vê a coluna QA e a lateral sem SHA e sem botão; POST forjado de confirmar presença de #4 → linha continua VERIFICACAO_NECESSARIA @congelado', async ({
   page,
   browser,
 }, testInfo) => {

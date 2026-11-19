@@ -1,12 +1,17 @@
 import { expect, test } from '@playwright/test'
 
-const MODULOS_ROTULOS = [
-  'Visão Geral',
-  'Clientes',
-  'Projetos',
-  'Infraestrutura',
-  'Central de Desenvolvimento',
+const GRUPOS = [
+  { rotulo: 'Trabalho', itens: ['Início', 'Fábrica'] },
+  { rotulo: 'Cadastro', itens: ['Clientes', 'Projetos', 'Máquinas'] },
 ]
+const ITENS = GRUPOS.flatMap((g) => g.itens)
+const ROTAS: Record<string, string> = {
+  Início: '/',
+  Fábrica: '/fabrica',
+  Clientes: '/clientes',
+  Projetos: '/projetos',
+  Máquinas: '/maquinas',
+}
 
 function obterCredenciaisAdmin(): { email: string; senha: string } {
   const email = process.env.E2E_ADMIN_EMAIL
@@ -26,7 +31,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page).toHaveURL(/\/$/)
 })
 
-test('menu lateral mostra os cinco módulos e Configurações no rodapé', async ({
+test('menu lateral mostra os grupos Trabalho e Cadastro, os cinco itens e Configurações no rodapé', async ({
   page,
   isMobile,
 }) => {
@@ -35,20 +40,26 @@ test('menu lateral mostra os cinco módulos e Configurações no rodapé', async
   const navPrincipal = page.getByRole('navigation', { name: 'Navegação principal' })
   await expect(navPrincipal).toBeVisible()
 
-  for (const m of MODULOS_ROTULOS) {
-    await expect(navPrincipal.getByRole('link', { name: m })).toBeVisible()
+  for (const grupo of GRUPOS) {
+    await expect(navPrincipal.getByText(grupo.rotulo, { exact: true })).toBeVisible()
+    for (const item of grupo.itens) {
+      await expect(navPrincipal.getByRole('link', { name: item })).toBeVisible()
+    }
   }
+  await expect(navPrincipal.getByRole('link')).toHaveCount(ITENS.length)
+  await expect(navPrincipal.getByText('Infraestrutura')).toHaveCount(0)
+  await expect(navPrincipal.getByText('Central de Desenvolvimento')).toHaveCount(0)
 
   const linkConfig = page.getByRole('link', { name: 'Configurações' })
   await expect(linkConfig).toBeVisible()
   await expect(linkConfig).toHaveAttribute('href', '/configuracoes')
 })
 
-test('cada módulo mostra título, breadcrumb e estado não configurado sem badge de sucesso', async ({
+test('cada item leva à rota certa, com título e sem badge de sucesso', async ({
   page,
   isMobile,
 }) => {
-  for (const m of MODULOS_ROTULOS) {
+  for (const m of ITENS) {
     if (isMobile) {
       await page.getByRole('button', { name: 'Abrir navegação' }).click()
       await page.getByRole('dialog').getByRole('link', { name: m }).click()
@@ -60,13 +71,10 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
         .click()
     }
 
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(m)
-    // A Central de Desenvolvimento mostra "Conectada" na situação das fontes; a regra
-    // vale para a fila, que é onde o estado de entrega aparece.
-    const regiaoDaFila = page.getByRole('region', { name: 'Fila de desenvolvimento' })
-    if (m === 'Central de Desenvolvimento') {
-      await expect(regiaoDaFila.locator('[data-tom="sucesso"]')).toHaveCount(0)
-    } else {
+    const rota = ROTAS[m] ?? ''
+    await expect(page).toHaveURL(new RegExp(`${rota === '/' ? '/$' : `${rota}$`}`))
+    await expect(page.getByRole('heading', { level: 1, name: m, exact: true })).toBeVisible()
+    if (m !== 'Fábrica') {
       await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
     }
 
@@ -78,16 +86,12 @@ test('cada módulo mostra título, breadcrumb e estado não configurado sem badg
       const lista = page.getByRole('list', { name: 'Lista de projetos' })
       const vazio = page.locator('[data-tipo="nenhum-registro"]')
       await expect(lista.or(vazio)).toBeVisible()
-    } else if (m === 'Infraestrutura') {
+    } else if (m === 'Máquinas') {
       const lista = page.getByRole('list', { name: 'Inventário de recursos' })
       const vazio = page.locator('[data-tipo="nenhum-registro"]')
       await expect(lista.or(vazio)).toBeVisible()
-    } else if (m === 'Visão Geral') {
-      await expect(page.getByRole('heading', { level: 2, name: 'Pendências' })).toBeVisible()
-    } else if (m === 'Central de Desenvolvimento') {
-      await expect(regiaoDaFila).toBeVisible()
-    } else {
-      await expect(page.getByRole('status')).toBeVisible()
+    } else if (m === 'Início') {
+      await expect(page.getByRole('heading', { level: 2, name: 'Espera você' })).toBeVisible()
     }
   }
 })

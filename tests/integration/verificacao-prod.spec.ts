@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
@@ -7,6 +7,11 @@ import { POST } from '@/app/api/evidencias/verificacao/route'
 import { gerarTokenDeEvidencia } from '@/modules/ambientes/service'
 import { registrarVerificacaoProd } from '@/modules/publicacao/service'
 import { limparBanco } from './banco-de-teste'
+
+// Módulos congelados: o teste roda com eles ligados.
+vi.hoisted(() => {
+  process.env.FLOW_MODULOS_EXTRAS = 'entregas,ambientes,homologacao,publicacao'
+})
 
 const NOME = 'kustertech-exemplo/portal'
 const COMMIT = '1' + 'a'.repeat(39)

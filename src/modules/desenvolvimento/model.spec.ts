@@ -7,6 +7,7 @@ import {
   apresentarStatusDeSeed,
   AUTOR_WARREN,
   derivarExecucoes,
+  destinoDaIssue,
   ehPrDoWarren,
   estadoDaExecucao,
   JANELA_SEM_SINAL_MS,
@@ -693,5 +694,22 @@ describe('motivoDeEsperaDaSeed', () => {
         conhecidas,
       ),
     ).toBe('Aguarda EXEM-a003 (em andamento).')
+  })
+})
+
+describe('destinoDaIssue', () => {
+  const issue = { id: 'i-1', urlHtml: 'https://github.com/kustertech-exemplo/automacao/issues/1' }
+
+  test('com entregas congelado, a issue abre no GitHub como link externo', () => {
+    expect(destinoDaIssue(issue, 'p-1', false)).toEqual({ href: issue.urlHtml, externo: true })
+    expect(destinoDaIssue(issue, null, false)).toEqual({ href: issue.urlHtml, externo: true })
+  })
+
+  test('com entregas ativo, a issue abre na página da issue do projeto', () => {
+    expect(destinoDaIssue(issue, 'p-1', true)).toEqual({
+      href: '/projetos/p-1/entregas/issues/i-1',
+      externo: false,
+    })
+    expect(destinoDaIssue(issue, null, true)).toBeNull()
   })
 })

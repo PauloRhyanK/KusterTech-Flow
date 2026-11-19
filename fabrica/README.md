@@ -162,7 +162,7 @@ Enquanto o coordenador prepara o Warren, ele marca uma **drenagem**: todos os pl
 
 ### Painel da Fábrica na Central
 
-A cada ciclo o coordenador pode enviar um retrato do estado da Fábrica (fila, fases e raias, vagas, decisões abertas e avisos) à Central, que o mostra em `/desenvolvimento/fabrica`. É só saída: a máquina não abre porta e a Central nunca comanda a Fábrica. Sem URL, o envio fica desligado.
+A cada ciclo o coordenador pode enviar um retrato do estado da Fábrica (fila, fases e raias, vagas, decisões abertas e avisos) à Central, que o mostra em `/fabrica`. É só saída: a máquina não abre porta e a Central nunca comanda a Fábrica. Sem URL, o envio fica desligado.
 
 Para ligar, crie o token em Configurações → Fábrica de agentes na Central, grave-o num arquivo legível só pelo usuário da Fábrica e acrescente ao `~/fabrica/coordenador.env`:
 
