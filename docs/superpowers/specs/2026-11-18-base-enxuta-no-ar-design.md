@@ -225,7 +225,6 @@ O Flow não fala com o Docker nem com o sistema. Ele lê arquivos que os scripts
 | `limpezas.jsonl` | `limpar-oficina.sh` | diária | **novo** |
 | `retrato.json` | `metricas_oficina.py retrato` | 1 min | **novo** |
 | `disco-por-dono.json` | `metricas_oficina.py disco` | 1 h | **novo** |
-| `backup-ultimo.json` | `backup-oficina.sh` | diária | existe |
 
 Extensões aos scripts (em `scripts/infra/`, com teste):
 
