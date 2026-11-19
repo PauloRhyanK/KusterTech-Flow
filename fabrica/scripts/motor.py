@@ -17,6 +17,8 @@ MAX_PAGINAS_DA_BUSCA = 20
 # Janela de deduplicação do `Idempotency-Key` em POST /runs (idempotency.ts): 10 min por (projeto, chave).
 JANELA_IDEMPOTENCIA = datetime.timedelta(minutes=10)
 _DIALETOS = ("sqlite", "postgres")
+# Estados finais de um Plan Run no Warren.
+TERMINAIS_DE_PLANO = ("succeeded", "failed", "cancelled")
 _NAO_TERMINAIS_DE_RUN = ("queued", "pending", "dispatched", "running")
 # R2: causas de falha que o Warren refaz sozinho, UMA vez, num run novo com o mesmo prompt e `retryOf` apontando para
 # o original (runs/retry/infra-lost-retry.ts, INFRA_LOST_RUN_FAILURE_REASONS); filhos de Plan Run ficam de fora.
@@ -198,6 +200,10 @@ class Motor(typing.Protocol):
         """O `planRunId` cujo promptTemplate tem o marcador do nonce (ou de um da lista), entre os Plan Runs do projeto."""
         ...
 
+    def planos_do_projeto(self, projeto: str) -> list[dict]:
+        """Os Plan Runs do projeto: `[{"id", "estado", "planId"}]` (`planId` pode ser None)."""
+        ...
+
     def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
         """R2: o run que o Warren criou sozinho para substituir `run_id` (perda de infraestrutura): `retryOf == run_id`
         ou um run DIFERENTE do original com um dos nonces no prompt. `nonces` pode ser vazia (estado antigo)."""
@@ -247,6 +253,7 @@ class MotorFalso:
         self._retries: dict[str, str] = {}
         # F6: o Plan Run também só aparece na busca pelo nonce depois do atraso de visibilidade
         self._planos_criados_em: dict[str, datetime.datetime] = {}
+        self._planos_de_seeds: dict[str, tuple[str, str]] = {}
         self._projetos: list[dict] = []
 
     def _registrar(self, nome: str, **argumentos) -> None:
@@ -440,6 +447,7 @@ class MotorFalso:
         self.definir_plano(plan_run_id, "running", [])
         self._textos_enviados[plan_run_id] = (projeto, prompt_template)
         self._planos_criados_em[plan_run_id] = self.agora()
+        self._planos_de_seeds[plan_run_id] = (projeto, plano_seeds)
         self._falhar_depois()
         return plan_run_id
 
@@ -530,6 +538,14 @@ class MotorFalso:
 
     def procurar_plano(self, projeto: str, nonce: str) -> str | None:
         return self._procurar("procurar_plano", projeto, nonce, "plano-")
+
+    def planos_do_projeto(self, projeto: str) -> list[dict]:
+        self._registrar("planos_do_projeto", projeto=projeto)
+        return [
+            {"id": ident, "estado": self._planos[ident]["estado"], "planId": plano_id}
+            for ident, (proj, plano_id) in self._planos_de_seeds.items()
+            if proj == projeto and ident in self._planos
+        ]
 
     def visao_geral(self) -> dict:
         self._registrar("visao_geral")

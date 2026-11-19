@@ -1135,6 +1135,32 @@ class TestesProcurarPorNonce(unittest.TestCase):
         self.assertTrue(m.despachar_run(**ARGS_RUN))  # o modo vale só para as próximas `vezes`
 
 
+class TestesPlanosDoProjeto(unittest.TestCase):
+    def test_planos_do_projeto_falso(self):
+        m = motor.MotorFalso()
+        a = m.despachar_plano(**dict(ARGS_PLANO, plano_seeds="pl-1"))
+        b = m.despachar_plano(**dict(ARGS_PLANO, plano_seeds="pl-2"))
+        m.despachar_plano(**dict(ARGS_PLANO, projeto="outro", plano_seeds="pl-3"))
+        m.cancelar_plano(b)
+        self.assertEqual(
+            m.planos_do_projeto("kustertech-flow"),
+            [{"id": a, "estado": "running", "planId": "pl-1"}, {"id": b, "estado": "cancelled", "planId": "pl-2"}],
+        )
+        self.assertEqual(m.planos_do_projeto("vazio"), [])
+        self.assertEqual(motor.TERMINAIS_DE_PLANO, ("succeeded", "failed", "cancelled"))
+
+    def test_planos_do_projeto_warren(self):
+        m, t = novo(ok({"planRuns": [{"id": "plnr_a", "state": "running", "planId": "pl-1"}]}))
+        self.assertEqual(m.planos_do_projeto("prj"), [{"id": "plnr_a", "estado": "running", "planId": "pl-1"}])
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/plan-runs?project=prj"))
+        m, _ = novo(ok({"planRuns": [{"id": "plnr_b", "state": "failed"}]}))
+        self.assertEqual(m.planos_do_projeto("prj"), [{"id": "plnr_b", "estado": "failed", "planId": None}])
+        for corpo in ({"x": 1}, {"planRuns": "x"}):
+            m, _ = novo(ok(corpo))
+            with self.assertRaises(RuntimeError):
+                m.planos_do_projeto("prj")
+
+
 class TestesCancelarPlano(unittest.TestCase):
     def test_warren_cancela_com_post_e_corpo_vazio(self):
         m, t = novo(ok({"planRun": {"id": "p/1", "state": "cancelled"}}))

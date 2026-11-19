@@ -364,6 +364,26 @@ class MotorWarren:
         caminho = "/plan-runs?project=%s" % urllib.parse.quote(projeto, safe="")
         return self._procurar(caminho, "planRuns", "promptTemplate", nonce)
 
+    def planos_do_projeto(self, projeto: str) -> list[dict]:
+        """GET /plan-runs?project= (plan-runs.ts): `{planRuns: [{id, state, planId}]}`."""
+        caminho = "/plan-runs?project=%s" % urllib.parse.quote(projeto, safe="")
+        itens = self._json("GET", caminho).get("planRuns")
+        if not isinstance(itens, list):
+            raise RuntimeError("GET %s: resposta sem a lista 'planRuns'" % caminho)
+        planos = []
+        for item in itens:
+            if not isinstance(item, dict):
+                raise RuntimeError("GET %s: 'planRuns' tem item que não é objeto" % caminho)
+            plano_id = item.get("planId")
+            planos.append(
+                {
+                    "id": self._texto(item, "planRuns[]", "id", "GET", caminho),
+                    "estado": self._texto(item, "planRuns[]", "state", "GET", caminho),
+                    "planId": plano_id if isinstance(plano_id, str) else None,
+                }
+            )
+        return planos
+
     def procurar_retry(self, projeto: str, run_id: str, nonces: list, desde: str | None = None) -> str | None:
         """R2 (infra-lost-retry.ts): o retry automático tem `retryOf` = original e o MESMO prompt (logo, o mesmo nonce).
 
