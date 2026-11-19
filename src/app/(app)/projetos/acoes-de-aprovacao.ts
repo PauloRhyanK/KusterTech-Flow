@@ -7,6 +7,7 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { exigirModulo } from '@/lib/modulos-rota'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { aprovarMilestone } from '@/modules/homologacao/service'
 
@@ -34,6 +35,7 @@ export async function aprovarMilestoneAction(
   _anterior: EstadoDaAprovacao,
   formData: FormData,
 ): Promise<EstadoDaAprovacao> {
+  exigirModulo('homologacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')

@@ -7,6 +7,7 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { exigirModulo } from '@/lib/modulos-rota'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
 
@@ -42,6 +43,7 @@ export async function registrarAcaoDeHomologacaoAction(
   _anterior: EstadoDaAcaoDeHomologacao,
   formData: FormData,
 ): Promise<EstadoDaAcaoDeHomologacao> {
+  exigirModulo('homologacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')

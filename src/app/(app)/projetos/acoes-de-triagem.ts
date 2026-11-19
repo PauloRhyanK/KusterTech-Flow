@@ -7,6 +7,7 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { exigirModulo } from '@/lib/modulos-rota'
 import { resumirErroParaLog } from '@/modules/github/model'
 import {
   MENSAGEM_CORPO,
@@ -95,6 +96,7 @@ export async function triarSolicitacaoAction(
   _anterior: EstadoDaTriagem,
   formData: FormData,
 ): Promise<EstadoDaTriagem> {
+  exigirModulo('homologacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -164,6 +166,7 @@ export async function reclassificarSolicitacaoAction(
   _anterior: EstadoDaTriagem,
   formData: FormData,
 ): Promise<EstadoDaTriagem> {
+  exigirModulo('homologacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -207,6 +210,7 @@ export async function confirmarRetesteAction(
   _anterior: EstadoDaTriagem,
   formData: FormData,
 ): Promise<EstadoDaTriagem> {
+  exigirModulo('homologacao')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')

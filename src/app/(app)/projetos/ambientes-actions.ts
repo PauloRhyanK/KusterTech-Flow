@@ -8,6 +8,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { lerDataHoraDeSaoPaulo } from '@/lib/data'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
+import { exigirModulo } from '@/lib/modulos-rota'
 import { TIPOS_DE_AMBIENTE } from '@/modules/ambientes/model'
 import {
   confirmarPresencaManual,
@@ -75,6 +76,7 @@ export async function salvarAmbienteAction(
   estadoOuForm: EstadoAmbiente | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoAmbiente> {
+  exigirModulo('ambientes')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -105,6 +107,7 @@ export async function gerarTokenDeEvidenciaAction(
   estadoOuForm: EstadoAmbiente | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoAmbiente> {
+  exigirModulo('ambientes')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -129,6 +132,7 @@ export async function revogarTokenDeEvidenciaAction(
   estadoOuForm: EstadoAmbiente | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoAmbiente> {
+  exigirModulo('ambientes')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -153,6 +157,7 @@ export async function registrarDeployManualAction(
   estadoOuForm: EstadoAmbiente | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoAmbiente> {
+  exigirModulo('ambientes')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
@@ -195,6 +200,7 @@ export async function confirmarPresencaManualAction(
   estadoOuForm: EstadoAmbiente | FormData,
   talvezForm?: FormData,
 ): Promise<EstadoAmbiente> {
+  exigirModulo('ambientes')
   const sessao = await obterSessao()
   if (!sessao) {
     redirect('/entrar')
