@@ -480,6 +480,83 @@ class TestesMarcar(unittest.TestCase):
         )
 
 
+class TestesSegurarERemover(unittest.TestCase):
+    AGORA = "2026-11-10T10:00:00Z"
+
+    def dois_sobrepostos(self):
+        velho = entrada("velho", ["src/a/**"], entrou="2026-11-01T10:00:00Z")
+        novo = entrada("novo", ["src/a/**"], entrou="2026-11-02T10:00:00Z")
+        return velho, novo
+
+    def test_segurado_nao_e_admitido_nem_bloqueia(self):
+        velho, novo = self.dois_sobrepostos()
+        f = fila.segurar([velho, novo], velho["id"], True)
+        self.assertEqual(fila.admitir(f), [novo["id"]])
+
+    def test_soltar_devolve_a_disputa(self):
+        velho, novo = self.dois_sobrepostos()
+        f = fila.segurar([velho, novo], velho["id"], True)
+        f = fila.segurar(f, velho["id"], False)
+        self.assertNotIn("segurado", f[0])
+        self.assertEqual(fila.admitir(f), [velho["id"]])
+
+    def test_segurar_fora_de_aguardando_recusa(self):
+        ativo = entrada("ativo", ["src/a/**"], estado="ativo")
+        with self.assertRaises(ValueError):
+            fila.segurar([ativo], ativo["id"], True)
+
+    def test_segurar_id_desconhecido_recusa(self):
+        with self.assertRaises(ValueError):
+            fila.segurar([], "nao-existe", True)
+        with self.assertRaises(ValueError):
+            fila.remover([], "nao-existe", manter_arquivo=True)
+
+    def test_segurar_nao_muda_a_fila_original(self):
+        velho, _ = self.dois_sobrepostos()
+        original = copy.deepcopy([velho])
+        fila.segurar([velho], velho["id"], True)
+        self.assertEqual([velho], original)
+
+    def test_segurado_continua_com_hash_novo(self):
+        """[RF 4]"""
+        velho = entrada("velho", ["src/a/**"])
+        f = fila.segurar([velho], velho["id"], True)
+        novo = fila.enfileirar(f, [achado("velho", ["src/b/**"])], self.AGORA)
+        self.assertEqual(len(novo), 1)
+        self.assertIs(novo[0]["segurado"], True)
+        self.assertEqual(novo[0]["arquivos"], ["src/b/**"])
+
+    def test_removido_de_proposito_nao_volta(self):
+        velho = entrada("velho", ["src/a/**"])
+        f = fila.remover([velho], velho["id"], manter_arquivo=True)
+        self.assertEqual(f[0]["estado"], "removido")
+        self.assertEqual(f[0]["hashRemovido"], velho["hash"])
+        novo = fila.enfileirar(f, [achado("velho", ["src/a/**"])], self.AGORA)
+        self.assertEqual(len(novo), 1)
+
+    def test_removido_de_proposito_volta_com_hash_novo(self):
+        """[RF 5]"""
+        velho = entrada("velho", ["src/a/**"])
+        f = fila.remover([velho], velho["id"], manter_arquivo=True)
+        novo = fila.enfileirar(f, [achado("velho", ["src/b/**"])], self.AGORA)
+        self.assertEqual(len(novo), 2)
+        self.assertEqual(novo[1]["estado"], "aguardando")
+        self.assertEqual(novo[1]["entrouEm"], self.AGORA)
+
+    def test_removido_sem_manter_arquivo_volta(self):
+        velho = entrada("velho", ["src/a/**"])
+        f = fila.remover([velho], velho["id"], manter_arquivo=False)
+        self.assertNotIn("hashRemovido", f[0])
+        novo = fila.enfileirar(f, [achado("velho", ["src/a/**"])], self.AGORA)
+        self.assertEqual(len(novo), 2)
+
+    def test_remover_tira_o_segurado(self):
+        velho = entrada("velho", ["src/a/**"])
+        f = fila.segurar([velho], velho["id"], True)
+        f = fila.remover(f, velho["id"], manter_arquivo=True)
+        self.assertNotIn("segurado", f[0])
+
+
 class TestesHashDoPlano(unittest.TestCase):
     def test_e_o_sha256_do_json_canonico(self):
         plano = {"b": 1, "a": ["é"]}
