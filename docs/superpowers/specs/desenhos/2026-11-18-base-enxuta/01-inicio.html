@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>KusterTech Flow — base enxuta (desenho)</title>
+<style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.45}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12.5px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:220px 1fr;min-height:780px}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 18px;letter-spacing:-.01em}
+  .logo span{color:#72d9c3}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;text-decoration:none;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}
+  aside a.on i{background:#72d9c3}
+  aside .cont{margin-left:auto;background:#a96011;color:#fff;border-radius:999px;font-size:11px;padding:0 7px;font-weight:600}
+  aside hr{border:0;border-top:1px solid #26334a;margin:14px 6px}
+  main{padding:28px 32px 40px}
+  .trilha{color:var(--text-tertiary);font-size:12.5px;margin-bottom:6px}
+  h1{font-size:24px;margin:0;letter-spacing:-.02em;font-weight:650}
+  .sub{color:var(--text-secondary);margin:4px 0 22px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin:0 0 10px;font-weight:600;display:flex;gap:8px;align-items:center}
+  h2 small{text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary);font-size:12.5px}
+  .grade{display:grid;grid-template-columns:1fr 320px;gap:24px;align-items:start}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:24px}
+  .linha{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--border)}
+  .linha:first-child{border-top:0}
+  .linha .t{font-weight:550}
+  .linha .d{color:var(--text-secondary);font-size:12.5px}
+  .cresce{flex:1;min-width:0}
+  .selo{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:550;white-space:nowrap;border:1px solid transparent}
+  .selo::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .s-atencao{color:var(--atencao);background:#fbf4ea;border-color:#f0dcc0}
+  .s-exec{color:var(--execucao);background:#f4f1fa;border-color:#ddd4ee}
+  .s-neutro{color:var(--neutro);background:#f1f4f7;border-color:var(--border)}
+  .s-erro{color:var(--erro);background:#fbf0f0;border-color:#efd0d0}
+  .s-ok{color:var(--sucesso);background:#eff7f2;border-color:#cfe6d9}
+  .link{color:var(--text-link);text-decoration:none;font-weight:550;white-space:nowrap}
+  .raias{display:flex;gap:3px;margin-top:6px}
+  .raias b{height:6px;flex:1;border-radius:3px;background:var(--border)}
+  .raias b.c{background:var(--flow)} .raias b.e{background:var(--execucao)} .raias b.f{background:var(--erro)}
+  .pad{padding:16px}
+  .rot{color:var(--text-secondary);font-size:12.5px}
+  .num{font-size:22px;font-weight:650;letter-spacing:-.02em}
+  .num small{font-size:13px;font-weight:400;color:var(--text-secondary)}
+  .barra-disco{height:10px;border-radius:5px;background:var(--surface-subtle);overflow:hidden;margin:10px 0 6px}
+  .barra-disco b{display:block;height:100%;background:var(--action);border-radius:5px}
+  .par{display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid var(--border);font-size:13px}
+  .par span:first-child{color:var(--text-secondary)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+  .kpis .cartao{margin:0}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:12px;color:var(--text-secondary);font-weight:550;text-align:left;padding:10px 16px;border-bottom:1px solid var(--border)}
+  td{padding:10px 16px;border-top:1px solid var(--border);font-size:13px}
+  td.r,th.r{text-align:right}
+  .anot{max-width:1280px;margin:0 auto 40px;padding:0 4px;color:#3d4a5e;font-size:13px}
+  .anot li{margin-bottom:4px}
+  .btn{border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:7px 12px;font:inherit;color:var(--text-primary)}
+  .topo{display:flex;align-items:flex-start;gap:16px}
+</style>
+</head>
+<body>
+<div class="barra">
+  <b>KusterTech Flow · base enxuta</b>
+  <button class="on" onclick="ver(0,this)">1. Início</button>
+  <button onclick="ver(1,this)">2. Máquina: oficina</button>
+  <span class="nota">Desenho para aprovação · dados de exemplo</span>
+</div>
+
+<!-- ============ TELA 1: INÍCIO ============ -->
+<section class="tela on">
+  <aside>
+    <div class="logo">KusterTech <span>Flow</span></div>
+    <a class="on"><i></i>Início<span class="cont">3</span></a>
+    <a><i></i>Fábrica</a>
+    <a><i></i>Clientes</a>
+    <a><i></i>Projetos</a>
+    <a><i></i>Máquinas</a>
+    <hr>
+    <a><i></i>Configurações</a>
+  </aside>
+  <main>
+    <h1>Início</h1>
+    <p class="sub">O que espera você, o que a Fábrica está fazendo e como está a oficina.</p>
+
+    <div class="grade">
+      <div>
+        <h2>Espera você <small>3 itens · o mais antigo há 2 h</small></h2>
+        <div class="cartao">
+          <div class="linha">
+            <span class="selo s-atencao">Decisão</span>
+            <div class="cresce"><div class="t">Qual campo identifica o cliente na importação?</div><div class="d">Projeto Alfa · telas-crm · aberta há 2 h</div></div>
+            <a class="link">Responder no GitHub ↗</a>
+          </div>
+          <div class="linha">
+            <span class="selo s-atencao">Fim de fase</span>
+            <div class="cresce"><div class="t">Fase 2 concluída: aprovar o avanço para a fase 3</div><div class="d">Produto Base · base-backend · aberta há 40 min</div></div>
+            <a class="link">Ver o PR ↗</a>
+          </div>
+          <div class="linha">
+            <span class="selo s-erro">Integração</span>
+            <div class="cresce"><div class="t">GitHub não respondeu nas últimas 3 leituras</div><div class="d">Projeto Beta · dados de há 34 min, possivelmente desatualizados</div></div>
+            <a class="link">Abrir o projeto</a>
+          </div>
+        </div>
+
+        <h2>Fábrica agora <small>retrato de há 40 s</small></h2>
+        <div class="cartao">
+          <div class="linha">
+            <div class="cresce"><div class="t">Produto Base · base-backend</div><div class="d">Fase 2 de 4 · 31 de 59 raias concluídas · 3 executando</div>
+              <div class="raias"><b class="c"></b><b class="c"></b><b class="c"></b><b class="c"></b><b class="c"></b><b class="c"></b><b class="e"></b><b class="e"></b><b></b><b></b><b></b><b></b></div></div>
+            <span class="selo s-exec">Ativo</span>
+          </div>
+          <div class="linha">
+            <div class="cresce"><div class="t">Projeto Alfa · telas-crm</div><div class="d">Fase 1 de 3 · 12 de 29 raias concluídas · 2 executando · 1 falhou</div>
+              <div class="raias"><b class="c"></b><b class="c"></b><b class="c"></b><b class="c"></b><b class="e"></b><b class="f"></b><b></b><b></b><b></b><b></b><b></b><b></b></div></div>
+            <span class="selo s-atencao">Aguarda decisão</span>
+          </div>
+          <div class="linha">
+            <div class="cresce"><div class="t">KusterTech Flow · base-enxuta</div><div class="d">Na fila desde 09:12 · espera o plano anterior do mesmo repositório</div></div>
+            <span class="selo s-neutro">Aguardando</span>
+          </div>
+          <div class="linha"><span class="d cresce">Vagas: 5 de 5 ocupadas · memória disponível 2,9 GB</span><a class="link">Abrir a Fábrica</a></div>
+        </div>
+      </div>
+
+      <div>
+        <h2>Oficina</h2>
+        <div class="cartao pad">
+          <div class="rot">Disco</div>
+          <div class="num">49 GB <small>livres de 120 GB</small></div>
+          <div class="barra-disco"><b style="width:59%"></b></div>
+          <div class="rot">59% em uso</div>
+          <div style="height:12px"></div>
+          <div class="par"><span>Última limpeza</span><span>hoje, 04:00</span></div>
+          <div class="par"><span>Liberou</span><span>3,2 GB</span></div>
+          <div class="par"><span>Resultado</span><span class="selo s-neutro">Concluída</span></div>
+          <div style="margin-top:12px"><a class="link">Ver a máquina</a></div>
+        </div>
+
+        <h2>Cadastro</h2>
+        <div class="cartao pad">
+          <div class="par" style="border-top:0"><span>Clientes</span><span>4</span></div>
+          <div class="par"><span>Projetos</span><span>7</span></div>
+          <div class="par"><span>Repositórios vinculados</span><span>8</span></div>
+          <div class="par"><span>Máquinas</span><span>6</span></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ TELA 2: MÁQUINA ============ -->
+<section class="tela">
+  <aside>
+    <div class="logo">KusterTech <span>Flow</span></div>
+    <a><i></i>Início<span class="cont">3</span></a>
+    <a><i></i>Fábrica</a>
+    <a><i></i>Clientes</a>
+    <a><i></i>Projetos</a>
+    <a class="on"><i></i>Máquinas</a>
+    <hr>
+    <a><i></i>Configurações</a>
+  </aside>
+  <main>
+    <div class="trilha">Máquinas / oficina</div>
+    <div class="topo">
+      <div class="cresce"><h1>oficina</h1>
+      <p class="sub">Servidor · máquina interna da Fábrica · <span class="selo s-neutro">Esta máquina</span></p></div>
+      <button class="btn">Editar</button>
+    </div>
+
+    <div class="kpis">
+      <div class="cartao pad"><div class="rot">Disco livre</div><div class="num">49 GB <small>de 120</small></div><div class="barra-disco"><b style="width:59%"></b></div></div>
+      <div class="cartao pad"><div class="rot">Última limpeza</div><div class="num">hoje <small>04:00</small></div><div class="rot" style="margin-top:10px">Liberou 3,2 GB</div></div>
+      <div class="cartao pad"><div class="rot">Memória disponível</div><div class="num">2,9 GB <small>de 8</small></div><div class="rot" style="margin-top:10px">Informada pela Fábrica há 40 s</div></div>
+      <div class="cartao pad"><div class="rot">CPU e containers</div><div class="num" style="color:var(--text-tertiary)">Sem dados</div><div class="rot" style="margin-top:10px">Não há monitoramento</div></div>
+    </div>
+
+    <div class="grade">
+      <div>
+        <h2>Limpeza diária <small>últimas 7 execuções</small></h2>
+        <div class="cartao">
+          <table>
+            <tr><th>Quando</th><th>Resultado</th><th class="r">Livre antes</th><th class="r">Livre depois</th><th class="r">Liberou</th></tr>
+            <tr><td>hoje, 04:00</td><td><span class="selo s-neutro">Concluída</span></td><td class="r mono">45,8 GB</td><td class="r mono">49,0 GB</td><td class="r mono">3,2 GB</td></tr>
+            <tr><td>ontem, 04:00</td><td><span class="selo s-neutro">Concluída</span></td><td class="r mono">44,1 GB</td><td class="r mono">50,3 GB</td><td class="r mono">6,2 GB</td></tr>
+            <tr><td>16/11, 04:00</td><td><span class="selo s-erro">Falhou</span></td><td class="r mono">41,0 GB</td><td class="r mono">41,0 GB</td><td class="r mono">0</td></tr>
+            <tr><td>15/11, 04:00</td><td><span class="selo s-neutro">Concluída</span></td><td class="r mono">43,7 GB</td><td class="r mono">48,9 GB</td><td class="r mono">5,2 GB</td></tr>
+          </table>
+        </div>
+
+        <h2>Projetos nesta máquina</h2>
+        <div class="cartao">
+          <div class="linha"><div class="cresce"><div class="t">KusterTech Flow</div><div class="d">sem cliente · 1 repositório</div></div><a class="link">Abrir</a></div>
+        </div>
+      </div>
+
+      <div>
+        <h2>Cadastro</h2>
+        <div class="cartao pad">
+          <div class="par" style="border-top:0"><span>Provedor</span><span>Própria</span></div>
+          <div class="par"><span>Endereço</span><span class="mono">oficina.tailnet</span></div>
+          <div class="par"><span>Especificação</span><span>4 núcleos · 8 GB · SSD 120 GB</span></div>
+          <div class="par"><span>Custo mensal</span><span>—</span></div>
+          <div class="par"><span>Hospeda</span><span>Fábrica, 4 runners</span></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<div class="anot">
+  <b>O que observar</b>
+  <ul>
+    <li><b>Início:</b> a primeira coisa na tela é o que espera você. Cada item leva direto ao lugar de responder. Sem itens, a seção diz "Nada espera você nas fontes disponíveis."</li>
+    <li><b>Fábrica agora:</b> uma linha por plano, com a faixa de raias (verde-água concluída, roxo executando, vermelho falhou). A fila completa fica no item Fábrica do menu.</li>
+    <li><b>Sem falso verde:</b> limpeza concluída usa selo neutro, não verde. Onde não há fonte ("CPU e containers"), aparece "Sem dados".</li>
+    <li><b>Máquinas sem leitura local</b> (as VPS, o DigitalOcean) mostram só o cadastro e os projetos; os quatro quadros do topo não aparecem.</li>
+    <li><b>Fora deste desenho:</b> a fila de publicação e as demandas (produtos 2 e 3) entram no Início depois, acima de "Fábrica agora".</li>
+  </ul>
+</div>
+
+<script>
+function ver(i,b){
+  document.querySelectorAll('.tela').forEach((t,n)=>t.classList.toggle('on',n===i));
+  document.querySelectorAll('.barra button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+}
+</script>
+</body>
+</html>

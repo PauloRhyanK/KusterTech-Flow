@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>KusterTech Flow — Demandas, Decidir, Publicação</title>
+<style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px 1fr;min-height:760px}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}
+  .logo span{color:#72d9c3}
+  aside small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}
+  aside a.on i{background:#72d9c3}
+  aside .cont{margin-left:auto;background:#a96011;color:#fff;border-radius:999px;font-size:11px;padding:0 7px;font-weight:600}
+  main{padding:26px 32px 36px}
+  h1{font-size:24px;margin:0 0 18px;letter-spacing:-.02em;font-weight:650;display:flex;align-items:center;gap:12px}
+  h1 small{font-size:13px;font-weight:400;color:var(--text-tertiary);letter-spacing:0}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-secondary);margin:0 0 10px;font-weight:600}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .btn{border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:8px 14px;font:inherit;font-weight:550;cursor:pointer}
+  .btn.p{background:var(--action);border-color:var(--action);color:#fff}
+  .dir{margin-left:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:6px;padding:2px 8px;background:var(--surface-subtle);color:var(--text-secondary);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:2px}
+  /* tipos */
+  .tipo{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+  .t-bug{background:#fbf0f0;color:var(--erro)} .t-ideia{background:#fbf4ea;color:var(--atencao)}
+  .t-ajuste{background:#eef4fd;color:var(--action)} .t-feat{background:#f4f1fa;color:var(--execucao)}
+  /* fluxo de entrada */
+  .fluxo{display:grid;grid-template-columns:150px 28px repeat(5,1fr);gap:10px;align-items:stretch;margin-bottom:26px}
+  .raia{border-radius:var(--r);padding:14px 14px 12px;background:#fff;border:1px solid var(--border);border-top:4px solid var(--border-strong);cursor:pointer}
+  .raia.sel{box-shadow:0 0 0 2px var(--midnight)}
+  .raia .n{font-size:30px;font-weight:650;letter-spacing:-.03em;line-height:1}
+  .raia .r{font-size:12.5px;color:var(--text-secondary);margin-top:6px;font-weight:550}
+  .raia .m{font-size:11.5px;color:var(--text-tertiary);margin-top:2px}
+  .entrada{background:var(--midnight);color:#e8efff;border-color:var(--midnight);border-top-color:#72d9c3}
+  .entrada .r,.entrada .m{color:#a7b4c9}
+  .seta{display:grid;place-items:center;color:var(--text-tertiary);font-size:20px}
+  .c-ori{border-top-color:#8290a1} .c-urg{border-top-color:var(--erro)} .c-noite{border-top-color:var(--action)}
+  .c-ag{border-top-color:var(--execucao)} .c-dec{border-top-color:var(--atencao)}
+  /* linhas */
+  .linha{display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid var(--border)}
+  .linha:first-child{border-top:0}
+  .tit{font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cresce{flex:1;min-width:0}
+  .etapas{display:flex;align-items:center;width:150px;flex:none}
+  .etapas i{width:9px;height:9px;border-radius:50%;background:var(--border-strong);flex:none}
+  .etapas u{height:2px;flex:1;background:var(--border)}
+  .etapas i.f,.etapas u.f{background:var(--flow)}
+  .etapas i.a{background:#fff;border:2.5px solid var(--execucao);width:12px;height:12px}
+  .etapas i.p{background:#fff;border:2.5px solid var(--atencao);width:12px;height:12px}
+  .etapas i.x{background:var(--erro)}
+  .est{width:150px;flex:none;font-size:12.5px;font-weight:550;text-align:right}
+  .grupo{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+  .grupo b{font-size:15px}.grupo span{color:var(--text-tertiary);font-size:12.5px}
+  .tempo{width:56px;flex:none;color:var(--text-tertiary);font-size:12px;text-align:right}
+  /* decidir */
+  .decidir{display:grid;grid-template-columns:230px 1fr;gap:24px}
+  .pilha .item{padding:10px 12px;border-radius:var(--rc);display:flex;gap:10px;align-items:center;margin-bottom:6px;background:#fff;border:1px solid var(--border)}
+  .pilha .item.on{border-color:var(--midnight);box-shadow:0 0 0 1px var(--midnight)}
+  .pilha .item.feito{opacity:.45}
+  .pilha .item div{font-size:12.5px;font-weight:550;line-height:1.25}
+  .prog{height:6px;border-radius:3px;background:var(--border);margin:8px 0 16px;overflow:hidden}.prog b{display:block;height:100%;width:28%;background:var(--flow)}
+  .foco{padding:26px 28px}
+  .foco h3{font-size:21px;margin:10px 0 6px;letter-spacing:-.02em}
+  .fala{background:var(--surface-subtle);border-radius:var(--r);padding:14px 16px;margin:16px 0;font-size:15px;line-height:1.5}
+  .anexos{display:flex;gap:10px;margin-top:12px;align-items:center}
+  .print{width:120px;height:74px;border-radius:8px;background:#fff;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--text-tertiary);font-size:11.5px}
+  .audio{flex:1;height:44px;border-radius:22px;background:#fff;border:1px solid var(--border-strong);display:flex;align-items:center;gap:10px;padding:0 14px;color:var(--text-secondary);font-size:12.5px}
+  .audio b{width:22px;height:22px;border-radius:50%;background:var(--midnight);flex:none}
+  .onda{flex:1;height:18px;background:repeating-linear-gradient(90deg,var(--border-strong) 0 2px,transparent 2px 5px);border-radius:2px}
+  .analise{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .analise div{border:1px solid var(--border);border-radius:var(--rc);padding:10px 12px}
+  .analise small{display:block;color:var(--text-tertiary);font-size:11.5px;margin-bottom:2px}
+  .analise b{font-size:14px}
+  .rec{display:flex;gap:10px;align-items:center;background:#f4f1fa;border:1px solid #ddd4ee;color:#4b3a78;border-radius:var(--rc);padding:10px 14px;font-size:13.5px}
+  .opcoes{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}
+  .op{border:1.5px solid var(--border-strong);border-radius:var(--r);padding:14px 10px;text-align:center;background:#fff;cursor:pointer}
+  .op b{display:block;font-size:13.5px}.op small{color:var(--text-tertiary);font-size:11.5px}
+  .op kbd{display:inline-block;margin-top:8px;font:inherit;font-size:11px;border:1px solid var(--border-strong);border-radius:4px;padding:0 6px;color:var(--text-secondary)}
+  .op.sug{border-color:var(--execucao);background:#f9f7fd}
+  .resp{margin-top:14px;display:flex;gap:10px}
+  .resp input{flex:1;border:1px solid var(--border-strong);border-radius:var(--rc);padding:9px 12px;font:inherit;color:var(--text-tertiary)}
+  /* publicação */
+  .pub{display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start}
+  .proj{padding:16px;margin-bottom:14px}
+  .proj .cab{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .proj .cab b{font-size:15px}
+  .trilho{display:flex;align-items:center;gap:8px}
+  .caixa{border-radius:var(--rc);padding:8px 12px;font-size:12.5px;border:1px solid var(--border);background:var(--surface-subtle);white-space:nowrap}
+  .caixa b{display:block;font-size:13px}
+  .caixa.ar{background:#eff7f6;border-color:#bfe3de}
+  .caixa.sub{background:#f4f1fa;border-color:#ddd4ee}
+  .caixa.noite{background:#eef4fd;border-color:#cfdff8;border-style:dashed}
+  .caixa.rec{background:#fbf0f0;border-color:#efd0d0;display:block}
+  .trilho em{font-style:normal;color:var(--text-tertiary)}
+  .lig{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);font-size:13px}
+  .lig:first-of-type{border-top:0}
+  .chave{width:34px;height:20px;border-radius:10px;background:var(--flow);position:relative;flex:none}
+  .chave::after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+  .chave.off{background:var(--border-strong)}.chave.off::after{right:auto;left:2px}
+  .anot{max-width:1280px;margin:0 auto 40px;padding:0 4px;color:#3d4a5e;font-size:13px}
+  .anot li{margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="barra">
+  <b>KusterTech Flow</b>
+  <button class="on" onclick="ver(0,this)">1. Demandas</button>
+  <button onclick="ver(1,this)">2. Decidir</button>
+  <button onclick="ver(2,this)">3. Publicação</button>
+  <span class="nota">Desenho para aprovação · dados de exemplo</span>
+</div>
+
+<!-- ============ 1. DEMANDAS ============ -->
+<section class="tela on">
+  <aside>
+    <div class="logo">KusterTech <span>Flow</span></div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a>
+    <a><i></i>Decidir<span class="cont">7</span></a>
+    <a class="on"><i></i>Demandas</a>
+    <a><i></i>Publicação</a>
+    <a><i></i>Fábrica</a>
+    <small>Cadastro</small>
+    <a><i></i>Clientes</a>
+    <a><i></i>Projetos</a>
+    <a><i></i>Máquinas</a>
+    <small>&nbsp;</small>
+    <a><i></i>Configurações</a>
+  </aside>
+  <main>
+    <h1>Demandas <small>hoje</small><button class="btn p dir">Nova demanda</button></h1>
+
+    <div class="fluxo">
+      <div class="raia entrada"><div class="n">31</div><div class="r">Recebidas</div><div class="m">sistema 19 · WhatsApp 9 · você 3</div></div>
+      <div class="seta">→</div>
+      <div class="raia c-ori"><div class="n">14</div><div class="r">Orientadas na hora</div><div class="m">sem demanda</div></div>
+      <div class="raia c-urg"><div class="n">2</div><div class="r">Urgente</div><div class="m">corrigindo agora</div></div>
+      <div class="raia c-noite"><div class="n">4</div><div class="r">Lote da noite</div><div class="m">publica às 22:00</div></div>
+      <div class="raia c-ag sel"><div class="n">4</div><div class="r">Fila de agentes</div><div class="m">5 de 5 vagas</div></div>
+      <div class="raia c-dec"><div class="n">7</div><div class="r">Decisão sua</div><div class="m">a mais antiga: 2 h</div></div>
+    </div>
+
+    <div class="grupo"><b>Fila de agentes</b><span>4 em andamento · 3 esperando vaga</span><span class="dir chip">Todos os projetos ▾</span></div>
+    <div class="cartao" style="margin-bottom:22px">
+      <div class="linha"><div class="tipo t-feat">F</div><div class="cresce"><div class="tit">Importação de leads por planilha</div></div><span class="chip"><i style="background:#2d6be4"></i>Projeto Alfa</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--execucao)">Desenvolvendo</div><div class="tempo">1 d</div></div>
+      <div class="linha"><div class="tipo t-bug">B</div><div class="cresce"><div class="tit">Fuso horário errado na agenda de eventos</div></div><span class="chip"><i style="background:#138d82"></i>Projeto Gama</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i><u></u><i></i></div><div class="est" style="color:var(--execucao)">Testando</div><div class="tempo">40 min</div></div>
+      <div class="linha"><div class="tipo t-feat">F</div><div class="cresce"><div class="tit">Painel de talhões com mapa</div></div><span class="chip"><i style="background:#a96011"></i>Projeto Beta</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="x"></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--erro)">Travada</div><div class="tempo">2 d</div></div>
+      <div class="linha"><div class="tipo t-feat">F</div><div class="cresce"><div class="tit">Tela de funil de vendas</div></div><span class="chip"><i style="background:#2d6be4"></i>Projeto Alfa</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="p"></i><u></u><i></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--atencao)">Desenho: espera você</div><div class="tempo">3 h</div></div>
+    </div>
+
+    <div class="grupo"><b>Esperando vaga</b><span>entram na ordem</span></div>
+    <div class="cartao">
+      <div class="linha"><span class="mono" style="color:var(--text-tertiary);width:30px;text-align:center">1</span><div class="tipo t-ajuste">A</div><div class="cresce"><div class="tit">Exportar contatos em CSV</div></div><span class="chip"><i style="background:#2d6be4"></i>Projeto Alfa</span><div class="est" style="color:var(--text-secondary)">Aguardando</div><div class="tempo">2 h</div></div>
+      <div class="linha"><span class="mono" style="color:var(--text-tertiary);width:30px;text-align:center">2</span><div class="tipo t-feat">F</div><div class="cresce"><div class="tit">Página da oficina</div></div><span class="chip"><i style="background:#7157a6"></i>KusterTech Flow</span><div class="est" style="color:var(--text-secondary)">Aguardando</div><div class="tempo">5 h</div></div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 2. DECIDIR ============ -->
+<section class="tela">
+  <aside>
+    <div class="logo">KusterTech <span>Flow</span></div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a>
+    <a class="on"><i></i>Decidir<span class="cont">7</span></a>
+    <a><i></i>Demandas</a>
+    <a><i></i>Publicação</a>
+    <a><i></i>Fábrica</a>
+    <small>Cadastro</small>
+    <a><i></i>Clientes</a>
+    <a><i></i>Projetos</a>
+    <a><i></i>Máquinas</a>
+    <small>&nbsp;</small>
+    <a><i></i>Configurações</a>
+  </aside>
+  <main>
+    <h1>Decidir <small>3 de 7</small></h1>
+    <div class="decidir">
+      <div class="pilha">
+        <div class="prog"><b></b></div>
+        <div class="item feito"><div class="tipo t-ideia">I</div><div>Modo escuro no app</div></div>
+        <div class="item feito"><div class="tipo t-bug">B</div><div>PDF sai cortado</div></div>
+        <div class="item on"><div class="tipo t-ideia">I</div><div>Lembrete de parcela por WhatsApp</div></div>
+        <div class="item"><div class="tipo t-feat">F</div><div>Desenho do funil de vendas</div></div>
+        <div class="item"><div class="tipo t-ajuste">A</div><div>Trocar "Lead" por "Contato"</div></div>
+        <div class="item"><div class="tipo t-bug">B</div><div>Projeto Beta: travou em conflito</div></div>
+        <div class="item"><div class="tipo t-ideia">I</div><div>Relatório por vendedor</div></div>
+      </div>
+
+      <div class="cartao foco">
+        <div style="display:flex;gap:8px;align-items:center"><div class="tipo t-ideia">I</div><span class="chip"><i style="background:#2d6be4"></i>Projeto Alfa</span><span class="chip">Ideia</span><span class="chip">pelo WhatsApp · há 2 h</span><span class="chip dir">Ana, vendedora</span></div>
+        <h3>Lembrete de parcela por WhatsApp</h3>
+        <div class="fala">"Seria bom o sistema avisar o cliente três dias antes de vencer a parcela, direto no WhatsApp dele."
+          <div class="anexos"><div class="print">print da tela</div><div class="audio"><b></b><div class="onda"></div>0:38</div></div>
+        </div>
+
+        <h2>Leitura do agente</h2>
+        <div class="analise">
+          <div><small>O que é</small><b>Função nova</b></div>
+          <div><small>Tamanho</small><b>Médio · 6 raias</b></div>
+          <div><small>Onde mexe</small><b>Cobrança, conector</b></div>
+          <div><small>Já pediram</small><b>3 pessoas</b></div>
+        </div>
+        <div class="rec"><b>Sugestão:</b> fila de agentes. O conector do WhatsApp já envia mensagens; falta só o agendamento.</div>
+
+        <div class="opcoes">
+          <div class="op"><b>Fazer agora</b><small>urgente</small><br><kbd>1</kbd></div>
+          <div class="op"><b>Lote da noite</b><small>ajuste pequeno</small><br><kbd>2</kbd></div>
+          <div class="op sug"><b>Fila de agentes</b><small>sugerido</small><br><kbd>3</kbd></div>
+          <div class="op"><b>Guardar</b><small>ideia para depois</small><br><kbd>4</kbd></div>
+          <div class="op"><b>Recusar</b><small>não vamos fazer</small><br><kbd>5</kbd></div>
+        </div>
+        <div class="resp"><input value="Resposta para a Ana (opcional; o agente escreve uma se você não escrever)"><button class="btn">Pular <span class="mono">→</span></button></div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 3. PUBLICAÇÃO ============ -->
+<section class="tela">
+  <aside>
+    <div class="logo">KusterTech <span>Flow</span></div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a>
+    <a><i></i>Decidir<span class="cont">7</span></a>
+    <a><i></i>Demandas</a>
+    <a class="on"><i></i>Publicação</a>
+    <a><i></i>Fábrica</a>
+    <small>Cadastro</small>
+    <a><i></i>Clientes</a>
+    <a><i></i>Projetos</a>
+    <a><i></i>Máquinas</a>
+    <small>&nbsp;</small>
+    <a><i></i>Configurações</a>
+  </aside>
+  <main>
+    <h1>Publicação <small>uma por vez em cada projeto</small></h1>
+    <div class="pub">
+      <div>
+        <div class="cartao proj">
+          <div class="cab"><b>Projeto Alfa</b><span class="chip">servidor 1</span><span class="chip dir" style="color:var(--execucao)">Publicando</span></div>
+          <div class="trilho">
+            <div class="caixa ar">No ar<b class="mono">a41c9e2</b></div><em>→</em>
+            <div class="caixa sub">Subindo agora · 2 min<b>Corrige PDF cortado</b></div><em>→</em>
+            <div class="caixa">Em seguida<b>Exportar CSV</b></div><em>→</em>
+            <div class="caixa noite">22:00 · lote da noite<b>3 ajustes</b></div>
+          </div>
+        </div>
+        <div class="cartao proj">
+          <div class="cab"><b>Produto Base</b><span class="chip">servidor 1</span><span class="chip dir">Parado</span></div>
+          <div class="trilho">
+            <div class="caixa ar">No ar<b class="mono">7be2d10</b></div><em>→</em>
+            <div class="caixa noite">22:00 · lote da noite<b>1 ajuste</b></div>
+          </div>
+        </div>
+        <div class="cartao proj">
+          <div class="cab"><b>Projeto Beta</b><span class="chip">servidor 2</span><span class="chip dir" style="color:var(--erro)">1 recusado</span></div>
+          <div class="trilho">
+            <div class="caixa ar">No ar<b class="mono">c09f3a7</b></div><em>→</em>
+            <div class="caixa">Fila vazia</div>
+          </div>
+          <div class="caixa rec" style="margin-top:10px"><b>Recusado: base antiga</b>Sessão do Claude pediu para publicar <span class="mono">9d1e44b</span>, que não contém as 3 últimas publicações. Nada foi ao ar.</div>
+        </div>
+        <div class="cartao proj">
+          <div class="cab"><b>Projeto Gama</b><span class="chip">servidor 3</span><span class="chip dir">Sem publicação configurada</span></div>
+        </div>
+      </div>
+
+      <div>
+        <h2>Regras · Projeto Alfa</h2>
+        <div class="cartao" style="padding:6px 16px;margin-bottom:22px">
+          <div class="lig"><span>Publicar ao entrar na fila</span><span class="chave"></span></div>
+          <div class="lig"><span>Lote da noite</span><span class="mono">22:00</span></div>
+          <div class="lig"><span>Pausar publicações</span><span class="chave off"></span></div>
+          <div class="lig"><span>Voltar versão se falhar</span><span class="chave"></span></div>
+          <div class="lig"><span>Recusar base antiga</span><span class="chave"></span></div>
+        </div>
+        <h2>Últimas 24 h</h2>
+        <div class="cartao" style="padding:6px 16px">
+          <div class="lig"><span>Publicadas</span><b>11</b></div>
+          <div class="lig"><span>Recusadas por base antiga</span><b>1</b></div>
+          <div class="lig"><span>Falharam e voltaram</span><b>0</b></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<div class="anot">
+  <b>O que observar</b>
+  <ul>
+    <li><b>Menu em dois grupos:</b> Trabalho (o que você abre todo dia) e Cadastro. "Decidir" tem o contador do que espera você.</li>
+    <li><b>Demandas:</b> o topo é o fluxo de entrada do dia, da esquerda para a direita. Cada quadro é um destino e também um filtro: clicar troca a lista abaixo. As linhas têm só ícone do tipo, título, projeto, trilho de etapas e estado.</li>
+    <li><b>Decidir:</b> uma demanda por vez, em tela cheia. O relato do usuário com print e áudio, a leitura do agente em quatro quadros, a sugestão dele e cinco botões com atalho de teclado (1 a 5). Decidiu, passa para a próxima.</li>
+    <li><b>Publicação:</b> uma faixa por projeto, lida da esquerda para a direita: o que está no ar, o que está subindo, o que vem depois e o lote da noite. O pedido com base antiga aparece recusado, com o motivo. As regras de cada projeto ficam ao lado.</li>
+    <li><b>Tipos:</b> B bug, I ideia, A ajuste, F função nova. Na implementação viram ícones.</li>
+  </ul>
+</div>
+
+<script>
+function ver(i,b){
+  document.querySelectorAll('.tela').forEach((t,n)=>t.classList.toggle('on',n===i));
+  document.querySelectorAll('.barra button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');window.scrollTo(0,0);
+}
+</script>
+</body>
+</html>

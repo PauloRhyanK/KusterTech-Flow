@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>KusterTech Flow — máquina oficina (v2)</title>
+<style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.45}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12.5px}
+  .barra{background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background);display:grid;grid-template-columns:220px 1fr}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 18px}
+  .logo span{color:#72d9c3}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}
+  aside a.on i{background:#72d9c3}
+  aside .cont{margin-left:auto;background:#a96011;color:#fff;border-radius:999px;font-size:11px;padding:0 7px;font-weight:600}
+  aside hr{border:0;border-top:1px solid #26334a;margin:14px 6px}
+  main{padding:28px 32px 40px}
+  .trilha{color:var(--text-tertiary);font-size:12.5px;margin-bottom:6px}
+  h1{font-size:24px;margin:0;letter-spacing:-.02em;font-weight:650}
+  .sub{color:var(--text-secondary);margin:4px 0 22px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin:0 0 10px;font-weight:600;display:flex;gap:8px;align-items:center}
+  h2 small{text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-tertiary);font-size:12.5px}
+  .grade{display:grid;grid-template-columns:1fr 320px;gap:24px;align-items:start}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:24px}
+  .linha{display:flex;align-items:center;gap:12px;padding:11px 16px;border-top:1px solid var(--border)}
+  .linha:first-child{border-top:0}
+  .t{font-weight:550}.d{color:var(--text-secondary);font-size:12.5px}
+  .cresce{flex:1;min-width:0}
+  .selo{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:550;white-space:nowrap;border:1px solid transparent}
+  .selo::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .s-atencao{color:var(--atencao);background:#fbf4ea;border-color:#f0dcc0}
+  .s-exec{color:var(--execucao);background:#f4f1fa;border-color:#ddd4ee}
+  .s-neutro{color:var(--neutro);background:#f1f4f7;border-color:var(--border)}
+  .s-erro{color:var(--erro);background:#fbf0f0;border-color:#efd0d0}
+  .link{color:var(--text-link);font-weight:550;white-space:nowrap}
+  .pad{padding:16px}
+  .rot{color:var(--text-secondary);font-size:12.5px}
+  .num{font-size:22px;font-weight:650;letter-spacing:-.02em}
+  .num small{font-size:13px;font-weight:400;color:var(--text-secondary)}
+  .med{height:8px;border-radius:4px;background:var(--surface-subtle);overflow:hidden;margin:10px 0 6px}
+  .med b{display:block;height:100%;background:var(--action);border-radius:4px}
+  .med b.alto{background:var(--atencao)}
+  .par{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--border);font-size:13px}
+  .par span:first-child{color:var(--text-secondary)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+  .kpis .cartao{margin:0}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:12px;color:var(--text-secondary);font-weight:550;text-align:left;padding:10px 16px;border-bottom:1px solid var(--border)}
+  td{padding:9px 16px;border-top:1px solid var(--border);font-size:13px}
+  td.r,th.r{text-align:right}
+  .fatia{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:4px 0 12px}
+  .fatia b{display:block;height:100%}
+  .leg{display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 0}
+  .leg i{width:10px;height:10px;border-radius:3px}
+  .leg span:last-child{margin-left:auto}
+  .topo{display:flex;align-items:flex-start;gap:16px}
+  .btn{border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:7px 12px;font:inherit}
+  .faixa{display:flex;gap:8px;align-items:center;background:#fbf4ea;border:1px solid #f0dcc0;color:#7a4509;border-radius:var(--rc);padding:10px 14px;margin-bottom:20px;font-size:13px}
+  svg{display:block;width:100%;height:70px}
+  .anot{max-width:1280px;margin:0 auto 40px;padding:0 4px;color:#3d4a5e;font-size:13px}
+  .anot li{margin-bottom:4px}
+  .duas{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+</style>
+</head>
+<body>
+<div class="barra"><b>KusterTech Flow · Máquina: oficina (versão 2)</b><span class="nota">Desenho para aprovação · dados de exemplo</span></div>
+
+<section class="tela">
+  <aside>
+    <div class="logo">KusterTech <span>Flow</span></div>
+    <a><i></i>Início<span class="cont">3</span></a>
+    <a><i></i>Fábrica</a>
+    <a><i></i>Clientes</a>
+    <a><i></i>Projetos</a>
+    <a class="on"><i></i>Máquinas</a>
+    <hr>
+    <a><i></i>Configurações</a>
+  </aside>
+  <main>
+    <div class="trilha">Máquinas / oficina</div>
+    <div class="topo">
+      <div class="cresce"><h1>oficina</h1>
+      <p class="sub">Servidor · máquina interna da Fábrica · ligada há 12 dias · <span class="selo s-neutro">Leitura de há 35 s</span></p></div>
+      <button class="btn">Editar</button>
+    </div>
+
+    <div class="faixa"><b>Memória apertada:</b> 1,1 GB disponível de 8 GB. A Fábrica não despacha raia nova abaixo de 2 GB.</div>
+
+    <div class="kpis">
+      <div class="cartao pad"><div class="rot">CPU</div><div class="num">62% <small>4 núcleos</small></div><div class="med"><b style="width:62%"></b></div><div class="rot">Carga 2,5 · 2,1 · 1,8</div></div>
+      <div class="cartao pad"><div class="rot">Memória</div><div class="num">6,9 GB <small>de 8</small></div><div class="med"><b class="alto" style="width:86%"></b></div><div class="rot">Disponível 1,1 GB · swap 0,4 GB</div></div>
+      <div class="cartao pad"><div class="rot">Disco</div><div class="num">49 GB <small>livres de 120</small></div><div class="med"><b style="width:59%"></b></div><div class="rot">59% em uso</div></div>
+      <div class="cartao pad"><div class="rot">Última limpeza</div><div class="num">hoje <small>04:00</small></div><div class="rot" style="margin-top:14px">Liberou 3,2 GB · concluída</div></div>
+    </div>
+
+    <div class="grade">
+      <div>
+        <h2>Serviços <small>o que divide a máquina</small></h2>
+        <div class="cartao">
+          <div class="linha"><div class="cresce"><div class="t">Fábrica</div><div class="d">fila ativa · 5 de 5 vagas ocupadas · 2 planos</div></div><span class="selo s-exec">Trabalhando</span></div>
+          <div class="linha"><div class="cresce"><div class="t">Runners do GitHub Actions</div><div class="d">2 ocupados · 2 livres</div></div><span class="selo s-neutro">4 de 4 no ar</span></div>
+          <div class="linha"><div class="cresce"><div class="t">KusterTech Flow</div><div class="d">web, worker e banco · 0,5 GB de memória</div></div><span class="selo s-neutro">No ar</span></div>
+        </div>
+
+        <h2>Containers <small>9 no ar · 1 parado</small></h2>
+        <div class="cartao">
+          <table>
+            <tr><th>Nome</th><th>Estado</th><th class="r">Memória</th><th class="r">CPU</th><th class="r">No ar há</th></tr>
+            <tr><td class="mono">fabrica-verificacao-a41c</td><td><span class="selo s-exec">Rodando</span></td><td class="r mono">2,1 GB</td><td class="r mono">148%</td><td class="r">6 min</td></tr>
+            <tr><td class="mono">fabrica-verificacao-b7e2</td><td><span class="selo s-exec">Rodando</span></td><td class="r mono">1,4 GB</td><td class="r mono">71%</td><td class="r">2 min</td></tr>
+            <tr><td class="mono">flow-web</td><td><span class="selo s-neutro">No ar</span></td><td class="r mono">212 MB</td><td class="r mono">1%</td><td class="r">3 dias</td></tr>
+            <tr><td class="mono">flow-postgres</td><td><span class="selo s-neutro">No ar</span></td><td class="r mono">164 MB</td><td class="r mono">0%</td><td class="r">3 dias</td></tr>
+            <tr><td class="mono">flow-worker</td><td><span class="selo s-neutro">No ar</span></td><td class="r mono">131 MB</td><td class="r mono">0%</td><td class="r">3 dias</td></tr>
+            <tr><td class="mono">runner-3-job</td><td><span class="selo s-erro">Parou com erro</span></td><td class="r mono">—</td><td class="r mono">—</td><td class="r">parado há 1 h</td></tr>
+            <tr><td colspan="5" class="d">mais 4 containers · <span class="link">mostrar todos</span></td></tr>
+          </table>
+        </div>
+
+        <div class="duas">
+          <div>
+            <h2>Memória <small>7 dias</small></h2>
+            <div class="cartao pad">
+              <svg viewBox="0 0 300 70" preserveAspectRatio="none"><polyline fill="none" stroke="#a96011" stroke-width="2" points="0,40 25,34 50,38 75,22 100,30 125,18 150,26 175,14 200,24 225,12 250,20 275,10 300,9"/><line x1="0" y1="8" x2="300" y2="8" stroke="#dce4ea" stroke-dasharray="4 4"/></svg>
+              <div class="rot">Pico de 7,4 GB ontem às 15:20</div>
+            </div>
+          </div>
+          <div>
+            <h2>Disco livre <small>7 dias</small></h2>
+            <div class="cartao pad">
+              <svg viewBox="0 0 300 70" preserveAspectRatio="none"><polyline fill="none" stroke="#2d6be4" stroke-width="2" points="0,20 40,26 43,14 85,24 88,30 130,40 133,22 175,30 178,16 220,26 223,14 265,22 268,12 300,16"/></svg>
+              <div class="rot">Mínimo de 41 GB em 16/11</div>
+            </div>
+          </div>
+        </div>
+
+        <h2>Limpeza diária <small>últimas 7 execuções</small></h2>
+        <div class="cartao">
+          <table>
+            <tr><th>Quando</th><th>Resultado</th><th class="r">Livre antes</th><th class="r">Livre depois</th><th class="r">Liberou</th></tr>
+            <tr><td>hoje, 04:00</td><td><span class="selo s-neutro">Concluída</span></td><td class="r mono">45,8 GB</td><td class="r mono">49,0 GB</td><td class="r mono">3,2 GB</td></tr>
+            <tr><td>ontem, 04:00</td><td><span class="selo s-neutro">Concluída</span></td><td class="r mono">44,1 GB</td><td class="r mono">50,3 GB</td><td class="r mono">6,2 GB</td></tr>
+            <tr><td>16/11, 04:00</td><td><span class="selo s-erro">Falhou</span></td><td class="r mono">41,0 GB</td><td class="r mono">41,0 GB</td><td class="r mono">0</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h2>Para onde vai o disco</h2>
+        <div class="cartao pad">
+          <div class="fatia"><b style="width:26%;background:#2d6be4"></b><b style="width:14%;background:#7157a6"></b><b style="width:9%;background:#138d82"></b><b style="width:5%;background:#a96011"></b><b style="width:5%;background:#8290a1"></b><b style="width:41%;background:#edf2f5"></b></div>
+          <div class="leg"><i style="background:#2d6be4"></i><span>Docker (imagens e volumes)</span><span class="mono">31 GB</span></div>
+          <div class="leg"><i style="background:#7157a6"></i><span>Fábrica (planos e clones)</span><span class="mono">17 GB</span></div>
+          <div class="leg"><i style="background:#138d82"></i><span>Runners (cache de builds)</span><span class="mono">11 GB</span></div>
+          <div class="leg"><i style="background:#a96011"></i><span>Backups do banco</span><span class="mono">6 GB</span></div>
+          <div class="leg"><i style="background:#8290a1"></i><span>Sistema e outros</span><span class="mono">6 GB</span></div>
+          <div class="leg"><i style="background:#edf2f5;border:1px solid #dce4ea"></i><span>Livre</span><span class="mono">49 GB</span></div>
+        </div>
+
+        <h2>Cadastro</h2>
+        <div class="cartao pad">
+          <div class="par" style="border-top:0"><span>Provedor</span><span>Própria</span></div>
+          <div class="par"><span>Endereço</span><span class="mono">oficina.tailnet</span></div>
+          <div class="par"><span>Especificação</span><span>i5-4440 · 8 GB · SSD 120 GB</span></div>
+          <div class="par"><span>Sistema</span><span>Debian 13</span></div>
+          <div class="par"><span>Custo mensal</span><span>—</span></div>
+        </div>
+
+        <h2>Projetos nesta máquina</h2>
+        <div class="cartao">
+          <div class="linha"><div class="cresce"><div class="t">KusterTech Flow</div><div class="d">sem cliente</div></div><span class="link">Abrir</span></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<div class="anot">
+  <b>O que mudou em relação à versão 1</b>
+  <ul>
+    <li><b>Faixa de atenção no topo</b> só aparece quando algo passa de um limite (memória disponível abaixo do mínimo da Fábrica, disco livre abaixo de 15%, limpeza atrasada ou com falha).</li>
+    <li><b>Quatro quadros:</b> CPU, memória, disco e última limpeza, todos com leitura de no máximo 1 minuto.</li>
+    <li><b>Serviços:</b> Fábrica, runners e o próprio Flow, que são os três que disputam a máquina.</li>
+    <li><b>Containers:</b> os que mais consomem primeiro; os parados com erro aparecem destacados.</li>
+    <li><b>Para onde vai o disco:</b> o que ocupa os 120 GB, por dono. É a informação que diz o que limpar.</li>
+    <li><b>Histórico de 7 dias</b> de memória e disco, guardado pelo próprio Flow (uma leitura a cada 10 minutos).</li>
+    <li><b>As outras máquinas</b> (VPS, DigitalOcean) continuam só com Cadastro e Projetos, até o Beszel entrar.</li>
+  </ul>
+</div>
+</body>
+</html>
