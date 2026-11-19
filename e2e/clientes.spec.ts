@@ -168,7 +168,7 @@ test('testador escopado ao cliente A vê só A na lista; /clientes/<B> mostra "S
   await expect(
     page.getByText('Este registro não existe ou não está disponível para você.'),
   ).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Ir para a Visão Geral' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Ir para o Início' })).toBeVisible()
 
   // Testador escopado em outro contexto
   const testadorContext = await browser.newContext()

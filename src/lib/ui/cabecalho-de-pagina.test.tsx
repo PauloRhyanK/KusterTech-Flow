@@ -4,7 +4,7 @@ import { CabecalhoDePagina } from './cabecalho-de-pagina'
 
 describe('CabecalhoDePagina', () => {
   it('renderiza título em h1 com tipografia Título 1 responsiva (mobile 21px, desktop 24px, 650)', () => {
-    render(<CabecalhoDePagina trilhas={[{ rotulo: 'Visão Geral' }]} titulo="Painel Principal" />)
+    render(<CabecalhoDePagina trilhas={[{ rotulo: 'Início' }]} titulo="Painel Principal" />)
 
     const heading = screen.getByRole('heading', { level: 1, name: 'Painel Principal' })
     expect(heading).toBeInTheDocument()
