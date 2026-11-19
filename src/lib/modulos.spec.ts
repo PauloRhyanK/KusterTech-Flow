@@ -7,11 +7,12 @@ import {
 } from './modulos'
 
 describe('catálogo de módulos', () => {
-  it('por padrão ativa clientes, projetos, github, desenvolvimento, fabrica e maquinas', () => {
+  it('por padrão ativa clientes, projetos, github, desenvolvimento, fabrica, maquinas e fila-de-publicacao; publicacao continua inativo', () => {
     expect([...resolverModulosAtivos(undefined)].sort()).toEqual([
       'clientes',
       'desenvolvimento',
       'fabrica',
+      'fila-de-publicacao',
       'github',
       'maquinas',
       'projetos',
@@ -25,13 +26,13 @@ describe('catálogo de módulos', () => {
   })
   it('ligar publicacao exige a cadeia inteira', () => {
     expect(() => resolverModulosAtivos('entregas,ambientes,publicacao')).toThrow(/homologacao/)
-    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(10)
+    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(11)
   })
   it('nome desconhecido em extras é erro', () => {
     expect(() => resolverModulosAtivos('alertas')).toThrow(/alertas/)
   })
   it('vazio e espaços equivalem a nenhum extra', () => {
-    expect(resolverModulosAtivos('  ').size).toBe(6)
+    expect(resolverModulosAtivos('  ').size).toBe(7)
   })
 })
 

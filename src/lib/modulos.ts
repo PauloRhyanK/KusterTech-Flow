@@ -5,6 +5,7 @@ export type ModuloId =
   | 'desenvolvimento'
   | 'fabrica'
   | 'maquinas'
+  | 'fila-de-publicacao'
   | 'entregas'
   | 'ambientes'
   | 'homologacao'
@@ -20,6 +21,7 @@ export const CATALOGO_DE_MODULOS: Record<
   desenvolvimento: { ativo: true, dependeDe: ['github'] },
   fabrica: { ativo: true, dependeDe: [] },
   maquinas: { ativo: true, dependeDe: [] },
+  'fila-de-publicacao': { ativo: true, dependeDe: ['github'] },
   entregas: { ativo: false, dependeDe: ['github'] },
   ambientes: { ativo: false, dependeDe: ['github'] },
   homologacao: { ativo: false, dependeDe: ['entregas', 'ambientes'] },

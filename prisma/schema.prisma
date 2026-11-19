@@ -19,27 +19,29 @@ enum Tema {
 }
 
 model Usuario {
-  id                       String                  @id @default(uuid())
-  email                    String                  @unique
-  nome                     String
-  senhaHash                String
-  ativo                    Boolean                 @default(true)
-  tema                     Tema                    @default(SISTEMA)
-  criadoEm                 DateTime                @default(now())
-  atualizadoEm             DateTime                @updatedAt
-  papeis                   UsuarioPapel[]
-  sessoes                  Sessao[]
-  vinculosCriados          IssueVinculo[]
-  eventosTimeline          EventoTimeline[]
-  evidenciasRegistradas    EvidenciaDeploy[]
-  presencasConfirmadas     PresencaIssueVersao[]
-  tarefasGitHub            TarefaGitHub[]
-  solicitacoesTriadas      SolicitacaoDeCorrecao[]
-  homologacoesAprovadas    Homologacao[]
-  autorizacoesProd         AutorizacaoProd[]
-  verificacoesProd         VerificacaoProd[]
-  divergenciasReconhecidas DivergenciaDeDeploy[]
-  fontesDaFabricaCriadas   FonteDaFabrica[]
+  id                        String                  @id @default(uuid())
+  email                     String                  @unique
+  nome                      String
+  senhaHash                 String
+  ativo                     Boolean                 @default(true)
+  tema                      Tema                    @default(SISTEMA)
+  criadoEm                  DateTime                @default(now())
+  atualizadoEm              DateTime                @updatedAt
+  papeis                    UsuarioPapel[]
+  sessoes                   Sessao[]
+  vinculosCriados           IssueVinculo[]
+  eventosTimeline           EventoTimeline[]
+  evidenciasRegistradas     EvidenciaDeploy[]
+  presencasConfirmadas      PresencaIssueVersao[]
+  tarefasGitHub             TarefaGitHub[]
+  solicitacoesTriadas       SolicitacaoDeCorrecao[]
+  homologacoesAprovadas     Homologacao[]
+  autorizacoesProd          AutorizacaoProd[]
+  verificacoesProd          VerificacaoProd[]
+  divergenciasReconhecidas  DivergenciaDeDeploy[]
+  fontesDaFabricaCriadas    FonteDaFabrica[]
+  fontesDePublicacaoCriadas FonteDePublicacao[]
+  pedidosDePublicacao       PedidoDePublicacao[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -166,13 +168,13 @@ model EventoIntegracao {
 }
 
 model RepositorioGitHub {
-  id                         String                   @id @default(uuid())
-  githubId                   BigInt                   @unique
+  id                         String                    @id @default(uuid())
+  githubId                   BigInt                    @unique
   instalacaoId               BigInt
   nomeCompleto               String
   urlHtml                    String
   privado                    Boolean
-  arquivadoNoGitHub          Boolean                  @default(false)
+  arquivadoNoGitHub          Boolean                   @default(false)
   removidoDaInstalacaoEm     DateTime?
   projetoId                  String?
   vinculadoEm                DateTime?
@@ -180,7 +182,7 @@ model RepositorioGitHub {
   sincronizacaoSolicitadaEm  DateTime?
   ultimaFalhaEm              DateTime?
   ultimaFalhaMotivo          String?
-  falhasConsecutivas         Int                      @default(0)
+  falhasConsecutivas         Int                       @default(0)
   cursorIssues               DateTime?
   cursorPullRequests         DateTime?
   cursorDeployments          DateTime?
@@ -191,9 +193,9 @@ model RepositorioGitHub {
   warrenFalhaEm              DateTime?
   warrenFalhaMotivo          String?
   seedsEncontrado            Boolean?
-  seedsLinhasInvalidas       Int                      @default(0)
+  seedsLinhasInvalidas       Int                       @default(0)
   catalogadoEm               DateTime
-  projeto                    Projeto?                 @relation(fields: [projetoId], references: [id], onDelete: SetNull)
+  projeto                    Projeto?                  @relation(fields: [projetoId], references: [id], onDelete: SetNull)
   issues                     IssueGitHub[]
   pullRequests               PullRequestGitHub[]
   versoes                    Versao[]
@@ -202,6 +204,9 @@ model RepositorioGitHub {
   autorizacoesProd           AutorizacaoProd[]
   execucoes                  ExecucaoAgente[]
   seeds                      SeedDoRepositorio[]
+  configuracaoDePublicacao   ConfiguracaoDePublicacao?
+  pedidosDePublicacao        PedidoDePublicacao[]
+  consertosDePublicacao      PedidoDeConserto[]
 
   @@index([projetoId])
 }
@@ -823,4 +828,123 @@ model SeedDoRepositorio {
   repositorio       RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
 
   @@unique([repositorioId, seedId])
+}
+
+enum ModoDePublicacao {
+  IMEDIATO
+  LOTE
+}
+
+enum EstadoDoPedidoDePublicacao {
+  NA_FILA
+  VERIFICANDO
+  PUBLICANDO
+  PUBLICADO
+  RECUSADO
+  DISPENSADO
+  FALHOU
+  CANCELADO
+}
+
+enum SituacaoDaFilaDePublicacao {
+  NORMAL
+  CONSERTANDO
+  PARADO
+}
+
+enum EstadoDoPedidoDeConserto {
+  ABERTO
+  EM_CURSO
+  COM_PR
+  RESOLVIDO
+  DESISTIU
+}
+
+model ConfiguracaoDePublicacao {
+  repositorioId    String                     @id
+  workflow         String
+  entradaDoCommit  String                     @default("commit")
+  horaDoLote       String                     @default("22:00")
+  modoPadrao       ModoDePublicacao           @default(IMEDIATO)
+  automatico       Boolean                    @default(true)
+  pausado          Boolean                    @default(false)
+  situacao         SituacaoDaFilaDePublicacao @default(NORMAL)
+  situacaoDesde    DateTime?
+  situacaoMotivo   String?
+  ultimoLoteEm     DateTime?
+  baseRedefinidaEm DateTime?
+  atualizadoEm     DateTime                   @updatedAt
+  repositorio      RepositorioGitHub          @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
+}
+
+// Linha única (id = 1).
+model PausaGeralDePublicacao {
+  id           Int       @id @default(1)
+  pausadaEm    DateTime?
+  pausadaPorId String?
+}
+
+// O token é mostrado uma única vez; no banco só o hash.
+model FonteDePublicacao {
+  id          String               @id @default(uuid())
+  nome        String
+  tokenHash   String               @unique
+  criadoEm    DateTime             @default(now())
+  revogadaEm  DateTime?
+  criadaPorId String
+  ultimoUsoEm DateTime?
+  criadaPor   Usuario              @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
+  pedidos     PedidoDePublicacao[]
+}
+
+// Índice único parcial "um por vez" é criado à mão na migration.
+model PedidoDePublicacao {
+  id               String                     @id @default(uuid())
+  repositorioId    String
+  commit           String?
+  modo             ModoDePublicacao
+  descricao        String?
+  fonteId          String?
+  usuarioId        String?
+  consertoId       String?                    @unique
+  estado           EstadoDoPedidoDePublicacao @default(NA_FILA)
+  motivo           String?
+  atendidoPorId    String?
+  verificadoContra String?
+  execucaoId       BigInt?
+  execucaoUrl      String?
+  disparoTentadoEm DateTime?
+  checks           ResumoDeChecks?
+  loteEm           DateTime?
+  criadoEm         DateTime                   @default(now())
+  verificandoDesde DateTime?
+  iniciadoEm       DateTime?
+  concluidoEm      DateTime?
+  repositorio      RepositorioGitHub          @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
+  fonte            FonteDePublicacao?         @relation(fields: [fonteId], references: [id], onDelete: SetNull)
+  usuario          Usuario?                   @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  conserto         PedidoDeConserto?
+
+  @@index([repositorioId, estado])
+}
+
+model PedidoDeConserto {
+  id            String                   @id @default(uuid())
+  repositorioId String
+  pedidoId      String                   @unique
+  commit        String
+  execucaoUrl   String?
+  trechoDoLog   String
+  estado        EstadoDoPedidoDeConserto @default(ABERTO)
+  runId         String?
+  prUrl         String?
+  motivo        String?
+  shaDaCorrecao String?
+  abertoEm      DateTime                 @default(now())
+  pegoEm        DateTime?
+  encerradoEm   DateTime?
+  repositorio   RepositorioGitHub        @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
+  pedido        PedidoDePublicacao       @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([estado])
 }
