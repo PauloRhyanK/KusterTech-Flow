@@ -1068,13 +1068,14 @@ class TestesSegurar(Base):
         self.assertEqual(len([a for a in self.avisos() if "pedido" in a]), 2)
         self.assertIn("ativo", self.estados().values())
 
-    def test_remover_fica_na_caixa_intocado(self):
+    def test_remover_de_plano_desconhecido_vira_aviso_e_sai_da_caixa(self):
         self.publicar("login", ["src/x/**"])
         entrada = self.raiz / "entrada"
         entrada.mkdir()
         (entrada / "r.json").write_text('{"comando":"remover","id":"x"}', encoding="utf-8")
         self.novo().ciclo()
-        self.assertEqual([p.name for p in entrada.glob("*.json")], ["r.json"])
+        self.assertEqual(list(entrada.glob("*.json")), [])
+        self.assertTrue(any("remover" in a and "desconhecido" in a for a in self.avisos()))
 
     def test_pedido_que_nao_sai_da_caixa_nao_e_reaplicado(self):
         c, primeiro, segundo = self.dois_que_colidem()
@@ -1105,6 +1106,260 @@ class TestesSegurar(Base):
         c.pedir("segurar", segundo)
         c.ciclo()
         self.assertIn("%s: aguardando (segurado)" % segundo, c.status())
+
+
+ISSUE_PAUSA = "https://github.com/dono/cliente/issues/7"
+PR_ORQ = "https://github.com/dono/cliente/pull/9"
+COMENTARIO_REMOCAO = "Plano removido da fila pelo coordenador."
+ESCRITAS_DA_FORJA = ("fechar_pr", "fechar_decisao", "reabrir_decisao", "abrir_decisao", "mergear", "garantir_label")
+ESCRITAS_DO_MOTOR = ("cancelar_plano", "despachar_plano", "despachar_run", "retomar_plano", "atualizar_projeto")
+
+
+class TestesRemover(Base):
+    def setUp(self):
+        super().setUp()
+        self.cap = self.raiz / "capacidade.json"
+
+    def admitido(self, feature="login"):
+        a = self.publicar(feature, ["src/%s/**" % feature])
+        c = self.novo()
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "ativo")
+        return c, a
+
+    def com_plan_run(self, a, estado_do_run="running"):
+        estado = self.estado_do_plano(a)
+        self.motor.definir_plano("plano-raia", estado_do_run, [])
+        estado["raias"]["raia-0"] = {"estado": "executando", "planRunId": "plano-raia"}
+        self.gravar_estado_do_plano(a, estado)
+        capacidade.reservar(self.cap, a, "raia-0", mem_disponivel_mb=None)
+        capacidade.tomar_orquestrador(self.cap, REPO, a)
+
+    def pausado(self):
+        c, a = self.admitido()
+        self.com_plan_run(a)
+        estado = self.estado_do_plano(a)
+        estado["pausado"] = "Warren rejeitando despachos"
+        estado["decisaoPausa"] = {"url": ISSUE_PAUSA, "motivo": "x"}
+        self.gravar_estado_do_plano(a, estado)
+        self.forja.definir_decisao(ISSUE_PAUSA, fechada=False)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "pausado")
+        return c, a
+
+    def caixa(self):
+        pasta = self.raiz / "entrada"
+        return sorted(pasta.glob("*.json")) if pasta.exists() else []
+
+    def test_remove_pausado(self):
+        c, a = self.pausado()
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertIn(("disable", "--now", self.unit(a)), self.systemd.chamadas)
+        self.assertEqual(self.systemd.estados[self.unit(a)], "inactive")
+        self.assertEqual(self.motor.plano("plano-raia")["estado"], "cancelled")
+        self.assertEqual(self.forja.decisao(ISSUE_PAUSA)["fechada"], True)
+        self.assertEqual(self.forja.decisao(ISSUE_PAUSA)["ultimoComentario"], COMENTARIO_REMOCAO)
+        self.assertEqual(self.estados()[a], "removido")
+        dados = capacidade.ler(self.cap)
+        self.assertEqual((dados["reservas"], dados["orquestrador"]), ({}, {}))
+        self.assertEqual(self.caixa(), [])
+        self.assertIn("%s removido da fila" % a, self.avisos())
+        self.assertTrue(self.pasta(a).exists())
+        log = [json.loads(l) for l in (self.raiz / "log.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertIn({"evento": "removido", "id": a, "manterArquivo": True}, [{k: v for k, v in r.items() if k != "ts"} for r in log])
+
+    def test_unit_desligada_antes_de_fechar_a_issue(self):
+        c, a = self.pausado()
+        ordem = []
+        systemd, fechar = self.systemd.__call__, self.forja.fechar_decisao
+
+        def systemd_com_ordem(*args):
+            ordem.append(("systemd",) + args)
+            return systemd(*args)
+
+        def fechar_com_ordem(url, comentario):
+            ordem.append(("fechar_decisao", url))
+            return fechar(url, comentario)
+
+        c.systemd = systemd_com_ordem
+        self.forja.fechar_decisao = fechar_com_ordem
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertIn(("systemd", "disable", "--now", self.unit(a)), ordem)
+        self.assertLess(ordem.index(("systemd", "disable", "--now", self.unit(a))), ordem.index(("fechar_decisao", ISSUE_PAUSA)))
+
+    def test_remove_ativo(self):
+        c, a = self.admitido()
+        self.com_plan_run(a)
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertEqual(self.systemd.estados[self.unit(a)], "inactive")
+        self.assertEqual(self.motor.plano("plano-raia")["estado"], "cancelled")
+        self.assertEqual(capacidade.ler(self.cap)["reservas"], {})
+
+    def test_remove_aguardando(self):
+        self.publicar("login", ["src/x/**"])
+        self.publicar("cobranca", ["src/x/**"])
+        c = self.novo()
+        c.ciclo()
+        segundo = [i for i, e in self.estados().items() if e == "aguardando"][0]
+        self.systemd.chamadas.clear()
+        c.pedir("remover", segundo, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[segundo], "removido")
+        self.assertEqual([ch for ch in self.systemd.chamadas if ch[-1] == self.unit(segundo)], [])
+        self.assertEqual(self.caixa(), [])
+
+    def test_plan_run_vivo_achado_so_no_warren(self):
+        c, a = self.admitido()
+        vivo = self.motor.despachar_plano(
+            projeto="cliente", plano_seeds="pl-0000", agente="x", modelo="m", prompt_template="p", max_custo_usd=1.0
+        )
+        alheio = self.motor.despachar_plano(
+            projeto="cliente", plano_seeds="pl-9999", agente="x", modelo="m", prompt_template="p", max_custo_usd=1.0
+        )
+        self.assertEqual(self.estado_do_plano(a)["raias"]["raia-0"]["estado"], "planejada")
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.motor.plano(vivo)["estado"], "cancelled")
+        self.assertEqual(self.motor.plano(alheio)["estado"], "running")
+        self.assertEqual(self.estados()[a], "removido")
+
+    def test_warren_fora_nao_conclui(self):
+        c, a = self.pausado()
+        c.pedir("remover", a, manter_arquivo=True)
+        with unittest.mock.patch.object(self.motor, "cancelar_plano", side_effect=OSError("Warren fora")):
+            c.ciclo()
+        self.assertEqual(self.estados()[a], "pausado")
+        self.assertEqual(len(self.caixa()), 1)
+        self.assertTrue(any(a in m and "Warren fora" in m for m in self.avisos()))
+        self.assertEqual(self.forja.decisao(ISSUE_PAUSA)["fechada"], False)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertEqual(self.caixa(), [])
+
+    def test_orquestrador_em_curso_espera(self):  # [RF 3]
+        c, a = self.admitido()
+        self.motor.definir_run("run-orq", estado="running")
+        estado = self.estado_do_plano(a)
+        estado["orquestrador"] = {"runId": "run-orq", "motivo": "x"}
+        self.gravar_estado_do_plano(a, estado)
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertNotEqual(self.estados()[a], "removido")
+        self.assertEqual(len(self.caixa()), 1)
+        self.assertIn("%s: esperando o run do orquestrador terminar para remover" % a, self.avisos())
+        self.forja.definir_pr(PR_ORQ, head_sha="a" * 40, branch="fabrica/orq")
+        self.motor.definir_run("run-orq", estado="succeeded", prUrl=PR_ORQ)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertIn((PR_ORQ, COMENTARIO_REMOCAO), self.forja.fechados)
+
+    def test_unit_inexistente_nao_trava(self):  # [RF 2]
+        c, a = self.admitido()
+        systemd = self.systemd.__call__
+
+        def sem_unit(*args):
+            if args[0] == "disable":
+                self.systemd.chamadas.append(args)
+                return 1, "Failed to disable unit: Unit file %s.service does not exist." % args[-1]
+            return systemd(*args)
+
+        c.systemd = sem_unit
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+
+    def test_unit_que_nao_desliga_nao_conclui(self):  # [RF 2]
+        c, a = self.admitido()
+        systemd = self.systemd.__call__
+
+        def negado(*args):
+            if args[0] == "disable":
+                return 1, "Access denied"
+            return systemd(*args)
+
+        c.systemd = negado
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "ativo")
+        self.assertEqual(len(self.caixa()), 1)
+        self.assertTrue(any(a in m and "Access denied" in m for m in self.avisos()))
+
+    def test_estado_ilegivel(self):
+        c, a = self.admitido()
+        (self.pasta(a) / "estado.json").write_text("{ruim", encoding="utf-8")
+        capacidade.reservar(self.cap, a, "raia-0", mem_disponivel_mb=None)
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertEqual(capacidade.ler(self.cap)["reservas"], {})
+        self.assertIn(
+            "%s removido com estado.json ilegível: confira à mão os Plan Runs no Warren e os PRs do orquestrador" % a, self.avisos()
+        )
+
+    def test_arquivo_presente_recusa_sem_manter_arquivo(self):
+        c, a = self.admitido()
+        with self.assertRaises(coordenador.ErroDeEntrada) as erro:
+            c.pedir("remover", a)
+        self.assertIn(
+            "o arquivo .fabrica/planos/login.json continua no branch padrão: apague-o ou use --manter-arquivo", erro.exception.erros[0]
+        )
+        self.assertEqual(self.caixa(), [])
+        self.apagar("login")
+        c.pedir("remover", a)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "removido")
+
+    def test_manter_arquivo_nao_reentra(self):
+        c, a = self.admitido()
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        tamanho = len(self.fila_estado()["fila"])
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(len(self.fila_estado()["fila"]), tamanho)
+        self.assertEqual(self.estados()[a], "removido")
+        self.assertEqual(self.ligados(), [self.unit(a)])
+
+    def test_pedido_repetido_sem_efeito(self):
+        c, a = self.pausado()
+        c.pedir("remover", a, manter_arquivo=True)
+        c.pedir("remover", a, manter_arquivo=True)
+        c.ciclo()
+        self.assertEqual(self.caixa(), [])
+        self.assertEqual(len([m for m in self.avisos() if m == "%s removido da fila" % a]), 1)
+        self.assertEqual(c.pedir("remover", a, manter_arquivo=True), "%s já está removido" % a)
+        self.assertEqual(self.caixa(), [])
+        disables = len(self.systemd.de("disable"))
+        c.ciclo()
+        self.assertEqual(len(self.systemd.de("disable")), disables)
+
+    def test_concluido_recusa(self):
+        c, a = self.admitido()
+        self.concluir(a)
+        c.ciclo()
+        self.assertEqual(self.estados()[a], "concluido")
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            c.pedir("remover", a, manter_arquivo=True)
+
+    def test_simular_nao_muda_nada(self):
+        c, a = self.pausado()
+        fila_antes = (self.raiz / "fila-estado.json").read_bytes()
+        cap_antes = self.cap.read_bytes()
+        self.forja.chamadas.clear()
+        self.motor.chamadas.clear()
+        texto = c.pedir("remover", a, manter_arquivo=True, simular=True)
+        self.assertEqual(self.caixa(), [])
+        self.assertEqual((self.raiz / "fila-estado.json").read_bytes(), fila_antes)
+        self.assertEqual(self.cap.read_bytes(), cap_antes)
+        self.assertEqual([ch for ch in self.forja.chamadas if ch[0] in ESCRITAS_DA_FORJA], [])
+        self.assertEqual([ch for ch in self.motor.chamadas if ch[0] in ESCRITAS_DO_MOTOR], [])
+        self.assertEqual(self.systemd.de("disable"), [])
+        for trecho in (self.unit(a), "plano-raia", ISSUE_PAUSA):
+            self.assertIn(trecho, texto)
 
 
 class TestesStatus(Base):
@@ -1462,6 +1717,22 @@ class TestesMain(Base):
         codigo, _, erro = self.rodar("segurar", "nao-existe")
         self.assertEqual(codigo, 2)
         self.assertTrue(erro)
+
+    def test_remover_pela_cli_exige_manter_arquivo_com_o_arquivo_presente(self):
+        a = self.publicar("login", ["src/x/**"])
+        self.novo().ciclo()
+        codigo, _, erro = self.rodar("remover", a)
+        self.assertEqual(codigo, 2)
+        self.assertIn("--manter-arquivo", erro)
+        self.assertEqual(list((self.raiz / "entrada").glob("*.json")) if (self.raiz / "entrada").exists() else [], [])
+        codigo, saida, _ = self.rodar("remover", a, "--manter-arquivo", "--simular")
+        self.assertEqual(codigo, 0)
+        self.assertIn(self.unit(a), saida)
+        self.assertFalse((self.raiz / "entrada").exists())
+        codigo, saida, _ = self.rodar("remover", a, "--manter-arquivo")
+        self.assertEqual(codigo, 0)
+        self.assertIn("gravado", saida)
+        self.assertEqual(len(list((self.raiz / "entrada").glob("*.json"))), 1)
 
     def test_ler_coordenador_env(self):
         self.assertEqual(coordenador.ler_coordenador_env(self.raiz), {})
