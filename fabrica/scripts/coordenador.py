@@ -840,14 +840,11 @@ class Coordenador:
             falha = None
             planos = _atuais(self.dados["fila"])
             lidos = retrato.ler_planos(self.raiz / DIR_PLANOS, planos)
+            for id_ in planos:  # linha de base primeiro: a primeira falha abaixo não deixa plano sem ela
+                if id_ not in vistas and lidos[id_]["estado"] is not None:
+                    vistas[id_] = publicar.seeds_novas([], lidos[id_]["estado"])
             for id_, entrada in planos.items():
-                estado = lidos[id_]["estado"]
-                if estado is None:
-                    continue
-                if id_ not in vistas:
-                    vistas[id_] = publicar.seeds_novas([], estado)
-                    continue
-                novas = publicar.seeds_novas(vistas[id_], estado)
+                novas = publicar.seeds_novas(vistas[id_], lidos[id_]["estado"]) if id_ in vistas else []
                 if not novas:
                     continue
                 feature = entrada.get("feature") if isinstance(entrada.get("feature"), str) and entrada.get("feature") else id_
@@ -858,8 +855,11 @@ class Coordenador:
                     falha = str(exc)
                 except Exception as exc:  # noqa: BLE001 - só a classe, nunca o texto
                     falha = "falha inesperada (%s)" % type(exc).__name__
-                else:
-                    vistas[id_] = vistas[id_] + novas
+                if falha is not None:
+                    break  # uma falha custa no máximo um timeout por ciclo; os outros planos esperam o próximo
+                vistas[id_] = vistas[id_] + novas
+                self.dados["publicacao"] = {"vistas": vistas}
+                self._salvar()  # já gravado: queda depois do POST não repete o pedido
             self.dados["publicacao"] = {"vistas": vistas}
             if falha is None:
                 self._esquecer("publicacao:envio")

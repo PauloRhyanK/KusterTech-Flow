@@ -1896,6 +1896,42 @@ class TestesPublicacao(Base):
         self.assertEqual(self.avisos_de_publicacao(), ["Publicação: pedido ao Flow falhou (falha inesperada (KeyError))"])
         self.assertNotIn("fp_segredo", json.dumps(self.fila_estado()))
 
+    def dois_planos(self):
+        a = self.publicar("login", ["src/login/**"])
+        b = self.publicar("cobranca", ["src/cobranca/**"])
+        c = self.coordenador_com()
+        c.ciclo()
+        for id_ in (a, b):
+            self.seeds(id_, s1="em_andamento")
+        c.ciclo()
+        for id_ in (a, b):
+            self.seeds(id_, s1="mergeada")
+        return a, b, c
+
+    def test_primeira_falha_encerra_o_passo_e_o_outro_plano_espera_o_proximo_ciclo(self):
+        a, b, c = self.dois_planos()
+        self.pedir.falhas.append(retrato.FalhaDeEnvio("timeout"))
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 1)
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {a: [], b: []})
+        c.ciclo()
+        self.assertEqual(len(self.pedir.chamadas), 3)
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {a: ["s1"], b: ["s1"]})
+
+    def test_sucesso_e_gravado_antes_do_proximo_pedido(self):
+        a, b, c = self.dois_planos()
+        vistos = []
+        original = self.pedir.__call__
+
+        def espiar(**kw):
+            vistos.append(self.fila_estado().get("publicacao", {}).get("vistas"))
+            return original(**kw)
+
+        c._pedir_publicacao = espiar
+        c.ciclo()
+        self.assertEqual(len(vistos), 2)
+        self.assertEqual(sorted(vistos[1].values(), key=len), [[], ["s1"]])
+
     def test_sem_token_de_publicacao_o_passo_nao_roda(self):
         id_ = self.publicar("login", ["src/login/**"])
         c = self.coordenador_com(central=CENTRAL)
