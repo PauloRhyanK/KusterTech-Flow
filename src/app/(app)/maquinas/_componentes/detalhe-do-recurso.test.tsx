@@ -28,17 +28,53 @@ const base: RecursoDetalhado = {
 }
 
 describe('DetalheDoRecurso', () => {
-  test('servidor sem fonte: CPU, Memória e Disco "Sem dados" e nenhum [data-tom="sucesso"]', () => {
+  test('máquina comum não tem nenhum quadro de métrica nem tom de sucesso', () => {
     const { container } = render(<DetalheDoRecurso recurso={base} />)
 
-    for (const rotulo of ['CPU', 'Memória', 'Disco']) {
-      const termo = screen.getByText(rotulo, { selector: 'dt' })
-      expect(termo.nextElementSibling).toHaveTextContent('Sem dados')
+    for (const rotulo of ['CPU', 'Memória', 'Disco', 'Métricas']) {
+      expect(screen.queryByText(rotulo)).toBeNull()
     }
-    expect(screen.getByText('Nenhuma fonte de métricas configurada.')).toBeInTheDocument()
-    expect(screen.queryByText('Problemas prioritários')).toBeNull()
+    expect(screen.queryByRole('group')).toBeNull()
     expect(screen.getByText('Nenhum recurso hospedado neste servidor.')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Cadastro' })).toBeInTheDocument()
     expect(container.querySelector('[data-tom="sucesso"]')).toBeNull()
+  })
+
+  test('máquina local mostra o painel antes do cadastro, que vai para a lateral do painel', () => {
+    render(
+      <DetalheDoRecurso
+        recurso={{ ...base, identificadorExterno: 'oficina' }}
+        painelLocal={{
+          leitura: {
+            lidaEm: new Date('2026-11-18T12:00:00Z'),
+            amostra: null,
+            retrato: null,
+            discoPorDono: null,
+            limpezas: [],
+            historico: [],
+            avisos: [],
+            linhasIgnoradas: 0,
+          },
+          ramMinimaMb: null,
+          agora: new Date('2026-11-18T12:00:00Z'),
+        }}
+      />,
+    )
+    const quadros = ['CPU', 'Memória', 'Disco', 'Última limpeza'].map((rotulo) =>
+      screen.getByRole('group', { name: rotulo }),
+    )
+    for (const q of quadros) expect(q).toHaveTextContent('Sem dados')
+    const cadastro = screen.getByRole('region', { name: 'Cadastro' })
+    expect(
+      quadros[0]!.compareDocumentPosition(cadastro) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: 'Para onde vai o disco' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Projetos associados' }).closest('aside')).toBe(
+      cadastro.closest('aside'),
+    )
+    expect(screen.queryByText('Métricas')).toBeNull()
+    expect(screen.queryByText('Recursos hospedados')).toBeNull()
+    expect(screen.queryByText('Informações')).toBeNull()
   })
 
   test('container: estado "Sem dados" e prévia de logs indisponível, com "Hospedado em" apontando ao servidor', () => {

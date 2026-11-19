@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import type { Amostra, Limpeza } from './contrato'
+import type { Amostra, Limpeza, RetratoDaMaquina } from './contrato'
 import {
+  apresentarContainer,
   avisosDaMaquina,
+  diaEHora,
+  fatiasDoDisco,
   formatarBytes,
+  idadeCurta,
   leituraVelha,
+  ordenarContainers,
+  pontosDoGrafico,
   reduzirHistorico,
+  servicoDoFlow,
   type LeituraDaMaquina,
 } from './model'
 
@@ -137,5 +144,188 @@ describe('formatarBytes', () => {
   it('formata em GB e MB', () => {
     expect(formatarBytes(52613349376)).toBe('49,0 GB')
     expect(formatarBytes(222298112)).toBe('212 MB')
+  })
+})
+
+type Container = RetratoDaMaquina['containers'][number]
+
+function container(nome: string, extra: Partial<Container> = {}): Container {
+  return {
+    nome,
+    estado: 'rodando',
+    codigoDeSaida: null,
+    memoriaBytes: 100,
+    cpuPct: 1,
+    desde: '2026-11-18T09:00:00-03:00',
+    ...extra,
+  }
+}
+
+describe('ordenarContainers', () => {
+  it('contêiner que parou com erro vem antes dos que rodam', () => {
+    const ordem = ordenarContainers([
+      container('web', { memoriaBytes: 900 }),
+      container('runner', { estado: 'parado', codigoDeSaida: 1, memoriaBytes: null }),
+    ]).map((c) => c.nome)
+    expect(ordem).toEqual(['runner', 'web'])
+  })
+
+  it('entre os que rodam, o de maior memória vem primeiro', () => {
+    const ordem = ordenarContainers([
+      container('pequeno', { memoriaBytes: 10 }),
+      container('sem-medida', { memoriaBytes: null }),
+      container('grande', { memoriaBytes: 900 }),
+      container('parado-ok', { estado: 'parado', codigoDeSaida: 0, memoriaBytes: null }),
+    ]).map((c) => c.nome)
+    expect(ordem).toEqual(['grande', 'pequeno', 'sem-medida', 'parado-ok'])
+  })
+
+  it('não altera a lista recebida', () => {
+    const lista = [container('a', { memoriaBytes: 1 }), container('b', { memoriaBytes: 2 })]
+    ordenarContainers(lista)
+    expect(lista.map((c) => c.nome)).toEqual(['a', 'b'])
+  })
+})
+
+describe('apresentarContainer', () => {
+  it('rodando é "No ar"; parado sem erro é "Parado"; parado com código é "Parou com erro"', () => {
+    expect(apresentarContainer(container('a'))).toEqual({ texto: 'No ar', tom: 'neutro' })
+    expect(apresentarContainer(container('b', { estado: 'parado', codigoDeSaida: 0 }))).toEqual({
+      texto: 'Parado',
+      tom: 'neutro',
+    })
+    expect(apresentarContainer(container('c', { estado: 'parado', codigoDeSaida: null }))).toEqual({
+      texto: 'Parado',
+      tom: 'neutro',
+    })
+    expect(apresentarContainer(container('d', { estado: 'parado', codigoDeSaida: 137 }))).toEqual({
+      texto: 'Parou com erro',
+      tom: 'erro',
+    })
+  })
+
+  it('apresentarContainer nunca devolve o tom sucesso', () => {
+    const casos = [
+      container('a'),
+      container('b', { estado: 'parado', codigoDeSaida: 0 }),
+      container('c', { estado: 'parado', codigoDeSaida: 1 }),
+    ]
+    for (const c of casos) expect(apresentarContainer(c).tom).not.toBe('sucesso')
+  })
+})
+
+describe('fatiasDoDisco', () => {
+  const GB = 1024 ** 3
+  const disco = {
+    em: '2026-11-18T10:00:00-03:00',
+    donos: [
+      { nome: 'docker' as const, bytes: 31 * GB },
+      { nome: 'fabrica' as const, bytes: 17 * GB },
+      { nome: 'runners' as const, bytes: 11 * GB },
+      { nome: 'backups' as const, bytes: 6 * GB },
+      { nome: 'outros' as const, bytes: 6 * GB },
+    ],
+  }
+
+  it('fatiasDoDisco somam 100% com a fatia livre', () => {
+    const fatias = fatiasDoDisco(disco, 120 * GB, 49 * GB)
+    expect(fatias.map((f) => f.nome)).toEqual([
+      'docker',
+      'fabrica',
+      'runners',
+      'backups',
+      'outros',
+      'livre',
+    ])
+    expect(fatias.reduce((s, f) => s + f.pct, 0)).toBeCloseTo(100)
+    expect(fatias[0]).toMatchObject({ rotulo: 'Docker (imagens e volumes)', bytes: 31 * GB })
+    expect(fatias.at(-1)).toMatchObject({ rotulo: 'Livre', bytes: 49 * GB })
+  })
+
+  it('o espaço sem dono informado entra em "Sistema e outros"', () => {
+    const fatias = fatiasDoDisco(disco, 130 * GB, 49 * GB)
+    expect(fatias.find((f) => f.nome === 'outros')?.bytes).toBe(16 * GB)
+    expect(fatias.reduce((s, f) => s + f.pct, 0)).toBeCloseTo(100)
+  })
+
+  it('medidas que passam do total ainda somam 100%', () => {
+    const fatias = fatiasDoDisco(disco, 100 * GB, 49 * GB)
+    expect(fatias.reduce((s, f) => s + f.pct, 0)).toBeCloseTo(100)
+  })
+})
+
+describe('pontosDoGrafico', () => {
+  it('pontosDoGrafico de um valor só desenha uma linha reta', () => {
+    const pontos = pontosDoGrafico([5], 300, 70).split(' ')
+    expect(pontos).toHaveLength(2)
+    const [a, b] = pontos.map((p) => p.split(',').map(Number))
+    expect(a![0]).toBe(0)
+    expect(b![0]).toBe(300)
+    expect(a![1]).toBe(b![1])
+  })
+
+  it('o maior valor fica no alto e o menor embaixo, da esquerda para a direita', () => {
+    const pontos = pontosDoGrafico([0, 10, 5], 300, 70)
+      .split(' ')
+      .map((p) => p.split(',').map(Number))
+    expect(pontos.map((p) => p[0])).toEqual([0, 150, 300])
+    expect(pontos[1]![1]).toBeLessThan(pontos[2]![1]!)
+    expect(pontos[2]![1]).toBeLessThan(pontos[0]![1]!)
+    for (const [, y] of pontos) {
+      expect(y).toBeGreaterThanOrEqual(0)
+      expect(y).toBeLessThanOrEqual(70)
+    }
+  })
+
+  it('sem valores não há pontos', () => {
+    expect(pontosDoGrafico([], 300, 70)).toBe('')
+  })
+})
+
+describe('idadeCurta', () => {
+  const base = new Date('2026-11-18T12:00:00-03:00')
+  const antes = (ms: number) => new Date(base.getTime() - ms)
+  it('segundos, minutos, horas e dias', () => {
+    expect(idadeCurta(antes(35_000), base)).toBe('35 s')
+    expect(idadeCurta(antes(6 * 60_000), base)).toBe('6 min')
+    expect(idadeCurta(antes(3 * hora), base)).toBe('3 h')
+    expect(idadeCurta(antes(12 * 24 * hora), base)).toBe('12 dias')
+    expect(idadeCurta(antes(30 * hora), base)).toBe('1 dia')
+  })
+  it('data no futuro conta como agora', () => {
+    expect(idadeCurta(new Date(base.getTime() + 5000), base)).toBe('0 s')
+  })
+})
+
+describe('diaEHora', () => {
+  const base = new Date('2026-11-18T12:00:00-03:00')
+  it('hoje, ontem e data curta, no fuso de São Paulo', () => {
+    expect(diaEHora(new Date('2026-11-18T04:00:00-03:00'), base)).toEqual({
+      dia: 'hoje',
+      hora: '04:00',
+    })
+    expect(diaEHora(new Date('2026-11-17T23:30:00-03:00'), base)).toEqual({
+      dia: 'ontem',
+      hora: '23:30',
+    })
+    expect(diaEHora(new Date('2026-11-16T04:00:00-03:00'), base)).toEqual({
+      dia: '16/11',
+      hora: '04:00',
+    })
+  })
+})
+
+describe('servicoDoFlow', () => {
+  it('soma a memória dos contêineres do Flow e diz quantos estão no ar', () => {
+    const r = servicoDoFlow([
+      container('flow-web', { memoriaBytes: 300 * 1024 ** 2 }),
+      container('flow-worker', { memoriaBytes: 200 * 1024 ** 2 }),
+      container('fabrica-x', { memoriaBytes: 900 * 1024 ** 2 }),
+    ])
+    expect(r).toEqual({ total: 2, noAr: 2, memoriaBytes: 500 * 1024 ** 2 })
+  })
+
+  it('sem contêiner do Flow devolve null', () => {
+    expect(servicoDoFlow([container('fabrica-x')])).toBeNull()
   })
 })

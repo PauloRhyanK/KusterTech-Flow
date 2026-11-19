@@ -9,6 +9,7 @@ import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
 import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
+import { MAQUINA_LOCAL_E2E } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { gravarHomologacaoDePublicacao } from '../../tests/support/homologacao-de-publicacao'
 import {
@@ -1037,5 +1038,25 @@ export async function envelhecerIssueNoBanco(
   await db.repositorioGitHub.update({
     where: { id: repositorio.id },
     data: { cursorIssues: null },
+  })
+}
+
+// A máquina cujo identificador externo é o FLOW_MAQUINA_LOCAL do E2E. O nome "E2E " a
+// coloca na limpeza do setup global.
+export async function garantirMaquinaLocalNoBanco(): Promise<{ id: string }> {
+  const nome = 'E2E Oficina local'
+  return db.recurso.upsert({
+    where: { identificadorExterno: MAQUINA_LOCAL_E2E },
+    update: {},
+    create: {
+      tipo: 'SERVIDOR',
+      nome,
+      nomeNormalizado: normalizarNome(nome),
+      identificadorExterno: MAQUINA_LOCAL_E2E,
+      provedor: 'Própria',
+      endereco: 'oficina.exemplo.test',
+      especificacao: 'i5 · 8 GB · SSD 120 GB',
+    },
+    select: { id: true },
   })
 }

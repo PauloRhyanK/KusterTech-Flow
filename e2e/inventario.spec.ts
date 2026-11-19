@@ -119,7 +119,7 @@ test('nome repetido com outra caixa e acento é recusado com "Já existe um recu
   expect(await contarRecursos()).toBe(antes)
 })
 
-test('servidor sem fonte mostra CPU, Memória e Disco como Sem dados e nenhum badge de sucesso; mobile sem rolagem horizontal', async ({
+test('servidor comum não mostra métricas nem badge de sucesso; mobile sem rolagem horizontal', async ({
   page,
 }) => {
   await entrarComoAdmin(page)
@@ -130,14 +130,11 @@ test('servidor sem fonte mostra CPU, Memória e Disco como Sem dados e nenhum ba
 
   await page.goto(`/maquinas/${servidor.id}`)
   await expect(page.getByRole('heading', { level: 1, name: servidor.nome })).toBeVisible()
+  // Só a máquina local tem fonte de métricas (spec §6.5): a comum mostra cadastro e projetos.
+  await expect(page.getByRole('region', { name: 'Cadastro' })).toBeVisible()
   for (const rotulo of ['CPU', 'Memória', 'Disco']) {
-    await expect(
-      page
-        .locator('dt', { hasText: new RegExp(`^${rotulo}$`) })
-        .locator('xpath=following-sibling::dd'),
-    ).toHaveText('Sem dados')
+    await expect(page.getByText(rotulo, { exact: true })).toHaveCount(0)
   }
-  await expect(page.getByText('Nenhuma fonte de métricas configurada.')).toBeVisible()
   await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
 
   await page.goto('/maquinas')
