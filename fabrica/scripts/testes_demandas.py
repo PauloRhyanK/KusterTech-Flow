@@ -1,3 +1,4 @@
+import datetime
 import json
 import pathlib
 import sys
@@ -6,8 +7,11 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import capacidade  # noqa: E402
 import demandas  # noqa: E402
 import despachante  # noqa: E402
+import motor  # noqa: E402
+import prompts  # noqa: E402
 from retrato import FalhaDeEnvio  # noqa: E402
 
 ID = "11111111-2222-4333-8444-555555555555"
@@ -447,6 +451,341 @@ class TestesSaida(unittest.TestCase):
         self.assertEqual(cliente.enviados, [])
         self.assertEqual([x["chave"] for x in avisos], ["demandas:recusa:%s" % ID])
         self.assertEqual(self.estado["demandas"]["saida"], [])
+
+
+CONFIG_DO_KIT = json.loads((pathlib.Path(__file__).resolve().parent.parent / "modelos" / "config.json").read_text())
+INSTANTE = datetime.datetime(2026, 11, 20, 10, 0, 0, tzinfo=datetime.timezone.utc)
+REPO = "kustertech-exemplo/app"
+
+
+def triagem_ok(**mudancas):
+    base = {
+        "tipo": "defeito",
+        "destino": "fila_de_agentes",
+        "tamanho": "pequeno",
+        "mexeEm": "src/modules/clientes",
+        "risco": "baixo",
+        "dados": "nenhum",
+        "impacto": {"toca": ["tela de clientes"], "podeQuebrar": ["listagem"], "autorizacao": False, "caminhoProtegido": False},
+        "resposta": None,
+        "motivo": "defeito pequeno",
+    }
+    base.update(mudancas)
+    return base
+
+
+def resposta_triagem(obj):
+    return "li o código\n%s\n%s\n%s" % (prompts.INICIO_TRIAGEM, json.dumps(obj, ensure_ascii=False), prompts.FIM_TRIAGEM)
+
+
+class ClienteDeBusca:
+    """Responde `buscar` pela lista `paginas` (dict, None = 404, ou exceção); depois dela, uma página vazia."""
+
+    def __init__(self, *paginas, cursor="1"):
+        self.paginas, self.desdes, self.cursor = list(paginas), [], cursor
+
+    def buscar(self, desde):
+        self.desdes.append(desde)
+        if not self.paginas:
+            return {"cursor": desde or self.cursor, "mais": False, "demandas": []}
+        r = self.paginas.pop(0)
+        if isinstance(r, BaseException):
+            raise r
+        return r
+
+
+def pagina(*demandas_, cursor="1", mais=False):
+    return {"cursor": cursor, "mais": mais, "demandas": list(demandas_)}
+
+
+class BasePasso(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.raiz = pathlib.Path(self._tmp.name)
+        self.capacidade = self.raiz / "capacidade.json"
+        self.motor = motor.MotorFalso()
+        self.agora = INSTANTE
+        self.motor.agora = lambda: self.agora
+        self.estado = {"fila": [], "avisos": [], "chaves": {}}
+        self.salvos = []
+
+    def passo(self, cliente, *, modelos=None, projetos=None):
+        return demandas.passo(
+            self.estado,
+            cliente=cliente,
+            motor=self.motor,
+            forja=None,
+            capacidade_path=self.capacidade,
+            projetos={REPO: "app"} if projetos is None else projetos,
+            modelos=CONFIG_DO_KIT["modelos"] if modelos is None else modelos,
+            raiz=self.raiz,
+            agora=self.agora,
+            mem_disponivel_mb=None,
+            salvar=lambda: self.salvos.append(json.loads(json.dumps(self.estado))),
+        )
+
+    def despachos(self):
+        return [a for nome, a in self.motor.chamadas if nome == "despachar_run"]
+
+    def item(self, id_=ID):
+        return self.estado["demandas"]["itens"][id_]
+
+    def saida(self):
+        return [s["evento"] for s in self.estado["demandas"]["saida"]]
+
+    def triar(self):
+        """Um ciclo com a demanda recém-chegada: o run da triagem fica despachado."""
+        self.passo(ClienteDeBusca(pagina(retrato())))
+        return self.item()["runId"]
+
+    def avancar(self, segundos):
+        self.agora = self.agora + datetime.timedelta(seconds=segundos)
+
+
+class TestesTriagem(BasePasso):
+    def test_triagem_despacha_run_produto_com_o_modelo_haiku_da_config_e_sem_reservar_vaga(self):
+        self.passo(ClienteDeBusca(pagina(retrato())))
+        (despacho,) = self.despachos()
+        produto = CONFIG_DO_KIT["modelos"]["produto"]
+        self.assertEqual(despacho["modelo"], produto["modelo"])
+        self.assertEqual(despacho["modelo"], "claude-haiku-5-5")
+        self.assertEqual((despacho["agente"], despacho["max_custo_usd"], despacho["projeto"]), (produto["agente"], produto["maxCustoUsd"], "app"))
+        hexa = demandas.nonce_do_motor(ID, "triagem", 0)
+        self.assertRegex(hexa, r"^[0-9a-f]{32}$")
+        self.assertEqual(despacho["chave_idempotencia"], hexa)
+        self.assertTrue(despacho["prompt"].endswith("<!-- fabrica:nonce=%s -->" % hexa))
+        self.assertIn("Não mude arquivo nem abra PR", despacho["prompt"])
+        self.assertIsNone(despacho["branch_existente"])
+        self.assertNotIn(demandas.chave(ID), capacidade.ler(self.capacidade)["reservas"])
+        self.assertEqual(demandas.chaves_ocupando(self.estado), set())
+        # `despachando` com o nonce e o início no disco antes do POST
+        antes = [s for s in self.salvos if s["demandas"]["itens"].get(ID, {}).get("fase") == "despachando"]
+        self.assertTrue(antes)
+        self.assertEqual((antes[0]["demandas"]["itens"][ID]["nonce"], antes[0]["demandas"]["itens"][ID]["inicio"]), (hexa, "2026-11-20T10:00:00Z"))
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("triando", "run-1"))
+        self.assertEqual(self.item()["ultima"]["id"], ID)
+
+    def test_review_focus_5_triagem_roda_com_todas_as_vagas_ocupadas(self):
+        capacidade.configurar(self.capacidade, vagas=1, ram_minima_mb=0)
+        self.assertTrue(capacidade.reservar(self.capacidade, "outro-plano", "raia-0", mem_disponivel_mb=None))
+        antes = capacidade.ler(self.capacidade)["reservas"]
+        self.passo(ClienteDeBusca(pagina(retrato(destino="urgente"))))
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual(capacidade.ler(self.capacidade)["reservas"], antes)
+
+    def test_triagem_respondida_vira_evento_triagem_na_saida(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.definir_texto(run_id, resposta_triagem(triagem_ok()))
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("triagem", triagem_ok()))
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertIsNone(self.item()["runId"])
+        # gravado no estado (o coordenador esvazia a saída depois)
+        self.assertEqual(self.salvos[-1]["demandas"]["saida"][0]["evento"]["id"], evento["id"])
+        # o ciclo seguinte, com o retrato ainda em `recebida`, não despacha nem enfileira de novo
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca(pagina(retrato(), cursor="2")))
+        self.assertEqual((len(self.despachos()), self.saida()), (1, []))
+
+    def test_triagem_orientada_vira_evento_com_resposta(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        t = triagem_ok(destino="orientada", tipo="ajuste", resposta="Isso se configura em Configurações → Demandas.")
+        self.motor.definir_texto(run_id, resposta_triagem(t))
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "triagem")
+        self.assertEqual((evento["dados"]["destino"], evento["dados"]["resposta"]), ("orientada", t["resposta"]))
+
+    def test_triagem_sem_formato_vira_triagem_falhou(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.definir_texto(run_id, "acho que é um defeito")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("triagem_falhou", {"motivo": "a triagem não respondeu no formato"}))
+
+    def test_run_falho_vira_triagem_falhou_com_o_motivo_do_agente(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="failed", motivoFalha="x" * 300)
+        self.motor.definir_texto(run_id, resposta_triagem(triagem_ok()))
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("triagem_falhou", {"motivo": "o agente falhou: " + "x" * 200}))
+
+    def test_run_cancelado_sem_motivo(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="cancelled")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida()[0]["dados"], {"motivo": "o agente falhou: cancelled"})
+
+    def test_triagem_acima_de_30_min_vira_triagem_falhou(self):
+        self.triar()
+        self.avancar(1799)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.avancar(2)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("triagem_falhou", {"motivo": "a triagem passou de 30 min"}))
+        self.assertEqual(demandas.TETO_TRIAGEM_S, 1800)
+
+    def test_run_sumido_vira_triagem_falhou(self):
+        self.triar()
+        self.item()["runId"] = "run-que-nao-existe"
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida()[0]["dados"], {"motivo": "o agente falhou: run não encontrado no Warren"})
+
+    def test_run_perdido_por_infra_adota_o_retry_do_warren(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="failed", motivoFalha="sandbox_run_lost")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        novo = self.item()["runId"]
+        self.assertNotEqual(novo, run_id)
+        self.motor.definir_run(novo, estado="succeeded")
+        self.motor.definir_texto(novo, resposta_triagem(triagem_ok()))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida()[0]["tipo"], "triagem")
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_reinicio_em_despachando_adota_o_run_pelo_nonce(self):
+        hexa = demandas.nonce_do_motor(ID, "triagem", 0)
+        run_id = self.motor.despachar_run(
+            projeto="app", agente="claude-code", modelo="m", prompt="x\n<!-- fabrica:nonce=%s -->" % hexa,
+            branch_existente=None, max_custo_usd=1, chave_idempotencia=hexa,
+        )
+        it = demandas.secao(self.estado)["itens"][ID] = item("despachando", alvo="triando", nonce=hexa, inicio="2026-11-20T10:00:00Z", projeto="app", ultima=retrato())
+        self.assertIsNone(it["runId"])
+        self.passo(ClienteDeBusca(pagina(retrato())))
+        self.assertEqual(len(self.despachos()), 1)  # só o de cima
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("triando", run_id))
+
+    def test_reinicio_em_despachando_sem_run_despacha_de_novo_com_a_mesma_chave(self):
+        hexa = demandas.nonce_do_motor(ID, "triagem", 0)
+        demandas.secao(self.estado)["itens"][ID] = item("despachando", alvo="triando", nonce=hexa, inicio="2026-11-20T10:00:00Z", projeto="app", ultima=retrato())
+        self.passo(ClienteDeBusca())
+        (despacho,) = self.despachos()
+        self.assertEqual(despacho["chave_idempotencia"], hexa)
+        self.assertEqual(self.item()["fase"], "triando")
+
+    def test_queda_no_post_fica_despachando_e_o_ciclo_seguinte_acha_pelo_nonce(self):
+        self.motor.falhar_despacho("incerta")
+        eventos = self.passo(ClienteDeBusca(pagina(retrato())))
+        self.assertEqual(self.item()["fase"], "despachando")
+        self.assertIn("erro", [e["evento"] for e in eventos])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("triando", "run-1"))
+
+    def test_saida_pendente_nao_despacha(self):
+        demandas.secao(self.estado)["itens"][ID] = item("nova", ultima=retrato())
+        demandas.enfileirar_evento(self.estado, ID, "travada", {"motivo": "x", "url": None}, agora=AGORA)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.despachos(), [])
+
+    def test_repositorio_fora_da_fila_espera_com_um_aviso_por_repositorio(self):
+        outro = dict(retrato(), id=OUTRO)
+        eventos = self.passo(ClienteDeBusca(pagina(retrato(), outro)), projetos={})
+        avisos = [e for e in eventos if e["evento"] == "aviso"]
+        self.assertEqual(len(avisos), 1)
+        self.assertEqual(avisos[0]["mensagem"], "Demandas: kustertech-exemplo/app não tem projeto do Warren em fila.json")
+        self.assertEqual(self.despachos(), [])
+        self.assertEqual(self.item()["fase"], "nova")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 2)
+
+    def test_sem_modelo_do_produto_avisa_e_espera(self):
+        modelos = {k: v for k, v in CONFIG_DO_KIT["modelos"].items() if k != "produto"}
+        eventos = self.passo(ClienteDeBusca(pagina(retrato())), modelos=modelos)
+        (aviso,) = [e for e in eventos if e["evento"] == "aviso"]
+        self.assertIn("configure modelos.produto", aviso["mensagem"])
+        self.assertEqual(self.despachos(), [])
+
+    def test_triagem_ja_resolvida_pelo_paulo_nao_vira_evento(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.definir_texto(run_id, resposta_triagem(triagem_ok()))
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", destino="fila_de_agentes"), cursor="2")))
+        self.assertEqual(self.saida(), [])
+        self.assertIsNone(self.item()["runId"])
+
+    def test_recusa_da_triagem_ressincroniza_e_manda_para_a_decisao_do_paulo_uma_vez(self):
+        run_id = self.triar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.definir_texto(run_id, resposta_triagem(triagem_ok()))
+        self.passo(ClienteDeBusca())
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.assertTrue(self.item()["precisa_ressincronizar"])
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "triagem_falhou")
+        self.assertFalse(self.item()["precisa_ressincronizar"])
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertEqual(len(self.despachos()), 1)
+
+
+class TestesBusca(BasePasso):
+    def test_cursor_so_avanca_depois_de_gravar_os_itens(self):
+        cliente = ClienteDeBusca(pagina(retrato(), cursor="5", mais=True), pagina(dict(retrato(), id=OUTRO), cursor="9"))
+        self.passo(cliente, modelos={})
+        self.assertEqual(cliente.desdes, [None, "5"])
+        self.assertEqual(self.estado["demandas"]["cursor"], "9")
+        cursores = [s["demandas"]["cursor"] for s in self.salvos]
+        com_id = [ID in s["demandas"]["itens"] for s in self.salvos]
+        com_outro = [OUTRO in s["demandas"]["itens"] for s in self.salvos]
+        self.assertLess(com_id.index(True), cursores.index("5"))
+        self.assertLess(com_outro.index(True), cursores.index("9"))
+
+    def test_queda_ao_gravar_os_itens_nao_avanca_o_cursor(self):
+        def salvar_que_cai():
+            raise OSError("disco cheio")
+
+        with self.assertRaises(OSError):
+            demandas.passo(
+                self.estado, cliente=ClienteDeBusca(pagina(retrato(), cursor="5")), motor=self.motor, forja=None,
+                capacidade_path=self.capacidade, projetos={REPO: "app"}, modelos={}, raiz=self.raiz, agora=self.agora,
+                mem_disponivel_mb=None, salvar=salvar_que_cai,
+            )
+        self.assertIsNone(self.estado["demandas"]["cursor"])
+
+    def test_busca_le_ate_5_paginas_por_ciclo(self):
+        paginas = [pagina(cursor=str(i), mais=True) for i in range(1, 9)]
+        cliente = ClienteDeBusca(*paginas)
+        self.passo(cliente, modelos={})
+        self.assertEqual(len(cliente.desdes), 5)
+        self.assertEqual(self.estado["demandas"]["cursor"], "5")
+
+    def test_falha_na_busca_avisa_e_segue_com_as_demandas_que_ja_tem(self):
+        demandas.secao(self.estado)["itens"][ID] = item("nova", ultima=retrato())
+        eventos = self.passo(ClienteDeBusca(FalhaDeEnvio("HTTP 500")))
+        self.assertIn("demandas:busca", [e.get("chave") for e in eventos])
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_flow_sem_rota_desliga_o_passo_avisa_uma_vez_e_tenta_de_novo_em_1h(self):
+        demandas.secao(self.estado)["itens"][ID] = item("nova", ultima=retrato())
+        cliente = ClienteDeBusca(None, None, None)
+        eventos = self.passo(cliente)
+        self.assertEqual([e["chave"] for e in eventos if e["evento"] == "aviso"], ["demandas:sem-rota"])
+        self.assertEqual(self.despachos(), [])
+        self.assertEqual(self.estado["demandas"]["semRotaEm"], "2026-11-20T10:00:00Z")
+        self.avancar(3599)
+        self.assertEqual(self.passo(cliente), [])
+        self.assertEqual(len(cliente.desdes), 1)
+        self.avancar(2)
+        self.assertEqual([e for e in self.passo(cliente) if e["evento"] == "aviso"], [])
+        self.assertEqual(len(cliente.desdes), 2)
+        self.assertEqual(demandas.REVER_FLOW_SEM_DEMANDAS_S, 3600)
+        self.avancar(3601)
+        cliente.paginas = [pagina(cursor="3")]
+        self.passo(cliente)
+        self.assertIsNone(self.estado["demandas"]["semRotaEm"])
+        self.assertEqual(len(self.despachos()), 1)
 
 
 if __name__ == "__main__":

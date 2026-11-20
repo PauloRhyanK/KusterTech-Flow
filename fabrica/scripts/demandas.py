@@ -12,10 +12,19 @@ O estado vive em `fila-estado.json`, na chave `demandas`:
   mesmo id e o Flow responde `repetido`.
 
 `proxima_acao` é pura: lê o item e o retrato e devolve o nome da ação; quem age é o `passo` (Tasks 3 a 8).
+
+O `passo` busca as demandas (até `PAGINAS_POR_CICLO` páginas, o `cursor` só avança depois de gravar os itens; o
+retrato recém-chegado fica em `recebida` até a decisão, e só então vira `ultima`) e faz a triagem: um run do papel
+`produto` (`modelos.produto`), sem vaga de `capacidade.json`. A triagem passa por `despachando` (gravado com o
+nonce e o `inicio` antes do POST pago) e `triando` (com `runId`); um coordenador reiniciado em `despachando` acha o
+run pelo nonce e, sem ele, repete o POST com a mesma `Idempotency-Key`. O resultado vai para a caixa de saída como
+evento `triagem`; resposta fora do formato, run falho e o teto de 30 min viram `triagem_falhou` (spec §9: a
+demanda vai para a decisão do Paulo).
 """
 
 import contextlib
 import datetime
+import hashlib
 import os
 import pathlib
 import re
@@ -24,6 +33,10 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import capacidade  # noqa: E402
+import despachante  # noqa: E402
+import motor as motor_  # noqa: E402
+import prompts  # noqa: E402
 from retrato import FORMATO_INSTANTE, FalhaDeEnvio  # noqa: E402
 
 FASES = (
@@ -80,6 +93,11 @@ _CAMINHO_LOCAL = re.compile(r"demandas/(%s)/(%s)" % (_UUID.pattern, _UUID.patter
 
 def nonce(id_: str, fase: str, tentativa: int) -> str:
     return "demanda:%s:%s:%s" % (id_, fase, tentativa)
+
+
+def nonce_do_motor(id_: str, fase: str, tentativa: int) -> str:
+    """O `nonce` em 32 hex (sha256), o formato que o marcador do prompt e a `Idempotency-Key` do Warren aceitam."""
+    return hashlib.sha256(nonce(id_, fase, tentativa).encode("utf-8")).hexdigest()[:32]
 
 
 def chave(id_: str) -> str:
@@ -436,3 +454,317 @@ def esvaziar_saida(estado: dict, cliente, raiz, *, salvar) -> list[dict]:
         if isinstance(item, dict) and isinstance(item.get("arquivo"), dict):
             _apagar_local(raiz, item["arquivo"].get("caminho"))
     return avisos
+
+
+# ---------------------------------------------------------------- passo: busca e triagem
+
+PAGINAS_POR_CICLO = 5
+REVER_FLOW_SEM_DEMANDAS_S = 3600
+TETO_TRIAGEM_S = 1800
+PAPEL_DA_TRIAGEM = "produto"
+CHAVE_SEM_ROTA = "demandas:sem-rota"
+CHAVE_BUSCA = "demandas:busca"
+AVISO_SEM_ROTA = "Demandas: o Flow não tem a rota de demandas (404); a Fábrica tenta de novo em 1 h"
+MOTIVO_SEM_FORMATO = "a triagem não respondeu no formato"
+MOTIVO_TETO_TRIAGEM = "a triagem passou de 30 min"
+MOTIVO_AGENTE = "o agente falhou: %s"
+MOTIVO_RUN_SUMIU = "run não encontrado no Warren"
+MOTIVO_TRIAGEM_RECUSADA = "o Flow recusou a triagem da Fábrica"
+LIMITE_MOTIVO_DO_AGENTE = 200
+
+
+def _instante(valor):
+    try:
+        return datetime.datetime.strptime(valor, FORMATO_INSTANTE).replace(tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _modelo(modelos, papel: str) -> dict | None:
+    """`modelos.<papel>` validado como no despachante; ausente ou torto: `None`."""
+    try:
+        return despachante._validar_modelo(despachante._dict(modelos).get(papel), papel)
+    except Exception:  # noqa: BLE001 - sem modelo, a fase espera com um aviso
+        return None
+
+
+def _marco(demanda: dict):
+    return (demanda.get("etapaAtual") or {}).get("marco")
+
+
+def _ainda_na_triagem(demanda: dict) -> bool:
+    """A demanda ainda espera a triagem da Fábrica: na etapa `recebida`, sem espera e aberta."""
+    return _marco(demanda) == "recebida" and not demanda.get("espera") and not demanda.get("encerrada")
+
+
+class _Passo:
+    def __init__(self, estado, *, cliente, motor, capacidade_path, projetos, modelos, agora, salvar):
+        self.estado = estado
+        self.sec = secao(estado)
+        self.cliente = cliente
+        self.motor = motor
+        self.capacidade = capacidade_path
+        self.projetos = {str(k).lower(): v for k, v in (projetos or {}).items()}
+        self.modelo_da_triagem = _modelo(modelos, PAPEL_DA_TRIAGEM)
+        self.agora = agora if isinstance(agora, datetime.datetime) else motor_.instante(agora)
+        self.agora_texto = _texto_do_instante(self.agora)
+        self.salvar = salvar or (lambda: None)
+        self.eventos = []
+        self._avisados = set()
+
+    def aviso(self, chave_: str, mensagem: str) -> None:
+        if chave_ not in self._avisados:
+            self._avisados.add(chave_)
+            self.eventos.append({"evento": "aviso", "chave": chave_, "mensagem": mensagem[:300]})
+
+    def erro(self, id_, exc) -> None:
+        self.eventos.append({"evento": "erro", "etapa": "demandas", "alvo": id_, "erro": "%s: %s" % (type(exc).__name__, exc)})
+
+    # ------------------------------------------------------------ busca
+
+    def buscar(self) -> bool:
+        """Lê as páginas novas; `False` = Flow sem a rota (o passo fica desligado até `REVER_FLOW_SEM_DEMANDAS_S`)."""
+        sem_rota = _instante(self.sec.get("semRotaEm"))
+        if sem_rota is not None and (self.agora - sem_rota).total_seconds() < REVER_FLOW_SEM_DEMANDAS_S:
+            return False
+        itens = self.sec["itens"]
+        for _ in range(PAGINAS_POR_CICLO):
+            try:
+                resposta = self.cliente.buscar(self.sec["cursor"])
+            except FalhaDeEnvio as falha:
+                self.aviso(CHAVE_BUSCA, "Demandas: a busca no Flow falhou (%s)" % falha)
+                return True  # segue com as demandas que já tem
+            if resposta is None:
+                primeira = self.sec.get("semRotaEm") is None
+                self.sec["semRotaEm"] = self.agora_texto
+                self.salvar()
+                if primeira:
+                    self.aviso(CHAVE_SEM_ROTA, AVISO_SEM_ROTA)
+                return False
+            self.sec["semRotaEm"] = None
+            for demanda in resposta["demandas"]:
+                if not isinstance(itens.get(demanda["id"]), dict):
+                    itens[demanda["id"]] = item_novo()
+                itens[demanda["id"]]["recebida"] = demanda
+            self.salvar()  # os itens no disco antes do cursor: uma queda aqui relê a mesma página
+            self.sec["cursor"] = resposta["cursor"]
+            self.salvar()
+            if not resposta["mais"]:
+                break
+        return True
+
+    # ------------------------------------------------------------ decisão
+
+    def decidir(self) -> None:
+        itens = self.sec["itens"]
+        vista = {
+            id_: {"ultima": it.get("recebida") or it.get("ultima")}
+            for id_, it in itens.items()
+            if isinstance(it, dict) and _UUID.fullmatch(str(id_))
+        }
+        for id_ in ordenar(vista):
+            it = itens[id_]
+            demanda = it.get("recebida") or it.get("ultima")
+            if not isinstance(demanda, dict) or not demanda:
+                continue
+            try:
+                self.largar_triagem_superada(id_, it, demanda)
+                acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
+                if acao == "aguardar_envio":
+                    continue  # o retrato está atrasado: decide de novo quando a saída esvaziar
+                self.agir(id_, it, demanda, acao)
+            except Exception as exc:  # noqa: BLE001 - uma demanda não derruba as outras; o próximo ciclo refaz
+                self.erro(id_, exc)
+                continue
+            if it.get("recebida") is not None:
+                it["ultima"] = it.pop("recebida")
+                self.salvar()
+
+    def agir(self, id_: str, it: dict, demanda: dict, acao: str) -> None:
+        if acao == "ressincronizar":
+            self.ressincronizar(id_, it, demanda)
+        elif acao == "triar":
+            self.triar(id_, it, demanda)
+        elif acao == "acompanhar" and it.get("alvo") == "triando":
+            if it.get("fase") == "despachando":
+                self.retomar_triagem(id_, it, demanda)
+            elif it.get("fase") == "triando" and it.get("runId"):
+                self.acompanhar_triagem(id_, it, demanda)
+        # as outras ações são das Tasks 4 a 8
+
+    def largar_triagem_superada(self, id_: str, it: dict, demanda: dict) -> None:
+        """O Paulo decidiu (ou encerrou) a demanda com a triagem no meio: o run segue no Warren, mas não conta mais."""
+        em_curso = it.get("alvo") == "triando" and (it.get("fase") == "despachando" or (it.get("fase") == "triando" and it.get("runId")))
+        if em_curso and not _ainda_na_triagem(demanda):
+            it.update(fase="triando", runId=None, alvo=None)
+            it.pop("retryEsperado", None)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_triagem_superada", "id": id_})
+
+    def ressincronizar(self, id_: str, it: dict, demanda: dict) -> None:
+        """Um evento da demanda saiu da caixa sem o Flow aplicar: refaz a fase local pelo retrato.
+
+        Na triagem: a demanda ainda `recebida` com a triagem já decidida vai para a decisão do Paulo com um
+        `triagem_falhou` (uma vez só; recusado de novo, fica onde está, com o aviso da recusa). Nas outras etapas,
+        só limpa a marca (as Tasks 4 a 8 refazem as suas fases).
+        """
+        it["precisa_ressincronizar"] = False
+        terminada = it.get("fase") == "triando" and not it.get("runId")
+        if _ainda_na_triagem(demanda) and terminada and not it.get("triagemRecusada"):
+            it["triagemRecusada"] = True
+            enfileirar_evento(self.estado, id_, "triagem_falhou", {"motivo": MOTIVO_TRIAGEM_RECUSADA}, agora=self.agora_texto)
+        self.salvar()
+
+    # ------------------------------------------------------------ triagem
+
+    def desde(self, it: dict):
+        inicio = _instante(it.get("inicio"))
+        return _texto_do_instante(inicio - despachante.MARGEM_DESDE) if inicio is not None else None
+
+    def estourou(self, it: dict) -> bool:
+        inicio = _instante(it.get("inicio"))
+        return inicio is None or (self.agora - inicio).total_seconds() > TETO_TRIAGEM_S
+
+    def triar(self, id_: str, it: dict, demanda: dict) -> None:
+        repo = demanda.get("repositorio")
+        projeto = self.projetos.get(str(repo).lower())
+        if projeto is None:
+            self.aviso("demandas:sem-projeto:%s" % repo, "Demandas: %s não tem projeto do Warren em fila.json" % repo)
+            return
+        if self.modelo_da_triagem is None:
+            self.aviso(
+                "demandas:modelo:%s" % PAPEL_DA_TRIAGEM,
+                "Demandas: configure modelos.%s (agente, modelo, maxCustoUsd) em fabrica/modelos/config.json do kit" % PAPEL_DA_TRIAGEM,
+            )
+            return
+        if capacidade.ler(self.capacidade).get("drenagem"):
+            return  # o Warren vai reiniciar: espera o próximo ciclo (a triagem não ocupa vaga, mas é um run)
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(fase="despachando", alvo="triando", projeto=projeto, nonce=nonce_do_motor(id_, "triagem", tentativa), inicio=self.agora_texto, runId=None)
+        it.pop("retryEsperado", None)
+        self.salvar()  # antes do POST pago: um coordenador que morra daqui em diante acha o run pelo nonce
+        self.despachar_triagem(id_, it, demanda)
+
+    def despachar_triagem(self, id_: str, it: dict, demanda: dict) -> None:
+        modelo = self.modelo_da_triagem
+        run_id = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompts.prompt_triagem(demanda=demanda), it["nonce"]),
+            branch_existente=None,
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=it["nonce"],
+        )
+        self.com_run(id_, it, run_id)
+
+    def com_run(self, id_: str, it: dict, run_id: str) -> None:
+        it.update(fase="triando", runId=run_id)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_triagem", "id": id_, "runId": run_id})
+
+    def retomar_triagem(self, id_: str, it: dict, demanda: dict) -> None:
+        """`despachando` herdado (o POST pode ter criado o run): adota pelo nonce ou repete com a mesma chave."""
+        try:
+            run_id = self.motor.procurar_run(it["projeto"], it["nonce"], self.desde(it))
+        except Exception:
+            if self.estourou(it):
+                self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+                return
+            raise
+        if run_id is not None:
+            self.com_run(id_, it, run_id)
+        elif self.estourou(it):
+            self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+        elif self.modelo_da_triagem is not None:
+            self.despachar_triagem(id_, it, demanda)
+
+    def acompanhar_triagem(self, id_: str, it: dict, demanda: dict) -> None:
+        try:
+            run = self.motor.run(it["runId"])
+        except Exception as exc:
+            if despachante._eh_404(exc):
+                self.falhou(id_, it, MOTIVO_AGENTE % MOTIVO_RUN_SUMIU)
+            elif self.estourou(it):
+                self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+            else:
+                raise
+            return
+        run = despachante._dict(run)
+        situacao = run.get("estado")
+        if situacao == "failed" and run.get("motivoFalha") in motor_.MOTIVOS_INFRA_PERDIDA and not it.get("retryDe"):
+            if self.esperar_retry(id_, it, run):
+                return
+        if situacao == "succeeded":
+            triagem = prompts.extrair_triagem(self.motor.ultimo_texto(it["runId"]))
+            if triagem is None:
+                self.falhou(id_, it, MOTIVO_SEM_FORMATO)
+            else:
+                self.concluir(id_, it, "triagem", triagem)
+        elif situacao in despachante.TERMINAIS_DE_RUN:
+            motivo = run.get("motivoFalha")
+            motivo = motivo.strip() if isinstance(motivo, str) and motivo.strip() else situacao
+            self.falhou(id_, it, MOTIVO_AGENTE % motivo[:LIMITE_MOTIVO_DO_AGENTE])
+        elif self.estourou(it):
+            self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+
+    def esperar_retry(self, id_: str, it: dict, run: dict) -> bool:
+        """R2 (como nos consertos): adota o retry do Warren ou espera; `False` = o Warren não refez, vale o run falho."""
+        original = it["runId"]
+        espera = it.get("retryEsperado")
+        if not isinstance(espera, dict):
+            espera = it["retryEsperado"] = {"buscas": 0, "vistoEm": self.agora_texto}
+            self.salvar()
+        try:
+            achado = self.motor.procurar_retry(it["projeto"], original, [it["nonce"]], self.desde(it))
+        except Exception as exc:  # noqa: BLE001 - busca falha não conta; o teto ainda vale
+            if self.estourou(it):
+                self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+            else:
+                self.erro(id_, exc)
+            return True
+        if isinstance(achado, str) and achado and achado != original:
+            it.pop("retryEsperado", None)
+            it.update(runId=achado, retryDe=original)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_retry_adotado", "id": id_, "original": original, "runId": achado})
+            return True
+        espera["buscas"] = (espera.get("buscas") if isinstance(espera.get("buscas"), int) else 0) + 1
+        visto = _instante(espera.get("vistoEm"))
+        if visto is None:
+            espera["vistoEm"] = self.agora_texto
+            visto = self.agora
+        if espera["buscas"] < despachante.CICLOS_PARA_ACHAR_RETRY or self.agora - visto < despachante.PISO_PARA_DESISTIR:
+            self.salvar()
+            if self.estourou(it):
+                self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+            return True
+        it.pop("retryEsperado", None)
+        return False
+
+    def concluir(self, id_: str, it: dict, tipo: str, dados: dict) -> None:
+        """O evento vai para a caixa de saída e a triagem fecha no mesmo `salvar` (`triando` sem `runId`)."""
+        enfileirar_evento(self.estado, id_, tipo, dados, agora=self.agora_texto)
+        it.update(fase="triando", runId=None)
+        it.pop("retryEsperado", None)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_%s" % tipo, "id": id_, "destino": dados.get("destino"), "motivo": dados.get("motivo")})
+
+    def falhou(self, id_: str, it: dict, motivo: str) -> None:
+        self.concluir(id_, it, "triagem_falhou", {"motivo": motivo[:300]})
+
+
+def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar) -> list[dict]:
+    """Um ciclo das demandas: busca no Flow e triagem. Muta `estado["demandas"]` e devolve os eventos de log.
+
+    `cliente` é o `ClienteDoFlow`; `projetos` mapeia o repositório (`fila.json`) para o projeto do Warren (repositório
+    fora dele: a demanda espera, com um aviso por repositório); `modelos` é o `modelos` de
+    `<kit>/fabrica/modelos/config.json`. A triagem não reserva vaga. A caixa de saída é esvaziada por quem chama
+    (`esvaziar_saida`), depois. `salvar` grava o `fila-estado.json` (antes de cada POST pago e a cada transição).
+    `forja`, `raiz` e `mem_disponivel_mb` são das fases seguintes.
+    """
+    del forja, raiz, mem_disponivel_mb  # Tasks 4 a 8
+    p = _Passo(estado, cliente=cliente, motor=motor, capacidade_path=capacidade_path, projetos=projetos, modelos=modelos, agora=agora, salvar=salvar)
+    if p.buscar():
+        p.decidir()
+    return p.eventos
