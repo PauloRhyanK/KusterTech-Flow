@@ -33,7 +33,9 @@ export interface SaidaDaRecepcao {
 
 const CORPO_INVALIDO: SaidaDaRecepcao = { status: 400, corpo: { erro: 'Corpo inválido.' } }
 
-async function autenticarFonte(authorization: string | null): Promise<{ id: string } | null> {
+export async function autenticarFonte(
+  authorization: string | null,
+): Promise<{ id: string } | null> {
   const token = extrairTokenDaFabrica(authorization)
   if (token === null) return null
   const fonte = await db.fonteDaFabrica.findUnique({
