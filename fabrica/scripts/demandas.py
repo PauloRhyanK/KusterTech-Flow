@@ -42,6 +42,17 @@ o motivo e, na segunda, a demanda fica `travada`. O ajuste pedido refaz no mesmo
 nível "vai sozinho" pelo Flow), o PR do desenho é mergeado no head enviado antes de o plano ser solto da fila, e a
 demanda volta a `plano_no_repo`. Toda saída de `desenhando` solta a vaga; o run que passou do teto (ou foi superado)
 a segura até terminar.
+
+O teste no navegador (etapa `testada`) é um run do `qa` (`modelos.qa`) com uma vaga (`demanda:<id>`, raia `qa`): o
+agente sobe o sistema no próprio run (como o README manda), percorre a demanda e abre um PR em rascunho só com
+`.fabrica/demandas/<id>/**` (`teste.json` e capturas). `ler_resultado_do_teste` lê o head; com capturas de desktop e
+de celular, cada captura e depois o evento `teste` vão à caixa de saída e o PR é fechado sem merge. Sem as duas telas
+(ou com o `teste.json` torto), o run é refeito uma vez no mesmo branch e, na segunda, a demanda fica `travada`; o
+`nao_subiu` do qa (o projeto não sobe num run) trava com o motivo. Quem decide a correção é o Flow: na primeira falha
+volta a etapa para `desenvolvida` e o kit despacha a correção (`frontend`, `modelos.frontend`, a partir do branch
+padrão), mergeada atrás das guardas com CI `verde`/`ausente` e seguida de `etapa_concluida` (`desenvolvida`); na segunda
+falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Nunca há
+dois runs da demanda ao mesmo tempo: o run que passou do teto (ou foi superado) segura a vaga até terminar.
 """
 
 import contextlib
@@ -101,6 +112,8 @@ ACOES = (
 # esperas em que só o Paulo mexe: a Fábrica não faz nada até a espera sair
 ESPERAS_DO_PAULO = ("decidir_destino", "aprovar_desenho", "concluir_etapa", "travada", "teste_falhou")
 FASES_COM_VAGA = ("desenhando", "testando", "corrigindo")
+# o run que não conta mais (passou do teto, foi superado) e ainda segura a vaga da demanda, por fase
+RUNS_SUPERADOS = ("desenhoSuperado", "testeSuperado", "correcaoSuperada")
 
 LIMITE_DO_ARQUIVO = 10 * 1024 * 1024  # o mesmo do Flow
 # respostas do Flow que reenviar nunca conserta: o item sai da caixa com um aviso, sem esperar a contagem
@@ -282,8 +295,9 @@ def proxima_acao(item: dict, demanda: dict, *, pendente: bool = False) -> str:
         return "corrigir" if _retomada_nova(item, demanda) else "nada"
     if espera is None and marco == "testada" and fase == "esperando_paulo" and _retomada_nova(item, demanda):
         # o Flow limpa a espera ao aplicar a retomada: só o retrato anterior diz se era teste falho ou trava
+        # (`falhaDoTeste`: o kit viu a segunda falha, ou a retomada dela sem ver a espera)
         anterior = ((item.get("ultima") or {}).get("espera") or {}).get("tipo")
-        return "corrigir" if anterior == "teste_falhou" else "testar"
+        return "corrigir" if anterior == "teste_falhou" or item.get("falhaDoTeste") else "testar"
     if espera in ESPERAS_DO_PAULO:
         return "nada"
     if fase == "desenho_enviado" and _passou_do_desenho(demanda):
@@ -320,7 +334,9 @@ def proxima_acao(item: dict, demanda: dict, *, pendente: bool = False) -> str:
             return "soltar_plano"
         return "acompanhar"
     if marco == "testada" and espera is None:
-        return "acompanhar" if fase == "testando" else "testar"
+        # a correção depois da segunda falha roda (ou travou) com a etapa ainda em `testada`: nenhum teste junto
+        corrigindo = fase == "corrigindo" and (item.get("alvo") == "corrigindo" or item.get("travaDaCorrecao"))
+        return "acompanhar" if fase == "testando" or corrigindo else "testar"
     if marco == "entregue":
         return "acompanhar" if fase == "entregando" else "entregar"
     return "nada"  # etapa do Paulo (marco nulo) ou espera que a Fábrica não conhece
@@ -435,15 +451,20 @@ def chaves_do_orquestrador(estado: dict) -> set[str]:
     }
 
 
+def _run_superado_vivo(it: dict) -> bool:
+    return any(isinstance(it.get(campo), dict) for campo in RUNS_SUPERADOS)
+
+
 def chaves_ocupando(estado: dict) -> set[str]:
     """As chaves de vaga (`demanda:<id>`) das fases que reservam vaga e têm run vivo (ou o POST em curso), mais as do
-    run superado do desenho, que segura a vaga até terminar. O coordenador as soma aos `ativos` de `limpar_orfaos`."""
+    run superado (desenho, teste ou correção), que segura a vaga até terminar. O coordenador as soma aos `ativos` de
+    `limpar_orfaos`."""
     itens = (estado.get("demandas") or {}).get("itens") or {}
     return {
         chave(id_)
         for id_, it in itens.items()
         if isinstance(it, dict)
-        and ((it.get("fase") in FASES_COM_VAGA and (it.get("runId") or it.get("alvo") == it.get("fase"))) or isinstance(it.get("desenhoSuperado"), dict))
+        and ((it.get("fase") in FASES_COM_VAGA and (it.get("runId") or it.get("alvo") == it.get("fase"))) or _run_superado_vivo(it))
     }
 
 
@@ -701,6 +722,33 @@ MOTIVO_CI_DO_DESENHO_PENDENTE = "o CI do desenho não terminou em 2 h"
 MOTIVO_MERGE_DO_DESENHO = "o GitHub recusou o merge do desenho"
 MOTIVO_DESENHO_RECUSADO = "o Flow recusou o desenho enviado pela Fábrica"
 MOTIVO_ERRO_DO_DESENHO = "o desenho parou: o mesmo erro %d ciclos seguidos (%s)"
+PAPEL_DO_TESTE = "qa"
+PAPEL_DA_CORRECAO = "frontend"
+COMENTARIO_DO_TESTE = "Evidência enviada ao Flow."
+RESULTADOS_DO_TESTE = ("passou", "falhou", "nao_subiu")  # `nao_subiu` é do kit: o qa não subiu o sistema no run
+CAPTURAS_POR_TELA = 10
+ASSINATURA_PNG = b"\x89PNG\r\n\x1a\n"
+_CAPTURA = re.compile(r"(desktop|celular)-\d{2}\.png")
+MOTIVO_SEM_CAPTURAS = "o teste não trouxe capturas de desktop e celular"
+MOTIVO_NAO_SUBIU = "o qa não subiu o sistema no run: %s"
+MOTIVO_TESTE_FORA = "o PR do teste mexe fora de %s/: %s"
+MOTIVO_TESTE_SEM_PR = "o qa terminou sem PR do teste 2 vezes"
+MOTIVO_LINK_DO_TESTE = "o run do teste devolveu um link de PR inválido"
+MOTIVO_PR_DO_TESTE_FECHADO = "o PR do teste foi fechado"
+MOTIVO_TESTE_OUTRO_REPO = "o PR do teste está em outro repositório"
+MOTIVO_TESTE_RECUSADO = "o Flow recusou o teste enviado pela Fábrica"
+MOTIVO_ERRO_DO_TESTE = "o teste parou: o mesmo erro %d ciclos seguidos (%s)"
+MOTIVO_CORRECAO_SEM_PR = "o frontend terminou sem PR da correção 2 vezes"
+MOTIVO_LINK_DA_CORRECAO = "o run da correção devolveu um link de PR inválido"
+MOTIVO_PR_DA_CORRECAO_FECHADO = "o PR da correção foi fechado sem merge"
+MOTIVO_CORRECAO_OUTRO_REPO = "o PR da correção está em outro repositório"
+MOTIVO_CORRECAO_NA_PASTA = "o PR da correção mexe em .fabrica/demandas/: %s"
+MOTIVO_CORRECAO_PROTEGIDO = "o PR da correção mexe em caminho protegido: %s"
+MOTIVO_CI_DA_CORRECAO = "o PR da correção do teste está com o CI vermelho"
+MOTIVO_CI_DA_CORRECAO_PENDENTE = "o CI da correção do teste não terminou em 2 h"
+MOTIVO_MERGE_DA_CORRECAO = "o GitHub recusou o merge da correção"
+MOTIVO_CORRECAO_RECUSADA = "o Flow recusou a conclusão da correção do teste"
+MOTIVO_ERRO_DA_CORRECAO = "a correção parou: o mesmo erro %d ciclos seguidos (%s)"
 
 
 def _instante(valor):
@@ -766,6 +814,59 @@ def _ajustes(demanda: dict) -> list[dict]:
     return ajustes
 
 
+def _dados(it: dict, nome: str) -> dict:
+    """`it[nome]` (`teste` ou `correcao`), criado se faltar ou estiver torto."""
+    d = it.get(nome)
+    if not isinstance(d, dict):
+        d = it[nome] = {}
+    return d
+
+
+def _resumo_do_teste(valor) -> str | None:
+    if not isinstance(valor, str):
+        return None
+    limpo = prompts._CONTROLE.sub("", valor).strip()
+    return prompts._cortar_utf16(limpo, prompts.LIMITE_RESUMO_DO_TESTE).strip() or None
+
+
+def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
+    """O `teste.json` e as capturas do head do PR do teste: `{"resultado", "resumo", "capturas": [{"caminho", "tela",
+    "dados"}]}` (as capturas em ordem de caminho, até 10 por tela).
+
+    `teste.json` ausente, fora de UTF-8/JSON, com `resultado` desconhecido ou sem `resumo` → `None`. Captura fora do
+    nome `desktop-NN.png`/`celular-NN.png`, que não é PNG ou acima de 10 MB fica de fora (o Flow a recusaria).
+    """
+    pasta = prompts.pasta_da_demanda(_id_valido(id_))
+    bruto = forja.arquivo_bruto(repo, sha, pasta + "/teste.json")
+    try:
+        teste = json.loads(bytes(bruto).decode("utf-8")) if isinstance(bruto, (bytes, bytearray)) else None
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        teste = None
+    if not isinstance(teste, dict) or teste.get("resultado") not in RESULTADOS_DO_TESTE:
+        return None
+    resumo = _resumo_do_teste(teste.get("resumo"))
+    if resumo is None:
+        return None
+    prefixo = pasta + "/capturas/"
+    capturas, por_tela = [], {"desktop": 0, "celular": 0}
+    for caminho in sorted(c for c in forja.listar(repo, sha, pasta + "/capturas") or [] if isinstance(c, str)):
+        m = _CAPTURA.fullmatch(caminho[len(prefixo):]) if caminho.startswith(prefixo) else None
+        if m is None or por_tela[m.group(1)] >= CAPTURAS_POR_TELA:
+            continue
+        dados = forja.arquivo_bruto(repo, sha, caminho)
+        if not isinstance(dados, (bytes, bytearray)) or len(dados) > LIMITE_DO_ARQUIVO or not bytes(dados).startswith(ASSINATURA_PNG):
+            continue
+        por_tela[m.group(1)] += 1
+        capturas.append({"caminho": caminho, "tela": m.group(1), "dados": bytes(dados)})
+    return {"resultado": teste["resultado"], "resumo": resumo, "capturas": capturas}
+
+
+def _na_pasta(caminho, pasta: str) -> bool:
+    if not isinstance(caminho, str) or not caminho.startswith(pasta + "/"):
+        return False
+    return not any(parte in ("", ".", "..") for parte in caminho.split("/"))
+
+
 def _ainda_na_triagem(demanda: dict) -> bool:
     """A demanda ainda espera a triagem da Fábrica: na etapa `recebida`, sem espera e aberta."""
     return _marco(demanda) == "recebida" and not demanda.get("espera") and not demanda.get("encerrada")
@@ -784,6 +885,8 @@ class _Passo:
         self.modelo_da_triagem = _modelo(modelos, PAPEL_DA_TRIAGEM)
         self.modelo_do_plano = _modelo(modelos, PAPEL_DO_PLANO)
         self.modelo_do_desenho = _modelo(modelos, PAPEL_DO_DESENHO)
+        self.modelo_do_teste = _modelo(modelos, PAPEL_DO_TESTE)
+        self.modelo_da_correcao = _modelo(modelos, PAPEL_DA_CORRECAO)
         self.mem_disponivel_mb = mem_disponivel_mb
         self.agora = agora if isinstance(agora, datetime.datetime) else motor_.instante(agora)
         self.agora_texto = _texto_do_instante(self.agora)
@@ -851,7 +954,10 @@ class _Passo:
                 self.largar_plano_superado(id_, it, demanda)
                 self.seguir_run_superado(id_, it)
                 self.largar_desenho_superado(id_, it, demanda)
+                self.largar_teste_superado(id_, it, demanda)
+                self.largar_correcao_superada(id_, it, demanda)
                 self.seguir_desenho_superado(id_, it)
+                self.seguir_teste(id_, it, demanda)
                 self.adotar_plano_da_sessao(id_, it, demanda)
                 self.seguir_desenvolvimento(id_, it, demanda)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
@@ -891,7 +997,15 @@ class _Passo:
             # quem solta a entrada da fila é `aplicar_na_fila` (no `_passo_fila`); aqui só a marca local
             it["segurado"] = False
             self.salvar()
-        # as outras ações são das Tasks 7 e 8
+        elif acao == "testar":
+            self.testar(id_, it, demanda)
+        elif acao == "acompanhar" and it.get("alvo") == "testando" and it.get("fase") == "testando":
+            self.contando_erros(id_, it, lambda: self.acompanhar_teste(id_, it, demanda), campo="erroDoTeste", travar=self.travar_teste_por_erro(id_, it))
+        elif acao == "corrigir":
+            self.corrigir(id_, it, demanda)
+        elif acao == "acompanhar" and it.get("fase") == "corrigindo":
+            self.contando_erros(id_, it, lambda: self.acompanhar_correcao(id_, it, demanda), campo="erroDaCorrecao", travar=self.travar_correcao_por_erro(id_, it))
+        # as outras ações são da Task 8
 
     def largar_triagem_superada(self, id_: str, it: dict, demanda: dict) -> None:
         """O Paulo decidiu (ou encerrou) a demanda com a triagem no meio: o run segue no Warren, mas não conta mais."""
@@ -940,6 +1054,23 @@ class _Passo:
         ):
             # a trava do desenho (ou do merge dele) não pegou no Flow: nada se refaz sozinho, só o aviso
             self.aviso_do_desenho(id_)
+        elif self.teste_sem_resposta_do_flow(it, demanda):
+            # o Flow não aplicou uma captura ou o `teste`: a demanda vai para o Paulo (uma vez); a retomada testa de novo
+            if not it.get("testeRecusado"):
+                it.update(testeRecusado=True, fase="esperando_paulo", inicio=self.agora_texto, travaDoTeste=True)
+                enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_TESTE_RECUSADO, "url": _dados(it, "teste").get("prUrl")}, agora=self.agora_texto)
+            else:
+                self.aviso_do_teste(id_)
+        elif it.get("travaDoTeste") and it.get("fase") == "esperando_paulo" and _marco(demanda) == "testada" and not demanda.get("encerrada"):
+            self.aviso_do_teste(id_)  # a trava do teste não pegou no Flow: nada se refaz sozinho, só o aviso
+        elif it.get("fase") == "corrigindo" and not demanda.get("encerrada") and _marco(demanda) in ("desenvolvida", "testada"):
+            c = _dados(it, "correcao")
+            if c.get("mergeado") and _marco(demanda) == "desenvolvida" and not it.get("correcaoRecusada"):
+                # a correção está no branch padrão, mas o Flow não aplicou a conclusão: a demanda vai para o Paulo (uma vez)
+                it.update(correcaoRecusada=True, travaDaCorrecao=True, inicio=self.agora_texto)
+                enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_CORRECAO_RECUSADA, "url": c.get("prUrl")}, agora=self.agora_texto)
+            else:
+                self.aviso_do_teste(id_)
         elif _marco(demanda) == "desenvolvida" and it.get("fase") in ("plano_no_repo", "desenvolvendo") and not demanda.get("encerrada"):
             if it.get("desenvolvida"):
                 # o plano terminou, mas o Flow não aplicou a conclusão: a demanda vai para o Paulo (uma vez)
@@ -1461,8 +1592,8 @@ class _Passo:
         Sem vaga (ou com o run superado ainda vivo) espera o ciclo seguinte. O ajuste e a retomada reaproveitam o branch
         do PR anterior. O nonce é `versão + tentativa`, com a `tentativa` subindo a cada run: nunca repete na demanda.
         """
-        if isinstance(it.get("desenhoSuperado"), dict):
-            return  # o run anterior ainda vive no Warren: nunca dois runs do desenho
+        if _run_superado_vivo(it):
+            return  # o run anterior ainda vive no Warren: nunca dois runs da demanda
         d = _dados_do_desenho(it)
         versao = _versao_do_desenho(demanda)
         if it.get("fase") == "desenho_enviado" and isinstance(d.get("versao"), int) and versao < d["versao"]:
@@ -1623,8 +1754,13 @@ class _Passo:
             self.eventos.append({"evento": "demanda_desenho_superado", "id": id_})
 
     def seguir_desenho_superado(self, id_: str, it: dict) -> None:
-        """O run do desenho que não conta mais: solta a vaga quando ele termina (ou some), ou passada a folga do teto."""
-        sup = it.get("desenhoSuperado")
+        for campo in RUNS_SUPERADOS:
+            self.seguir_superado(id_, it, campo)
+
+    def seguir_superado(self, id_: str, it: dict, campo: str) -> None:
+        """O run (desenho, teste ou correção) que não conta mais: solta a vaga quando ele termina (ou some), ou passada
+        a folga do teto. Enquanto ele vive, nenhuma fase da demanda despacha outro run (`_run_superado_vivo`)."""
+        sup = it.get(campo)
         if not isinstance(sup, dict):
             return
         inicio = _instante(sup.get("inicio"))
@@ -1642,11 +1778,12 @@ class _Passo:
                 if not terminou:
                     self.erro(id_, exc)
         if terminou:
-            it.pop("desenhoSuperado", None)
-            if it.get("fase") != "desenhando":  # nenhum run novo do desenho reservou a vaga (desenhar espera o superado)
+            it.pop(campo, None)
+            # nenhum run novo reservou a vaga (toda fase com vaga espera o superado), e nenhum outro superado a segura
+            if not (it.get("fase") in FASES_COM_VAGA and it.get("alvo") == it.get("fase")) and not _run_superado_vivo(it):
                 capacidade.sincronizar(self.capacidade, chave(id_), set())
             self.salvar()
-            self.eventos.append({"evento": "demanda_vaga_do_desenho_solta", "id": id_, "runId": sup.get("runId")})
+            self.eventos.append({"evento": "demanda_vaga_solta", "id": id_, "campo": campo, "runId": sup.get("runId")})
         else:
             self.salvar()
 
@@ -1718,6 +1855,7 @@ class _Passo:
         """Fim do desenho: a demanda volta a `plano_no_repo` e o acompanhamento do desenvolvimento começa."""
         d = _dados_do_desenho(it)
         d.pop("ciPendenteDesde", None)
+        d["mergeado"] = merge  # o teste no navegador compara com o desenho só se ele chegou ao branch padrão
         it.update(fase="plano_no_repo", travaDoDesenho=False, desenho=d)
         self.salvar()
         self.eventos.append({"evento": "demanda_desenho_mergeado" if merge else "demanda_desenho_sem_merge", "id": id_, "prUrl": d.get("prUrl")})
@@ -1739,6 +1877,451 @@ class _Passo:
             return True
 
         return travar
+
+    # ------------------------------------------------------------ teste no navegador
+
+    def aviso_do_teste(self, id_: str) -> None:
+        self.aviso("demandas:teste:%s" % id_, "Demandas: o Flow recusou o teste (ou a trava, ou a correção) da demanda %s; confira a demanda" % id_[:8])
+
+    def teste_sem_resposta_do_flow(self, it: dict, demanda: dict) -> bool:
+        """O `teste` foi enviado e o retrato segue em `testada`, sem espera e sem retomada depois do envio."""
+        t = it.get("teste") if isinstance(it.get("teste"), dict) else {}
+        return (
+            it.get("fase") == "testando"
+            and bool(t.get("enviado"))
+            and _marco(demanda) == "testada"
+            and not demanda.get("encerrada")
+            and not demanda.get("espera")
+            and not _retomada_nova({"inicio": t.get("enviadoEm")}, demanda)
+        )
+
+    def testar(self, id_: str, it: dict, demanda: dict) -> None:
+        """Um run do `qa` (vaga `demanda:<id>` na raia `qa`): sobe o sistema no próprio run, percorre a demanda num
+        navegador e devolve um PR em rascunho com o `teste.json` e as capturas. Sem vaga (ou com um run superado da
+        demanda ainda vivo) espera o ciclo seguinte."""
+        if _run_superado_vivo(it):
+            return  # o run anterior ainda vive no Warren: nunca dois runs da demanda
+        projeto = self.projeto_de(demanda)
+        if projeto is None:
+            return
+        if self.modelo_do_teste is None:
+            self.sem_modelo(PAPEL_DO_TESTE)
+            return
+        if capacidade.ler(self.capacidade).get("drenagem"):
+            return
+        if not capacidade.reservar(self.capacidade, chave(id_), PAPEL_DO_TESTE, mem_disponivel_mb=self.mem_disponivel_mb):
+            return
+        it.update(
+            fase="testando",
+            alvo="testando",
+            projeto=projeto,
+            repo=demanda["repositorio"],
+            teste={"semPr": 0, "terminou": False, "refeito": False},
+            travaDoTeste=False,
+            testeRecusado=False,
+            falhaDoTeste=False,
+        )
+        it.pop("erroDoTeste", None)
+        self.novo_run_do_teste(id_, it, demanda)
+
+    def novo_run_do_teste(self, id_: str, it: dict, demanda: dict) -> None:
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(nonce=nonce_do_motor(id_, "teste", tentativa), tentativa=tentativa + 1, inicio=self.agora_texto, runId=None)
+        it["teste"]["terminou"] = False
+        self.salvar()  # antes do POST pago: um coordenador que morra daqui em diante acha o run pelo nonce
+        self.despachar_teste(id_, it, demanda)
+
+    def despachar_teste(self, id_: str, it: dict, demanda: dict) -> None:
+        modelo = self.modelo_do_teste
+        t = it["teste"]
+        d = it.get("desenho") if isinstance(it.get("desenho"), dict) else {}
+        desenho = prompts.caminho_do_desenho(id_) if d.get("mergeado") is True else None
+        prompt = prompts.prompt_teste_no_navegador(demanda=demanda, desenho=desenho, refazer=bool(t.get("refeito")))
+        branch = t.get("branch") if t.get("refeito") and isinstance(t.get("branch"), str) and t.get("branch") else None
+        run_id = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompt, it["nonce"]),
+            branch_existente=branch,
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=it["nonce"],
+        )
+        it["runId"] = run_id
+        self.salvar()
+        self.eventos.append({"evento": "demanda_teste", "id": id_, "runId": run_id})
+
+    def acompanhar_teste(self, id_: str, it: dict, demanda: dict) -> None:
+        t = _dados(it, "teste")
+        inicio = _instante(it.get("inicio"))
+        if inicio is None or (self.agora - inicio).total_seconds() > TETO_RUN_S:
+            self.travar_teste(id_, it, MOTIVO_TETO_RUN, t.get("prUrl"), vivo=True)
+            return
+        if not it.get("runId"):
+            # o POST pode ter criado o run: adota pelo nonce ou repete com a mesma chave
+            run_id = self.motor.procurar_run(it["projeto"], it["nonce"], self.desde(it))
+            if run_id is not None:
+                it["runId"] = run_id
+                self.salvar()
+            elif self.modelo_do_teste is not None:
+                self.despachar_teste(id_, it, demanda)
+            return
+        try:
+            run = despachante._dict(self.motor.run(it["runId"]))
+        except Exception as exc:
+            if not despachante._eh_404(exc):
+                raise
+            run = {"estado": "failed", "prUrl": None}  # o run sumiu do Warren: conta como sem PR
+        if run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+            return
+        if not t.get("terminou"):
+            t["terminou"] = True  # daqui em diante a vaga não espera mais o run
+            self.salvar()
+        pr_url = run.get("prUrl")
+        if isinstance(pr_url, str) and pr_url:
+            self.conferir_teste(id_, it, demanda, pr_url)
+            return
+        t["semPr"] = (t.get("semPr") if isinstance(t.get("semPr"), int) else 0) + 1
+        if t["semPr"] >= TENTATIVAS_SEM_PR or self.modelo_do_teste is None:
+            self.travar_teste(id_, it, MOTIVO_TESTE_SEM_PR, t.get("prUrl"))
+        else:
+            self.novo_run_do_teste(id_, it, demanda)
+
+    def conferir_teste(self, id_: str, it: dict, demanda: dict, pr_url: str) -> None:
+        """O PR do run: só `.fabrica/demandas/<id>/**`, com o `teste.json` e capturas das duas telas; sem elas, refaz uma
+        vez no mesmo branch e, na segunda, trava. `nao_subiu` trava com o motivo do qa."""
+        t = it["teste"]
+        repo = it.get("repo") or demanda["repositorio"]
+        pasta = prompts.pasta_da_demanda(id_)
+        try:
+            pr = despachante._dict(self.forja.pr(pr_url))
+        except ValueError:  # o link que o run devolveu não é de um PR
+            self.travar_teste(id_, it, MOTIVO_LINK_DO_TESTE, t.get("prUrl"))
+            return
+        if str(pr.get("repo")).lower() != str(repo).lower():
+            self.travar_teste(id_, it, MOTIVO_TESTE_OUTRO_REPO, pr_url)
+            return
+        if pr.get("aberto") is not True:
+            self.travar_teste(id_, it, MOTIVO_PR_DO_TESTE_FECHADO, pr_url)
+            return
+        arquivos, head, branch = pr.get("arquivos"), pr.get("headSha"), pr.get("branch")
+        if not isinstance(arquivos, list) or not isinstance(head, str) or not head or not isinstance(branch, str) or not branch:
+            raise RuntimeError("PR do teste ilegível")
+        t.update(prUrl=pr_url, branch=branch, headSha=head)
+        self.salvar()
+        fora = [a for a in arquivos if not _na_pasta(a, pasta)]
+        if fora:
+            self.travar_teste(id_, it, MOTIVO_TESTE_FORA % (pasta, str(fora[0])[:200]), pr_url)
+            return
+        resultado = ler_resultado_do_teste(self.forja, repo, head, id_)
+        if resultado is not None and resultado["resultado"] == "nao_subiu":
+            self.travar_teste(id_, it, MOTIVO_NAO_SUBIU % resultado["resumo"][:250], pr_url)
+            return
+        telas = {c["tela"] for c in resultado["capturas"]} if resultado is not None else set()
+        if {"desktop", "celular"} <= telas:
+            self.enviar_teste(id_, it, resultado)
+        elif not t.get("refeito"):
+            t.update(refeito=True, semPr=0)  # refaz uma vez, no mesmo branch, com o motivo no prompt
+            self.novo_run_do_teste(id_, it, demanda)
+        else:
+            self.travar_teste(id_, it, MOTIVO_SEM_CAPTURAS, pr_url)
+
+    def enviar_teste(self, id_: str, it: dict, resultado: dict) -> None:
+        """Cada captura e depois o `teste` vão à caixa de saída, a vaga é solta e o PR em rascunho é fechado."""
+        t = it["teste"]
+        ids = [
+            enfileirar_arquivo(
+                self.estado, self.raiz, id_, tipo="captura", nome=c["caminho"].rsplit("/", 1)[-1], conteudo="image/png", dados=c["dados"], tela=c["tela"]
+            )
+            for c in resultado["capturas"]
+        ]
+        dados = {"resultado": resultado["resultado"], "resumo": resultado["resumo"], "capturas": ids}
+        enfileirar_evento(self.estado, id_, "teste", dados, agora=self.agora_texto)
+        t.update(enviado=True, enviadoEm=self.agora_texto, resultado=resultado["resultado"], resumo=resultado["resumo"], fecharPr=True)
+        self.sair_do_teste(id_, it, fase="testando")
+        self.eventos.append({"evento": "demanda_teste_enviado", "id": id_, "resultado": resultado["resultado"], "prUrl": t.get("prUrl")})
+        self.fechar_pr_do_teste(id_, it)
+
+    def fechar_pr_do_teste(self, id_: str, it: dict) -> None:
+        """O PR em rascunho do teste nunca é mergeado: fecha com um comentário, depois do envio (repete se falhar)."""
+        t = it.get("teste") if isinstance(it.get("teste"), dict) else {}
+        if not t.get("fecharPr") or not isinstance(t.get("prUrl"), str):
+            return
+        try:
+            self.forja.fechar_pr(t["prUrl"], COMENTARIO_DO_TESTE)
+        except Exception as exc:  # noqa: BLE001 - o ciclo seguinte tenta de novo; o teste já está na saída
+            self.erro(id_, exc)
+            return
+        t.pop("fecharPr", None)
+        self.salvar()
+
+    def seguir_teste(self, id_: str, it: dict, demanda: dict) -> None:
+        """Antes da decisão: fecha o PR do teste que ficou aberto e reconhece a segunda falha (o Flow espera o Paulo).
+
+        A segunda falha é a espera `teste_falhou` no retrato, ou (sem o kit ver a espera) a etapa ainda `testada`, sem
+        espera, com uma retomada depois do envio do `teste` falho. A fase vai a `esperando_paulo` com o `inicio` no
+        envio, e `falhaDoTeste` diz a `proxima_acao` que a retomada é para corrigir.
+        """
+        t = it.get("teste")
+        if not isinstance(t, dict):
+            return
+        self.fechar_pr_do_teste(id_, it)
+        if it.get("fase") != "testando" or it.get("alvo") or not t.get("enviado") or t.get("resultado") != "falhou":
+            return
+        if demanda.get("encerrada") or _marco(demanda) != "testada" or it.get("precisa_ressincronizar"):
+            return
+        espera = (demanda.get("espera") or {}).get("tipo")
+        if espera == "teste_falhou" or (espera is None and _retomada_nova({"inicio": t.get("enviadoEm")}, demanda)):
+            it.update(fase="esperando_paulo", inicio=t.get("enviadoEm") or self.agora_texto, falhaDoTeste=True)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_teste_falhou_de_novo", "id": id_})
+
+    def sair_do_teste(self, id_: str, it: dict, *, vivo: bool = False, **campos) -> None:
+        """Toda saída do run do teste: solta a vaga e grava. `vivo`: o run pode estar rodando; a vaga fica com a demanda
+        em `testeSuperado` até ele terminar (`seguir_superado`)."""
+        t = _dados(it, "teste")
+        if vivo and not t.get("terminou") and (it.get("runId") or it.get("nonce")):
+            it["testeSuperado"] = {"runId": it.get("runId"), "nonce": it.get("nonce"), "projeto": it.get("projeto"), "inicio": it.get("inicio")}
+        else:
+            capacidade.sincronizar(self.capacidade, chave(id_), set())
+        it.update(runId=None, alvo=None, **campos)
+        self.salvar()
+
+    def travar_teste(self, id_: str, it: dict, motivo: str, url, *, vivo: bool = False) -> None:
+        """`travada` para o Paulo; a retomada dele (depois do novo `inicio`) testa de novo com um nonce novo."""
+        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo[:300], "url": url}, agora=self.agora_texto)
+        self.sair_do_teste(id_, it, vivo=vivo, fase="esperando_paulo", inicio=self.agora_texto, travaDoTeste=True)
+        self.eventos.append({"evento": "demanda_teste_travado", "id": id_, "motivo": motivo})
+
+    def travar_teste_por_erro(self, id_: str, it: dict):
+        def travar(vezes, texto):
+            if it.get("fase") != "testando" or it.get("alvo") != "testando":
+                return False
+            self.travar_teste(id_, it, MOTIVO_ERRO_DO_TESTE % (vezes, texto), _dados(it, "teste").get("prUrl"), vivo=True)
+            return True
+
+        return travar
+
+    def largar_teste_superado(self, id_: str, it: dict, demanda: dict) -> None:
+        """O Paulo mexeu na demanda (encerrou, travou ou passou da etapa) com o teste no meio: o run não conta mais."""
+        em_curso = it.get("alvo") == "testando" and it.get("fase") == "testando"
+        if em_curso and not (_marco(demanda) == "testada" and not demanda.get("espera") and not demanda.get("encerrada")):
+            self.sair_do_teste(id_, it, vivo=True, fase="esperando_paulo", inicio=self.agora_texto)
+            self.eventos.append({"evento": "demanda_teste_superado", "id": id_})
+
+    # ------------------------------------------------------------ correção do teste
+
+    def corrigir(self, id_: str, it: dict, demanda: dict) -> None:
+        """Um run do `frontend` (vaga `demanda:<id>` na raia `frontend`) a partir do branch padrão, com o resumo do
+        teste falho. O Flow já decidiu que cabe a correção (a primeira falha, ou a retomada do Paulo na segunda)."""
+        if _run_superado_vivo(it):
+            return
+        projeto = self.projeto_de(demanda)
+        if projeto is None:
+            return
+        if self.modelo_da_correcao is None:
+            self.sem_modelo(PAPEL_DA_CORRECAO)
+            return
+        if capacidade.ler(self.capacidade).get("drenagem"):
+            return
+        if not capacidade.reservar(self.capacidade, chave(id_), PAPEL_DA_CORRECAO, mem_disponivel_mb=self.mem_disponivel_mb):
+            return
+        teste = it.get("teste") if isinstance(it.get("teste"), dict) else {}
+        resumo = teste.get("resumo") or (demanda.get("espera") or {}).get("motivo") or ""
+        it.update(
+            fase="corrigindo",
+            alvo="corrigindo",
+            projeto=projeto,
+            repo=demanda["repositorio"],
+            correcao={"semPr": 0, "terminou": False, "resumo": resumo},
+            travaDaCorrecao=False,
+            falhaDoTeste=False,
+            correcaoRecusada=False,
+        )
+        it.pop("erroDaCorrecao", None)
+        self.novo_run_da_correcao(id_, it, demanda)
+
+    def novo_run_da_correcao(self, id_: str, it: dict, demanda: dict) -> None:
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(nonce=nonce_do_motor(id_, "correcao", tentativa), tentativa=tentativa + 1, inicio=self.agora_texto, runId=None)
+        it["correcao"]["terminou"] = False
+        self.salvar()  # antes do POST pago
+        self.despachar_correcao(id_, it, demanda)
+
+    def despachar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
+        modelo = self.modelo_da_correcao
+        prompt = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=it["correcao"].get("resumo") or "")
+        run_id = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompt, it["nonce"]),
+            branch_existente=None,
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=it["nonce"],
+        )
+        it["runId"] = run_id
+        self.salvar()
+        self.eventos.append({"evento": "demanda_correcao", "id": id_, "runId": run_id})
+
+    def acompanhar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
+        c = _dados(it, "correcao")
+        if it.get("travaDaCorrecao"):
+            self.retomar_correcao(id_, it, demanda)
+            return
+        if it.get("alvo") != "corrigindo":
+            return  # mergeada: o Flow volta (ou já está) em `testada`
+        if c.get("prUrl"):
+            self.conferir_correcao(id_, it, demanda)  # o run terminou: vale o teto do CI pendente
+            return
+        inicio = _instante(it.get("inicio"))
+        if inicio is None or (self.agora - inicio).total_seconds() > TETO_RUN_S:
+            self.travar_correcao(id_, it, MOTIVO_TETO_RUN, None, vivo=True)
+            return
+        if not it.get("runId"):
+            run_id = self.motor.procurar_run(it["projeto"], it["nonce"], self.desde(it))
+            if run_id is not None:
+                it["runId"] = run_id
+                self.salvar()
+            elif self.modelo_da_correcao is not None:
+                self.despachar_correcao(id_, it, demanda)
+            return
+        try:
+            run = despachante._dict(self.motor.run(it["runId"]))
+        except Exception as exc:
+            if not despachante._eh_404(exc):
+                raise
+            run = {"estado": "failed", "prUrl": None}
+        if run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+            return
+        if not c.get("terminou"):
+            c["terminou"] = True
+            self.salvar()
+        pr_url = run.get("prUrl")
+        if isinstance(pr_url, str) and pr_url:
+            c["prUrl"] = pr_url
+            self.salvar()
+            self.conferir_correcao(id_, it, demanda)
+            return
+        c["semPr"] = (c.get("semPr") if isinstance(c.get("semPr"), int) else 0) + 1
+        if c["semPr"] >= TENTATIVAS_SEM_PR or self.modelo_da_correcao is None:
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_SEM_PR, None)
+        else:
+            self.novo_run_da_correcao(id_, it, demanda)
+
+    def retomar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
+        """A correção travou: só a retomada do Paulo (depois da trava) mexe. Com o merge feito, manda a conclusão de
+        novo; com o PR, confere o mesmo PR (o Paulo pode ter consertado o CI); sem PR, corrige do zero."""
+        if not _retomada_nova(it, demanda):
+            return
+        c = _dados(it, "correcao")
+        if c.get("mergeado"):
+            it.update(travaDaCorrecao=False, inicio=self.agora_texto)
+            self.correcao_mergeada(id_, it, demanda)
+        elif c.get("prUrl"):
+            c.pop("ciPendenteDesde", None)
+            it.update(travaDaCorrecao=False, alvo="corrigindo", inicio=self.agora_texto)
+            self.salvar()
+            self.conferir_correcao(id_, it, demanda)
+        else:
+            self.corrigir(id_, it, demanda)  # sem vaga, a trava (e a retomada) ficam para o ciclo seguinte
+
+    def conferir_correcao(self, id_: str, it: dict, demanda: dict) -> None:
+        """As guardas do merge do PR da correção, no mesmo head: fora de `.fabrica/demandas/`, fora dos protegidos da
+        `.fabrica/config.json` e CI `verde` ou `ausente`. CI vermelho (ou pendente acima de 2 h) trava com a URL."""
+        c = it["correcao"]
+        url = c["prUrl"]
+        repo = it.get("repo") or demanda["repositorio"]
+        try:
+            pr = despachante._dict(self.forja.pr(url))
+        except ValueError:
+            self.travar_correcao(id_, it, MOTIVO_LINK_DA_CORRECAO, None)
+            return
+        if pr.get("mergeado") is True:
+            self.correcao_mergeada(id_, it, demanda)  # mergeado num ciclo que caiu antes de gravar (ou pelo Paulo)
+            return
+        if pr.get("aberto") is not True:
+            self.travar_correcao(id_, it, MOTIVO_PR_DA_CORRECAO_FECHADO, url)
+            return
+        if str(pr.get("repo")).lower() != str(repo).lower():
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_OUTRO_REPO, url)
+            return
+        arquivos, head = pr.get("arquivos"), pr.get("headSha")
+        if not isinstance(arquivos, list) or not isinstance(head, str) or not head:
+            raise RuntimeError("PR da correção ilegível")
+        na_pasta = [a for a in arquivos if not isinstance(a, str) or a.startswith(".fabrica/demandas/")]
+        if na_pasta:
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_NA_PASTA % str(na_pasta[0])[:200], url)
+            return
+        config = self.config_do_repo(repo, head)
+        if config is None:
+            self.travar_correcao(id_, it, MOTIVO_CONFIG_ILEGIVEL, url)
+            return
+        protegido = next((a for a in arquivos if any(globs.casa_glob(a, g) for g in config[0])), None)
+        if protegido is not None:
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_PROTEGIDO % str(protegido)[:200], url)
+            return
+        ci = self.forja.ci(repo, head)
+        if ci == "pendente":
+            desde = _instante(c.get("ciPendenteDesde"))
+            if desde is None:
+                c["ciPendenteDesde"] = self.agora_texto
+                self.salvar()
+            elif (self.agora - desde).total_seconds() > CI_PENDENTE_MAXIMO_S:
+                self.travar_correcao(id_, it, MOTIVO_CI_DA_CORRECAO_PENDENTE, url)
+            return
+        if ci not in ("verde", "ausente"):
+            self.travar_correcao(id_, it, MOTIVO_CI_DA_CORRECAO, url)
+            return
+        if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
+            self.correcao_mergeada(id_, it, demanda)
+        else:
+            self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def correcao_mergeada(self, id_: str, it: dict, demanda: dict) -> None:
+        """A correção no branch padrão: na etapa `desenvolvida` (primeira falha) vai `etapa_concluida` e o Flow volta a
+        `testada`; na `testada` (retomada da segunda falha) o ciclo seguinte já testa de novo."""
+        c = _dados(it, "correcao")
+        c["mergeado"] = True
+        c.pop("ciPendenteDesde", None)
+        if _marco(demanda) == "desenvolvida" and not demanda.get("encerrada"):
+            enfileirar_evento(self.estado, id_, "etapa_concluida", {"marco": "desenvolvida"}, agora=self.agora_texto)
+        self.sair_da_correcao(id_, it)
+        self.eventos.append({"evento": "demanda_correcao_mergeada", "id": id_, "prUrl": c.get("prUrl")})
+
+    def sair_da_correcao(self, id_: str, it: dict, *, vivo: bool = False, **campos) -> None:
+        """Toda saída do run da correção: solta a vaga e grava (`vivo`: como em `sair_do_teste`, em `correcaoSuperada`)."""
+        c = _dados(it, "correcao")
+        if vivo and not c.get("terminou") and (it.get("runId") or it.get("nonce")):
+            it["correcaoSuperada"] = {"runId": it.get("runId"), "nonce": it.get("nonce"), "projeto": it.get("projeto"), "inicio": it.get("inicio")}
+        else:
+            capacidade.sincronizar(self.capacidade, chave(id_), set())
+        it.update(runId=None, alvo=None, **campos)
+        self.salvar()
+
+    def travar_correcao(self, id_: str, it: dict, motivo: str, url, *, vivo: bool = False) -> None:
+        """`travada` para o Paulo, com a fase em `corrigindo`; a retomada dele segue de onde parou (`retomar_correcao`)."""
+        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo[:300], "url": url}, agora=self.agora_texto)
+        _dados(it, "correcao").pop("ciPendenteDesde", None)
+        self.sair_da_correcao(id_, it, vivo=vivo, travaDaCorrecao=True, inicio=self.agora_texto)
+        self.eventos.append({"evento": "demanda_correcao_travada", "id": id_, "motivo": motivo})
+
+    def travar_correcao_por_erro(self, id_: str, it: dict):
+        def travar(vezes, texto):
+            if it.get("fase") != "corrigindo" or it.get("travaDaCorrecao"):
+                return False
+            self.travar_correcao(id_, it, MOTIVO_ERRO_DA_CORRECAO % (vezes, texto), _dados(it, "correcao").get("prUrl"), vivo=True)
+            return True
+
+        return travar
+
+    def largar_correcao_superada(self, id_: str, it: dict, demanda: dict) -> None:
+        """O Paulo mexeu na demanda (encerrou, travou ou passou da etapa) com a correção no meio: o run não conta mais,
+        e a retomada dele segue como numa trava da correção."""
+        em_curso = it.get("alvo") == "corrigindo" and it.get("fase") == "corrigindo"
+        if em_curso and (demanda.get("encerrada") or demanda.get("espera") or _marco(demanda) not in ("desenvolvida", "testada")):
+            self.sair_da_correcao(id_, it, vivo=True, travaDaCorrecao=True, inicio=self.agora_texto)
+            self.eventos.append({"evento": "demanda_correcao_superada", "id": id_})
 
 
 def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar) -> list[dict]:

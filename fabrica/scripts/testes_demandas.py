@@ -1727,5 +1727,290 @@ class TestesDesenho(BasePasso):
         self.assertIn("demandas:modelo:ux-ui", [e.get("chave") for e in eventos])
 
 
+PASTA_T = ".fabrica/demandas/%s" % ID
+TESTE_JSON = PASTA_T + "/teste.json"
+CAPTURAS = PASTA_T + "/capturas"
+PR_T = "https://github.com/kustertech-exemplo/app/pull/11"
+PR_C = "https://github.com/kustertech-exemplo/app/pull/12"
+HEAD_T = "e" * 40
+HEAD_T2 = "f" * 40
+HEAD_C = "1" * 40
+BRANCH_T = "fabrica/teste-11111111"
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+RETOMADA = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
+
+
+class TestesTesteNoNavegador(BasePasso):
+    def setUp(self):
+        super().setUp()
+        demandas.secao(self.estado)["itens"][ID] = item("desenvolvendo", plano=CAMINHO, desenvolvida=True, ultima=retrato("desenvolvida"))
+
+    def abrir_teste(self, cursor="2", **extra):
+        """Um ciclo com a demanda na etapa `testada`: o run do qa fica despachado."""
+        self.passo(ClienteDeBusca(pagina(retrato("testada", **extra), cursor=cursor)))
+        return self.item()["runId"]
+
+    def entregar_teste(self, run_id, *, resultado="passou", resumo="o fluxo passou", telas=("desktop-01.png", "celular-01.png"), head=HEAD_T, teste=None, extras=()):
+        arquivos = [TESTE_JSON] + ["%s/%s" % (CAPTURAS, t) for t in telas] + list(extras)
+        self.forja.definir_pr(PR_T, head_sha=head, branch=BRANCH_T, arquivos=arquivos)
+        corpo = json.dumps({"resultado": resultado, "resumo": resumo}) if teste is None else teste
+        self.forja.definir_arquivo(REPO, head, TESTE_JSON, corpo)
+        for t in telas:
+            self.forja.definir_arquivo(REPO, head, "%s/%s" % (CAPTURAS, t), PNG)
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_T)
+
+    def entregar_correcao(self, run_id, *, ci="verde", arquivos=("src/app/clientes/page.tsx",)):
+        self.forja.definir_pr(PR_C, head_sha=HEAD_C, branch="fabrica/correcao-11111111", arquivos=list(arquivos))
+        self.forja.definir_ci(REPO, HEAD_C, ci)
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_C)
+
+    def reservas(self):
+        return capacidade.ler(self.capacidade)["reservas"]
+
+    def enviado(self):
+        self.estado["demandas"]["saida"] = []
+
+    def falhar_o_teste(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, resultado="falhou", resumo="o botão salvar não responde")
+        self.passo(ClienteDeBusca())
+        self.enviado()
+
+    def test_teste_passou_envia_capturas_desktop_e_celular_antes_do_evento_e_fecha_o_pr(self):
+        run_id = self.abrir_teste()
+        (despacho,) = self.despachos()
+        qa = CONFIG_DO_KIT["modelos"]["qa"]
+        self.assertEqual((despacho["agente"], despacho["modelo"], despacho["max_custo_usd"], despacho["projeto"]), (qa["agente"], qa["modelo"], qa["maxCustoUsd"], "app"))
+        hexa = demandas.nonce_do_motor(ID, "teste", 0)
+        self.assertEqual(despacho["chave_idempotencia"], hexa)
+        self.assertTrue(despacho["prompt"].endswith("<!-- fabrica:nonce=%s -->" % hexa))
+        self.assertIn(TESTE_JSON, despacho["prompt"])
+        self.assertIsNone(despacho["branch_existente"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["qa"]})
+        self.assertEqual(demandas.chaves_ocupando(self.estado), {demandas.chave(ID)})
+        antes = [x["demandas"]["itens"][ID] for x in self.salvos if x["demandas"]["itens"][ID].get("fase") == "testando"]
+        self.assertEqual((antes[0]["nonce"], antes[0]["runId"]), (hexa, None))  # no disco antes do POST
+        self.entregar_teste(run_id)
+        self.passo(ClienteDeBusca())
+        saida = self.estado["demandas"]["saida"]
+        self.assertEqual([("arquivo" if "arquivo" in s else s["evento"]["tipo"]) for s in saida], ["arquivo", "arquivo", "teste"])
+        telas = [(s["arquivo"]["tipo"], s["arquivo"]["nome"], s["arquivo"]["conteudo"], s["arquivo"]["tela"]) for s in saida[:2]]
+        self.assertEqual(telas, [("captura", "celular-01.png", "image/png", "celular"), ("captura", "desktop-01.png", "image/png", "desktop")])
+        self.assertEqual((self.raiz / saida[0]["arquivo"]["caminho"]).read_bytes(), PNG)
+        dados = saida[2]["evento"]["dados"]
+        self.assertEqual(dados, {"resultado": "passou", "resumo": "o fluxo passou", "capturas": [saida[0]["arquivo"]["id"], saida[1]["arquivo"]["id"]]})
+        self.assertEqual(self.forja.fechados, [(PR_T, "Evidência enviada ao Flow.")])
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual((self.reservas(), demandas.chaves_ocupando(self.estado)), ({}, set()))
+        # o retrato atrasado (ainda `testada`) não testa de novo
+        self.enviado()
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca(pagina(retrato("testada"), cursor="3")))
+        self.assertEqual((len(self.despachos()), self.saida(), len(self.forja.fechados)), (1, [], 1))
+
+    def test_teste_sem_captura_de_celular_refaz_uma_vez_e_depois_trava(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, telas=("desktop-01.png",))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.estado["demandas"]["saida"], [])
+        self.assertEqual(len(self.despachos()), 2)
+        segundo = self.despachos()[1]
+        self.assertEqual(segundo["branch_existente"], BRANCH_T)
+        self.assertEqual(segundo["chave_idempotencia"], demandas.nonce_do_motor(ID, "teste", 1))
+        self.assertIn("faltaram capturas de desktop e celular", segundo["prompt"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["qa"]})
+        self.entregar_teste(self.item()["runId"], telas=("desktop-01.png",), head=HEAD_T2)
+        self.passo(ClienteDeBusca())
+        (s,) = self.estado["demandas"]["saida"]
+        self.assertEqual((s["evento"]["tipo"], s["evento"]["dados"]), ("travada", {"motivo": "o teste não trouxe capturas de desktop e celular", "url": PR_T}))
+        self.assertEqual((len(self.despachos()), self.reservas()), (2, {}))
+        # a retomada do Paulo testa de novo, do zero
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("testada", espera="travada"), cursor="3")))
+        self.avancar(60)
+        self.passo(ClienteDeBusca(pagina(retrato("testada", eventos=RETOMADA), cursor="4")))
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertNotIn("faltaram capturas", self.despachos()[2]["prompt"])
+
+    def test_teste_json_torto_tambem_refaz_uma_vez(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, teste="{não é json")
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.estado["demandas"]["saida"], len(self.despachos())), ([], 2))
+
+    def test_sistema_que_nao_sobe_no_run_trava_com_o_motivo(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, resultado="nao_subiu", resumo="o README pede um banco externo", telas=())
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "o qa não subiu o sistema no run: o README pede um banco externo", "url": PR_T})
+        self.assertEqual((len(self.despachos()), self.reservas()), (1, {}))
+
+    def test_pr_do_teste_fora_da_pasta_da_demanda_trava_sem_enviar(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, extras=("src/app/page.tsx",))
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "o PR do teste mexe fora de %s/: src/app/page.tsx" % PASTA_T, "url": PR_T})
+        self.assertEqual(self.forja.fechados, [])
+
+    def test_primeira_falha_despacha_correcao_frontend_e_reenvia_desenvolvida_depois_do_merge(self):
+        self.falhar_o_teste()
+        self.assertEqual(self.forja.fechados, [(PR_T, "Evidência enviada ao Flow.")])
+        # o Flow voltou a demanda para `desenvolvida`
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        self.assertEqual(len(self.despachos()), 2)
+        correcao = self.despachos()[1]
+        fe = CONFIG_DO_KIT["modelos"]["frontend"]
+        self.assertEqual((correcao["agente"], correcao["modelo"], correcao["max_custo_usd"]), (fe["agente"], fe["modelo"], fe["maxCustoUsd"]))
+        self.assertEqual(correcao["chave_idempotencia"], demandas.nonce_do_motor(ID, "correcao", 1))
+        self.assertIsNone(correcao["branch_existente"])
+        self.assertIn("o botão salvar não responde", correcao["prompt"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        self.assertEqual(demandas.chaves_ocupando(self.estado), {demandas.chave(ID)})
+        self.passo(ClienteDeBusca())  # o run ainda roda: nada novo
+        self.assertEqual(len(self.despachos()), 2)
+        self.entregar_correcao(self.item()["runId"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("etapa_concluida", {"marco": "desenvolvida"}))
+        self.assertEqual(self.reservas(), {})
+        self.enviado()
+        self.passo(ClienteDeBusca())  # retrato atrasado: nada
+        self.assertEqual((len(self.despachos()), self.saida()), (2, []))
+        # o Flow volta a `testada`: o ciclo seguinte testa de novo
+        self.passo(ClienteDeBusca(pagina(retrato("testada"), cursor="4")))
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertEqual(self.despachos()[2]["chave_idempotencia"], demandas.nonce_do_motor(ID, "teste", 2))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["qa"]})
+
+    def test_correcao_com_ci_vermelho_trava_com_a_url_do_pr(self):
+        self.falhar_o_teste()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        self.entregar_correcao(self.item()["runId"], ci="vermelho")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o PR da correção do teste está com o CI vermelho", "url": PR_C}))
+        self.assertEqual((self.forja.merges, self.reservas()), ([], {}))
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="4")))
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="5")))
+        self.assertEqual((len(self.despachos()), self.saida()), (2, []))
+        # o Paulo conserta o CI e retoma: mergeia o mesmo PR, sem run novo
+        self.forja.definir_ci(REPO, HEAD_C, "verde")
+        self.avancar(60)
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", eventos=RETOMADA), cursor="6")))
+        self.assertEqual((self.forja.merges, len(self.despachos())), ([(PR_C, HEAD_C)], 2))
+        self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
+
+    def test_segunda_falha_espera_o_paulo_e_retomada_volta_a_corrigir(self):
+        self.falhar_o_teste()
+        # segunda falha: o Flow segura a demanda em `testada` esperando o Paulo
+        self.passo(ClienteDeBusca(pagina(retrato("testada", espera="teste_falhou"), cursor="3")))
+        self.passo(ClienteDeBusca(pagina(retrato("testada", espera="teste_falhou"), cursor="4")))
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.despachos()), self.saida(), self.reservas()), (1, [], {}))
+        self.assertEqual(self.item()["fase"], "esperando_paulo")
+        self.avancar(60)
+        self.passo(ClienteDeBusca(pagina(retrato("testada", eventos=RETOMADA), cursor="5")))
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.despachos()[1]["chave_idempotencia"], demandas.nonce_do_motor(ID, "correcao", 1))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        # a etapa continua `testada` enquanto a correção roda: nenhum teste junto
+        self.passo(ClienteDeBusca(pagina(retrato("testada", eventos=RETOMADA), cursor="6")))
+        self.assertEqual(len(self.despachos()), 2)
+        self.entregar_correcao(self.item()["runId"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+        self.assertEqual(self.saida(), [])  # a etapa já é `testada`: sem `etapa_concluida`
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertEqual(self.despachos()[2]["chave_idempotencia"], demandas.nonce_do_motor(ID, "teste", 2))
+
+    def test_retomada_da_segunda_falha_sem_ver_a_espera_tambem_corrige(self):
+        self.falhar_o_teste()
+        self.avancar(60)
+        self.passo(ClienteDeBusca(pagina(retrato("testada", eventos=RETOMADA), cursor="3")))
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.despachos()[1]["chave_idempotencia"], demandas.nonce_do_motor(ID, "correcao", 1))
+
+    def test_captura_acima_de_10_mb_nao_e_enviada(self):
+        grande = b"\x89PNG\r\n\x1a\n" + b"\x00" * (10 * 1024 * 1024)
+        self.forja.definir_arquivo(REPO, HEAD_T, TESTE_JSON, json.dumps({"resultado": "passou", "resumo": "ok"}))
+        for nome, dados in (("desktop-01.png", grande), ("desktop-02.png", PNG), ("celular-01.png", PNG), ("celular-02.png", b"GIF89a"), ("outra.png", PNG)):
+            self.forja.definir_arquivo(REPO, HEAD_T, "%s/%s" % (CAPTURAS, nome), dados)
+        r = demandas.ler_resultado_do_teste(self.forja, REPO, HEAD_T, ID)
+        self.assertEqual((r["resultado"], r["resumo"]), ("passou", "ok"))
+        self.assertEqual([(c["caminho"], c["tela"]) for c in r["capturas"]], [(CAPTURAS + "/celular-01.png", "celular"), (CAPTURAS + "/desktop-02.png", "desktop")])
+        self.assertEqual(r["capturas"][0]["dados"], PNG)
+        self.assertIsNone(demandas.ler_resultado_do_teste(self.forja, REPO, HEAD_T2, ID))
+        # pelo passo: a única captura de desktop acima de 10 MB fica de fora, e o run é refeito
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, head=HEAD_T2)
+        self.forja.definir_arquivo(REPO, HEAD_T2, CAPTURAS + "/desktop-01.png", grande)
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.estado["demandas"]["saida"], len(self.despachos())), ([], 2))
+
+    def test_teto_trava_segura_a_vaga_ate_o_run_terminar(self):
+        run_id = self.abrir_teste()
+        self.avancar(demandas.TETO_RUN_S + 1)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "o agente passou de 2 h", "url": None})
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["qa"]})
+        self.assertEqual(demandas.chaves_ocupando(self.estado), {demandas.chave(ID)})
+        self.enviado()
+        self.avancar(60)
+        em = self.agora.strftime("%Y-%m-%dT%H:%M:%SZ")
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": em, "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("testada", eventos=retomada), cursor="3")))
+        self.assertEqual(len(self.despachos()), 1)  # nunca dois runs da demanda
+        self.entregar_teste(run_id)  # termina com PR: o resultado não conta
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 2))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["qa"]})
+        self.assertNotIn("testeSuperado", self.item())
+
+    def test_o_mesmo_erro_5_ciclos_seguidos_vira_travada_e_solta_a_vaga(self):
+        run_id = self.abrir_teste()
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_T)  # a forja não conhece o PR: KeyError todo ciclo
+        for _ in range(4):
+            self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertTrue(evento["dados"]["motivo"].startswith("o teste parou: o mesmo erro 5 ciclos seguidos (KeyError"))
+        self.assertEqual(self.reservas(), {})
+
+    def test_teste_recusado_pelo_flow_vira_travada_uma_vez(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id)
+        self.passo(ClienteDeBusca())
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", "aplicado", "recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o Flow recusou o teste enviado pela Fábrica", "url": PR_T}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        eventos = self.passo(ClienteDeBusca())
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 1))
+        self.assertIn("demandas:teste:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_sem_modelo_do_qa_espera_com_aviso(self):
+        modelos = dict(CONFIG_DO_KIT["modelos"])
+        del modelos["qa"]
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("testada"), cursor="2")), modelos=modelos)
+        self.assertEqual((self.despachos(), self.reservas()), ([], {}))
+        self.assertIn("demandas:modelo:qa", [e.get("chave") for e in eventos])
+
+    def test_demanda_sem_tela_nao_testa_no_navegador(self):
+        etapas = [e for e in MODELO if e["marco"] not in ("desenho", "testada")]
+        self.assertNotEqual(demandas.proxima_acao(self.item(), retrato("entregue", etapas=etapas)), "testar")
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", etapas=etapas), cursor="2")))
+        self.passo(ClienteDeBusca(pagina(retrato("entregue", etapas=etapas), cursor="3")))
+        self.assertEqual((self.despachos(), self.reservas()), ([], {}))
+        self.assertNotIn("teste", self.item())
+
+
 if __name__ == "__main__":
     unittest.main()
