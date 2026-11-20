@@ -1,7 +1,7 @@
 # Demandas — desenho
 
 **Data:** 19/11/2026
-**Estado:** rascunho aguardando a revisão do Paulo
+**Estado:** aprovada pelo Paulo em 19/11/2026
 **Desenho de referência:** [`desenhos/2026-11-18-base-enxuta/03-demandas.html`](desenhos/2026-11-18-base-enxuta/03-demandas.html), aba "Demandas"
 
 ## 1. Por que
@@ -64,10 +64,10 @@ O padrão é por projeto; o Paulo muda por demanda.
 
 ## 4. Como uma demanda anda
 
-1. **Entra** pela tela ("Nova demanda"), pela rota de fontes, ou vinda de um relato de usuário.
-2. **Triagem.** Um agente da Fábrica lê a demanda e o código do projeto e propõe tipo, destino, tamanho e onde mexe. A proposta fica na demanda. Com destino "decisão do Paulo", ela espera na tela Decidir (produto 4).
-3. **Planejamento.** A Fábrica transforma a demanda em plano (o caminho `nova_spec` do orquestrador). Em "planejar comigo", espera a sessão com o Paulo.
-4. **Desenho.** Para demanda com tela, o papel de UX gera o desenho da tela com a identidade visual do projeto e o envia ao Flow. O Paulo aprova ou pede ajuste com um texto.
+1. **Entra** pela tela ("Nova demanda"), pela rota de fontes (sessões do Claude Code de cada projeto, seção 5.1), ou vinda de um relato de usuário.
+2. **Triagem.** Um agente da Fábrica (papel `produto`, modelo Haiku, sem ocupar vaga de raia) lê a demanda, o contexto do projeto (spec, decisões, código) e **mede o impacto**: o que a mudança toca, o que pode quebrar, se mexe em dados, autorização ou caminho protegido. Propõe tipo, destino, tamanho, onde mexe e o impacto. Demanda que não é de código (dúvida, configuração) é respondida na própria triagem e fecha como **orientada**, sem ir à Fábrica. A proposta fica na demanda. Com destino "decisão do Paulo", ela espera na tela Decidir (produto 4).
+3. **Planejamento.** A Fábrica transforma a demanda em plano (o caminho `nova_spec` do orquestrador). Em "planejar comigo", o planejamento acontece numa **sessão do Claude Code** com o Paulo; o Flow marca a demanda como esperando e recebe o plano pronto.
+4. **Desenho.** Para demanda com tela, o papel de UX gera o desenho como **HTML autocontido** com a identidade visual do projeto e o envia ao Flow, que o mostra em **tela cheia, estilo canvas**, com "Aprovar" e "Pedir ajuste". Em "planejar comigo", a sessão do Claude Code pode publicar o desenho como **artefato do Claude** e enviar o link ao Flow, que mostra o link ao lado. O Paulo aprova ou pede ajuste com um texto.
 5. **Desenvolvimento.** O fluxo de raias e gates que já existe.
 6. **Teste no navegador.** Um agente abre a tela pronta, percorre o fluxo da demanda, e envia ao Flow as capturas (desktop e celular) e o resultado.
 7. **Entrega.** PR mergeado e pedido de publicação na fila (produto 2).
@@ -83,6 +83,18 @@ A Fábrica faz todas as chamadas, com o token de fonte que já existe:
 - `POST /api/fabrica/demandas/<id>/arquivos`: desenho (HTML autocontido ou imagem) e capturas.
 
 Cada evento tem um id gerado pela Fábrica; evento repetido não duplica. O retrato atual continua, e os planos passam a carregar o id da demanda que os originou.
+
+### 5.1 Sessões dos projetos
+
+As sessões do Claude Code de cada projeto (por exemplo, a que desenvolve um sistema de cliente) também conversam com o Flow, com um **token de fonte de demandas** (criado e revogado pelo Paulo, só o hash no banco, como as fontes de publicação):
+
+- `POST /api/demandas`: abre uma demanda (repositório, título, descrição, tipo e nível opcionais, tem tela, anexos). A triagem decide o destino.
+- `GET /api/demandas/<id>`: etapa atual, destino, o que espera e o link do desenho, para a sessão acompanhar.
+- `POST /api/demandas/<id>/plano`: a sessão de "planejar comigo" entrega o plano e, se houver, o link do artefato com o desenho.
+
+### 5.2 Guia de uso
+
+Entrega deste produto: `docs/guias/demandas-pelo-flow.md`, genérico (sem nome de cliente), para a sessão de cada projeto seguir sozinha: como abrir uma demanda, o que cada destino e cada nível significam, como acompanhar, como entregar o plano de "planejar comigo", e como Demandas e a fila de publicação (`docs/guias/publicar-pela-fila.md`) se encaixam.
 
 ## 6. Telas
 
@@ -134,11 +146,11 @@ Módulo `demandas`.
 - **Ponta a ponta:** uma demanda com tela do começo ao fim, com a Fábrica simulada enviando os eventos.
 - **Telas:** desenho aprovado antes, conferido no navegador depois (D74).
 
-## 11. Em aberto
+## 11. Respostas (antes "Em aberto")
 
-1. **Quem faz a triagem e quanto custa.** A premissa é o papel `produto` com modelo barato. Cada triagem é uma execução na Fábrica; com muitas demandas por dia, isso disputa vagas.
-2. **"Planejar comigo" acontece onde?** A premissa é uma sessão do Claude Code, como hoje; o Flow só marca que está esperando e recebe o plano. A alternativa é a conversa da tela Decidir.
-3. **Formato do desenho.** HTML autocontido (como os desenhos desta reforma) ou imagem. A premissa é HTML, em `iframe` isolado.
-4. **Urgente.** "Resolve na hora" significa furar a fila da Fábrica com prioridade máxima e publicar imediato. Precisa de uma vaga reservada? A premissa é que não: entra na frente da fila.
-5. **Demanda que não é de código** (dúvida, configuração): fica no Flow como "orientada", sem ir à Fábrica?
-6. **Limites e retenção de arquivos** (seção 7) cabem no disco da oficina?
+1. **Triagem:** papel `produto`, modelo Haiku, sem ocupar vaga de raia; precisa ler o contexto e medir bem os impactos (Paulo, 19/11).
+2. **"Planejar comigo":** numa sessão do Claude Code; o Flow espera e recebe o plano.
+3. **Desenho:** HTML no Flow, em tela cheia estilo canvas; quando o Paulo planeja junto, pode ser artefato do Claude publicado.
+4. **Urgente:** entra na frente da fila da Fábrica, sem vaga reservada, e publica como imediato.
+5. **Demanda que não é de código:** orientada no Flow pela triagem, sem ir à Fábrica.
+6. **Arquivos:** 10 MB por arquivo, 100 MB por demanda, capturas apagadas 90 dias depois da entrega; o desenho aprovado fica.

@@ -1,10 +1,12 @@
 import http.server
+import io
 import json
 import pathlib
 import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 
 RAIZ_DOS_SCRIPTS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ_DOS_SCRIPTS))
@@ -51,6 +53,86 @@ class _Servidor(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *_):
         pass
+
+
+class _Resposta:
+    def __init__(self, status, corpo=b"{}"):
+        self.status, self._corpo = status, corpo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self, _n=-1):
+        return self._corpo
+
+
+class _AbrirFalso:
+    """Responde por código (int: HTTP com esse status; 201 vira sucesso) e guarda os corpos recebidos."""
+
+    def __init__(self, *codigos):
+        self.codigos, self.corpos = list(codigos), []
+
+    def __call__(self, req, timeout=None):
+        self.corpos.append(json.loads(req.data))
+        codigo = self.codigos.pop(0)
+        if isinstance(codigo, tuple):
+            codigo, erro = codigo
+            raise urllib.error.HTTPError(req.full_url, codigo, "x", {}, io.BytesIO(json.dumps({"erro": erro}).encode()))
+        if codigo >= 400:
+            raise urllib.error.HTTPError(req.full_url, codigo, "x", {}, io.BytesIO(b""))
+        return _Resposta(codigo, b'{"id": "y"}')
+
+
+class TestesPedirComDemanda(unittest.TestCase):
+    def pedir(self, abrir, **extra):
+        with tempfile.TemporaryDirectory() as pasta:
+            arquivo = pathlib.Path(pasta) / "token"
+            arquivo.write_text("fp_segredo\n", encoding="utf-8")
+            return publicar.pedir(repo="dono/cliente", descricao="d", url="http://localhost:1/api/publicacoes", token_file=str(arquivo), abrir=abrir, **extra)
+
+    def test_pedir_com_modo_e_demanda_manda_os_dois_campos(self):
+        abrir = _AbrirFalso(201)
+        self.assertEqual(self.pedir(abrir, modo="imediato", demanda="d-1"), {"id": "y"})
+        self.assertEqual(abrir.corpos, [{"repositorio": "dono/cliente", "descricao": "d", "modo": "imediato", "demanda": "d-1"}])
+
+    def test_review_focus_3_flow_antigo_422_repete_sem_modo_e_demanda(self):
+        abrir = _AbrirFalso((422, "Corpo inválido."), 201)
+        self.assertEqual(self.pedir(abrir, modo="lote", demanda="d-1"), {"id": "y"})
+        self.assertEqual(abrir.corpos, [
+            {"repositorio": "dono/cliente", "descricao": "d", "modo": "lote", "demanda": "d-1"},
+            {"repositorio": "dono/cliente", "descricao": "d"},
+        ])
+        # a resposta da segunda tentativa vale, inclusive a falha
+        abrir = _AbrirFalso((422, "Corpo inválido."), 409)
+        with self.assertRaises(retrato.FalhaDeEnvio) as ctx:
+            self.pedir(abrir, modo="lote", demanda="d-1")
+        self.assertEqual((ctx.exception.codigo, len(abrir.corpos)), (409, 2))
+
+    def test_pedir_sem_modo_nem_demanda_e_identico_ao_de_hoje(self):
+        abrir = _AbrirFalso(201)
+        self.pedir(abrir)
+        self.assertEqual(abrir.corpos, [{"repositorio": "dono/cliente", "descricao": "d"}])
+        abrir = _AbrirFalso(422)  # sem os campos extras não há o que repetir
+        with self.assertRaises(retrato.FalhaDeEnvio):
+            self.pedir(abrir)
+        self.assertEqual(len(abrir.corpos), 1)
+
+    def test_422_que_nao_e_do_esquema_nao_repete_sem_os_campos(self):
+        for erro in ("Demanda não encontrada.", "A demanda não é deste repositório.", None):
+            with self.subTest(erro=erro):
+                abrir = _AbrirFalso((422, erro) if erro else 422)
+                with self.assertRaises(retrato.FalhaDeEnvio) as ctx:
+                    self.pedir(abrir, modo="imediato", demanda="d-1")
+                self.assertEqual((ctx.exception.codigo, len(abrir.corpos)), (422, 1))
+
+    def test_so_o_422_repete(self):
+        abrir = _AbrirFalso(500)
+        with self.assertRaises(retrato.FalhaDeEnvio):
+            self.pedir(abrir, modo="lote", demanda="d-1")
+        self.assertEqual(len(abrir.corpos), 1)
 
 
 class TestesPedir(unittest.TestCase):

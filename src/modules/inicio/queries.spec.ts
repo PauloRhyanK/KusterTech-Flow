@@ -9,6 +9,8 @@ const { erroLog, obterRetrato, obterLeitura } = vi.hoisted(() => ({
 
 vi.mock('@/lib/log', () => ({ log: { error: erroLog, warn: vi.fn(), info: vi.fn() } }))
 
+vi.mock('@/modules/demandas/queries', () => ({ esperasDeDemandas: vi.fn().mockResolvedValue([]) }))
+
 vi.mock('@/modules/fabrica/queries', () => ({ obterRetratoMaisRecente: obterRetrato }))
 
 vi.mock('@/modules/oficina/queries', () => ({

@@ -211,6 +211,10 @@ class TestesUrlsEValidacao(unittest.TestCase):
 
 
 class TestesPr(unittest.TestCase):
+    def test_base_do_pr_vem_de_base_ref(self):
+        f, _ = novo(ok(pr_json(base={"ref": "main"})), ok(arquivos(1)))
+        self.assertEqual(f.pr(PR_URL)["base"], "main")
+
     def test_campos_e_urls(self):
         f, t = novo(ok(pr_json()), ok(arquivos(2)))
         r = f.pr(PR_URL)
@@ -225,6 +229,7 @@ class TestesPr(unittest.TestCase):
                 "numero": 12,
                 "arquivos": ["src/f0.ts", "src/f1.ts"],
                 "mergeado": False,
+                "base": None,
             },
         )
         self.assertEqual(t.urls()[0], API + "/repos/acme/app/pulls/12")
@@ -620,6 +625,39 @@ class TestesArquivo(unittest.TestCase):
         self.assertNotIn(SEGREDO, str(ctx.exception))
         self.assertIsNone(ctx.exception.__cause__)
         self.assertTrue(ctx.exception.__suppress_context__)
+
+
+class TestesArquivoBruto(unittest.TestCase):
+    def test_arquivo_bruto_devolve_bytes_e_404_vira_none(self):
+        dados = b"<html>\xff\xfe" + "olá".encode("utf-8")
+        f, t = novo((200, {}, dados))
+        self.assertEqual(f.arquivo_bruto("acme/app", SHA, ".fabrica/demandas/x/desenho.html"), dados)
+        t.exigir(self, 1)
+        metodo, url, headers, _ = t.requisicoes[0]
+        self.assertEqual((metodo, url), ("GET", API + "/repos/acme/app/contents/.fabrica/demandas/x/desenho.html?ref=" + SHA))
+        self.assertEqual(headers["Accept"], "application/vnd.github.raw")
+        f, t = novo(vazio(404))
+        self.assertIsNone(f.arquivo_bruto("acme/app", "main", "a.html"))
+        f, t = novo((500, {}, SEGREDO.encode()))
+        with self.assertRaises(RuntimeError) as ctx:
+            f.arquivo_bruto("acme/app", "main", "a.html")
+        self.assertNotIn(SEGREDO, str(ctx.exception))
+        for repo, ref, caminho in (("acme", "main", "a"), ("acme/app", "", "a"), ("acme/app", "main", "../a")):
+            f, t = novo()
+            with self.assertRaises(ValueError):
+                f.arquivo_bruto(repo, ref, caminho)
+            t.exigir(self, 0)
+
+    def test_falsa_guarda_bytes_e_texto(self):
+        f = forja.ForjaFalsa()
+        f.definir_arquivo("acme/app", "main", "a.html", b"\xff")
+        f.definir_arquivo("acme/app", "main", "b.html", "olá")
+        self.assertEqual(f.arquivo_bruto("acme/app", "main", "a.html"), b"\xff")
+        self.assertEqual(f.arquivo_bruto("acme/app", "main", "b.html"), "olá".encode("utf-8"))
+        self.assertIsNone(f.arquivo_bruto("acme/app", "main", "c.html"))
+        with self.assertRaises(RuntimeError):
+            f.arquivo("acme/app", "main", "a.html")
+        self.assertEqual(f.chamadas[0], ("arquivo_bruto", {"repo": "acme/app", "ref": "main", "caminho": "a.html"}))
 
 
 class TestesListar(unittest.TestCase):
@@ -1318,6 +1356,7 @@ class TestesForjaFalsa(unittest.TestCase):
                 "numero": 12,
                 "arquivos": ["a.ts", "b.ts"],
                 "mergeado": False,
+                "base": "main",
             },
         )
         r["arquivos"].append("c.ts")

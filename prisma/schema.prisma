@@ -42,6 +42,8 @@ model Usuario {
   fontesDaFabricaCriadas    FonteDaFabrica[]
   fontesDePublicacaoCriadas FonteDePublicacao[]
   pedidosDePublicacao       PedidoDePublicacao[]
+  demandasCriadas           Demanda[]
+  fontesDeDemandasCriadas   FonteDeDemandas[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -111,6 +113,10 @@ model Projeto {
   composicoesDePublicacao ComposicaoDePublicacao[]
   autorizacoesProd        AutorizacaoProd[]
   recursos                RecursoProjeto[]
+  modeloDeEtapasId        String?
+  nivelPadraoDeDemanda    NivelDeAcompanhamento    @default(APROVAR_DESENHO)
+  modeloDeEtapas          ModeloDeEtapas?          @relation(fields: [modeloDeEtapasId], references: [id], onDelete: SetNull)
+  demandas                Demanda[]
 }
 
 model ProjetoCliente {
@@ -198,6 +204,7 @@ model RepositorioGitHub {
   projeto                    Projeto?                  @relation(fields: [projetoId], references: [id], onDelete: SetNull)
   issues                     IssueGitHub[]
   pullRequests               PullRequestGitHub[]
+  demandas                   Demanda[]
   versoes                    Versao[]
   tarefasGitHub              TarefaGitHub[]
   composicoesDePublicacao    ComposicaoDePublicacao[]
@@ -755,15 +762,16 @@ model RecursoProjeto {
 
 // O token (prefixo ff_) é mostrado uma única vez; no banco só o hash.
 model FonteDaFabrica {
-  id          String            @id @default(uuid())
-  nome        String
-  tokenHash   String            @unique
-  criadoEm    DateTime          @default(now())
-  revogadaEm  DateTime?
-  criadaPorId String
-  ultimoUsoEm DateTime?
-  criadaPor   Usuario           @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
-  retrato     RetratoDaFabrica?
+  id                 String            @id @default(uuid())
+  nome               String
+  tokenHash          String            @unique
+  criadoEm           DateTime          @default(now())
+  revogadaEm         DateTime?
+  criadaPorId        String
+  ultimoUsoEm        DateTime?
+  demandasBuscadasEm DateTime?
+  criadaPor          Usuario           @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
+  retrato            RetratoDaFabrica?
 }
 
 // Só o último retrato de cada fonte; `conteudo` é o JSON validado pelo contrato v1.
@@ -924,8 +932,11 @@ model PedidoDePublicacao {
   fonte            FonteDePublicacao?         @relation(fields: [fonteId], references: [id], onDelete: SetNull)
   usuario          Usuario?                   @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
   conserto         PedidoDeConserto?
+  demandaId        String?
+  demanda          Demanda?                   @relation(fields: [demandaId], references: [id], onDelete: SetNull)
 
   @@index([repositorioId, estado])
+  @@index([demandaId])
 }
 
 model PedidoDeConserto {
@@ -947,4 +958,166 @@ model PedidoDeConserto {
   pedido        PedidoDePublicacao       @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
 
   @@index([estado])
+}
+
+enum NivelDeAcompanhamento {
+  PLANEJAR_COMIGO
+  APROVAR_DESENHO
+  VAI_SOZINHO
+}
+
+enum DestinoDaDemanda {
+  URGENTE
+  LOTE_DA_NOITE
+  FILA_DE_AGENTES
+  DECISAO_DO_PAULO
+  ORIENTADA
+}
+
+enum TipoDeDemanda {
+  DEFEITO
+  IDEIA
+  AJUSTE
+  FUNCAO_NOVA
+}
+
+enum OrigemDaDemanda {
+  FLOW
+  SESSAO
+  FABRICA
+  USUARIO
+}
+
+enum QuemConcluiEtapa {
+  FABRICA
+  PAULO
+  QUALQUER
+}
+
+enum TipoDeArquivoDaDemanda {
+  ANEXO
+  DESENHO
+  CAPTURA
+}
+
+// O modelo padrão e o índice único parcial "um padrão" são criados à mão na migration.
+model ModeloDeEtapas {
+  id       String          @id @default(uuid())
+  nome     String          @unique
+  padrao   Boolean         @default(false)
+  criadoEm DateTime        @default(now())
+  etapas   EtapaDoModelo[]
+  projetos Projeto[]
+}
+
+model EtapaDoModelo {
+  id            String                  @id @default(uuid())
+  modeloId      String
+  ordem         Int
+  chave         String
+  nome          String
+  rotulo        String
+  marco         String?
+  quemConclui   QuemConcluiEtapa
+  puladaSemTela Boolean                 @default(false)
+  esperaEm      NivelDeAcompanhamento[]
+  modelo        ModeloDeEtapas          @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+
+  @@unique([modeloId, ordem])
+  @@unique([modeloId, chave])
+}
+
+model Demanda {
+  id               String                @id @default(uuid())
+  projetoId        String
+  repositorioId    String
+  titulo           String
+  descricao        String?
+  tipo             TipoDeDemanda?
+  destino          DestinoDaDemanda?
+  nivel            NivelDeAcompanhamento
+  temTela          Boolean
+  origem           OrigemDaDemanda
+  fonteId          String?
+  chaveDaFonte     String?
+  criadaPorId      String?
+  modeloId         String?
+  etapas           Json
+  etapaAtual       String
+  concluidas       String[]
+  espera           String?
+  esperaMotivo     String?
+  esperaDesde      DateTime?
+  antesDaTrava     Json?
+  triagem          Json?
+  recusasDoDesenho Int                   @default(0)
+  falhasDoTeste    Int                   @default(0)
+  versaoDoDesenho  Int                   @default(0)
+  desenhoAprovado  Int?
+  planoCaminho     String?
+  planoPrUrl       String?
+  artefatoUrl      String?
+  prs              String[]
+  encerrada        String?
+  entregueEm       DateTime?
+  criadaEm         DateTime              @default(now())
+  atualizadaEm     DateTime              @updatedAt
+  projeto          Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio      RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  fonte            FonteDeDemandas?      @relation(fields: [fonteId], references: [id], onDelete: SetNull)
+  criadaPor        Usuario?              @relation(fields: [criadaPorId], references: [id], onDelete: SetNull)
+  eventos          EventoDaDemanda[]
+  arquivos         ArquivoDaDemanda[]
+  pedidos          PedidoDePublicacao[]
+
+  @@unique([fonteId, chaveDaFonte])
+  @@index([encerrada, espera])
+  @@index([projetoId, criadaEm])
+}
+
+model EventoDaDemanda {
+  seq          BigInt   @id @default(autoincrement())
+  idExterno    String   @unique
+  demandaId    String
+  tipo         String
+  origem       String
+  usuarioId    String?
+  fonteId      String?
+  dados        Json
+  em           DateTime
+  registradoEm DateTime @default(now())
+  demanda      Demanda  @relation(fields: [demandaId], references: [id], onDelete: Cascade)
+
+  @@index([demandaId, seq])
+}
+
+model ArquivoDaDemanda {
+  id         String                 @id
+  demandaId  String
+  tipo       TipoDeArquivoDaDemanda
+  nome       String
+  conteudo   String
+  tamanho    Int
+  tela       String?
+  versao     Int?
+  enviadoPor String
+  fonteId    String?
+  usuarioId  String?
+  criadoEm   DateTime               @default(now())
+  apagadoEm  DateTime?
+  demanda    Demanda                @relation(fields: [demandaId], references: [id], onDelete: Cascade)
+
+  @@index([demandaId, tipo])
+}
+
+model FonteDeDemandas {
+  id          String    @id @default(uuid())
+  nome        String
+  tokenHash   String    @unique
+  criadoEm    DateTime  @default(now())
+  revogadaEm  DateTime?
+  criadaPorId String
+  ultimoUsoEm DateTime?
+  criadaPor   Usuario   @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
+  demandas    Demanda[]
 }

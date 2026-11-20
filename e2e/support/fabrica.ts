@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { APIRequestContext } from '@playwright/test'
 
 function instanteUTC(data: Date): string {
@@ -81,4 +82,38 @@ export async function enviarRetratoDaFabrica(
     data: corpo,
   })
   return { status: resposta.status(), json: await resposta.json() }
+}
+
+// Um evento da Fábrica para uma demanda (`POST /api/fabrica/demandas/<id>/eventos`), com id novo.
+export async function eventoDaFabrica(
+  request: APIRequestContext,
+  token: string,
+  demandaId: string,
+  tipo: string,
+  dados: Record<string, unknown>,
+): Promise<{ status: number; json: unknown }> {
+  const resposta = await request.post(`/api/fabrica/demandas/${demandaId}/eventos`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { id: randomUUID(), em: instanteUTC(new Date()), tipo, dados },
+  })
+  return { status: resposta.status(), json: await resposta.json() }
+}
+
+// Um arquivo da Fábrica (desenho ou captura) em `POST /api/fabrica/demandas/<id>/arquivos`.
+// `query` leva `tipo`, `nome` e, nas capturas, `tela`; o `id` do arquivo é gerado aqui.
+export async function arquivoDaFabrica(
+  request: APIRequestContext,
+  token: string,
+  demandaId: string,
+  query: { tipo: 'desenho' | 'captura'; nome: string; tela?: 'desktop' | 'celular' },
+  corpo: Buffer,
+  conteudo: string,
+): Promise<{ status: number; id: string }> {
+  const id = randomUUID()
+  const params = new URLSearchParams({ id, ...query })
+  const resposta = await request.post(`/api/fabrica/demandas/${demandaId}/arquivos?${params}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': conteudo },
+    data: corpo,
+  })
+  return { status: resposta.status(), id }
 }

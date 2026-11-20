@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>KusterTech Flow — Demandas (desenho 19/11)</title><style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px 1fr;min-height:760px}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}
+  .logo span{color:#72d9c3}
+  aside small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}
+  aside a.on i{background:#72d9c3}
+  aside .cont{margin-left:auto;background:#a96011;color:#fff;border-radius:999px;font-size:11px;padding:0 7px;font-weight:600}
+  main{padding:26px 32px 36px}
+  h1{font-size:24px;margin:0 0 18px;letter-spacing:-.02em;font-weight:650;display:flex;align-items:center;gap:12px}
+  h1 small{font-size:13px;font-weight:400;color:var(--text-tertiary);letter-spacing:0}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-secondary);margin:0 0 10px;font-weight:600}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .btn{border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:8px 14px;font:inherit;font-weight:550;cursor:pointer}
+  .btn.p{background:var(--action);border-color:var(--action);color:#fff}
+  .dir{margin-left:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:6px;padding:2px 8px;background:var(--surface-subtle);color:var(--text-secondary);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:2px}
+  /* tipos */
+  .tipo{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+  .t-bug{background:#fbf0f0;color:var(--erro)} .t-ideia{background:#fbf4ea;color:var(--atencao)}
+  .t-ajuste{background:#eef4fd;color:var(--action)} .t-feat{background:#f4f1fa;color:var(--execucao)}
+  /* fluxo de entrada */
+  .fluxo{display:grid;grid-template-columns:150px 28px repeat(5,1fr);gap:10px;align-items:stretch;margin-bottom:26px}
+  .raia{border-radius:var(--r);padding:14px 14px 12px;background:#fff;border:1px solid var(--border);border-top:4px solid var(--border-strong);cursor:pointer}
+  .raia.sel{box-shadow:0 0 0 2px var(--midnight)}
+  .raia .n{font-size:30px;font-weight:650;letter-spacing:-.03em;line-height:1}
+  .raia .r{font-size:12.5px;color:var(--text-secondary);margin-top:6px;font-weight:550}
+  .raia .m{font-size:11.5px;color:var(--text-tertiary);margin-top:2px}
+  .entrada{background:var(--midnight);color:#e8efff;border-color:var(--midnight);border-top-color:#72d9c3}
+  .entrada .r,.entrada .m{color:#a7b4c9}
+  .seta{display:grid;place-items:center;color:var(--text-tertiary);font-size:20px}
+  .c-ori{border-top-color:#8290a1} .c-urg{border-top-color:var(--erro)} .c-noite{border-top-color:var(--action)}
+  .c-ag{border-top-color:var(--execucao)} .c-dec{border-top-color:var(--atencao)}
+  /* linhas */
+  .linha{display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid var(--border)}
+  .linha:first-child{border-top:0}
+  .tit{font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cresce{flex:1;min-width:0}
+  .etapas{display:flex;align-items:center;width:150px;flex:none}
+  .etapas i{width:9px;height:9px;border-radius:50%;background:var(--border-strong);flex:none}
+  .etapas u{height:2px;flex:1;background:var(--border)}
+  .etapas i.f,.etapas u.f{background:var(--flow)}
+  .etapas i.a{background:#fff;border:2.5px solid var(--execucao);width:12px;height:12px}
+  .etapas i.p{background:#fff;border:2.5px solid var(--atencao);width:12px;height:12px}
+  .etapas i.x{background:var(--erro)}
+  .est{width:150px;flex:none;font-size:12.5px;font-weight:550;text-align:right}
+  .grupo{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+  .grupo b{font-size:15px}.grupo span{color:var(--text-tertiary);font-size:12.5px}
+  .tempo{width:56px;flex:none;color:var(--text-tertiary);font-size:12px;text-align:right}
+  /* decidir */
+  .decidir{display:grid;grid-template-columns:230px 1fr;gap:24px}
+  .pilha .item{padding:10px 12px;border-radius:var(--rc);display:flex;gap:10px;align-items:center;margin-bottom:6px;background:#fff;border:1px solid var(--border)}
+  .pilha .item.on{border-color:var(--midnight);box-shadow:0 0 0 1px var(--midnight)}
+  .pilha .item.feito{opacity:.45}
+  .pilha .item div{font-size:12.5px;font-weight:550;line-height:1.25}
+  .prog{height:6px;border-radius:3px;background:var(--border);margin:8px 0 16px;overflow:hidden}.prog b{display:block;height:100%;width:28%;background:var(--flow)}
+  .foco{padding:26px 28px}
+  .foco h3{font-size:21px;margin:10px 0 6px;letter-spacing:-.02em}
+  .fala{background:var(--surface-subtle);border-radius:var(--r);padding:14px 16px;margin:16px 0;font-size:15px;line-height:1.5}
+  .anexos{display:flex;gap:10px;margin-top:12px;align-items:center}
+  .print{width:120px;height:74px;border-radius:8px;background:#fff;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--text-tertiary);font-size:11.5px}
+  .audio{flex:1;height:44px;border-radius:22px;background:#fff;border:1px solid var(--border-strong);display:flex;align-items:center;gap:10px;padding:0 14px;color:var(--text-secondary);font-size:12.5px}
+  .audio b{width:22px;height:22px;border-radius:50%;background:var(--midnight);flex:none}
+  .onda{flex:1;height:18px;background:repeating-linear-gradient(90deg,var(--border-strong) 0 2px,transparent 2px 5px);border-radius:2px}
+  .analise{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .analise div{border:1px solid var(--border);border-radius:var(--rc);padding:10px 12px}
+  .analise small{display:block;color:var(--text-tertiary);font-size:11.5px;margin-bottom:2px}
+  .analise b{font-size:14px}
+  .rec{display:flex;gap:10px;align-items:center;background:#f4f1fa;border:1px solid #ddd4ee;color:#4b3a78;border-radius:var(--rc);padding:10px 14px;font-size:13.5px}
+  .opcoes{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}
+  .op{border:1.5px solid var(--border-strong);border-radius:var(--r);padding:14px 10px;text-align:center;background:#fff;cursor:pointer}
+  .op b{display:block;font-size:13.5px}.op small{color:var(--text-tertiary);font-size:11.5px}
+  .op kbd{display:inline-block;margin-top:8px;font:inherit;font-size:11px;border:1px solid var(--border-strong);border-radius:4px;padding:0 6px;color:var(--text-secondary)}
+  .op.sug{border-color:var(--execucao);background:#f9f7fd}
+  .resp{margin-top:14px;display:flex;gap:10px}
+  .resp input{flex:1;border:1px solid var(--border-strong);border-radius:var(--rc);padding:9px 12px;font:inherit;color:var(--text-tertiary)}
+  /* publicação */
+  .pub{display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start}
+  .proj{padding:16px;margin-bottom:14px}
+  .proj .cab{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .proj .cab b{font-size:15px}
+  .trilho{display:flex;align-items:center;gap:8px}
+  .caixa{border-radius:var(--rc);padding:8px 12px;font-size:12.5px;border:1px solid var(--border);background:var(--surface-subtle);white-space:nowrap}
+  .caixa b{display:block;font-size:13px}
+  .caixa.ar{background:#eff7f6;border-color:#bfe3de}
+  .caixa.sub{background:#f4f1fa;border-color:#ddd4ee}
+  .caixa.noite{background:#eef4fd;border-color:#cfdff8;border-style:dashed}
+  .caixa.rec{background:#fbf0f0;border-color:#efd0d0;display:block}
+  .trilho em{font-style:normal;color:var(--text-tertiary)}
+  .lig{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);font-size:13px}
+  .lig:first-of-type{border-top:0}
+  .chave{width:34px;height:20px;border-radius:10px;background:var(--flow);position:relative;flex:none}
+  .chave::after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+  .chave.off{background:var(--border-strong)}.chave.off::after{right:auto;left:2px}
+  .anot{max-width:1280px;margin:0 auto 40px;padding:0 4px;color:#3d4a5e;font-size:13px}
+  .anot li{margin-bottom:4px}
+
+  .tela.on{grid-template-columns:210px minmax(0,1fr)} main{min-width:0}
+  h1 .btn{font-size:14px}
+  .btn.prim{background:var(--action);border-color:var(--action);color:#fff}
+  .fluxo{grid-template-columns:130px 22px repeat(5,minmax(0,1fr))}
+  .voltar{color:var(--text-link);font-size:13px;margin-bottom:8px;display:block}
+  .cabd{display:flex;gap:14px;align-items:center;margin-bottom:6px}
+  .cabd h1{margin:0}
+  .meta2{display:flex;gap:8px;align-items:center;margin-bottom:18px}
+  .trilhoG{display:flex;align-items:flex-start;margin:4px 0 22px}
+  .trilhoG .e{flex:1;text-align:center;font-size:12px;color:var(--text-tertiary);position:relative}
+  .trilhoG .e b{display:block;width:14px;height:14px;border-radius:50%;margin:0 auto 6px;background:var(--border-strong)}
+  .trilhoG .e.f b{background:var(--flow)} .trilhoG .e.f{color:var(--text-secondary)}
+  .trilhoG .e.p b{background:#fff;border:3px solid var(--atencao)} .trilhoG .e.p{color:var(--atencao);font-weight:650}
+  .trilhoG .e::before{content:"";position:absolute;top:6px;left:-50%;width:100%;height:2px;background:var(--border);z-index:-1}
+  .trilhoG .e:first-child::before{display:none} .trilhoG .e.f::before,.trilhoG .e.p::before{background:var(--flow)}
+  .pede{display:flex;gap:14px;align-items:center;background:#fbf4ea;border:1px solid #f0dcc0;border-radius:var(--r);padding:14px 16px;margin-bottom:18px}
+  .pede .q{width:30px;height:30px;border-radius:50%;background:var(--atencao);color:#fff;display:grid;place-items:center;font-weight:700;flex:none}
+  .pede b{display:block;font-size:16px}.pede span{color:var(--text-secondary);font-size:12.5px}
+  .canvas{border:1px solid var(--border-strong);border-radius:var(--r);background:#fff;overflow:hidden}
+  .canvas .barraC{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-subtle);font-size:12.5px;color:var(--text-secondary)}
+  .canvas .barraC i{width:10px;height:10px;border-radius:50%;background:var(--border-strong)}
+  .falso{height:330px;padding:22px;display:grid;grid-template-columns:150px 1fr;gap:18px}
+  .falso .s{background:var(--surface-subtle);border-radius:8px}
+  .falso .c div{background:var(--surface-subtle);border-radius:6px;margin-bottom:12px}
+  .imp{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+  .imp div{border:1px solid var(--border);border-radius:var(--rc);padding:10px 12px;background:#fff}
+  .imp small{display:block;color:var(--text-tertiary);font-size:11.5px;margin-bottom:2px}
+  .imp b{font-size:14px}
+  .lado{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .lado h2{margin-bottom:8px}
+  .ok{display:inline-flex;gap:6px;align-items:center;background:#eef7f2;color:var(--sucesso);border:1px solid #cfe7da;border-radius:6px;padding:2px 10px;font-size:12.5px;font-weight:600}
+  .form{max-width:620px}
+  .campo{margin-bottom:14px}.campo label{display:block;font-size:12.5px;color:var(--text-secondary);font-weight:600;margin-bottom:5px}
+  .inp{border:1px solid var(--border-strong);border-radius:var(--rc);padding:9px 12px;background:#fff;color:var(--text-tertiary)}
+  .seg{display:flex;gap:8px}.seg span{border:1.5px solid var(--border-strong);border-radius:999px;padding:6px 14px;font-size:13px;font-weight:550;background:#fff}
+  .seg span.on{border-color:var(--midnight);background:var(--midnight);color:#fff}
+</style></head><body>
+<div class="barra"><b>KusterTech Flow · Demandas</b><button class="on" onclick="ver(0,this)">1. Lista</button><button onclick="ver(1,this)">2. Demanda: aprovar desenho</button><button onclick="ver(2,this)">3. Demanda entregue</button><button onclick="ver(3,this)">4. Nova demanda</button><span class="nota">Desenho aprovado em 20/11/2026 · dados de exemplo</span></div>
+<section class="tela on"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início<span class="cont">3</span></a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<h1>Demandas <small>hoje</small><button class="btn prim dir">Nova demanda</button></h1>
+<div class="fluxo">
+<div class="raia entrada"><div class="n">12</div><div class="r">Recebidas</div><div class="m">você 4 · sessões 8</div></div><div class="seta">→</div>
+<div class="raia c-ori"><div class="n">3</div><div class="r">Orientadas</div><div class="m">sem ir à Fábrica</div></div>
+<div class="raia c-urg"><div class="n">1</div><div class="r">Urgente</div><div class="m">na frente da fila</div></div>
+<div class="raia c-noite"><div class="n">2</div><div class="r">Lote da noite</div><div class="m">publica às 22:00</div></div>
+<div class="raia c-ag"><div class="n">4</div><div class="r">Fila de agentes</div><div class="m">3 de 5 vagas</div></div>
+<div class="raia c-dec"><div class="n">2</div><div class="r">Decisão sua</div><div class="m">a mais antiga: 2 h</div></div>
+</div>
+<div class="grupo"><b>Espera você</b><span>3</span></div>
+<div class="cartao" style="margin-bottom:20px">
+<div class="linha"><div class="tipo t-feat">F</div><div class="cresce"><div class="tit">Tela de funil de vendas</div></div><span class="chip">Projeto Alfa</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="p"></i><u></u><i></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--atencao)">Aprovar desenho</div><div class="tempo">3 h</div></div>
+<div class="linha"><div class="tipo t-ideia">I</div><div class="cresce"><div class="tit">Painel com metas por equipe</div></div><span class="chip">Projeto Beta</span><div class="etapas"><i class="p"></i><u></u><i></i><u></u><i></i><u></u><i></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--atencao)">Planejar comigo</div><div class="tempo">1 d</div></div>
+<div class="linha"><div class="tipo t-bug">B</div><div class="cresce"><div class="tit">Exportação trava com 5 mil linhas</div></div><span class="chip">Projeto Gama</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="x"></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--erro)">Travada</div><div class="tempo">2 d</div></div>
+</div>
+<div class="grupo"><b>Em andamento</b><span>4</span></div>
+<div class="cartao" style="margin-bottom:20px">
+<div class="linha"><div class="tipo t-feat">F</div><div class="cresce"><div class="tit">Importação de leads por planilha</div></div><span class="chip">Projeto Alfa</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--execucao)">Desenvolvendo</div><div class="tempo">1 d</div></div>
+<div class="linha"><div class="tipo t-bug">B</div><div class="cresce"><div class="tit">Fuso errado na agenda</div></div><span class="chip">Projeto Gama</span><div class="etapas"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i><u></u><i></i></div><div class="est" style="color:var(--execucao)">Testando no navegador</div><div class="tempo">40 min</div></div>
+</div>
+<div class="grupo"><b>Na fila</b><span>entram na ordem</span></div>
+<div class="cartao">
+<div class="linha"><div class="tipo t-ajuste">A</div><div class="cresce"><div class="tit">Exportar contatos em CSV</div></div><span class="chip">Projeto Alfa</span><div class="etapas"><i class="a"></i><u></u><i></i><u></u><i></i><u></u><i></i><u></u><i></i><u></u><i></i></div><div class="est" style="color:var(--neutro)">Triagem</div><div class="tempo">10 min</div></div>
+</div>
+</main></section><section class="tela"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início<span class="cont">3</span></a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<a class="voltar">← Demandas</a>
+<div class="cabd"><div class="tipo t-feat">F</div><h1>Tela de funil de vendas</h1></div>
+<div class="meta2"><span class="chip">Projeto Alfa</span><span class="chip">Aprovar desenho</span><span class="chip">Fila de agentes</span><span class="chip">aberta por uma sessão · há 1 d</span></div>
+<div class="trilhoG"><div class="e f"><b></b>Recebida</div><div class="e f"><b></b>Planejada</div><div class="e p"><b></b>Desenho</div><div class="e"><b></b>Desenvolvida</div><div class="e"><b></b>Testada</div><div class="e"><b></b>Entregue</div></div>
+<div class="pede"><div class="q">?</div><div><b>O desenho está pronto para você aprovar</b><span>versão 2 · ajuste pedido ontem: "menos texto no topo"</span></div><button class="btn dir">Pedir ajuste</button><button class="btn prim">Aprovar</button></div>
+<div class="imp"><div><small>Tamanho</small><b>Médio</b></div><div><small>Mexe em</small><b>2 telas, 1 rota</b></div><div><small>Risco</small><b>Baixo</b></div><div><small>Dados</small><b>Só leitura</b></div></div>
+<div class="canvas"><div class="barraC"><i></i><i></i><i></i><span style="margin-left:8px">Desenho · funil-de-vendas.html</span><span class="dir">Abrir em tela cheia ⤢</span></div>
+<div class="falso"><div class="s"></div><div class="c"><div style="height:28px;width:40%"></div><div style="height:90px"></div><div style="height:150px"></div></div></div></div>
+</main></section><section class="tela"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início<span class="cont">3</span></a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<a class="voltar">← Demandas</a>
+<div class="cabd"><div class="tipo t-bug">B</div><h1>Fuso errado na agenda</h1><span class="ok dir">✓ Entregue · no ar há 2 h</span></div>
+<div class="meta2"><span class="chip">Projeto Gama</span><span class="chip">Vai sozinho</span><span class="chip">PR #318</span><span class="chip">publicado 9d2e41b</span></div>
+<div class="trilhoG"><div class="e f"><b></b>Recebida</div><div class="e f"><b></b>Planejada</div><div class="e f"><b></b>Desenho</div><div class="e f"><b></b>Desenvolvida</div><div class="e f"><b></b>Testada</div><div class="e f"><b></b>Entregue</div></div>
+<div class="lado"><div><h2>Desenho aprovado</h2><div class="canvas"><div class="falso" style="height:300px"><div class="s"></div><div class="c"><div style="height:28px;width:40%"></div><div style="height:200px"></div></div></div></div></div>
+<div><h2>Entregue · desktop e celular</h2><div class="canvas"><div class="falso" style="height:300px;grid-template-columns:1fr 90px"><div class="c"><div style="height:28px;width:50%"></div><div style="height:200px"></div></div><div class="s"></div></div></div></div></div>
+</main></section><section class="tela"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início<span class="cont">3</span></a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<a class="voltar">← Demandas</a><h1>Nova demanda</h1>
+<div class="form cartao" style="padding:22px">
+<div class="campo"><label>Projeto</label><div class="inp">Projeto Alfa ▾</div></div>
+<div class="campo"><label>O que você quer</label><div class="inp">Título curto</div></div>
+<div class="campo"><label>Detalhes (opcional)</label><div class="inp" style="height:80px">Escreva, cole imagem ou anexe um áudio</div></div>
+<div class="campo"><label>Quanto você quer acompanhar</label><div class="seg"><span>Planejar comigo</span><span class="on">Aprovar desenho</span><span>Vai sozinho</span></div></div>
+<div class="campo"><label>Tem tela?</label><div class="seg"><span class="on">Sim</span><span>Não</span></div></div>
+<button class="btn prim">Criar demanda</button>
+</div></main></section><script>function ver(i,b){document.querySelectorAll('.tela').forEach((t,n)=>t.classList.toggle('on',n===i));document.querySelectorAll('.barra button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window.scrollTo(0,0)}</script></body></html>

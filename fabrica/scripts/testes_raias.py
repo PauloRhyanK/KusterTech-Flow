@@ -128,6 +128,11 @@ class TestesGlobs(unittest.TestCase):
 
 
 class TestesPlano(unittest.TestCase):
+    def test_plano_com_campo_demanda_passa_em_validar_plano(self):
+        plano = plano_referencia()
+        plano["demanda"] = "11111111-2222-4333-8444-555555555555"
+        self.assertEqual(raias.validar_plano(plano), [])
+
     def assertErro(self, plano, trecho):
         erros = raias.validar_plano(plano)
         self.assertTrue(

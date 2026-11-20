@@ -17,6 +17,7 @@ export const pedidoSchema = z.strictObject({
     .optional(),
   modo: z.enum(['imediato', 'lote']).optional(),
   descricao: z.string().trim().min(1).max(200).optional(),
+  demanda: z.string().uuid().optional(),
 })
 
 export type PedidoRecebido = z.infer<typeof pedidoSchema>

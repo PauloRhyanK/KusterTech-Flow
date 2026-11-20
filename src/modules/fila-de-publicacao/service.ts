@@ -256,6 +256,7 @@ export async function publicarAgora(
     repositorio.id,
     { usuarioId: sujeito.usuarioId },
     { modo: 'imediato', descricao: DESCRICAO_DO_PUBLICAR_AGORA },
+    null,
     repositorio.configuracaoDePublicacao,
     new Date(),
   )

@@ -21,6 +21,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import retrato  # noqa: E402
 
 CAMINHO_DA_ROTA = "/api/publicacoes"
+# o `erro` do 422 do esquema estrito (campo desconhecido, num Flow de antes das demandas); os outros 422
+# ("Demanda não encontrada.", "A demanda não é deste repositório.") são recusas de verdade e não se repetem
+ERRO_DO_ESQUEMA = "Corpo inválido."
 
 
 def url_da_rota(url_central) -> str:
@@ -31,9 +34,22 @@ def url_da_rota(url_central) -> str:
     return urllib.parse.urlunsplit((partes.scheme, partes.netloc, CAMINHO_DA_ROTA, "", ""))
 
 
-def pedir(*, repo: str, descricao: str, url: str, token_file: str, abrir=None) -> dict:
-    """Pede a publicação do repositório. Devolve o JSON da resposta (`{}` se vazio); falha: `retrato.FalhaDeEnvio`."""
-    corpo = json.dumps({"repositorio": repo, "descricao": descricao}, ensure_ascii=False).encode("utf-8")
+def pedir(*, repo: str, descricao: str, url: str, token_file: str, abrir=None, modo: str | None = None, demanda: str | None = None) -> dict:
+    """Pede a publicação do repositório. Devolve o JSON da resposta (`{}` se vazio); falha: `retrato.FalhaDeEnvio`.
+
+    `modo` e `demanda` (da entrega de uma demanda) só vão no corpo quando não são `None`. Um Flow de antes das
+    demandas recusa campo desconhecido (`422` "Corpo inválido."): o pedido é repetido uma vez sem eles, e a resposta dessa segunda
+    tentativa é a que vale.
+    """
+    campos = {"repositorio": repo, "descricao": descricao}
+    extras = {nome: valor for nome, valor in (("modo", modo), ("demanda", demanda)) if valor is not None}
+    corpo = json.dumps({**campos, **extras}, ensure_ascii=False).encode("utf-8")
+    try:
+        return retrato.enviar(corpo, url=url, token_file=token_file, abrir=abrir) or {}
+    except retrato.FalhaDeEnvio as exc:
+        if exc.codigo != 422 or exc.erro != ERRO_DO_ESQUEMA or not extras:
+            raise
+    corpo = json.dumps(campos, ensure_ascii=False).encode("utf-8")
     return retrato.enviar(corpo, url=url, token_file=token_file, abrir=abrir) or {}
 
 

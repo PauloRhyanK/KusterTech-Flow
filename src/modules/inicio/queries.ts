@@ -2,6 +2,7 @@ import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { moduloAtivo } from '@/lib/modulos'
+import { esperasDeDemandas } from '@/modules/demandas/queries'
 import { idsVisiveis, podeVerVisaoGlobal } from '@/modules/clientes/model'
 import type { RetratoV1 } from '@/modules/fabrica/contrato'
 import { planosEmCurso, retratoDesatualizado, type ResumoDoPlano } from '@/modules/fabrica/model'
@@ -333,6 +334,9 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
   const consultas: [TipoDeEspera, () => Promise<ItemDeEspera[]>][] = []
   if (moduloAtivo('fila-de-publicacao') && pode('publicacao')) {
     consultas.push(['publicacao', () => esperasDePublicacao(sujeito, agora)])
+  }
+  if (moduloAtivo('demandas') && pode('demanda')) {
+    consultas.push(['demanda', () => esperasDeDemandas(sujeito, agora)])
   }
   if (moduloAtivo('github') && pode('integracao')) {
     consultas.push(['integracao', () => integracoesPendentes(sujeito, agora)])

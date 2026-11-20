@@ -2,6 +2,7 @@ import {
   Bot,
   Building2,
   FolderKanban,
+  Inbox,
   LayoutDashboard,
   type LucideIcon,
   Rocket,
@@ -30,6 +31,12 @@ export const GRUPOS_DE_NAVEGACAO: readonly GrupoDeNavegacao[] = [
         href: '/',
         icone: LayoutDashboard,
         descricao: 'O que espera você e o resumo dos projetos',
+      },
+      {
+        rotulo: 'Demandas',
+        href: '/demandas',
+        icone: Inbox,
+        descricao: 'Demandas dos projetos',
       },
       {
         rotulo: 'Publicação',

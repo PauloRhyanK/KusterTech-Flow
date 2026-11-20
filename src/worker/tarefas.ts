@@ -8,11 +8,14 @@ import { processarEventosDeWebhook } from '@/modules/github/eventos'
 import { processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
+import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
 import { calcularComposicoes } from '@/modules/publicacao/composicoes'
 import { detectarDivergencias } from '@/modules/publicacao/divergencias'
+
+const INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS = 60 * 60_000
 
 export interface TarefaDoWorker {
   nome: string
@@ -26,6 +29,8 @@ export function criarTarefasDoCiclo(d: {
   ativos?: ReadonlySet<ModuloId>
 }): readonly TarefaDoWorker[] {
   const ativos = d.ativos ?? modulosAtivos()
+  // Em memória do processo: depois de reiniciar, a limpeza roda no primeiro ciclo.
+  let ultimaLimpezaDeArquivos: number | null = null
   const tarefas: readonly TarefaDoWorker[] = [
     {
       nome: 'processar-eventos-de-webhook',
@@ -135,6 +140,26 @@ export function criarTarefasDoCiclo(d: {
           log.info(
             { tarefa: 'detectar-divergencias', ...resumo },
             'divergências de deploy detectadas',
+          )
+        }
+      },
+    },
+    {
+      nome: 'limpar-arquivos-de-demandas',
+      modulo: 'demandas',
+      async executar(agora) {
+        if (
+          ultimaLimpezaDeArquivos !== null &&
+          agora.getTime() - ultimaLimpezaDeArquivos < INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS
+        ) {
+          return
+        }
+        const resumo = await limparArquivosDeDemandas(agora)
+        ultimaLimpezaDeArquivos = agora.getTime()
+        if (resumo.capturas + resumo.parciais > 0) {
+          log.info(
+            { tarefa: 'limpar-arquivos-de-demandas', ...resumo },
+            'arquivos de demandas limpos',
           )
         }
       },

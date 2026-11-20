@@ -1156,3 +1156,56 @@ export async function semearPedidoDePublicacaoNoBanco(
     },
   })
 }
+
+// Projetos que este processo de teste mostrou com nome curto, com o nome "E2E …" original.
+const exibidosComoNoBanco = new Map<string, string>()
+
+// Demandas dos repositórios de exemplo (eventos e arquivos saem em cascata; os arquivos em disco
+// ficam na pasta temporária do E2E). Os projetos que o teste mostrou como "Projeto Alfa" voltam ao
+// nome "E2E …" e são arquivados, para o setup global apagá-los.
+export async function limparDemandasNoBanco(): Promise<void> {
+  const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
+  await db.pedidoDePublicacao.updateMany({
+    where: { demanda: dosExemplos },
+    data: { demandaId: null },
+  })
+  await db.demanda.deleteMany({ where: dosExemplos })
+  for (const [id, nome] of exibidosComoNoBanco) {
+    await db.projeto.updateMany({ where: { id }, data: { nome, arquivadoEm: new Date() } })
+    exibidosComoNoBanco.delete(id)
+  }
+}
+
+// Projeto de teste (criado com nome "E2E …") mostrado com um nome curto nas capturas; o normalizado
+// continua único e `limparDemandasNoBanco` devolve o nome original.
+export async function exibirProjetoComoNoBanco(projetoId: string, nome: string): Promise<void> {
+  const atual = await db.projeto.findUniqueOrThrow({
+    where: { id: projetoId },
+    select: { nome: true },
+  })
+  if (!atual.nome.startsWith('E2E ')) throw new Error('Só projetos de teste ("E2E …").')
+  exibidosComoNoBanco.set(projetoId, atual.nome)
+  await db.projeto.update({ where: { id: projetoId }, data: { nome } })
+}
+
+// Fonte de demandas (`fd_`) criada pelo admin do E2E; o token volta só aqui, como na tela.
+export async function criarFonteDeDemandasNoBanco(nome: string): Promise<string> {
+  const criadaPorId = process.env.E2E_ADMIN_ID
+  if (!criadaPorId) throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
+  const token = `fd_${randomBytes(32).toString('base64url')}`
+  await db.fonteDeDemandas.create({
+    data: { nome, tokenHash: hashDoTokenDaFabrica(token), criadaPorId },
+  })
+  return token
+}
+
+// Fonte da Fábrica (`ff_`) criada pelo admin do E2E, para simular a Fábrica pela API.
+export async function criarFonteDaFabricaNoBanco(nome: string): Promise<string> {
+  const criadaPorId = process.env.E2E_ADMIN_ID
+  if (!criadaPorId) throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
+  const token = `ff_${randomBytes(32).toString('base64url')}`
+  await db.fonteDaFabrica.create({
+    data: { nome, tokenHash: hashDoTokenDaFabrica(token), criadaPorId },
+  })
+  return token
+}

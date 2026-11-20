@@ -198,3 +198,71 @@ test('conserto COM_PR há mais de 1 h com o PR mergeado sem SHA do merge → "PR
     }),
   ])
 })
+
+test('demanda esperando aprovação aparece em "Espera você" com o tipo Demanda; sem desenvolvimento.ler não aparece', async () => {
+  await sincronizarCatalogo(criarFonteFixtures(), AGORA)
+  const projeto = await criarProjeto(admin, { nome: 'Projeto Portal' })
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto: 'kustertech-exemplo/portal' },
+  })
+  const demanda = await db.demanda.create({
+    data: {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Tela de funil de vendas',
+      nivel: 'APROVAR_DESENHO',
+      temTela: true,
+      origem: 'FLOW',
+      etapas: [],
+      etapaAtual: 'desenho',
+      espera: 'aprovar_desenho',
+      esperaDesde: new Date(AGORA.getTime() - 30 * 60_000),
+    },
+  })
+  await db.demanda.create({
+    data: {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Recebida parada',
+      nivel: 'VAI_SOZINHO',
+      temTela: false,
+      origem: 'FLOW',
+      etapas: [],
+      etapaAtual: 'recebida',
+      criadaEm: new Date(AGORA.getTime() - 30 * 60_000),
+    },
+  })
+  await db.fonteDaFabrica.create({
+    data: {
+      nome: 'Fábrica',
+      tokenHash: 'hash-inicio-demandas',
+      criadaPorId: admin.usuarioId,
+      demandasBuscadasEm: new Date(AGORA.getTime() - 11 * 60_000),
+    },
+  })
+
+  const inicio = await obterInicio(admin, AGORA)
+  expect(inicio.espera.fontesComFalha).toEqual([])
+  expect(inicio.espera.itens.filter((i) => i.tipo === 'demanda')).toEqual([
+    expect.objectContaining({
+      titulo: 'Aprovar o desenho de Tela de funil de vendas',
+      contexto: 'Projeto Portal · há 30 min',
+      href: `/demandas/${demanda.id}`,
+      rotuloDoLink: 'Ver a demanda',
+    }),
+  ])
+  expect(inicio.espera.itens.filter((i) => i.id === 'fabrica-sem-buscar-demandas')).toEqual([
+    expect.objectContaining({
+      titulo: 'A Fábrica não busca demandas há 11 min',
+      contexto: '1 demanda esperando a triagem',
+    }),
+  ])
+
+  const aprovador: Sujeito = {
+    usuarioId: admin.usuarioId,
+    papeis: [{ papel: 'APROVADOR', clienteId: null }],
+  }
+  const semLeitura = await obterInicio(aprovador, AGORA)
+  expect(semLeitura.espera.itens.some((i) => i.tipo === 'demanda')).toBe(false)
+  expect(semLeitura.espera.fontesComFalha).toEqual([])
+})

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { prepararPastaDosArquivos } from './arquivos'
 import { prepararPastaDaOficina } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { garantirBancoDeTeste } from '../../tests/support/banco-de-teste-compartilhado'
@@ -26,6 +27,7 @@ export default async function globalSetup(): Promise<void> {
 
   // A oficina começa vazia: sem leitura, nenhum aviso chega ao Início.
   prepararPastaDaOficina('vazia')
+  prepararPastaDosArquivos()
 
   await garantirBancoDeTeste(urlTeste)
 
@@ -47,6 +49,8 @@ export default async function globalSetup(): Promise<void> {
       where: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } },
       data: { projetoId: null, vinculadoEm: null },
     })
+    // Demandas antes dos repositórios e projetos (FK RESTRICT); eventos e arquivos em cascata.
+    await db.demanda.deleteMany({ where: dosExemplos })
     await db.issueVinculo.deleteMany({
       where: {
         OR: [
@@ -129,6 +133,11 @@ export default async function globalSetup(): Promise<void> {
           { criadaPor: { email: { startsWith: 'e2e+', endsWith: '@local.test' } } },
         ],
       },
+    })
+
+    // Fontes de demandas antes dos usuários que as criaram (FK RESTRICT).
+    await db.fonteDeDemandas.deleteMany({
+      where: { criadaPor: { email: { startsWith: 'e2e+', endsWith: '@local.test' } } },
     })
 
     // Fontes da Fábrica antes dos usuários que as criaram (FK RESTRICT); o retrato sai em cascata.

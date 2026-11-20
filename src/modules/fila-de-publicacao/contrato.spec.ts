@@ -16,6 +16,13 @@ describe('pedidoSchema', () => {
     expect(pedidoSchema.safeParse({ ...base, commit: COMMIT, modo: 'lote' }).success).toBe(true)
   })
 
+  test('pedidoSchema aceita demanda uuid e recusa demanda que não é uuid', () => {
+    const base = { repositorio: 'kustertech-exemplo/portal' }
+    const id = '0b5f6f0e-3c1d-4c3a-9a55-0d1e2f3a4b5c'
+    expect(pedidoSchema.safeParse({ ...base, demanda: id }).success).toBe(true)
+    expect(pedidoSchema.safeParse({ ...base, demanda: 'abc' }).success).toBe(false)
+  })
+
   test('estadoNoFio converte para minúsculas', () => {
     expect(estadoNoFio('NA_FILA')).toBe('na_fila')
     expect(estadoNoFio('FALHOU')).toBe('falhou')

@@ -14,17 +14,24 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
    desligada, as issues de pausa e de decisão (comentário fixo), marca `removido` e solta reservas e trava.
    Warren ou GitHub fora deixa o pedido na caixa e o ciclo seguinte refaz as etapas, todas idempotentes. Nunca
    apaga código, branch, PR de seed nem a pasta do plano; `--manter-arquivo` impede o mesmo plano de reentrar;
-4. aplica a fila (`fila.enfileirar` e `fila.admitir`): para cada admitido, clona o repositório, grava o
-   `plano.env`, roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
+4. aplica a fila (`fila.enfileirar`, `demandas.aplicar_na_fila` e `fila.admitir`): o plano de uma demanda do
+   Flow fica `segurado` até a etapa `desenvolvida` da demanda (no mesmo ciclo em que é descoberto) e o urgente é
+   visto primeiro na admissão, sem vaga reservada; para cada admitido, clona o repositório, grava o `plano.env`,
+   roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
 5. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
    concluído (`estado.plano_concluido`) tem a unit desligada, as reservas soltas e vira `concluido`;
-6. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
-   rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando;
-7. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
+6. com `FABRICA_CENTRAL_URL`, cuida das demandas do Flow (`demandas.passo` e depois `demandas.esvaziar_saida`):
+   busca, triagem, plano, desenho, acompanhamento do plano na fila, teste no navegador e entrega (com o pedido de
+   publicação, se houver `FABRICA_PUBLICACAO_TOKEN_FILE`). Uma falha aqui vira um aviso e nunca muda a fila nem
+   para o ciclo; os planos de demanda saem do pedido de publicação por seed;
+7. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
+   rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando (nem de um conserto nem de uma
+   demanda em curso: `demanda:<id>` segura a trava do plano e a vaga do desenho, do teste e da correção);
+8. envia o retrato da Fábrica à Central (`retrato.py`), se `FABRICA_CENTRAL_URL` estiver definida: o envio roda
    mesmo quando um passo anterior falhou e nunca muda a fila nem para o ciclo. A resposta traz os pedidos de
    conserto de publicação, atendidos por `consertos.py` com um run `fixer` numa vaga (o estado volta no retrato
    seguinte);
-8. grava `fila-estado.json` de forma atômica.
+9. grava `fila-estado.json` de forma atômica.
 
 Tudo é idempotente pelo `fila-estado.json` e pelo `estado.json` de cada plano: um coordenador reiniciado no
 meio não admite duas vezes nem roda `iniciar` de novo. Os tokens só vêm de arquivos e nunca são gravados.
@@ -50,6 +57,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import consertos  # noqa: E402
+import demandas  # noqa: E402
+import demandas_flow  # noqa: E402
 import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
@@ -291,6 +300,15 @@ def _id_valido(id_) -> bool:
     return isinstance(id_, str) and _ID.fullmatch(id_) is not None
 
 
+def _soltar_recusado(entrada: dict) -> str:
+    """O plano segurado pela demanda só sai da espera pelo Flow (a etapa chega ao desenvolvimento) ou por `remover`."""
+    id_ = entrada.get("id")
+    return (
+        "pedido soltar de %s recusado: o plano espera a demanda %s chegar ao desenvolvimento (aprove o desenho ou "
+        "conclua a etapa no Flow); para tirá-lo da fila, coordenador.py remover %s" % (id_, str(entrada.get("demanda"))[:8], id_)
+    )
+
+
 def _atuais(fila_: list) -> dict:
     """A entrada vigente de cada id (a última válida da lista); id fora do formato fica de fora."""
     return retrato.vigentes(fila_)
@@ -317,6 +335,7 @@ class Coordenador:
         central=None,
         enviar=None,
         pedir_publicacao=None,
+        cliente_do_flow=None,
     ):
         self.raiz = pathlib.Path(raiz)
         self.forja = forja
@@ -338,6 +357,7 @@ class Coordenador:
         self.central = central  # {"url", "token_file"} ou None (envio desligado)
         self._enviar = enviar or retrato.enviar
         self._pedir_publicacao = pedir_publicacao or publicar.pedir
+        self._cliente_do_flow = cliente_do_flow or demandas_flow.ClienteDoFlow  # (url da Central, token_file) → cliente
         self._ciclos = 0
         self._ultimo_preparo = None
         self._sha_revertido = None
@@ -450,6 +470,8 @@ class Coordenador:
             raise ErroDeEntrada(["só quem aguarda pode ser segurado: %s está %s" % (id_, entrada.get("estado"))])
         if comando == "soltar" and not entrada.get("segurado"):
             raise ErroDeEntrada(["%s não está segurado" % id_])
+        if comando == "soltar" and entrada.get("seguradoPor") == "demanda":
+            raise ErroDeEntrada([_soltar_recusado(entrada)])
         if comando == "remover":
             return self._pedir_remocao(entrada, manter_arquivo=bool(opcoes.get("manter_arquivo")), simular=bool(opcoes.get("simular")))
         despachante.enfileirar_pedido(self.raiz, {"comando": comando, "id": id_, **opcoes})
@@ -688,13 +710,16 @@ class Coordenador:
         if entrada is None:
             self._aviso(chave, "pedido %s de %s recusado: plano desconhecido" % (comando, id_))
             return
-        if valor and entrada.get("segurado"):
-            return  # já segurado: nada a fazer, nem aviso
+        if valor and entrada.get("segurado") and entrada.get("seguradoPor") != "demanda":
+            return  # já segurado pelo Paulo: nada a fazer, nem aviso (o da demanda passa a ser do Paulo)
         if valor and entrada.get("estado") != "aguardando":
             self._aviso(chave, "pedido segurar de %s recusado: o plano está %s" % (id_, entrada.get("estado")))
             return
         if not valor and not entrada.get("segurado"):
             self._aviso(chave, "pedido soltar de %s recusado: o plano não está segurado" % id_)
+            return
+        if not valor and entrada.get("seguradoPor") == "demanda":
+            self._aviso(chave, _soltar_recusado(entrada))
             return
         self.dados["fila"] = fila.segurar(self.dados["fila"], id_, valor)
         self._salvar()
@@ -767,6 +792,7 @@ class Coordenador:
             self._passo_entrada(eventos)
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
+            self._passo_demandas()
             self._passo_publicar()
             self._passo_orfaos(rodando, confiavel, eventos)
         finally:
@@ -842,6 +868,8 @@ class Coordenador:
     def _passo_publicar(self) -> None:
         """Pede ao Flow a publicação depois do merge de uma seed: um pedido por plano por ciclo. Nunca levanta.
 
+        O plano de uma demanda (entrada com `demanda`) fica de fora: a demanda pede a publicação uma vez, na entrega.
+
         Desligado sem `FABRICA_CENTRAL_URL` e `FABRICA_PUBLICACAO_TOKEN_FILE`. A primeira leitura de um plano só
         grava as seeds já mergeadas (linha de base). Falha transitória (rede, timeout, 5xx) não marca a seed como
         vista (tenta no ciclo seguinte) e encerra o passo; o aviso sai só quando a categoria muda, e um ciclo sem
@@ -861,7 +889,7 @@ class Coordenador:
             vistas = publicacao.get("vistas") if isinstance(publicacao, dict) else None
             vistas = {k: [n for n in v if isinstance(n, str)] for k, v in vistas.items() if isinstance(v, list)} if isinstance(vistas, dict) else {}
             falha = None
-            planos = _atuais(self.dados["fila"])
+            planos = {id_: e for id_, e in _atuais(self.dados["fila"]).items() if not e.get("demanda")}
             lidos = retrato.ler_planos(self.raiz / DIR_PLANOS, planos)
             for id_ in planos:  # linha de base primeiro: a primeira falha abaixo não deixa plano sem ela
                 if id_ not in vistas and lidos[id_]["estado"] is not None:
@@ -897,6 +925,92 @@ class Coordenador:
             else:
                 self._aviso("publicacao:envio", "Publicação: pedido ao Flow falhou (%s)" % falha)
             self._salvar()
+
+    def _modelos_do_kit(self) -> dict:
+        """`modelos` de `<kit>/fabrica/modelos/config.json`; ausente ou torto vale `{}` (cada fase avisa o papel sem modelo)."""
+        try:
+            config = despachante._ler_json(self.kit / "fabrica" / "modelos" / "config.json")
+        except Exception:  # noqa: BLE001
+            return {}
+        modelos = despachante._dict(config).get("modelos")
+        return modelos if isinstance(modelos, dict) else {}
+
+    def _passo_demandas(self) -> None:
+        """As demandas do Flow (`demandas.passo`) e depois a caixa de saída (`demandas.esvaziar_saida`). Nunca levanta.
+
+        Só com `FABRICA_CENTRAL_URL` e com o `fila.json` lido neste ciclo. Os avisos vão pelo `_aviso` (repetem só
+        quando a mensagem muda); a busca boa esquece o aviso da busca, a rota de volta o do 404 e a saída andando o
+        da saída parada. Uma exceção inesperada (do cliente, da busca ou de uma fase) vira o aviso `demandas:passo`
+        e o log, e nunca muda a fila nem para o ciclo: a caixa de saída vai mesmo assim.
+        """
+        central = self.central or {}
+        if self._config is None or not central.get("url"):
+            return
+        with contextlib.suppress(Exception):
+            cliente = None
+            try:
+                cliente = self._cliente_do_flow(central["url"], central.get("token_file"))
+                publicacao = None
+                if central.get("publicacao_token_file"):
+                    with contextlib.suppress(retrato.FalhaDeEnvio):  # URL recusada: o `_passo_publicar` já avisa
+                        publicacao = {"url": publicar.url_da_rota(central["url"]), "token_file": central["publicacao_token_file"]}
+                eventos = demandas.passo(
+                    self.dados,
+                    cliente=cliente,
+                    motor=self.motor,
+                    forja=self.forja,
+                    capacidade_path=self.capacidade,
+                    projetos={r["repo"].lower(): r["projeto"] for r in self._config["repos"]},
+                    modelos=self._modelos_do_kit(),
+                    raiz=self.raiz,
+                    agora=self._agora(),
+                    mem_disponivel_mb=capacidade.mem_disponivel_mb(),
+                    salvar=self._salvar,
+                    publicacao=publicacao,
+                    pedir_publicacao=self._pedir_publicacao,
+                )
+            except Exception as exc:  # noqa: BLE001 - só a classe no aviso; o texto vai ao log, sem segredo
+                self._falha_das_demandas("passo", exc)
+                eventos = []
+            else:
+                self._esquecer("demandas:passo")
+                self._esquecer_avisos_das_demandas(eventos)
+            if cliente is not None:
+                try:
+                    eventos = eventos + demandas.esvaziar_saida(self.dados, cliente, self.raiz, salvar=self._salvar)
+                except Exception as exc:  # noqa: BLE001
+                    self._falha_das_demandas("saida", exc)
+                else:
+                    self._esquecer("demandas:saida")
+                    if demandas.secao(self.dados).get("saidaParada") is None:
+                        self._esquecer(demandas.CHAVE_SAIDA_PARADA)
+            for evento in eventos:
+                if evento.get("evento") == "aviso":
+                    self._aviso(evento["chave"], evento["mensagem"])
+                elif evento.get("evento") == "erro":
+                    self._log_repetivel("demandas:%s" % evento.get("alvo"), evento)
+                else:
+                    self._log(evento)
+            self._salvar()
+
+    def _falha_das_demandas(self, etapa: str, exc: BaseException) -> None:
+        """`etapa`: `passo` (busca e fases) ou `saida` (a caixa de saída); cada uma com o seu aviso."""
+        self._erro_de_etapa("demandas", etapa, exc)
+        nome = "o passo" if etapa == "passo" else "o envio da caixa de saída"
+        self._aviso("demandas:%s" % etapa, "Demandas: %s falhou (%s); tento de novo no próximo ciclo" % (nome, type(exc).__name__))
+
+    def _esquecer_avisos_das_demandas(self, eventos: list) -> None:
+        """Depois de um passo sem exceção: a busca que voltou, a rota que voltou e as demandas que saíram do estado
+        levam os avisos delas (a próxima falha do mesmo tipo avisa de novo)."""
+        sec = demandas.secao(self.dados)
+        if demandas.CHAVE_BUSCA not in {e.get("chave") for e in eventos} and sec.get("buscaRecusadaEm") is None:
+            self._esquecer(demandas.CHAVE_BUSCA)
+        if sec.get("semRotaEm") is None:
+            self._esquecer(demandas.CHAVE_SEM_ROTA)
+        for chave in [c for c in self.dados["chaves"] if c.startswith("demandas:")]:
+            ultima = chave.rsplit(":", 1)[-1]
+            if demandas._UUID.fullmatch(ultima) and ultima not in sec["itens"]:
+                self._esquecer(chave)
 
     def _passo_consertos(self, resposta) -> None:
         """Atende os pedidos de conserto da resposta; sem resposta legível, só acompanha os que estão em andamento."""
@@ -1146,6 +1260,15 @@ class Coordenador:
         for i, entrada in enumerate(anterior):
             if isinstance(entrada, dict) and entrada.get("estado") == "aguardando" and nova[i].get("estado") == "removido":
                 self._log({"evento": "removido", "id": entrada.get("id")})
+        # o plano de uma demanda espera a etapa `desenvolvida` (antes do `admitir`, no mesmo ciclo da descoberta)
+        segurados_antes = {e.get("id") for e in nova if isinstance(e, dict) and e.get("seguradoPor") == "demanda"}
+        nova = demandas.aplicar_na_fila(self.dados.get("demandas") or {}, nova)
+        for entrada in nova:
+            if isinstance(entrada, dict) and entrada.get("estado") == "aguardando":
+                pela_demanda = entrada.get("seguradoPor") == "demanda"
+                if pela_demanda != (entrada.get("id") in segurados_antes):
+                    evento = "segurado_pela_demanda" if pela_demanda else "solto_pela_demanda"
+                    self._log({"evento": evento, "id": entrada.get("id"), "demanda": entrada.get("demanda")})
         self.dados["fila"] = nova
         self._salvar()
         for id_ in fila.admitir(self.dados["fila"]):
@@ -1333,11 +1456,25 @@ class Coordenador:
                 self._erro_de_etapa("refazer_ocupacao", id_, exc)
         try:
             # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera; um
-            # conserto em andamento segura a vaga dele (`conserto:<id>`) como um plano
-            removidos = capacidade.limpar_orfaos(self.capacidade, ocupando | consertos.chaves_ocupando(self.dados))
+            # conserto em andamento segura a vaga dele (`conserto:<id>`) como um plano, e uma demanda (`demanda:<id>`)
+            # segura a trava do plano e a vaga do desenho, do teste e da correção (mesmo com o passo de demandas
+            # desligado ou falhando neste ciclo: as chaves vêm do `fila-estado.json`) até o teto da fase + 30 min;
+            # depois disso, sem o passo das demandas para soltá-las, saem aqui com um aviso
+            agora = self._agora()
+            ativos = ocupando | consertos.chaves_ocupando(self.dados)
+            ativos |= demandas.chaves_do_orquestrador(self.dados, agora) | demandas.chaves_ocupando(self.dados, agora)
+            vencidas = demandas.chaves_vencidas(self.dados, agora)
+            removidos = capacidade.limpar_orfaos(self.capacidade, ativos)
         except Exception as exc:  # noqa: BLE001
             self._erro_de_etapa("limpar_orfaos", "capacidade", exc)
             return
+        for demanda, fase, inicio in vencidas:
+            if demandas.chave(demanda) in removidos:
+                self._aviso(
+                    "demandas:vencida:%s:%s" % (fase, demanda),
+                    "Demandas: a demanda %s (%s desde %s) passou do teto da fase sem o passo das demandas a acompanhar; "
+                    "a trava e a vaga dela foram soltas" % (demanda[:8], fase, inicio),
+                )
         if removidos:
             self._log({"evento": "orfaos", "planos": removidos})
             eventos.append({"evento": "orfaos", "planos": removidos})
@@ -1382,6 +1519,29 @@ class Coordenador:
 # ---------------------------------------------------------------- status
 
 
+def _segurado(entrada: dict) -> str:
+    if not entrada.get("segurado"):
+        return ""
+    if entrada.get("seguradoPor") == "demanda":
+        return " (segurado pela demanda %s)" % str(entrada.get("demanda"))[:8]
+    return " (segurado)"
+
+
+def _linha_das_demandas(dados: dict, central) -> str:
+    if not central:
+        return "demandas: desligado"
+    sec = dados.get("demandas") if isinstance(dados.get("demandas"), dict) else {}
+    if sec.get("semRotaEm"):
+        return "demandas: Flow sem a rota (tenta de novo 1 h depois de %s)" % sec["semRotaEm"]
+    itens = [it for it in (sec.get("itens") if isinstance(sec.get("itens"), dict) else {}).values() if isinstance(it, dict)]
+
+    def esperando(it):
+        retrato_ = demandas._retrato_atual(it)
+        return it.get("fase") == "esperando_paulo" or isinstance(retrato_.get("espera"), dict)
+
+    return "demandas: %d em curso (%d esperando o Paulo), cursor %s" % (len(itens), sum(1 for it in itens if esperando(it)), sec.get("cursor"))
+
+
 def status(raiz, central=None) -> str:
     raiz = pathlib.Path(raiz)
     linhas = []
@@ -1393,7 +1553,7 @@ def status(raiz, central=None) -> str:
     atuais = sorted(_atuais(dados["fila"]).values(), key=lambda e: (str(e.get("entrouEm")), e["id"]))
     if atuais:
         linhas.append("fila:")
-        linhas.extend("  %s: %s%s (entrou em %s)" % (e["id"], e["estado"], " (segurado)" if e.get("segurado") else "", e.get("entrouEm")) for e in atuais)
+        linhas.extend("  %s: %s%s (entrou em %s)" % (e["id"], e["estado"], _segurado(e), e.get("entrouEm")) for e in atuais)
     else:
         linhas.append("fila vazia")
     try:
@@ -1420,6 +1580,7 @@ def status(raiz, central=None) -> str:
             linhas.append("último envio à Central: %s %s" % (ultimo.get("em"), ultimo.get("resultado")))
     else:
         linhas.append("envio à Central: desligado (defina %s e %s em coordenador.env)" % (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN))
+    linhas.append(_linha_das_demandas(dados, central))
     avisos = [a for a in dados["avisos"] if isinstance(a, dict)][-AVISOS_NO_STATUS:]
     linhas.append("avisos:" if avisos else "avisos: nenhum")
     linhas.extend("  - [%s] %s" % (a.get("em"), a.get("mensagem")) for a in avisos)

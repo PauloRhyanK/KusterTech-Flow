@@ -7,9 +7,10 @@ import {
 } from './modulos'
 
 describe('catálogo de módulos', () => {
-  it('por padrão ativa clientes, projetos, github, desenvolvimento, fabrica, maquinas e fila-de-publicacao; publicacao continua inativo', () => {
+  it('por padrão ativa clientes, projetos, github, desenvolvimento, fabrica, maquinas fila-de-publicacao e demandas; publicacao continua inativo', () => {
     expect([...resolverModulosAtivos(undefined)].sort()).toEqual([
       'clientes',
+      'demandas',
       'desenvolvimento',
       'fabrica',
       'fila-de-publicacao',
@@ -17,6 +18,9 @@ describe('catálogo de módulos', () => {
       'maquinas',
       'projetos',
     ])
+  })
+  it('FLOW_MODULOS_EXTRAS sem fabrica não desliga demandas porque fabrica é ativo', () => {
+    expect(resolverModulosAtivos('entregas').has('demandas')).toBe(true)
   })
   it('extras ligam módulos congelados', () => {
     expect(resolverModulosAtivos('entregas, ambientes').has('entregas')).toBe(true)
@@ -26,13 +30,13 @@ describe('catálogo de módulos', () => {
   })
   it('ligar publicacao exige a cadeia inteira', () => {
     expect(() => resolverModulosAtivos('entregas,ambientes,publicacao')).toThrow(/homologacao/)
-    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(11)
+    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(12)
   })
   it('nome desconhecido em extras é erro', () => {
     expect(() => resolverModulosAtivos('alertas')).toThrow(/alertas/)
   })
   it('vazio e espaços equivalem a nenhum extra', () => {
-    expect(resolverModulosAtivos('  ').size).toBe(7)
+    expect(resolverModulosAtivos('  ').size).toBe(8)
   })
 })
 

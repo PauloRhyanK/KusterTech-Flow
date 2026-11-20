@@ -20,6 +20,7 @@ OCUPANDO = ("admitindo", "ativo", "pausado")
 # Mesma regra da Task 1: `plano` só vale como `.fabrica/plano.json`; em `planos/` o nome `plano` é recusado.
 _CAMINHO = re.compile(r"\.fabrica/(?:(plano)|planos/([a-z0-9]+(?:-[a-z0-9]+)*))\.json")
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _INSTANTE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _FORMATO_DO_INSTANTE = "%Y-%m-%dT%H:%M:%SZ"
 # o mesmo limite da skill fabrica-preparar-execucao: o nome da unit fabrica-plano@<id> fica bem abaixo de 255
@@ -136,17 +137,18 @@ def _descobertos_validos(descobertos) -> dict[str, dict]:
         arquivos = arquivos_do_plano(item["plano"])
         if not arquivos:
             continue
-        achados.setdefault(
-            id_,
-            {
-                "id": id_,
-                "repo": item["repo"],
-                "feature": feature,
-                "caminho": item["caminho"],
-                "arquivos": arquivos,
-                "hash": hash_,
-            },
-        )
+        candidato = {
+            "id": id_,
+            "repo": item["repo"],
+            "feature": feature,
+            "caminho": item["caminho"],
+            "arquivos": arquivos,
+            "hash": hash_,
+        }
+        demanda = item["plano"].get("demanda")
+        if isinstance(demanda, str) and _UUID.fullmatch(demanda):
+            candidato["demanda"] = demanda  # o plano de uma demanda do Flow (o uuid dela)
+        achados.setdefault(id_, candidato)
     return achados
 
 
@@ -161,6 +163,9 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
     descoberto difere do guardado; um `concluido` antigo, sem `hash`, só ganha o hash. Um `removido` que
     reaparece volta sempre, salvo o removido de propósito (`hashRemovido`): ele só volta, como entrada nova, se o
     `hash` descoberto difere do `hashRemovido`. Um `aguardando` atualizado preserva `segurado`. Entradas malformadas passam como estão e não entram em nenhuma decisão.
+
+    O `demanda` do plano (uuid de uma demanda do Flow) vai para a entrada como `demanda`; sem o campo, a entrada é
+    a de sempre (um `aguardando` que já tem `demanda` não a perde).
     """
     if not _instante_valido(agora):
         raise ValueError(f"agora deve ser ISO 8601 em UTC com Z (AAAA-MM-DDTHH:MM:SSZ): {agora!r}")
@@ -177,10 +182,13 @@ def enfileirar(fila: list[dict], descobertos: list[dict], agora: str) -> list[di
             if atual is None:
                 copia["estado"] = "removido"
                 copia.pop("segurado", None)
+                copia.pop("seguradoPor", None)
             else:
                 copia["arquivos"] = list(atual["arquivos"])
                 copia["caminho"] = atual["caminho"]
                 copia["hash"] = atual["hash"]
+                if "demanda" in atual:
+                    copia["demanda"] = atual["demanda"]
         elif atual is not None and ultima_por_id[entrada["id"]] == i:
             if entrada["estado"] in OCUPANDO:
                 copia["hash"] = atual["hash"]
@@ -210,15 +218,17 @@ def colide(a: dict, b: dict) -> bool:
 
 
 def admitir(fila: list[dict]) -> list[str]:
-    """Ids a admitir, do mais antigo ao mais novo.
+    """Ids a admitir: os `urgente` primeiro, cada grupo do mais antigo ao mais novo.
 
     Um plano entra se não colide com nenhum `admitindo`, `ativo` ou `pausado`, nem com um `aguardando` mais antigo que
     continua esperando. Não passa na frente de quem colide com ele, mas passa na frente de quem não colide.
     Entrada malformada não é admitida e não bloqueia ninguém; `aguardando` com `segurado: True` também não.
+    O `urgente` (plano de demanda urgente) é visto antes dos outros `aguardando`, sem vaga reservada: nunca entra
+    se colide com quem já ocupa.
     """
     validas = [e for e in _lista(fila) if _entrada_valida(e) and not (e["estado"] == "aguardando" and e.get("segurado") is True)]
     ocupando = [e for e in validas if e["estado"] in OCUPANDO]
-    esperando = sorted((e for e in validas if e["estado"] == "aguardando"), key=lambda e: e["entrouEm"])
+    esperando = sorted((e for e in validas if e["estado"] == "aguardando"), key=lambda e: (not e.get("urgente"), e["entrouEm"]))
     admitidos: list[str] = []
     ficam: list[dict] = []
     for entrada in esperando:
@@ -255,7 +265,8 @@ def _posicao_mais_recente(fila: list, id_: str) -> int:
 def segurar(fila: list[dict], id_: str, valor: bool) -> list[dict]:
     """Uma cópia da fila com `segurado: True` (ou sem a chave, se `valor` é falso) na entrada válida mais recente do `id_`.
 
-    Segurar só vale para `aguardando`; outro estado levanta `ValueError`. Soltar numa entrada que não está
+    É o Paulo quem segura e solta por aqui: as duas tiram o `seguradoPor` da demanda (o seu segurar a demanda não
+    solta). Segurar só vale para `aguardando`; outro estado levanta `ValueError`. Soltar numa entrada que não está
     segurada devolve a cópia sem mudança. Id desconhecido levanta `ValueError`.
     """
     fila = _lista(fila)
@@ -267,6 +278,7 @@ def segurar(fila: list[dict], id_: str, valor: bool) -> list[dict]:
         nova[posicao]["segurado"] = True
     else:
         nova[posicao].pop("segurado", None)
+    nova[posicao].pop("seguradoPor", None)
     return nova
 
 
@@ -282,6 +294,7 @@ def remover(fila: list[dict], id_: str, *, manter_arquivo: bool) -> list[dict]:
     alvo = nova[posicao]
     alvo["estado"] = "removido"
     alvo.pop("segurado", None)
+    alvo.pop("seguradoPor", None)
     alvo.pop("hashRemovido", None)
     if manter_arquivo and "hash" in alvo:
         alvo["hashRemovido"] = alvo["hash"]

@@ -60,3 +60,6 @@ cadastro.json
 
 # worker e scripts empacotados (pnpm build:worker)
 /dist/
+
+# arquivos das demandas no desenvolvimento (FLOW_ARQUIVOS_DIR)
+.dados/
