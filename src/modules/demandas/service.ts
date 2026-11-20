@@ -11,7 +11,7 @@ import {
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
-import { apagarArquivo, gravarArquivo } from './arquivos'
+import { apagarArquivo, caminhoDoArquivo, gravarParcial, promoverParcial } from './arquivos'
 import { DESTINOS, NIVEIS } from './contrato'
 import {
   estadoInicial,
@@ -187,7 +187,7 @@ export async function abrirDemanda(
   agora: Date,
 ): Promise<{ id: string; repetida: boolean }> {
   if (e.fonteId && e.chaveDaFonte) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`demanda:${e.fonteId}:${e.chaveDaFonte}`}))`
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`demanda-da-fonte:${e.fonteId}:${e.chaveDaFonte}`}))`
     const existente = await tx.demanda.findUnique({
       where: { fonteId_chaveDaFonte: { fonteId: e.fonteId, chaveDaFonte: e.chaveDaFonte } },
       select: { id: true },
@@ -354,9 +354,38 @@ async function contarBytes(corpo: ReadableStream<Uint8Array>, limite: number): P
   }
 }
 
-// Um envio de 10 MB por uma conexão lenta segura a trava da demanda enquanto grava.
-const TEMPO_DO_ENVIO_MS = 5 * 60_000
+type ArquivoGuardado = { status: 200 | 201 | 409 | 413 | 415; corpo: object }
 
+const ARQUIVO_DIFERENTE = 'Arquivo com o mesmo id e conteúdo diferente.'
+
+function mesmoArquivo(
+  existente: { demandaId: string; tipo: TipoDeArquivoDaDemanda; tamanho: number },
+  e: { demandaId: string; arquivoId: string; tipo: TipoDeArquivo },
+  tamanho: number,
+): ArquivoGuardado {
+  const igual =
+    existente.demandaId === e.demandaId &&
+    existente.tipo === doFio.tipoDeArquivo(e.tipo) &&
+    existente.tamanho === tamanho
+  return igual
+    ? { status: 200, corpo: { id: e.arquivoId } }
+    : { status: 409, corpo: { erro: ARQUIVO_DIFERENTE } }
+}
+
+async function usadoNaDemanda(cliente: Cliente, demandaId: string): Promise<number> {
+  const soma = await cliente.arquivoDaDemanda.aggregate({
+    where: { demandaId, apagadoEm: null },
+    _sum: { tamanho: true },
+  })
+  return soma._sum.tamanho ?? 0
+}
+
+/**
+ * O corpo vai para um `.parcial` com id novo **fora de transação** (um envio lento não segura
+ * conexão nem trava), com limite `min(10 MB, 100 MB − usado)` lido sem a trava. Depois, numa
+ * transação curta sob a trava da demanda, tudo é conferido de novo (id, soma, tamanho real) e só
+ * então o `.parcial` vira o arquivo e a linha é gravada: a garantia dos 100 MB vem dessa conferência.
+ */
 export async function guardarArquivo(e: {
   demandaId: string
   arquivoId: string
@@ -369,87 +398,86 @@ export async function guardarArquivo(e: {
   enviadoPor: Ator
   fonteId?: string
   usuarioId?: string
-}): Promise<{ status: 200 | 201 | 409 | 413 | 415; corpo: object }> {
-  let gravou = false
+}): Promise<ArquivoGuardado> {
+  caminhoDoArquivo(e.demandaId, e.arquivoId) // ids que não são uuid saem já aqui
+  const demanda = await db.demanda.findUnique({
+    where: { id: e.demandaId },
+    select: { id: true },
+  })
+  if (!demanda) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
+
+  const anterior = await db.arquivoDaDemanda.findUnique({ where: { id: e.arquivoId } })
+  if (anterior) {
+    const tamanho = e.tamanhoDeclarado ?? (await contarBytes(e.corpo, LIMITE_POR_ARQUIVO))
+    return mesmoArquivo(anterior, e, tamanho)
+  }
+
+  const usadoSemTrava = await usadoNaDemanda(db, e.demandaId)
+  const declarado = avaliarArquivo({
+    tipo: e.tipo,
+    conteudo: e.conteudo,
+    tamanho: e.tamanhoDeclarado ?? 0,
+    usadoNaDemanda: usadoSemTrava,
+  })
+  if (!declarado.ok) return { status: declarado.status, corpo: { erro: declarado.erro } }
+
+  const limite = Math.max(0, Math.min(LIMITE_POR_ARQUIVO, LIMITE_POR_DEMANDA - usadoSemTrava))
+  const tempId = randomUUID()
+  const gravado = await gravarParcial(e.demandaId, tempId, e.corpo, limite)
+  if (!gravado.ok) {
+    const passou = avaliarArquivo({
+      tipo: e.tipo,
+      conteudo: e.conteudo,
+      tamanho: limite + 1,
+      usadoNaDemanda: usadoSemTrava,
+    })
+    return {
+      status: 413,
+      corpo: { erro: passou.ok ? 'A demanda passaria de 100 MB.' : passou.erro },
+    }
+  }
+
+  let promovido = false
   try {
-    return await db.$transaction(
-      async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${e.demandaId}))`
-        const demanda = await tx.demanda.findUnique({
-          where: { id: e.demandaId },
-          select: { id: true },
-        })
-        if (!demanda) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
+    const r = await db.$transaction(async (tx): Promise<ArquivoGuardado> => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('demanda:' || ${e.demandaId}))`
+      const existente = await tx.arquivoDaDemanda.findUnique({ where: { id: e.arquivoId } })
+      if (existente) return mesmoArquivo(existente, e, gravado.tamanho)
 
-        const tipo = doFio.tipoDeArquivo(e.tipo)
-        const existente = await tx.arquivoDaDemanda.findUnique({ where: { id: e.arquivoId } })
-        if (existente) {
-          const tamanho = e.tamanhoDeclarado ?? (await contarBytes(e.corpo, LIMITE_POR_ARQUIVO))
-          const igual =
-            existente.demandaId === e.demandaId &&
-            existente.tipo === tipo &&
-            existente.tamanho === tamanho
-          return igual
-            ? { status: 200 as const, corpo: { id: e.arquivoId } }
-            : {
-                status: 409 as const,
-                corpo: { erro: 'Arquivo com o mesmo id e conteúdo diferente.' },
-              }
-        }
+      const real = avaliarArquivo({
+        tipo: e.tipo,
+        conteudo: e.conteudo,
+        tamanho: gravado.tamanho,
+        usadoNaDemanda: await usadoNaDemanda(tx, e.demandaId),
+      })
+      if (!real.ok) return { status: real.status, corpo: { erro: real.erro } }
 
-        const soma = await tx.arquivoDaDemanda.aggregate({
-          where: { demandaId: e.demandaId, apagadoEm: null },
-          _sum: { tamanho: true },
-        })
-        const usadoNaDemanda = soma._sum.tamanho ?? 0
-        const avaliar = (tamanho: number) =>
-          avaliarArquivo({ tipo: e.tipo, conteudo: e.conteudo, tamanho, usadoNaDemanda })
-
-        const declarado = avaliar(e.tamanhoDeclarado ?? 0)
-        if (!declarado.ok) return { status: declarado.status, corpo: { erro: declarado.erro } }
-
-        const limite = Math.max(
-          0,
-          Math.min(LIMITE_POR_ARQUIVO, LIMITE_POR_DEMANDA - usadoNaDemanda),
-        )
-        const gravado = await gravarArquivo(e.demandaId, e.arquivoId, e.corpo, limite)
-        if (!gravado.ok) {
-          const passou = avaliar(limite + 1)
-          return {
-            status: 413 as const,
-            corpo: { erro: passou.ok ? 'A demanda passaria de 100 MB.' : passou.erro },
-          }
-        }
-        gravou = true
-        const real = avaliar(gravado.tamanho)
-        if (!real.ok) {
-          await apagarArquivo(e.demandaId, e.arquivoId)
-          gravou = false
-          return { status: real.status, corpo: { erro: real.erro } }
-        }
-
-        await tx.arquivoDaDemanda.create({
-          data: {
-            id: e.arquivoId,
-            demandaId: e.demandaId,
-            tipo,
-            nome: e.nome,
-            conteudo: e.conteudo,
-            tamanho: gravado.tamanho,
-            tela: e.tela,
-            enviadoPor: e.enviadoPor,
-            fonteId: e.fonteId ?? null,
-            usuarioId: e.usuarioId ?? null,
-          },
-        })
-        return { status: 201 as const, corpo: { id: e.arquivoId } }
-      },
-      { timeout: TEMPO_DO_ENVIO_MS },
-    )
+      await promoverParcial(e.demandaId, tempId, e.arquivoId)
+      promovido = true
+      await tx.arquivoDaDemanda.create({
+        data: {
+          id: e.arquivoId,
+          demandaId: e.demandaId,
+          tipo: doFio.tipoDeArquivo(e.tipo),
+          nome: e.nome,
+          conteudo: e.conteudo,
+          tamanho: gravado.tamanho,
+          tela: e.tela,
+          enviadoPor: e.enviadoPor,
+          fonteId: e.fonteId ?? null,
+          usuarioId: e.usuarioId ?? null,
+        },
+      })
+      return { status: 201, corpo: { id: e.arquivoId } }
+    })
+    return r
   } catch (erro) {
-    // A transação não gravou a linha: o arquivo no disco não pode ficar sem dono.
-    if (gravou) await apagarArquivo(e.demandaId, e.arquivoId)
+    // A linha não foi gravada: o arquivo promovido não pode ficar sem dono.
+    if (promovido) await apagarArquivo(e.demandaId, e.arquivoId)
     throw erro
+  } finally {
+    // Recusa, repetição ou erro: o `.parcial` não fica no volume.
+    if (!promovido) await apagarArquivo(e.demandaId, tempId)
   }
 }
 
@@ -521,9 +549,13 @@ export async function registrarEvento(e: {
             tipo: 'DESENHO',
             apagadoEm: null,
           },
-          select: { id: true },
+          select: { id: true, versao: true },
         })
         if (!desenho) return { resultado: 'recusado', motivo: 'Arquivo do desenho não encontrado.' }
+        // Cada versão tem o seu arquivo; reaproveitar um deixaria a versão anterior sem arquivo.
+        if (desenho.versao !== null) {
+          return { resultado: 'recusado', motivo: 'Este arquivo já é uma versão do desenho.' }
+        }
         desenhoId = desenho.id
       }
 

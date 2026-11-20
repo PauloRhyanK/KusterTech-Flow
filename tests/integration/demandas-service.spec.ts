@@ -631,4 +631,101 @@ describe('demandas / service (integração)', () => {
     ).toBe(415)
     expect(await db.arquivoDaDemanda.count({ where: { demandaId: id } })).toBe(1)
   })
+
+  test('guardarArquivo não segura transação nem trava enquanto lê o corpo', async () => {
+    const { projeto, repositorio } = await cenario()
+    const { id } = await criarDemanda(admin, {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'T',
+      descricao: null,
+      nivel: 'vai_sozinho',
+      temTela: true,
+      anexos: [],
+    })
+    let liberar!: () => void
+    const solto = new Promise<void>((r) => (liberar = r))
+    let avisar!: () => void
+    const noMeio = new Promise<void>((r) => (avisar = r))
+    let parte = 0
+    const corpo = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        parte += 1
+        if (parte === 1) return c.enqueue(new Uint8Array(1024))
+        if (parte === 2) {
+          avisar()
+          await solto
+          return c.enqueue(new Uint8Array(1024))
+        }
+        c.close()
+      },
+    })
+    const envio = guardarArquivo({
+      demandaId: id,
+      arquivoId: randomUUID(),
+      tipo: 'captura',
+      nome: 'tela.png',
+      conteudo: 'image/png',
+      tamanhoDeclarado: null,
+      corpo,
+      tela: 'desktop',
+      enviadoPor: 'fabrica',
+    })
+    await noMeio
+    try {
+      const [emTransacao] = await db.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND state LIKE 'idle in transaction%'`
+      const [travas] = await db.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory'`
+      expect(Number(emTransacao!.n)).toBe(0)
+      expect(Number(travas!.n)).toBe(0)
+    } finally {
+      liberar()
+    }
+    expect((await envio).status).toBe(201)
+    const noDisco = await readdir(join(dir, 'demandas', id))
+    expect(noDisco).toHaveLength(1)
+    expect(noDisco[0]).not.toMatch(/\.parcial$/)
+  })
+
+  test('desenho_pronto citando um arquivo que já é versão → recusado "Este arquivo já é uma versão do desenho."', async () => {
+    const id = await demandaNoDesenho()
+    const v1 = await db.arquivoDaDemanda.findFirstOrThrow({ where: { demandaId: id } })
+    await pedirAjuste(admin, id, 1, 'mais contraste')
+
+    const r = await daFabrica(id, {
+      tipo: 'desenho_pronto',
+      ator: 'fabrica',
+      dados: { arquivoId: v1.id },
+    })
+    expect(r).toEqual({
+      resultado: 'recusado',
+      motivo: 'Este arquivo já é uma versão do desenho.',
+    })
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.versaoDoDesenho).toBe(1)
+    expect((await db.arquivoDaDemanda.findUniqueOrThrow({ where: { id: v1.id } })).versao).toBe(1)
+  })
+
+  test('aba velha: aprovar a mesma versão duas vezes ao mesmo tempo → uma aprova, a outra é recusada; depois pedir ajuste dela é recusado', async () => {
+    const id = await demandaNoDesenho()
+    const rs = await Promise.allSettled([
+      aprovarDesenho(admin, id, 1),
+      aprovarDesenho(admin, id, 1),
+    ])
+    expect(rs.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const recusa = rs.find((r) => r.status === 'rejected') as PromiseRejectedResult
+    expect(recusa.reason).toBeInstanceOf(ErroDeDominio)
+    await expect(pedirAjuste(admin, id, 1, 'tarde demais')).rejects.toBeInstanceOf(ErroDeDominio)
+
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'desenho_aprovado' } }),
+    ).toBe(1)
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'ajuste_pedido' } }),
+    ).toBe(0)
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d).toMatchObject({ etapaAtual: 'desenvolvida', desenhoAprovado: 1, espera: null })
+  })
 })

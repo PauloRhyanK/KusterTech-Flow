@@ -56,9 +56,30 @@ export async function gravarArquivo(
   corpo: ReadableStream<Uint8Array>,
   limite: number,
 ): Promise<{ ok: true; tamanho: number } | { ok: false; motivo: 'grande' }> {
-  const destino = caminhoDoArquivo(demandaId, arquivoId)
-  const parcial = destino + SUFIXO_PARCIAL
-  await mkdir(resolve(destino, '..'), { recursive: true })
+  const r = await gravarParcial(demandaId, arquivoId, corpo, limite)
+  if (!r.ok) return r
+  try {
+    await promoverParcial(demandaId, arquivoId, arquivoId)
+  } catch (err) {
+    await rm(caminhoParcial(demandaId, arquivoId), { force: true })
+    throw err
+  }
+  return r
+}
+
+/**
+ * Como `gravarArquivo`, mas para em `<tempId>.parcial` (com `fsync`): quem chama decide depois,
+ * sob a trava da demanda, se promove com `promoverParcial` ou apaga com `apagarArquivo(tempId)`.
+ * Se o processo cair no meio, o worker apaga o `.parcial` velho.
+ */
+export async function gravarParcial(
+  demandaId: string,
+  tempId: string,
+  corpo: ReadableStream<Uint8Array>,
+  limite: number,
+): Promise<{ ok: true; tamanho: number } | { ok: false; motivo: 'grande' }> {
+  const parcial = caminhoParcial(demandaId, tempId)
+  await mkdir(resolve(parcial, '..'), { recursive: true })
 
   let arquivo: FileHandle | null = await open(parcial, 'wx', 0o600)
   let tamanho = 0
@@ -78,13 +99,21 @@ export async function gravarArquivo(
     await arquivo.sync()
     await arquivo.close()
     arquivo = null
-    await rename(parcial, destino)
     return { ok: true, tamanho }
   } catch (err) {
     await arquivo?.close().catch(() => undefined)
     await rm(parcial, { force: true })
     throw err
   }
+}
+
+/** `rename` atômico do `.parcial` (mesmo volume) para o nome final do arquivo. */
+export async function promoverParcial(
+  demandaId: string,
+  tempId: string,
+  arquivoId: string,
+): Promise<void> {
+  await rename(caminhoParcial(demandaId, tempId), caminhoDoArquivo(demandaId, arquivoId))
 }
 
 export async function lerArquivo(
