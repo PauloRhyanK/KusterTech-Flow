@@ -35,7 +35,7 @@ Content-Type: application/json
   "tipo": "funcao_nova",
   "nivel": "aprovar_desenho",
   "temTela": true,
-  "chave": "exportar-contatos-csv",
+  "chave": "3f1c2a9e-7b4d-4e8a-9c21-5d6f0a1b2c3d",
   "anexos": [{ "nome": "rascunho.png", "conteudo": "image/png", "base64": "<bytes em base64>" }]
 }
 ```
@@ -48,10 +48,12 @@ Content-Type: application/json
 | `tipo` | não | `defeito`, `ideia`, `ajuste`, `funcao_nova`; sem ele a triagem decide |
 | `nivel` | não | `planejar_comigo`, `aprovar_desenho`, `vai_sozinho` (veja **Níveis**); sem ele vale o padrão do projeto |
 | `temTela` | sim | `true` se a mudança aparece numa tela; `false` se não (sem tela, o desenho e o teste no navegador são pulados) |
-| `chave` | não | até 100 caracteres; **repetir o pedido com a mesma `chave` devolve a mesma demanda**, nunca uma segunda |
+| `chave` | não, mas recomendado | até 100 caracteres; **uma `chave` nova (um UUID) para cada demanda nova**; repetir o mesmo pedido com a mesma `chave` devolve a mesma demanda, nunca uma segunda |
 | `anexos` | não | até **3**, cada um com `nome`, `conteudo` e `base64` (veja abaixo) |
 
-**Use sempre uma `chave`** (por exemplo, um texto curto derivado do título). Se a chamada estourar o tempo ou a rede cair, repita o mesmo corpo: com a mesma `chave` e o mesmo token, o Flow responde `200` com a demanda já aberta.
+**Use sempre uma `chave`, e uma nova para cada demanda nova**: gere um UUID antes do primeiro envio e guarde-o junto com o corpo (num arquivo da sessão fora do repositório, ou na memória da sessão) até ter o `id`. Se a chamada estourar o tempo ou a rede cair, repita **o mesmo corpo com a mesma `chave`**: o Flow responde `200` com a demanda já aberta.
+
+O Flow só compara o token e a `chave`, **nunca o corpo**. Reusar uma `chave` num pedido diferente devolve `200` com a demanda **antiga** (que pode até já estar encerrada), e o pedido novo é descartado sem erro. Por isso não derive a `chave` do título nem de nada que se repita entre pedidos.
 
 **Anexos** (imagem ou áudio que ajudam a entender o pedido):
 
@@ -66,7 +68,7 @@ Respostas:
 | Status | Corpo | Significado |
 | --- | --- | --- |
 | `201` | `{ id, etapa: "recebida", url }` | demanda aberta; guarde o `id` |
-| `200` | `{ id, etapa: "recebida", url }` | a mesma `chave` já tinha aberto esta demanda (o `etapa` aqui é sempre `recebida`; para o estado real, use o `GET`) |
+| `200` | `{ id, etapa: "recebida", url }` | esta `chave` já tinha aberto uma demanda com este token: é **essa** que volta, mesmo que o corpo agora seja outro (o `etapa` aqui é sempre `recebida`; para o estado real, use o `GET`) |
 | `401` | `{ erro: "Token inválido." }` | token ausente, errado ou revogado |
 | `404` | `{ erro: "Repositório não encontrado." }` | repositório desconhecido do Flow, sem projeto ou com projeto arquivado |
 | `413` | `{ erro: "Corpo maior que 42 MB." }` | corpo grande demais |
@@ -211,6 +213,7 @@ Por isso, **a sessão não pede de novo pela fila a publicação de uma demanda*
 - Abrir demanda para o **próprio KusterTech Flow** por esta rota. O trabalho no Flow segue o caminho dele, não as demandas.
 - Mexer à mão em `.fabrica/demandas/` (o estado que a Fábrica guarda) ou fingir ser a Fábrica: as rotas `/api/fabrica/...` não são da sessão.
 - Abrir uma segunda demanda para o mesmo pedido: repita com a mesma `chave`, ou acompanhe a que existe.
+- Reusar a `chave` de outro pedido: o Flow devolve a demanda antiga e descarta a nova sem avisar.
 - Consultar mais de uma vez por minuto, ou ficar num laço esperando a entrega.
 - Entregar plano sem o Paulo ter pedido, ou mandar como `artefato` um link que não seja `https://claude.ai/...`.
 - Publicar por fora da fila, ou pedir de novo a publicação de uma demanda que a Fábrica já entregou.
@@ -218,7 +221,7 @@ Por isso, **a sessão não pede de novo pela fila a publicação de uma demanda*
 ## Resumo para a sessão
 
 1. Uma vez: o Paulo cria o token em **Configurações → Demandas**; ponha `FLOW_URL` e `FLOW_DEMANDAS_TOKEN` no ambiente, nunca no repositório.
-2. Abrir: `POST /api/demandas` com `repositorio`, `titulo`, `temTela`, uma `chave` e, se quiser, `descricao`, `tipo`, `nivel` e até 3 anexos de 10 MB. Guarde o `id`; em timeout, repita com a mesma `chave`.
+2. Abrir: `POST /api/demandas` com `repositorio`, `titulo`, `temTela`, uma `chave` nova (UUID) e, se quiser, `descricao`, `tipo`, `nivel` e até 3 anexos de 10 MB. Guarde a `chave` até ter o `id`; em timeout, repita o mesmo corpo com a mesma `chave`. Nunca reuse uma `chave` num pedido diferente.
 3. Acompanhar: `GET /api/demandas/<id>` no máximo uma vez por minuto. `espera` diz o que o Paulo precisa fazer; `encerrada` diz que acabou.
 4. Planejar comigo: só quando o Paulo passar o id. Planeje com as skills `fabrica-*`, faça o merge do plano com `"demanda": "<id>"` e entregue com `POST /api/demandas/<id>/plano` (com o `artefato` do Claude, se houver).
 5. Publicação: a Fábrica pede ao entregar; não peça de novo. Para o resto, siga `docs/guias/publicar-pela-fila.md`.

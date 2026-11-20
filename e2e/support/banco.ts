@@ -1157,9 +1157,12 @@ export async function semearPedidoDePublicacaoNoBanco(
   })
 }
 
+// Projetos que este processo de teste mostrou com nome curto, com o nome "E2E …" original.
+const exibidosComoNoBanco = new Map<string, string>()
+
 // Demandas dos repositórios de exemplo (eventos e arquivos saem em cascata; os arquivos em disco
-// ficam na pasta temporária do E2E). Projetos que as capturas mostram como "Projeto Alfa" voltam a
-// ter o prefixo "E2E " para o setup global apagá-los.
+// ficam na pasta temporária do E2E). Os projetos que o teste mostrou como "Projeto Alfa" voltam ao
+// nome "E2E …" e são arquivados, para o setup global apagá-los.
 export async function limparDemandasNoBanco(): Promise<void> {
   const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
   await db.pedidoDePublicacao.updateMany({
@@ -1167,20 +1170,21 @@ export async function limparDemandasNoBanco(): Promise<void> {
     data: { demandaId: null },
   })
   await db.demanda.deleteMany({ where: dosExemplos })
-  const exibidos = await db.projeto.findMany({
-    where: { nome: { not: { startsWith: 'E2E ' } }, nomeNormalizado: { startsWith: 'e2e ' } },
-    select: { id: true, nomeNormalizado: true },
-  })
-  for (const p of exibidos) {
-    await db.projeto.update({
-      where: { id: p.id },
-      data: { nome: `E2E ${p.nomeNormalizado}`, arquivadoEm: new Date() },
-    })
+  for (const [id, nome] of exibidosComoNoBanco) {
+    await db.projeto.updateMany({ where: { id }, data: { nome, arquivadoEm: new Date() } })
+    exibidosComoNoBanco.delete(id)
   }
 }
 
-// Projeto de teste mostrado com um nome curto nas capturas (o normalizado continua único).
+// Projeto de teste (criado com nome "E2E …") mostrado com um nome curto nas capturas; o normalizado
+// continua único e `limparDemandasNoBanco` devolve o nome original.
 export async function exibirProjetoComoNoBanco(projetoId: string, nome: string): Promise<void> {
+  const atual = await db.projeto.findUniqueOrThrow({
+    where: { id: projetoId },
+    select: { nome: true },
+  })
+  if (!atual.nome.startsWith('E2E ')) throw new Error('Só projetos de teste ("E2E …").')
+  exibidosComoNoBanco.set(projetoId, atual.nome)
   await db.projeto.update({ where: { id: projetoId }, data: { nome } })
 }
 

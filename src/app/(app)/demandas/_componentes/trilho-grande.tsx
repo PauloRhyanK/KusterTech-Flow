@@ -46,7 +46,8 @@ export function TrilhoGrande({ pontos }: { pontos: readonly PontoDeEtapa[] }) {
             data-ponto={p.ponto}
             aria-hidden="true"
             className={cn(
-              'relative mx-auto mb-1.5 block size-3.5 rounded-full',
+              // z-10: a linha da etapa seguinte é desenhada depois e não pode cobrir o ponto.
+              'relative z-10 mx-auto mb-1.5 block size-3.5 rounded-full',
               CLASSE_DO_PONTO[p.ponto],
             )}
           />

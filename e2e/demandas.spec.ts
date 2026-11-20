@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { expect, test, type APIRequestContext, type Browser, type Page } from '@playwright/test'
@@ -223,7 +224,7 @@ async function semearAsOutras(request: APIRequestContext, c: Cenario): Promise<v
     titulo: 'Exportar contatos em CSV',
     tipo: 'ajuste',
     temTela: false,
-    chave: 'exportar-contatos-csv',
+    chave: randomUUID(),
   }
   const primeira = await abrirPelaSessao(request, c, contatos)
   const repetida = await abrirPelaSessao(request, c, contatos)
