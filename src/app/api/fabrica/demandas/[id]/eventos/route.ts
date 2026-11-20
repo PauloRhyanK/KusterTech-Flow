@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { respostaDeApiNaoEncontrada } from '@/lib/api-nao-encontrada'
 import { moduloAtivo } from '@/lib/modulos'
-import { receberEventoDaFabrica } from '@/modules/demandas/recepcao-fabrica'
+import { LIMITE_DO_CORPO_DO_EVENTO } from '@/modules/demandas/contrato'
+import { lerTextoComLimite, receberEventoDaFabrica } from '@/modules/demandas/recepcao-fabrica'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +16,7 @@ export async function POST(
     authorization: request.headers.get('authorization'),
     contentType: request.headers.get('content-type'),
     contentLength: request.headers.get('content-length'),
-    corpo: () => request.text(),
+    corpo: () => lerTextoComLimite(request.body, LIMITE_DO_CORPO_DO_EVENTO),
   })
   return NextResponse.json(corpo, { status })
 }

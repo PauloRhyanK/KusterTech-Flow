@@ -30,6 +30,28 @@ function falhaInterna(erro: unknown, o: string): Saida<500> {
   return { status: 500, corpo: { erro: 'Falha interna.' } }
 }
 
+/** Lê o corpo como texto e para de ler ao passar do limite (devolve o que leu, já acima dele). */
+export async function lerTextoComLimite(
+  corpo: ReadableStream<Uint8Array> | null,
+  limite: number,
+): Promise<string> {
+  if (corpo === null) return ''
+  const leitor = corpo.getReader()
+  const partes: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await leitor.read()
+    if (done) break
+    partes.push(value)
+    total += value.byteLength
+    if (total > limite) {
+      await leitor.cancel()
+      break
+    }
+  }
+  return Buffer.concat(partes).toString('utf8')
+}
+
 export async function buscarDemandasParaAFabrica(
   authorization: string | null,
   desde: string | null,
@@ -52,13 +74,18 @@ export async function buscarDemandasParaAFabrica(
 
     // A página é pela ordem dos eventos (a primeira mudança depois do cursor), não pela fila:
     // assim o cursor avança sem pular nenhuma demanda. A fila ordena só dentro da página.
-    const mudadas = await db.eventoDaDemanda.groupBy({
-      by: ['demandaId'],
-      where: { seq: { gt: inicio } },
-      _min: { seq: true },
-      _max: { seq: true },
-      orderBy: { _min: { seq: 'asc' } },
-      take: LIMITE_DA_PAGINA + 1,
+    // Trava exclusiva do fluxo de eventos: espera os escritores em andamento terminarem, para que
+    // nenhum `seq` menor que o cursor devolvido ainda esteja para ser confirmado.
+    const mudadas = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('demanda-eventos'))`
+      return tx.eventoDaDemanda.groupBy({
+        by: ['demandaId'],
+        where: { seq: { gt: inicio } },
+        _min: { seq: true },
+        _max: { seq: true },
+        orderBy: { _min: { seq: 'asc' } },
+        take: LIMITE_DA_PAGINA + 1,
+      })
     })
     const mais = mudadas.length > LIMITE_DA_PAGINA
     const pagina = mudadas.slice(0, LIMITE_DA_PAGINA)

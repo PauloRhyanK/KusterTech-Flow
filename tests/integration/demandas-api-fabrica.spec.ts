@@ -10,7 +10,7 @@ import {
   receberArquivoDaFabrica,
   receberEventoDaFabrica,
 } from '@/modules/demandas/recepcao-fabrica'
-import { abrirDemanda, aprovarDesenho } from '@/modules/demandas/service'
+import { TRAVA_DOS_EVENTOS_SQL, abrirDemanda, aprovarDesenho } from '@/modules/demandas/service'
 import { criarFonteDaFabrica, revogarFonteDaFabrica } from '@/modules/fabrica/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
@@ -317,6 +317,93 @@ describe('GET /api/fabrica/demandas', () => {
     expect(d!.criadaEm).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
     const etapas = d!.etapas as { chave: string; puladaSemTela: boolean }[]
     expect(etapas.some((e) => e.puladaSemTela)).toBe(false)
+  })
+})
+
+describe('cursor sob concorrência', () => {
+  test('o evento de um escritor aberto durante o GET chega no GET seguinte, nunca se perde', async () => {
+    const a = await novaDemanda('A')
+    const b = await novaDemanda('B')
+    const base = (await buscarDemandasParaAFabrica(auth(), null, AGORA)).corpo as { cursor: string }
+
+    // Escritor B abre a transação, pega a trava compartilhada e insere (seq menor), sem confirmar.
+    let liberarB!: () => void
+    const segurar = new Promise<void>((r) => (liberarB = r))
+    let bInseriu!: () => void
+    const inseriu = new Promise<void>((r) => (bInseriu = r))
+    const escritorB = db.$transaction(
+      async (tx) => {
+        await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+        await tx.eventoDaDemanda.create({
+          data: {
+            idExterno: randomUUID(),
+            demandaId: b,
+            tipo: 'desenho_aprovado',
+            origem: 'paulo',
+            dados: { versao: 1 },
+            em: AGORA,
+          },
+        })
+        bInseriu()
+        await segurar
+      },
+      { timeout: 30_000 },
+    )
+    await inseriu
+    // Escritor A confirma depois, com seq maior.
+    expect((await pedirEvento(a, triagem())).status).toBe(201)
+
+    // O GET espera B terminar (trava exclusiva) em vez de passar por cima do seq menor.
+    let terminou = false
+    const get = buscarDemandasParaAFabrica(auth(), base.cursor, AGORA).then((r) => {
+      terminou = true
+      return r
+    })
+    await new Promise((r) => setTimeout(r, 400))
+    expect(terminou).toBe(false)
+    liberarB()
+    await escritorB
+    const r1 = (await get).corpo as { cursor: string; demandas: { id: string }[] }
+    const entregues = new Set(r1.demandas.map((d) => d.id))
+    if (!entregues.has(b)) {
+      const r2 = (await buscarDemandasParaAFabrica(auth(), r1.cursor, AGORA)).corpo as {
+        demandas: { id: string }[]
+      }
+      for (const d of r2.demandas) entregues.add(d.id)
+    }
+    expect(entregues.has(a)).toBe(true)
+    expect(entregues.has(b)).toBe(true)
+  })
+
+  test('com mais: true, eventos além do cursor numa demanda da página voltam na página seguinte', async () => {
+    const primeira = await novaDemanda('Primeira')
+    const ids = [primeira]
+    for (let i = 0; i < 50; i += 1) ids.push(await novaDemanda(`D${i}`))
+    expect((await pedirEvento(primeira, triagem())).status).toBe(201)
+    const um = (await buscarDemandasParaAFabrica(auth(), null, AGORA)).corpo as {
+      cursor: string
+      mais: boolean
+      demandas: { id: string; eventos: { tipo: string }[] }[]
+    }
+    expect(um.mais).toBe(true)
+    // A triagem é um evento de origem da Fábrica: não aparece em `eventos`; usa-se uma decisão do Paulo.
+    await db.eventoDaDemanda.create({
+      data: {
+        idExterno: randomUUID(),
+        demandaId: primeira,
+        tipo: 'retomada',
+        origem: 'paulo',
+        dados: {},
+        em: AGORA,
+      },
+    })
+    const p1 = um.demandas.find((d) => d.id === primeira)!
+    expect(p1.eventos.map((e) => e.tipo)).not.toContain('retomada')
+    const dois = (await buscarDemandasParaAFabrica(auth(), um.cursor, AGORA)).corpo as {
+      demandas: { id: string; eventos: { tipo: string }[] }[]
+    }
+    const p2 = dois.demandas.find((d) => d.id === primeira)
+    expect(p2?.eventos.map((e) => e.tipo)).toEqual(['retomada'])
   })
 })
 

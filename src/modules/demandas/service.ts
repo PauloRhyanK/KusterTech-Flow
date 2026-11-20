@@ -39,6 +39,13 @@ import {
 type Cliente = Prisma.TransactionClient | typeof db
 type TipoDeArquivo = 'anexo' | 'desenho' | 'captura'
 
+/**
+ * Chave do fluxo de eventos: quem insere um `EventoDaDemanda` segura a trava compartilhada até o
+ * commit; a leitura do cursor da Fábrica pega a exclusiva e só lê sem escritor em andamento.
+ * Assim nenhum `seq` menor aparece depois de um cursor maior já entregue.
+ */
+export const TRAVA_DOS_EVENTOS_SQL = Prisma.sql`SELECT pg_advisory_xact_lock_shared(hashtext('demanda-eventos'))`
+
 const DEMANDA_NAO_ENCONTRADA = 'Demanda não encontrada.'
 const PROJETO_NAO_ENCONTRADO = 'Projeto não encontrado.'
 
@@ -231,6 +238,7 @@ export async function abrirDemanda(
     },
     select: { id: true },
   })
+  await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
   await tx.eventoDaDemanda.create({
     data: {
       idExterno: randomUUID(),
@@ -583,6 +591,7 @@ export async function registrarEvento(e: {
           ...(r.estado.encerrada === 'entregue' && !estado.encerrada ? { entregueEm: agora } : {}),
         },
       })
+      await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
       await tx.eventoDaDemanda.create({
         data: {
           idExterno: e.idExterno,
