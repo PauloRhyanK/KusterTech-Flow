@@ -10,9 +10,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import capacidade  # noqa: E402
 import demandas  # noqa: E402
 import despachante  # noqa: E402
+import forja as forja_  # noqa: E402
 import motor  # noqa: E402
 import prompts  # noqa: E402
 from retrato import FalhaDeEnvio  # noqa: E402
+from testes_raias import plano_referencia  # noqa: E402
 
 ID = "11111111-2222-4333-8444-555555555555"
 OUTRO = "22222222-3333-4444-8555-666666666666"
@@ -507,6 +509,7 @@ class BasePasso(unittest.TestCase):
         self.motor = motor.MotorFalso()
         self.agora = INSTANTE
         self.motor.agora = lambda: self.agora
+        self.forja = forja_.ForjaFalsa()
         self.estado = {"fila": [], "avisos": [], "chaves": {}}
         self.salvos = []
 
@@ -515,7 +518,7 @@ class BasePasso(unittest.TestCase):
             self.estado,
             cliente=cliente,
             motor=self.motor,
-            forja=None,
+            forja=self.forja,
             capacidade_path=self.capacidade,
             projetos={REPO: "app"} if projetos is None else projetos,
             modelos=CONFIG_DO_KIT["modelos"] if modelos is None else modelos,
@@ -711,7 +714,9 @@ class TestesTriagem(BasePasso):
         self.motor.definir_texto(run_id, resposta_triagem(triagem_ok()))
         self.passo(ClienteDeBusca(pagina(retrato("planejada", destino="fila_de_agentes"), cursor="2")))
         self.assertEqual(self.saida(), [])
-        self.assertIsNone(self.item()["runId"])
+        # o run da triagem deixa de contar; o que segue é o plano (Task 4), com nonce próprio
+        self.assertEqual(self.item()["alvo"], "planejando")
+        self.assertEqual(self.item()["nonce"], demandas.nonce_do_motor(ID, "plano", 0))
 
     def test_recusa_da_triagem_ressincroniza_e_manda_para_a_decisao_do_paulo_uma_vez(self):
         run_id = self.triar()
@@ -728,6 +733,295 @@ class TestesTriagem(BasePasso):
         self.passo(ClienteDeBusca())
         self.assertEqual(self.saida(), [])
         self.assertEqual(len(self.despachos()), 1)
+
+PR = "https://github.com/kustertech-exemplo/app/pull/7"
+HEAD = "a" * 40
+CAMINHO = ".fabrica/planos/demanda-11111111.json"
+
+
+def plano_da_demanda():
+    plano = plano_referencia()
+    plano["demanda"] = ID
+    return plano
+
+
+class TestesPlano(BasePasso):
+    def planejar(self, **extra):
+        """Um ciclo com a demanda na etapa `planejada`: o run do orquestrador fica despachado."""
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", **extra))))
+        return self.item()["runId"]
+
+    def com_pr(self, run_id, *, arquivos=(CAMINHO,), ci="verde", plano=None, config=None):
+        self.forja.definir_pr(PR, head_sha=HEAD, branch="fabrica/demanda", arquivos=list(arquivos))
+        self.forja.definir_ci(REPO, HEAD, ci)
+        self.forja.definir_arquivo(REPO, HEAD, CAMINHO, json.dumps(plano_da_demanda() if plano is None else plano))
+        if config is not None:
+            self.forja.definir_arquivo(REPO, HEAD, ".fabrica/config.json", json.dumps(config))
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR)
+
+    def trava(self):
+        return capacidade.ler(self.capacidade)["orquestrador"].get(REPO)
+
+    def test_planejamento_toma_a_trava_do_orquestrador_e_nao_reserva_vaga(self):
+        capacidade.configurar(self.capacidade, vagas=1, ram_minima_mb=0)
+        self.assertTrue(capacidade.reservar(self.capacidade, "outro-plano", "raia-0", mem_disponivel_mb=None))
+        self.assertTrue(capacidade.tomar_orquestrador(self.capacidade, REPO, "outro-plano"))
+        reservas = capacidade.ler(self.capacidade)["reservas"]
+        # trava de outro plano: espera o próximo ciclo, sem despachar
+        self.passo(ClienteDeBusca(pagina(retrato("planejada"))))
+        self.assertEqual(self.despachos(), [])
+        self.assertEqual(self.item()["fase"], "nova")
+        capacidade.soltar_orquestrador(self.capacidade, REPO, "outro-plano")
+        self.passo(ClienteDeBusca())
+        (despacho,) = self.despachos()
+        orq = CONFIG_DO_KIT["modelos"]["orquestrador"]
+        self.assertEqual((despacho["agente"], despacho["modelo"], despacho["max_custo_usd"], despacho["projeto"]), (orq["agente"], orq["modelo"], orq["maxCustoUsd"], "app"))
+        hexa = demandas.nonce_do_motor(ID, "plano", 0)
+        self.assertEqual(despacho["chave_idempotencia"], hexa)
+        self.assertTrue(despacho["prompt"].endswith("<!-- fabrica:nonce=%s -->" % hexa))
+        self.assertIn("Motivo: nova_spec", despacho["prompt"])
+        self.assertIn("Seu plano: `%s`" % CAMINHO, despacho["prompt"])
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.assertEqual(capacidade.ler(self.capacidade)["reservas"], reservas)
+        self.assertEqual(demandas.chaves_ocupando(self.estado), set())
+        antes = [x["demandas"]["itens"][ID] for x in self.salvos if x["demandas"]["itens"][ID].get("fase") == "planejando"]
+        self.assertEqual((antes[0]["nonce"], antes[0]["runId"]), (hexa, None))  # no disco antes do POST
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("planejando", "run-1"))
+
+    def test_triagem_da_demanda_vai_no_contexto_do_plano(self):
+        self.triar()
+        self.motor.definir_run("run-1", estado="succeeded")
+        self.motor.definir_texto("run-1", resposta_triagem(triagem_ok()))
+        self.passo(ClienteDeBusca())
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca(pagina(retrato("planejada"), cursor="2")))
+        prompt = self.despachos()[-1]["prompt"]
+        self.assertIn('"motivo": "defeito pequeno"', prompt)
+        self.assertIn('"plano": "%s"' % CAMINHO, prompt)
+
+    def test_plano_so_em_fabrica_com_ci_verde_e_mergeado_e_vira_plano_criado(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(CAMINHO, ".fabrica/planejamento/exportar/plano.md", ".seeds/issues.jsonl"))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR, HEAD)])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("plano_criado", {"plano": CAMINHO, "prUrl": PR}))
+        self.assertEqual((self.item()["fase"], self.item()["plano"], self.item()["prUrl"]), ("plano_no_repo", CAMINHO, PR))
+        self.assertIsNone(self.trava())
+        self.assertEqual(len(self.despachos()), 1)
+        # o ciclo seguinte não mergeia nem enfileira de novo
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.forja.merges), self.saida(), len(self.despachos())), (1, [], 1))
+
+    def test_ci_ausente_passa_sem_ci_obrigatorio_no_plano(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, ci="ausente")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida()[0]["tipo"], "plano_criado")
+
+    def test_ci_ausente_com_ci_obrigatorio_no_plano_trava(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, ci="ausente", config={"protegidos": [], "ciObrigatorioNoPlano": True})
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(self.saida()[0]["dados"], {"motivo": "o repositório exige CI no plano e o head não tem CI", "url": PR})
+
+    def test_ci_vermelho_vira_travada(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, ci="vermelho")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o CI do plano está vermelho", "url": PR}))
+        self.assertIsNone(self.trava())
+
+    def test_plano_que_mexe_fora_de_fabrica_vira_travada_e_nao_mergeia(self):
+        for fora in ("src/app.ts", ".fabrica/planos/outra-feature.json", ".fabrica/config.json", ".fabrica/pergunta.md"):
+            with self.subTest(fora=fora):
+                self.setUp()
+                run_id = self.planejar()
+                self.com_pr(run_id, arquivos=(CAMINHO, fora, "src/outro.ts"))
+                self.passo(ClienteDeBusca())
+                self.assertEqual(self.forja.merges, [])
+                (evento,) = self.saida()
+                self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o plano mexe fora de .fabrica: %s" % fora, "url": PR}))
+                self.assertEqual(self.item()["fase"], "esperando_paulo")
+                self.assertIsNone(self.trava())
+
+    def test_plano_em_caminho_protegido_da_config_vira_travada(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(CAMINHO, ".fabrica/planejamento/auth/notas.md"), config={"protegidos": ["**/auth/**"]})
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(self.saida()[0]["dados"]["motivo"], "o plano mexe em caminho protegido: .fabrica/planejamento/auth/notas.md")
+
+    def test_plano_invalido_ou_sem_o_id_da_demanda_vira_travada(self):
+        sem_fases = plano_da_demanda()
+        sem_fases["fases"] = []
+        outra = plano_da_demanda()
+        outra["demanda"] = OUTRO
+        casos = (
+            (sem_fases, "o plano não passa em validar_plano: plano sem fases"),
+            (outra, 'o plano não traz "demanda": "%s"' % ID),
+        )
+        for plano, motivo in casos:
+            with self.subTest(motivo=motivo):
+                self.setUp()
+                run_id = self.planejar()
+                self.com_pr(run_id, plano=plano)
+                self.passo(ClienteDeBusca())
+                self.assertEqual(self.forja.merges, [])
+                self.assertEqual(self.saida()[0]["dados"]["motivo"], motivo)
+        self.setUp()
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(".seeds/issues.jsonl",))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida()[0]["dados"]["motivo"], "o PR não traz o plano %s" % CAMINHO)
+
+    def test_ci_pendente_espera_e_depois_de_2h_vira_travada(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, ci="pendente")
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.forja.merges, self.saida()), ([], []))
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.avancar(7199)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.avancar(2)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o CI do plano não terminou em 2 h", "url": PR}))
+        self.assertIsNone(self.trava())
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_ci_pendente_que_fica_verde_mergeia_no_mesmo_head(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, ci="pendente")
+        self.passo(ClienteDeBusca())
+        self.avancar(600)
+        self.forja.definir_ci(REPO, HEAD, "verde")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR, HEAD)])
+
+    def test_planejar_comigo_nunca_despacha_e_adota_o_plano_entregue_pela_sessao(self):
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="planejar_comigo", nivel="planejar_comigo"))))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.despachos(), [])
+        self.assertEqual(self.item()["fase"], "esperando_sessao")
+        self.assertIsNone(self.trava())
+        entregue = {"caminho": ".fabrica/planos/exportar.json", "prUrl": None, "artefato": None}
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="planejar_comigo", nivel="planejar_comigo", plano=entregue), cursor="2")))
+        self.assertEqual((self.item()["fase"], self.item()["plano"]), ("plano_no_repo", ".fabrica/planos/exportar.json"))
+        self.assertEqual((self.despachos(), self.saida(), self.forja.merges), ([], [], []))
+
+    def test_planejar_comigo_adota_o_plano_mesmo_com_a_etapa_ja_adiante(self):
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="planejar_comigo", nivel="planejar_comigo"))))
+        entregue = {"caminho": ".fabrica/planos/exportar.json", "prUrl": None, "artefato": None}
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", nivel="planejar_comigo", plano=entregue), cursor="2")))
+        self.assertEqual((self.item()["fase"], self.item()["plano"]), ("plano_no_repo", ".fabrica/planos/exportar.json"))
+
+    def test_trava_do_orquestrador_e_solta_ao_sair_de_planejando(self):
+        # sem PR: uma nova tentativa (nonce novo), depois `travada`
+        run_id = self.planejar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.despachos()[1]["chave_idempotencia"], demandas.nonce_do_motor(ID, "plano", 1))
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.motor.definir_run(self.item()["runId"], estado="failed", motivoFalha="erro")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 2)
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o orquestrador terminou sem PR do plano 2 vezes", "url": None}))
+        self.assertIsNone(self.trava())
+        # o Paulo encerra a demanda com o run no meio: a trava solta
+        self.setUp()
+        self.planejar()
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", encerrada="cancelada"), cursor="2")))
+        self.assertIsNone(self.trava())
+        self.assertIsNone(self.item()["runId"])
+
+    def test_plano_parado_pelo_paulo_solta_a_trava_e_a_retomada_planeja_de_novo(self):
+        self.planejar()
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="travada"), cursor="2")))
+        self.assertIsNone(self.trava())
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("esperando_paulo", None))
+        self.avancar(60)
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", eventos=retomada), cursor="3")))
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.trava(), demandas.chave(ID))
+
+    def test_link_de_pr_invalido_vira_travada(self):
+        run_id = self.planejar()
+        self.motor.definir_run(run_id, estado="succeeded", prUrl="https://github.com/kustertech-exemplo/app/issues/3")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida()[0]["dados"], {"motivo": "o run do plano devolveu um link de PR inválido", "url": None})
+        self.assertIsNone(self.trava())
+
+    def test_queda_no_post_do_plano_acha_o_run_pelo_nonce(self):
+        self.motor.falhar_despacho("incerta")
+        self.passo(ClienteDeBusca(pagina(retrato("planejada"))))
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("planejando", None))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual(self.item()["runId"], "run-1")
+
+    def test_queda_depois_do_merge_recupera_e_vira_plano_criado(self):
+        run_id = self.planejar()
+        self.com_pr(run_id)
+        self.assertTrue(self.forja.mergear(PR, HEAD))  # o merge passou, o estado não foi gravado
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.forja.merges), 1)
+        self.assertEqual(self.saida()[0]["tipo"], "plano_criado")
+        self.assertIsNone(self.trava())
+
+    def test_nivel_planejar_comigo_nunca_mergeia(self):
+        run_id = self.planejar()
+        self.com_pr(run_id)
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", nivel="planejar_comigo"), cursor="2")))
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(self.saida()[0]["dados"]["motivo"], "planejar comigo: o PR do plano vai para o Paulo")
+
+    def test_retomada_do_paulo_depois_da_trava_planeja_de_novo(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, ci="vermelho")
+        self.passo(ClienteDeBusca())
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="travada"), cursor="2")))
+        self.assertEqual(len(self.despachos()), 1)
+        self.passo(ClienteDeBusca(pagina(retrato("planejada"), cursor="3")))  # sem retomada: nada
+        self.assertEqual(len(self.despachos()), 1)
+        self.avancar(60)
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", eventos=retomada), cursor="4")))
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.despachos()[1]["chave_idempotencia"], demandas.nonce_do_motor(ID, "plano", 1))
+
+    def test_plano_criado_recusado_pelo_flow_vira_travada_uma_vez(self):
+        run_id = self.planejar()
+        self.com_pr(run_id)
+        self.passo(ClienteDeBusca())
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o Flow recusou o plano criado pela Fábrica", "url": PR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertFalse(self.item()["precisa_ressincronizar"])
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_sem_modelo_do_orquestrador_espera_com_aviso(self):
+        modelos = dict(CONFIG_DO_KIT["modelos"])
+        del modelos["orquestrador"]
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("planejada"))), modelos=modelos)
+        self.assertEqual(self.despachos(), [])
+        self.assertIn("demandas:modelo:orquestrador", [e.get("chave") for e in eventos])
+        self.assertIsNone(self.trava())
 
 
 class TestesBusca(BasePasso):

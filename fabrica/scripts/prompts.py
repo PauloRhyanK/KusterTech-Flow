@@ -254,6 +254,53 @@ def prompt_triagem(*, demanda: dict) -> str:
     )
 
 
+# ---------------------------------------------------------------- plano da demanda
+
+NIVEIS = ("planejar_comigo", "aprovar_desenho", "vai_sozinho")
+LIMITE_PROFUNDIDADE_DA_TRIAGEM = 4
+
+
+def caminho_do_plano_da_demanda(demanda_id: str) -> str:
+    """`.fabrica/planos/demanda-<id8>.json`: os 8 primeiros caracteres do uuid da demanda."""
+    return ".fabrica/planos/demanda-%s.json" % demanda_id[:8]
+
+
+def _neutralizado(valor, profundidade: int = 0):
+    """A triagem (escrita a partir do texto da demanda) com cada texto limpo como os dados da demanda."""
+    if isinstance(valor, str):
+        return _dado_da_demanda(valor, LIMITE_RESPOSTA)
+    if profundidade >= LIMITE_PROFUNDIDADE_DA_TRIAGEM:
+        return None
+    if isinstance(valor, dict):
+        return {_dado_da_demanda(str(k), 100): _neutralizado(v, profundidade + 1) for k, v in valor.items()}
+    if isinstance(valor, list):
+        return [_neutralizado(v, profundidade + 1) for v in valor]
+    return valor if isinstance(valor, (bool, int, float)) or valor is None else None
+
+
+def prompt_plano_da_demanda(*, demanda: dict, triagem: dict) -> str:
+    """Prompt do orquestrador (`nova_spec`) que transforma uma demanda do Flow em plano, sem sessão manual.
+
+    A demanda e a triagem fazem as vezes da spec. Título, descrição e os textos da triagem vêm de quem abriu a
+    demanda: entram só como valores do JSON do contexto, sem caracteres de controle, sem as marcas dos prompts e
+    sem marcador de nonce (o `orquestrador.md` diz que são dados, não instruções).
+    """
+    caminho = caminho_do_plano_da_demanda(demanda["id"])
+    contexto = {
+        "demanda": {
+            "id": demanda["id"],
+            "titulo": _dado_da_demanda(demanda.get("titulo"), LIMITE_TITULO),
+            "descricao": _dado_da_demanda(demanda.get("descricao"), LIMITE_DESCRICAO),
+            "tipo": demanda.get("tipo") if demanda.get("tipo") in TIPOS_DA_DEMANDA else None,
+            "temTela": demanda.get("temTela") is True,
+            "nivel": demanda.get("nivel") if demanda.get("nivel") in NIVEIS else None,
+        },
+        "triagem": _neutralizado(triagem if isinstance(triagem, dict) else {}),
+        "plano": caminho,
+    }
+    return prompt_orquestrador(motivo="nova_spec", estado_compacto={}, contexto=contexto, caminho_plano=caminho)
+
+
 def _cortar_utf16(texto: str, limite: int) -> str:
     """Corta em `limite` unidades UTF-16 (o `max` do zod no Flow), sem partir um par substituto."""
     unidades = 0

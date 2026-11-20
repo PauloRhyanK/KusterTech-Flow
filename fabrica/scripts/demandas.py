@@ -20,11 +20,20 @@ nonce e o `inicio` antes do POST pago) e `triando` (com `runId`); um coordenador
 run pelo nonce e, sem ele, repete o POST com a mesma `Idempotency-Key`. O resultado vai para a caixa de saída como
 evento `triagem`; resposta fora do formato, run falho e o teto de 30 min viram `triagem_falhou` (spec §9: a
 demanda vai para a decisão do Paulo).
+
+O plano (etapa `planejada`) é um run do orquestrador (`modelos.orquestrador`, prompt `nova_spec` com a demanda e a
+triagem no contexto) sob a trava de orquestrador do repositório (`capacidade.tomar_orquestrador` com
+`demanda:<id>`), sem vaga. `planejando` é gravado com o nonce antes do POST; sem `runId`, o run é achado pelo nonce.
+O PR do plano é mergeado pela Fábrica só atrás das guardas (`guardar_merge`), no mesmo head; guarda que falha vira
+`travada` para o Paulo (fase `esperando_paulo`; a retomada dele planeja de novo com nonce novo). Toda saída de
+`planejando` solta a trava. Em "planejar comigo" nada é despachado (`esperando_sessao`): o plano entregue pela
+sessão chega no retrato (`plano.caminho`) e a demanda vai para `plano_no_repo`.
 """
 
 import contextlib
 import datetime
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -35,8 +44,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import despachante  # noqa: E402
+import globs  # noqa: E402
 import motor as motor_  # noqa: E402
 import prompts  # noqa: E402
+import raias  # noqa: E402
 from retrato import FORMATO_INSTANTE, FalhaDeEnvio  # noqa: E402
 
 FASES = (
@@ -238,6 +249,9 @@ def proxima_acao(item: dict, demanda: dict, *, pendente: bool = False) -> str:
     if marco == "planejada":
         if espera == "planejar_comigo":
             return "acompanhar" if demanda.get("plano") else "esperar_sessao"
+        if fase == "esperando_paulo":
+            # o plano travou: só a retomada do Paulo (depois da trava) planeja de novo
+            return "planejar" if _retomada_nova(item, demanda) else "nada"
         return "planejar" if fase in ("nova", "triando") else "acompanhar"
     if marco == "desenho" and espera is None:
         plano = demanda.get("plano") or {}
@@ -471,6 +485,28 @@ MOTIVO_AGENTE = "o agente falhou: %s"
 MOTIVO_RUN_SUMIU = "run não encontrado no Warren"
 MOTIVO_TRIAGEM_RECUSADA = "o Flow recusou a triagem da Fábrica"
 LIMITE_MOTIVO_DO_AGENTE = 200
+PAPEL_DO_PLANO = "orquestrador"
+CI_PENDENTE_MAXIMO_S = 2 * 3600
+TENTATIVAS_SEM_PR = 2  # a primeira e uma nova tentativa
+CAMINHO_CONFIG_DO_REPO = ".fabrica/config.json"
+PERMITIDOS_AO_PLANO = (".fabrica/planejamento/**", ".seeds/**")  # além do próprio plano da demanda
+MOTIVO_FORA = "o plano mexe fora de .fabrica: %s"
+MOTIVO_PROTEGIDO = "o plano mexe em caminho protegido: %s"
+MOTIVO_SEM_PLANO = "o PR não traz o plano %s"
+MOTIVO_PLANO_INVALIDO = "o plano não passa em validar_plano: %s"
+MOTIVO_PLANO_DE_OUTRA = 'o plano não traz "demanda": "%s"'
+MOTIVO_PLANO_ILEGIVEL = "o plano do PR não é um JSON legível"
+MOTIVO_CONFIG_ILEGIVEL = "a .fabrica/config.json do repositório está ilegível"
+MOTIVO_CI_PENDENTE = "o CI do plano não terminou em 2 h"
+MOTIVO_CI_VERMELHO = "o CI do plano está vermelho"
+MOTIVO_CI_OBRIGATORIO = "o repositório exige CI no plano e o head não tem CI"
+MOTIVO_SEM_PR = "o orquestrador terminou sem PR do plano 2 vezes"
+MOTIVO_LINK_INVALIDO = "o run do plano devolveu um link de PR inválido"
+MOTIVO_PR_FECHADO = "o PR do plano foi fechado sem merge"
+MOTIVO_OUTRO_REPO = "o PR do plano está em outro repositório"
+MOTIVO_MERGE_RECUSADO = "o GitHub recusou o merge do plano"
+MOTIVO_PLANEJAR_COMIGO = "planejar comigo: o PR do plano vai para o Paulo"
+MOTIVO_PLANO_RECUSADO = "o Flow recusou o plano criado pela Fábrica"
 
 
 def _instante(valor):
@@ -492,20 +528,36 @@ def _marco(demanda: dict):
     return (demanda.get("etapaAtual") or {}).get("marco")
 
 
+def _permitido_ao_plano(caminho, caminho_do_plano: str) -> bool:
+    """O PR do plano da demanda só pode tocar o próprio plano, `.fabrica/planejamento/**` e `.seeds/**`."""
+    if not isinstance(caminho, str) or not caminho or caminho.startswith("/"):
+        return False
+    if any(parte in ("", ".", "..") for parte in caminho.split("/")):
+        return False
+    return caminho == caminho_do_plano or any(globs.casa_glob(caminho, g) for g in PERMITIDOS_AO_PLANO)
+
+
+def _ainda_no_planejamento(demanda: dict) -> bool:
+    """A demanda está na etapa `planejada`, sem espera e aberta (o plano ainda pode entrar pela Fábrica)."""
+    return _marco(demanda) == "planejada" and not demanda.get("espera") and not demanda.get("encerrada")
+
+
 def _ainda_na_triagem(demanda: dict) -> bool:
     """A demanda ainda espera a triagem da Fábrica: na etapa `recebida`, sem espera e aberta."""
     return _marco(demanda) == "recebida" and not demanda.get("espera") and not demanda.get("encerrada")
 
 
 class _Passo:
-    def __init__(self, estado, *, cliente, motor, capacidade_path, projetos, modelos, agora, salvar):
+    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar):
         self.estado = estado
         self.sec = secao(estado)
         self.cliente = cliente
         self.motor = motor
+        self.forja = forja
         self.capacidade = capacidade_path
         self.projetos = {str(k).lower(): v for k, v in (projetos or {}).items()}
         self.modelo_da_triagem = _modelo(modelos, PAPEL_DA_TRIAGEM)
+        self.modelo_do_plano = _modelo(modelos, PAPEL_DO_PLANO)
         self.agora = agora if isinstance(agora, datetime.datetime) else motor_.instante(agora)
         self.agora_texto = _texto_do_instante(self.agora)
         self.salvar = salvar or (lambda: None)
@@ -569,6 +621,8 @@ class _Passo:
                 continue
             try:
                 self.largar_triagem_superada(id_, it, demanda)
+                self.largar_plano_superado(id_, it, demanda)
+                self.adotar_plano_da_sessao(id_, it, demanda)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
                 if acao == "aguardar_envio":
                     continue  # o retrato está atrasado: decide de novo quando a saída esvaziar
@@ -590,7 +644,13 @@ class _Passo:
                 self.retomar_triagem(id_, it, demanda)
             elif it.get("fase") == "triando" and it.get("runId"):
                 self.acompanhar_triagem(id_, it, demanda)
-        # as outras ações são das Tasks 4 a 8
+        elif acao == "planejar":
+            self.planejar(id_, it, demanda)
+        elif acao == "esperar_sessao":
+            self.esperar_sessao(id_, it)
+        elif acao == "acompanhar" and it.get("alvo") == "planejando" and it.get("fase") == "planejando":
+            self.acompanhar_plano(id_, it, demanda)
+        # as outras ações são das Tasks 5 a 8
 
     def largar_triagem_superada(self, id_: str, it: dict, demanda: dict) -> None:
         """O Paulo decidiu (ou encerrou) a demanda com a triagem no meio: o run segue no Warren, mas não conta mais."""
@@ -613,6 +673,14 @@ class _Passo:
         if _ainda_na_triagem(demanda) and terminada and not it.get("triagemRecusada"):
             it["triagemRecusada"] = True
             enfileirar_evento(self.estado, id_, "triagem_falhou", {"motivo": MOTIVO_TRIAGEM_RECUSADA}, agora=self.agora_texto)
+        elif _ainda_no_planejamento(demanda) and it.get("fase") == "plano_no_repo" and not it.get("planoRecusado"):
+            # o plano está no repositório, mas o Flow não aplicou o `plano_criado`: a demanda vai para o Paulo
+            it["planoRecusado"] = True
+            url = it.get("prUrl") if isinstance(it.get("prUrl"), str) else None
+            enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_PLANO_RECUSADO, "url": url}, agora=self.agora_texto)
+        elif _ainda_no_planejamento(demanda) and it.get("fase") == "esperando_paulo":
+            # a trava do plano não pegou no Flow: nada se replaneja sozinho (sem retomada), só o aviso
+            self.aviso("demandas:plano:%s" % id_, "Demandas: o Flow recusou a trava do plano da demanda %s; confira a demanda" % id_[:8])
         self.salvar()
 
     # ------------------------------------------------------------ triagem
@@ -625,17 +693,23 @@ class _Passo:
         inicio = _instante(it.get("inicio"))
         return inicio is None or (self.agora - inicio).total_seconds() > TETO_TRIAGEM_S
 
-    def triar(self, id_: str, it: dict, demanda: dict) -> None:
+    def projeto_de(self, demanda: dict):
+        """O projeto do Warren do repositório da demanda; fora de `fila.json`: `None`, com um aviso por repositório."""
         repo = demanda.get("repositorio")
         projeto = self.projetos.get(str(repo).lower())
         if projeto is None:
             self.aviso("demandas:sem-projeto:%s" % repo, "Demandas: %s não tem projeto do Warren em fila.json" % repo)
+        return projeto
+
+    def sem_modelo(self, papel: str) -> None:
+        self.aviso("demandas:modelo:%s" % papel, "Demandas: configure modelos.%s (agente, modelo, maxCustoUsd) em fabrica/modelos/config.json do kit" % papel)
+
+    def triar(self, id_: str, it: dict, demanda: dict) -> None:
+        projeto = self.projeto_de(demanda)
+        if projeto is None:
             return
         if self.modelo_da_triagem is None:
-            self.aviso(
-                "demandas:modelo:%s" % PAPEL_DA_TRIAGEM,
-                "Demandas: configure modelos.%s (agente, modelo, maxCustoUsd) em fabrica/modelos/config.json do kit" % PAPEL_DA_TRIAGEM,
-            )
+            self.sem_modelo(PAPEL_DA_TRIAGEM)
             return
         if capacidade.ler(self.capacidade).get("drenagem"):
             return  # o Warren vai reiniciar: espera o próximo ciclo (a triagem não ocupa vaga, mas é um run)
@@ -745,6 +819,8 @@ class _Passo:
     def concluir(self, id_: str, it: dict, tipo: str, dados: dict) -> None:
         """O evento vai para a caixa de saída e a triagem fecha no mesmo `salvar` (`triando` sem `runId`)."""
         enfileirar_evento(self.estado, id_, tipo, dados, agora=self.agora_texto)
+        if tipo == "triagem":
+            it["triagem"] = dados  # o retrato do Flow não traz a triagem; o plano a leva no contexto
         it.update(fase="triando", runId=None)
         it.pop("retryEsperado", None)
         self.salvar()
@@ -752,6 +828,234 @@ class _Passo:
 
     def falhou(self, id_: str, it: dict, motivo: str) -> None:
         self.concluir(id_, it, "triagem_falhou", {"motivo": motivo[:300]})
+
+    # ------------------------------------------------------------ plano
+
+    def largar_plano_superado(self, id_: str, it: dict, demanda: dict) -> None:
+        """O Paulo mexeu na demanda (encerrou, parou ou passou da etapa) com o plano no meio: solta a trava, o run não conta."""
+        if it.get("alvo") == "planejando" and it.get("fase") == "planejando" and not _ainda_no_planejamento(demanda):
+            # `esperando_paulo` com `inicio` novo: a retomada do Paulo (se a etapa ainda for a do plano) planeja de novo
+            tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+            self.sair_do_planejamento(id_, it, fase="esperando_paulo", alvo=None, inicio=self.agora_texto, tentativa=tentativa + 1)
+            self.eventos.append({"evento": "demanda_plano_superado", "id": id_})
+
+    def adotar_plano_da_sessao(self, id_: str, it: dict, demanda: dict) -> None:
+        """"Planejar comigo": o plano entregue pela sessão (`POST /api/demandas/<id>/plano`) chega no retrato."""
+        caminho = (demanda.get("plano") or {}).get("caminho") if isinstance(demanda.get("plano"), dict) else None
+        if it.get("fase") == "esperando_sessao" and isinstance(caminho, str) and caminho:
+            prurl = demanda["plano"].get("prUrl")
+            it.update(fase="plano_no_repo", plano=caminho, prUrl=prurl if isinstance(prurl, str) else None)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_plano_da_sessao", "id": id_, "plano": caminho})
+
+    def esperar_sessao(self, id_: str, it: dict) -> None:
+        """"Planejar comigo": a Fábrica não despacha nada; o plano vem da sessão do Paulo."""
+        if it.get("fase") != "esperando_sessao":
+            it.update(fase="esperando_sessao", runId=None, alvo=None)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_esperando_sessao", "id": id_})
+
+    def planejar(self, id_: str, it: dict, demanda: dict) -> None:
+        if demanda.get("nivel") == "planejar_comigo":
+            self.esperar_sessao(id_, it)  # nunca planeja sozinho nesse nível
+            return
+        projeto = self.projeto_de(demanda)
+        if projeto is None:
+            return
+        if self.modelo_do_plano is None:
+            self.sem_modelo(PAPEL_DO_PLANO)
+            return
+        if capacidade.ler(self.capacidade).get("drenagem"):
+            return
+        repo = demanda["repositorio"]
+        if not capacidade.tomar_orquestrador(self.capacidade, repo, chave(id_)):
+            return  # outro plano do repositório tem a trava: o próximo ciclo tenta de novo (na espera FIFO)
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(fase="planejando", alvo="planejando", projeto=projeto, repo=repo, semPr=0, prUrl=None, runId=None)
+        it.pop("ciPendenteDesde", None)
+        self.novo_run_do_plano(id_, it, demanda, tentativa)
+
+    def novo_run_do_plano(self, id_: str, it: dict, demanda: dict, tentativa: int) -> None:
+        it.update(tentativa=tentativa, nonce=nonce_do_motor(id_, "plano", tentativa), inicio=self.agora_texto, runId=None)
+        self.salvar()  # antes do POST pago: um coordenador que morra daqui em diante acha o run pelo nonce
+        self.despachar_plano(id_, it, demanda)
+
+    def despachar_plano(self, id_: str, it: dict, demanda: dict) -> None:
+        modelo = self.modelo_do_plano
+        prompt = prompts.prompt_plano_da_demanda(demanda=demanda, triagem=it.get("triagem") or {})
+        run_id = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompt, it["nonce"]),
+            branch_existente=None,
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=it["nonce"],
+        )
+        it["runId"] = run_id
+        self.salvar()
+        self.eventos.append({"evento": "demanda_plano", "id": id_, "runId": run_id})
+
+    def acompanhar_plano(self, id_: str, it: dict, demanda: dict) -> None:
+        if it.get("prUrl"):
+            self.guardar_merge(id_, it, demanda)
+        elif it.get("runId"):
+            self.acompanhar_run_do_plano(id_, it, demanda)
+        else:
+            self.retomar_plano(id_, it, demanda)
+
+    def retomar_plano(self, id_: str, it: dict, demanda: dict) -> None:
+        """Sem `runId` (o POST pode ter criado o run): adota pelo nonce ou repete com a mesma chave."""
+        if not capacidade.tomar_orquestrador(self.capacidade, it["repo"], chave(id_), em_curso=True):
+            return
+        run_id = self.motor.procurar_run(it["projeto"], it["nonce"], self.desde(it))
+        if run_id is not None:
+            it["runId"] = run_id
+            self.salvar()
+        elif self.modelo_do_plano is not None:
+            self.despachar_plano(id_, it, demanda)
+
+    def acompanhar_run_do_plano(self, id_: str, it: dict, demanda: dict) -> None:
+        try:
+            run = despachante._dict(self.motor.run(it["runId"]))
+        except Exception as exc:
+            if not despachante._eh_404(exc):
+                raise
+            run = {"estado": "failed", "prUrl": None}  # o run sumiu do Warren: conta como sem PR
+        if run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+            return
+        pr_url = run.get("prUrl")
+        if isinstance(pr_url, str) and pr_url:
+            it["prUrl"] = pr_url
+            self.salvar()
+            self.guardar_merge(id_, it, demanda)
+            return
+        sem_pr = (it.get("semPr") if isinstance(it.get("semPr"), int) else 0) + 1
+        it["semPr"] = sem_pr
+        if sem_pr >= TENTATIVAS_SEM_PR or self.modelo_do_plano is None:
+            self.travar_plano(id_, it, MOTIVO_SEM_PR, None)
+        else:
+            self.novo_run_do_plano(id_, it, demanda, it["tentativa"] + 1)
+
+    def config_do_repo(self, repo: str, head: str):
+        """`protegidos` e `ciObrigatorioNoPlano` da `.fabrica/config.json` no head (o PR não pode mudá-la: está fora
+        do permitido). Ausente: sem protegidos extras e CI opcional; ilegível: `None`."""
+        bruto = self.forja.arquivo(repo, head, CAMINHO_CONFIG_DO_REPO)
+        if bruto is None:
+            return [], False
+        try:
+            config = json.loads(bruto)
+        except ValueError:
+            return None
+        protegidos = config.get("protegidos", []) if isinstance(config, dict) else None
+        obrigatorio = config.get("ciObrigatorioNoPlano", False) if isinstance(config, dict) else None
+        if not isinstance(protegidos, list) or not all(isinstance(g, str) and g for g in protegidos) or not isinstance(obrigatorio, bool):
+            return None
+        return protegidos, obrigatorio
+
+    def motivo_do_plano(self, id_: str, repo: str, head: str, caminho: str):
+        """O plano no head passa em `validar_plano` e é desta demanda; senão, o motivo."""
+        bruto = self.forja.arquivo(repo, head, caminho)
+        try:
+            plano = json.loads(bruto) if isinstance(bruto, str) else None
+        except ValueError:
+            plano = None
+        if not isinstance(plano, dict):
+            return MOTIVO_PLANO_ILEGIVEL
+        erros = raias.validar_plano(plano)
+        if erros:
+            return MOTIVO_PLANO_INVALIDO % erros[0]
+        if plano.get("demanda") != id_:
+            return MOTIVO_PLANO_DE_OUTRA % id_
+        return None
+
+    def guardar_merge(self, id_: str, it: dict, demanda: dict) -> None:
+        """As guardas do merge do PR do plano, sempre no mesmo head: arquivos, config do repositório, plano e CI."""
+        url = it["prUrl"]
+        repo = it.get("repo") or demanda["repositorio"]
+        caminho = prompts.caminho_do_plano_da_demanda(id_)
+        try:
+            pr = despachante._dict(self.forja.pr(url))
+        except ValueError:  # o link que o run devolveu não é de um PR
+            self.travar_plano(id_, it, MOTIVO_LINK_INVALIDO, None)
+            return
+        if pr.get("mergeado") is True:
+            self.plano_criado(id_, it, caminho, url)  # mergeado num ciclo que caiu antes de gravar (ou pelo Paulo)
+            return
+        if pr.get("aberto") is not True:
+            self.travar_plano(id_, it, MOTIVO_PR_FECHADO, url)
+            return
+        if str(pr.get("repo")).lower() != str(repo).lower():
+            self.travar_plano(id_, it, MOTIVO_OUTRO_REPO, url)
+            return
+        if demanda.get("nivel") == "planejar_comigo":
+            self.travar_plano(id_, it, MOTIVO_PLANEJAR_COMIGO, url)
+            return
+        arquivos, head = pr.get("arquivos"), pr.get("headSha")
+        if not isinstance(arquivos, list) or not isinstance(head, str) or not head:
+            raise RuntimeError("PR do plano ilegível")
+        fora = [a for a in arquivos if not _permitido_ao_plano(a, caminho)]
+        if fora:
+            self.travar_plano(id_, it, MOTIVO_FORA % fora[0], url)
+            return
+        if caminho not in arquivos:
+            self.travar_plano(id_, it, MOTIVO_SEM_PLANO % caminho, url)
+            return
+        config = self.config_do_repo(repo, head)
+        if config is None:
+            self.travar_plano(id_, it, MOTIVO_CONFIG_ILEGIVEL, url)
+            return
+        protegidos, ci_obrigatorio = config
+        protegido = next((a for a in arquivos if any(globs.casa_glob(a, g) for g in protegidos)), None)
+        if protegido is not None:
+            self.travar_plano(id_, it, MOTIVO_PROTEGIDO % protegido, url)
+            return
+        motivo = self.motivo_do_plano(id_, repo, head, caminho)
+        if motivo is not None:
+            self.travar_plano(id_, it, motivo, url)
+            return
+        ci = self.forja.ci(repo, head)
+        if ci == "pendente":
+            desde = _instante(it.get("ciPendenteDesde"))
+            if desde is None:
+                it["ciPendenteDesde"] = self.agora_texto
+                self.salvar()
+            elif (self.agora - desde).total_seconds() > CI_PENDENTE_MAXIMO_S:
+                self.travar_plano(id_, it, MOTIVO_CI_PENDENTE, url)
+            return
+        if ci == "ausente" and ci_obrigatorio:
+            self.travar_plano(id_, it, MOTIVO_CI_OBRIGATORIO, url)
+            return
+        if ci not in ("verde", "ausente"):
+            self.travar_plano(id_, it, MOTIVO_CI_VERMELHO, url)
+            return
+        it["mergeEmCurso"] = head
+        self.salvar()
+        if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
+            self.plano_criado(id_, it, caminho, url)
+        else:
+            self.travar_plano(id_, it, MOTIVO_MERGE_RECUSADO, url)
+
+    def sair_do_planejamento(self, id_: str, it: dict, **campos) -> None:
+        """Toda saída de `planejando`: solta a trava do orquestrador e grava (a trava antes: soltar duas vezes não faz mal)."""
+        if isinstance(it.get("repo"), str):
+            capacidade.soltar_orquestrador(self.capacidade, it["repo"], chave(id_))
+        it.update(runId=None, **campos)
+        it.pop("ciPendenteDesde", None)
+        it.pop("mergeEmCurso", None)
+        self.salvar()
+
+    def plano_criado(self, id_: str, it: dict, caminho: str, url: str) -> None:
+        enfileirar_evento(self.estado, id_, "plano_criado", {"plano": caminho, "prUrl": url}, agora=self.agora_texto)
+        self.sair_do_planejamento(id_, it, fase="plano_no_repo", alvo=None, plano=caminho, tentativa=0)
+        self.eventos.append({"evento": "demanda_plano_criado", "id": id_, "plano": caminho, "prUrl": url})
+
+    def travar_plano(self, id_: str, it: dict, motivo: str, url) -> None:
+        """`travada` para o Paulo; a retomada dele (depois do novo `inicio`) planeja de novo com um nonce novo."""
+        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo[:300], "url": url}, agora=self.agora_texto)
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        self.sair_do_planejamento(id_, it, fase="esperando_paulo", alvo=None, prUrl=url, inicio=self.agora_texto, tentativa=tentativa + 1)
+        self.eventos.append({"evento": "demanda_plano_travado", "id": id_, "motivo": motivo})
 
 
 def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar) -> list[dict]:
@@ -761,10 +1065,10 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
     fora dele: a demanda espera, com um aviso por repositório); `modelos` é o `modelos` de
     `<kit>/fabrica/modelos/config.json`. A triagem não reserva vaga. A caixa de saída é esvaziada por quem chama
     (`esvaziar_saida`), depois. `salvar` grava o `fila-estado.json` (antes de cada POST pago e a cada transição).
-    `forja`, `raiz` e `mem_disponivel_mb` são das fases seguintes.
+    `forja` lê e mergeia o PR do plano; `raiz` e `mem_disponivel_mb` são das fases seguintes.
     """
-    del forja, raiz, mem_disponivel_mb  # Tasks 4 a 8
-    p = _Passo(estado, cliente=cliente, motor=motor, capacidade_path=capacidade_path, projetos=projetos, modelos=modelos, agora=agora, salvar=salvar)
+    del raiz, mem_disponivel_mb  # Tasks 5 a 8
+    p = _Passo(estado, cliente=cliente, motor=motor, forja=forja, capacidade_path=capacidade_path, projetos=projetos, modelos=modelos, agora=agora, salvar=salvar)
     if p.buscar():
         p.decidir()
     return p.eventos
