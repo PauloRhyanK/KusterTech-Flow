@@ -936,24 +936,133 @@ class TestesPlano(BasePasso):
         (evento,) = self.saida()
         self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o orquestrador terminou sem PR do plano 2 vezes", "url": None}))
         self.assertIsNone(self.trava())
-        # o Paulo encerra a demanda com o run no meio: a trava solta
+        # o Paulo encerra a demanda com o run no meio: a trava fica até o run terminar (o motor não cancela run)
         self.setUp()
-        self.planejar()
+        run_id = self.planejar()
         self.assertEqual(self.trava(), demandas.chave(ID))
         self.passo(ClienteDeBusca(pagina(retrato("planejada", encerrada="cancelada"), cursor="2")))
-        self.assertIsNone(self.trava())
         self.assertIsNone(self.item()["runId"])
-
-    def test_plano_parado_pelo_paulo_solta_a_trava_e_a_retomada_planeja_de_novo(self):
-        self.planejar()
-        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="travada"), cursor="2")))
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.assertEqual(demandas.chaves_do_orquestrador(self.estado), {demandas.chave(ID)})
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR)  # termina com PR: o resultado não conta
+        self.passo(ClienteDeBusca())
         self.assertIsNone(self.trava())
+        self.assertEqual((self.saida(), self.forja.merges, demandas.chaves_do_orquestrador(self.estado)), ([], [], set()))
+
+    def test_plano_parado_pelo_paulo_segura_a_trava_ate_o_run_terminar_e_a_retomada_planeja_de_novo(self):
+        run_id = self.planejar()
+        self.assertTrue(self.trava())
+        capacidade.tomar_orquestrador(self.capacidade, REPO, "outro-plano")  # outro plano espera a trava
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="travada"), cursor="2")))
         self.assertEqual((self.item()["fase"], self.item()["runId"]), ("esperando_paulo", None))
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.assertFalse(capacidade.tomar_orquestrador(self.capacidade, REPO, "outro-plano"))
+        # a retomada com o run antigo vivo não despacha um segundo orquestrador
         self.avancar(60)
         retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
         self.passo(ClienteDeBusca(pagina(retrato("planejada", eventos=retomada), cursor="3")))
+        self.assertEqual(len(self.despachos()), 1)
+        self.motor.definir_run(run_id, estado="failed", motivoFalha="erro")
+        self.passo(ClienteDeBusca())
+        # o run terminou: a trava solta, e quem esperava primeiro na fila do repositório a leva
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertTrue(capacidade.tomar_orquestrador(self.capacidade, REPO, "outro-plano"))
+        capacidade.soltar_orquestrador(self.capacidade, REPO, "outro-plano")
+        self.passo(ClienteDeBusca())
         self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.despachos()[1]["chave_idempotencia"], demandas.nonce_do_motor(ID, "plano", 1))
         self.assertEqual(self.trava(), demandas.chave(ID))
+
+    def test_nivel_ausente_nulo_ou_desconhecido_nao_planeja_sozinho(self):
+        for nivel in ("ausente", None, "outro"):
+            with self.subTest(nivel=nivel):
+                self.setUp()
+                r = retrato("planejada", nivel=nivel)
+                if nivel == "ausente":
+                    del r["nivel"]
+                eventos = self.passo(ClienteDeBusca(pagina(r)))
+                self.assertEqual(self.despachos(), [])
+                self.assertEqual(self.item()["fase"], "esperando_sessao")
+                self.assertIsNone(self.trava())
+                self.assertEqual([e["chave"] for e in eventos if e.get("evento") == "aviso"], ["demandas:nivel:%s" % ID])
+                self.assertEqual(demandas.NIVEIS_SEM_SESSAO, ("vai_sozinho", "aprovar_desenho"))
+
+    def test_aprovar_desenho_planeja_e_mergeia(self):
+        run_id = self.planejar(nivel="aprovar_desenho")
+        self.com_pr(run_id)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR, HEAD)])
+
+    def test_nivel_nulo_ou_desconhecido_na_hora_do_merge_nao_mergeia(self):
+        for nivel in (None, "outro"):
+            with self.subTest(nivel=nivel):
+                self.setUp()
+                run_id = self.planejar()
+                self.com_pr(run_id)
+                self.passo(ClienteDeBusca(pagina(retrato("planejada", nivel=nivel), cursor="2")))
+                self.assertEqual(self.forja.merges, [])
+                self.assertEqual(self.saida()[0]["dados"], {"motivo": "o nível da demanda não deixa a Fábrica mergear o plano", "url": PR})
+
+    def test_plano_acima_de_2h_sem_pr_vira_travada_e_segura_a_trava_ate_o_run_terminar_ou_a_folga(self):
+        self.planejar()
+        self.avancar(7199)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.avancar(2)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o plano passou de 2 h sem PR", "url": None}))
+        self.assertEqual(self.item()["fase"], "esperando_paulo")
+        self.assertEqual(self.trava(), demandas.chave(ID))  # o run ainda roda
+        self.avancar(1798)  # 2 h 30 min do despacho, ainda dentro
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.trava(), demandas.chave(ID))
+        self.avancar(2)
+        self.passo(ClienteDeBusca())
+        self.assertIsNone(self.trava())
+        self.assertEqual((demandas.TETO_PLANO_S, demandas.FOLGA_DO_RUN_SUPERADO_S), (7200, 1800))
+
+    def test_sem_modelo_com_o_post_pendente_cai_no_teto(self):
+        self.motor.falhar_despacho("antes")
+        self.planejar()
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("planejando", None))
+        modelos = dict(CONFIG_DO_KIT["modelos"])
+        del modelos["orquestrador"]
+        self.avancar(7201)
+        self.passo(ClienteDeBusca(), modelos=modelos)
+        self.assertEqual(self.saida()[0]["dados"]["motivo"], "o plano passou de 2 h sem PR")
+        self.passo(ClienteDeBusca(), modelos=modelos)  # o POST nunca criou o run: a trava solta
+        self.assertIsNone(self.trava())
+
+    def test_o_mesmo_erro_5_ciclos_seguidos_vira_travada_e_solta_a_trava(self):
+        run_id = self.planejar()
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR)  # a forja não conhece o PR: KeyError todo ciclo
+        for _ in range(4):
+            eventos = self.passo(ClienteDeBusca())
+            self.assertIn("erro", [e["evento"] for e in eventos])
+            self.assertEqual(self.saida(), [])
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "travada")
+        self.assertTrue(evento["dados"]["motivo"].startswith("o plano parou: o mesmo erro 5 ciclos seguidos (KeyError"))
+        self.assertEqual(evento["dados"]["url"], PR)
+        self.assertIsNone(self.trava())
+        self.assertEqual(demandas.LIMITE_ERROS_DO_PLANO, 5)
+
+    def test_um_ciclo_sem_erro_zera_a_contagem(self):
+        run_id = self.planejar()
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR)
+        for _ in range(4):
+            self.passo(ClienteDeBusca())
+        self.com_pr(run_id, ci="pendente")
+        self.passo(ClienteDeBusca())
+        self.assertNotIn("erroDoPlano", self.item())
+        self.forja = forja_.ForjaFalsa()
+        for _ in range(4):
+            self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
 
     def test_link_de_pr_invalido_vira_travada(self):
         run_id = self.planejar()
