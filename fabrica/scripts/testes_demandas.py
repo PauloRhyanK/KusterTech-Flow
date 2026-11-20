@@ -1408,6 +1408,8 @@ class TestesValidarDesenho(unittest.TestCase):
             (b"<p>Leia em https://x.exemplo (texto, n\xc3\xa3o recurso)</p>", None),
             (b'<img src="data:image/png;base64,AAAA/onab=">', None),  # o base64 pode terminar em /on..=
             (b'<img src="data:image/png;base64,AAAA" onerror="x()">', "tem script"),
+            (b"<img src=data:image/png;base64,AAAA onerror=alert(1)>", "tem script"),
+            (b"<img src=data:;base64,A src=https://x.exemplo/a.png>", "carrega recurso de fora"),
         ]
         for dados, esperado in casos:
             with self.subTest(dados=dados[:60]):
@@ -1545,6 +1547,37 @@ class TestesDesenho(BasePasso):
         self.assertFalse(demandas.aplicar_na_fila(self.estado["demandas"], self.estado["fila"])[0]["segurado"])
         self.passo(ClienteDeBusca())
         self.assertEqual((len(self.forja.merges), self.saida()), (1, []))
+
+    def test_etapa_concluida_sem_aprovar_nao_mergeia_o_desenho(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", desenho={"versao": 1, "aprovada": None}), cursor="3")))
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        self.assertIn("demandas:desenho:%s" % ID, [e.get("chave") for e in eventos])
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.forja.merges, self.saida()), ([], []))
+
+    def test_desenho_pronto_v2_recusado_com_a_etapa_adiante_nao_mergeia_a_v2(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        ajuste = {"versao": 1, "texto": "mais contraste", "em": AGORA}
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", desenho={"versao": 1, "aprovada": None}, ajustes=[ajuste]), cursor="3")))
+        self.entregar(self.item()["runId"], head=HEAD_D2)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.item()["desenho"]["versao"], 2)
+        # o Paulo concluiu a etapa aprovando a v1 antes de a v2 chegar: o Flow recusa o desenho_pronto v2 (409)
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", "recusado"), self.raiz, salvar=lambda: None)
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", desenho={"versao": 1, "aprovada": 1}), cursor="4")))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual((self.item()["fase"], self.item()["precisa_ressincronizar"]), ("plano_no_repo", False))
+        self.assertIn("demandas:desenho:%s" % ID, [e.get("chave") for e in eventos])
+        self.assertEqual(self.saida(), [])
 
     def test_pr_do_desenho_com_ci_vermelho_trava_uma_vez(self):
         run_id = self.desenhar()

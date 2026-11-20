@@ -123,7 +123,8 @@ _FORA_DO_HTML = re.compile(
     re.IGNORECASE,
 )
 # o corpo de um `data:…;base64,` (sem `<`, aspas nem parênteses) sai antes da busca: pode terminar em `/on…=` por acaso
-_CORPO_BASE64 = re.compile(r";base64,[A-Za-z0-9+/=\s]*", re.IGNORECASE)
+# sem espaço na classe: num valor sem aspas, o espaço fecha o atributo (e o que vem depois tem de ser conferido)
+_CORPO_BASE64 = re.compile(r";base64,[A-Za-z0-9+/=]*", re.IGNORECASE)
 
 
 def validar_desenho(dados: bytes) -> str | None:
@@ -931,6 +932,9 @@ class _Passo:
                     enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_DESENHO_RECUSADO, "url": d.get("prUrl")}, agora=self.agora_texto)
                 else:
                     self.aviso_do_desenho(id_)
+        elif it.get("fase") == "desenho_enviado" and _passou_do_desenho(demanda) and not demanda.get("encerrada") and not it.get("travaDoDesenho"):
+            # o `desenho_pronto` (ou o arquivo) recusado com a etapa já adiante: o merge só vale para a versão aprovada
+            self.versao_aprovada_e_a_enviada(id_, it, demanda)
         elif it.get("travaDoDesenho") and not demanda.get("encerrada") and (
             (_marco(demanda) == "desenho" and it.get("fase") == "esperando_paulo") or it.get("fase") == "desenho_enviado"
         ):
@@ -1665,6 +1669,8 @@ class _Passo:
             )
             self.desenho_no_repo(id_, it, merge=False)
             return
+        if not self.versao_aprovada_e_a_enviada(id_, it, demanda):
+            return
         repo = it.get("repo") or demanda["repositorio"]
         pr = despachante._dict(self.forja.pr(url))
         if pr.get("mergeado") is True:
@@ -1692,6 +1698,21 @@ class _Passo:
             self.desenho_no_repo(id_, it, merge=True)
         else:
             self.travar_merge(id_, it, MOTIVO_MERGE_DO_DESENHO, url)
+
+    def versao_aprovada_e_a_enviada(self, id_: str, it: dict, demanda: dict) -> bool:
+        """Só mergeia o que o Paulo aprovou: `desenho.aprovada` do retrato igual à versão que o kit enviou. A etapa
+        concluída sem aprovar, ou uma versão que o Flow nunca recebeu, vai a `plano_no_repo` sem merge, com um aviso."""
+        enviada = _dados_do_desenho(it).get("versao")
+        aprovada = (demanda.get("desenho") or {}).get("aprovada") if isinstance(demanda.get("desenho"), dict) else None
+        if isinstance(enviada, int) and not isinstance(aprovada, bool) and aprovada == enviada:
+            return True
+        self.aviso(
+            "demandas:desenho:%s" % id_,
+            "Demandas: a etapa do desenho da demanda %s passou sem a aprovação da versão %s enviada (aprovada: %s); o PR do desenho não é mergeado"
+            % (id_[:8], enviada, aprovada),
+        )
+        self.desenho_no_repo(id_, it, merge=False)
+        return False
 
     def desenho_no_repo(self, id_: str, it: dict, *, merge: bool) -> None:
         """Fim do desenho: a demanda volta a `plano_no_repo` e o acompanhamento do desenvolvimento começa."""
