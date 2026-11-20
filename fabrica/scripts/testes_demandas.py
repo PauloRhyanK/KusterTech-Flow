@@ -755,8 +755,8 @@ class TestesPlano(BasePasso):
         self.forja.definir_pr(PR, head_sha=HEAD, branch="fabrica/demanda", arquivos=list(arquivos))
         self.forja.definir_ci(REPO, HEAD, ci)
         self.forja.definir_arquivo(REPO, HEAD, CAMINHO, json.dumps(plano_da_demanda() if plano is None else plano))
-        if config is not None:
-            self.forja.definir_arquivo(REPO, HEAD, ".fabrica/config.json", json.dumps(config))
+        if config is not None:  # a config vale a do branch padrão, nunca a do head do PR
+            self.forja.definir_arquivo(REPO, "main", ".fabrica/config.json", json.dumps(config))
         self.motor.definir_run(run_id, estado="succeeded", prUrl=PR)
 
     def trava(self):
@@ -848,6 +848,14 @@ class TestesPlano(BasePasso):
                 self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o plano mexe fora de .fabrica: %s" % fora, "url": PR}))
                 self.assertEqual(self.item()["fase"], "esperando_paulo")
                 self.assertIsNone(self.trava())
+
+    def test_config_do_head_do_plano_nao_vale(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(CAMINHO, ".fabrica/planejamento/auth/notas.md"), config={"protegidos": ["**/auth/**"]})
+        self.forja.definir_arquivo(REPO, HEAD, ".fabrica/config.json", json.dumps({"protegidos": []}))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(self.saida()[-1]["tipo"], "travada")
 
     def test_plano_em_caminho_protegido_da_config_vira_travada(self):
         run_id = self.planejar()
@@ -1759,10 +1767,10 @@ class TestesTesteNoNavegador(BasePasso):
             self.forja.definir_arquivo(REPO, head, "%s/%s" % (CAPTURAS, t), PNG)
         self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_T)
 
-    def entregar_correcao(self, run_id, *, ci="verde", arquivos=("src/app/clientes/page.tsx",)):
-        self.forja.definir_pr(PR_C, head_sha=HEAD_C, branch="fabrica/correcao-11111111", arquivos=list(arquivos))
+    def entregar_correcao(self, run_id, *, ci="verde", arquivos=("src/app/clientes/page.tsx",), mergeado=False, url=PR_C):
+        self.forja.definir_pr(url, head_sha=HEAD_C, branch="fabrica/correcao-11111111", arquivos=list(arquivos), aberto=not mergeado, mergeado=mergeado)
         self.forja.definir_ci(REPO, HEAD_C, ci)
-        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_C)
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=url)
 
     def reservas(self):
         return capacidade.ler(self.capacidade)["reservas"]
@@ -1903,6 +1911,73 @@ class TestesTesteNoNavegador(BasePasso):
         self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", eventos=RETOMADA), cursor="6")))
         self.assertEqual((self.forja.merges, len(self.despachos())), ([(PR_C, HEAD_C)], 2))
         self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
+
+    def corrigir_depois_da_falha(self):
+        self.falhar_o_teste()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        return self.item()["runId"]
+
+    def test_correcao_que_mexe_em_caminho_fixo_da_fabrica_trava_sem_merge(self):
+        for i, caminho in enumerate((".fabrica/config.json", ".fabrica/equipes/qa.md", ".claude/settings.json", ".warren/config.yml", ".fabrica/demandas/%s/teste.json" % ID)):
+            with self.subTest(caminho=caminho):
+                self.setUp()
+                self.entregar_correcao(self.corrigir_depois_da_falha(), arquivos=("src/app/clientes/page.tsx", caminho))
+                self.passo(ClienteDeBusca())
+                self.assertEqual(self.forja.merges, [])
+                (evento,) = self.saida()
+                self.assertEqual(evento["dados"], {"motivo": "o PR da correção mexe em caminho protegido: %s" % caminho, "url": PR_C})
+                self.assertEqual(self.reservas(), {})
+
+    def test_correcao_le_os_protegidos_do_branch_padrao_e_nunca_do_head(self):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/config.json", json.dumps({"protegidos": [".github/**"]}))
+        self.forja.definir_arquivo(REPO, HEAD_C, ".fabrica/config.json", json.dumps({"protegidos": []}))
+        self.entregar_correcao(self.corrigir_depois_da_falha(), arquivos=("src/app/clientes/page.tsx", ".github/workflows/ci.yml"))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"]["motivo"], "o PR da correção mexe em caminho protegido: .github/workflows/ci.yml")
+
+    def test_correcao_fora_dos_protegidos_do_branch_padrao_mergeia(self):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/config.json", json.dumps({"protegidos": [".github/**"]}))
+        self.entregar_correcao(self.corrigir_depois_da_falha(), arquivos=("src/app/clientes/page.tsx", "src/app/clientes/page.test.tsx"))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+
+    def test_pr_ja_mergeado_de_outro_repo_ou_nunca_visto_nao_vale_como_correcao(self):
+        for url, motivo in (
+            ("https://github.com/kustertech-exemplo/outro/pull/3", "o PR da correção está em outro repositório"),
+            (PR_C, "o PR da correção já estava mergeado antes de o kit conferir"),
+        ):
+            with self.subTest(url=url):
+                self.setUp()
+                self.entregar_correcao(self.corrigir_depois_da_falha(), mergeado=True, url=url)
+                self.passo(ClienteDeBusca())
+                (evento,) = self.saida()
+                self.assertEqual((evento["tipo"], evento["dados"]["motivo"]), ("travada", motivo))
+
+    def test_queda_depois_do_merge_da_correcao_recupera_pelo_head_visto(self):
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="pendente")
+        self.passo(ClienteDeBusca())  # visto aberto: o head fica gravado
+        self.entregar_correcao(self.item()["runId"] or "x", mergeado=True)
+        self.passo(ClienteDeBusca())
+        self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
+
+    def test_capturas_acima_de_40_mb_por_teste_ficam_de_fora_com_nota_no_resumo(self):
+        run_id = self.abrir_teste()
+        telas = tuple("desktop-%02d.png" % i for i in range(1, 6)) + tuple("celular-%02d.png" % i for i in range(1, 6))
+        self.entregar_teste(run_id, telas=telas)
+        nove_mb = b"\x89PNG\r\n\x1a\n" + b"\x00" * (9 * 1024 * 1024)
+        for t in telas:
+            self.forja.definir_arquivo(REPO, HEAD_T, "%s/%s" % (CAPTURAS, t), nove_mb)
+        self.passo(ClienteDeBusca())
+        arquivos = [s["arquivo"] for s in self.estado["demandas"]["saida"] if "arquivo" in s]
+        self.assertEqual([a["nome"] for a in arquivos], ["celular-01.png", "celular-02.png", "celular-03.png", "desktop-01.png"])
+        self.assertLessEqual(sum((self.raiz / a["caminho"]).stat().st_size for a in arquivos), 40 * 1024 * 1024)
+        evento = self.estado["demandas"]["saida"][-1]["evento"]
+        self.assertEqual(evento["tipo"], "teste")
+        self.assertEqual(evento["dados"]["capturas"], [a["id"] for a in arquivos])
+        self.assertTrue(evento["dados"]["resumo"].startswith("o fluxo passou"))
+        self.assertIn("6 capturas ficaram de fora (limite de 40 MB por teste)", evento["dados"]["resumo"])
 
     def test_segunda_falha_espera_o_paulo_e_retomada_volta_a_corrigir(self):
         self.falhar_o_teste()

@@ -742,7 +742,11 @@ MOTIVO_CORRECAO_SEM_PR = "o frontend terminou sem PR da correção 2 vezes"
 MOTIVO_LINK_DA_CORRECAO = "o run da correção devolveu um link de PR inválido"
 MOTIVO_PR_DA_CORRECAO_FECHADO = "o PR da correção foi fechado sem merge"
 MOTIVO_CORRECAO_OUTRO_REPO = "o PR da correção está em outro repositório"
-MOTIVO_CORRECAO_NA_PASTA = "o PR da correção mexe em .fabrica/demandas/: %s"
+MOTIVO_CORRECAO_JA_MERGEADA = "o PR da correção já estava mergeado antes de o kit conferir"
+# capturas enviadas por run de teste: o teste e o reteste da primeira falha (80 MB) deixam a demanda abaixo dos
+# 100 MB do Flow, com espaço para o desenho
+LIMITE_CAPTURAS_POR_TESTE = 40 * 1024 * 1024
+NOTA_CAPTURAS_DE_FORA = " (%d capturas ficaram de fora (limite de 40 MB por teste))"
 MOTIVO_CORRECAO_PROTEGIDO = "o PR da correção mexe em caminho protegido: %s"
 MOTIVO_CI_DA_CORRECAO = "o PR da correção do teste está com o CI vermelho"
 MOTIVO_CI_DA_CORRECAO_PENDENTE = "o CI da correção do teste não terminou em 2 h"
@@ -859,6 +863,22 @@ def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
         por_tela[m.group(1)] += 1
         capturas.append({"caminho": caminho, "tela": m.group(1), "dados": bytes(dados)})
     return {"resultado": teste["resultado"], "resumo": resumo, "capturas": capturas}
+
+
+def _capturas_no_limite(capturas: list[dict]) -> tuple[list[dict], int]:
+    """As capturas que cabem em `LIMITE_CAPTURAS_POR_TESTE` (a primeira de cada tela sempre entra; depois, em ordem de
+    caminho, enquanto couber) e quantas ficaram de fora. A ordem de saída é a de entrada."""
+    escolhidas, total, telas = set(), 0, set()
+    for i, c in enumerate(capturas):
+        if c["tela"] not in telas:
+            telas.add(c["tela"])
+            escolhidas.add(i)
+            total += len(c["dados"])
+    for i, c in enumerate(capturas):
+        if i not in escolhidas and total + len(c["dados"]) <= LIMITE_CAPTURAS_POR_TESTE:
+            escolhidas.add(i)
+            total += len(c["dados"])
+    return [c for i, c in enumerate(capturas) if i in escolhidas], len(capturas) - len(escolhidas)
 
 
 def _na_pasta(caminho, pasta: str) -> bool:
@@ -1456,10 +1476,10 @@ class _Passo:
         else:
             self.novo_run_do_plano(id_, it, demanda, it["tentativa"] + 1)
 
-    def config_do_repo(self, repo: str, head: str):
-        """`protegidos` e `ciObrigatorioNoPlano` da `.fabrica/config.json` no head (o PR não pode mudá-la: está fora
-        do permitido). Ausente: sem protegidos extras e CI opcional; ilegível: `None`."""
-        bruto = self.forja.arquivo(repo, head, CAMINHO_CONFIG_DO_REPO)
+    def config_do_repo(self, repo: str):
+        """`protegidos` e `ciObrigatorioNoPlano` da `.fabrica/config.json` do branch padrão, nunca do head do PR (que
+        poderia reescrevê-la para passar). Ausente: sem protegidos extras e CI opcional; ilegível: `None`."""
+        bruto = self.forja.arquivo(repo, self.forja.branch_padrao(repo), CAMINHO_CONFIG_DO_REPO)
         if bruto is None:
             return [], False
         try:
@@ -1521,7 +1541,7 @@ class _Passo:
         if caminho not in arquivos:
             self.travar_plano(id_, it, MOTIVO_SEM_PLANO % caminho, url)
             return
-        config = self.config_do_repo(repo, head)
+        config = self.config_do_repo(repo)
         if config is None:
             self.travar_plano(id_, it, MOTIVO_CONFIG_ILEGIVEL, url)
             return
@@ -2029,13 +2049,19 @@ class _Passo:
     def enviar_teste(self, id_: str, it: dict, resultado: dict) -> None:
         """Cada captura e depois o `teste` vão à caixa de saída, a vaga é solta e o PR em rascunho é fechado."""
         t = it["teste"]
+        capturas, de_fora = _capturas_no_limite(resultado["capturas"])
         ids = [
             enfileirar_arquivo(
                 self.estado, self.raiz, id_, tipo="captura", nome=c["caminho"].rsplit("/", 1)[-1], conteudo="image/png", dados=c["dados"], tela=c["tela"]
             )
-            for c in resultado["capturas"]
+            for c in capturas
         ]
-        dados = {"resultado": resultado["resultado"], "resumo": resultado["resumo"], "capturas": ids}
+        resumo = resultado["resumo"]
+        if de_fora:
+            nota = NOTA_CAPTURAS_DE_FORA % de_fora
+            resumo = prompts._cortar_utf16(resumo, prompts.LIMITE_RESUMO_DO_TESTE - len(nota.encode("utf-16-le")) // 2) + nota
+        resultado = dict(resultado, resumo=resumo)
+        dados = {"resultado": resultado["resultado"], "resumo": resumo, "capturas": ids}
         enfileirar_evento(self.estado, id_, "teste", dados, agora=self.agora_texto)
         t.update(enviado=True, enviadoEm=self.agora_texto, resultado=resultado["resultado"], resumo=resultado["resumo"], fecharPr=True)
         self.sair_do_teste(id_, it, fase="testando")
@@ -2227,8 +2253,9 @@ class _Passo:
             self.corrigir(id_, it, demanda)  # sem vaga, a trava (e a retomada) ficam para o ciclo seguinte
 
     def conferir_correcao(self, id_: str, it: dict, demanda: dict) -> None:
-        """As guardas do merge do PR da correção, no mesmo head: fora de `.fabrica/demandas/`, fora dos protegidos da
-        `.fabrica/config.json` e CI `verde` ou `ausente`. CI vermelho (ou pendente acima de 2 h) trava com a URL."""
+        """As guardas do merge do PR da correção, no mesmo head: o repositório da demanda, nada em
+        `despachante.PROTEGIDOS_FIXOS` nem nos `protegidos` da `.fabrica/config.json` do branch padrão, e CI `verde` ou
+        `ausente`. CI vermelho (ou pendente acima de 2 h) trava com a URL. Já mergeado só vale no head conferido."""
         c = it["correcao"]
         url = c["prUrl"]
         repo = it.get("repo") or demanda["repositorio"]
@@ -2237,27 +2264,34 @@ class _Passo:
         except ValueError:
             self.travar_correcao(id_, it, MOTIVO_LINK_DA_CORRECAO, None)
             return
+        if str(pr.get("repo")).lower() != str(repo).lower():
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_OUTRO_REPO, url)
+            return
+        head = pr.get("headSha")
         if pr.get("mergeado") is True:
-            self.correcao_mergeada(id_, it, demanda)  # mergeado num ciclo que caiu antes de gravar (ou pelo Paulo)
+            # só vale o merge do head que o kit já conferiu aberto (o ciclo caiu antes de gravar o merge)
+            if isinstance(head, str) and head and c.get("headSha") == head:
+                self.correcao_mergeada(id_, it, demanda)
+            else:
+                self.travar_correcao(id_, it, MOTIVO_CORRECAO_JA_MERGEADA, url)
             return
         if pr.get("aberto") is not True:
             self.travar_correcao(id_, it, MOTIVO_PR_DA_CORRECAO_FECHADO, url)
             return
-        if str(pr.get("repo")).lower() != str(repo).lower():
-            self.travar_correcao(id_, it, MOTIVO_CORRECAO_OUTRO_REPO, url)
-            return
-        arquivos, head = pr.get("arquivos"), pr.get("headSha")
+        arquivos = pr.get("arquivos")
         if not isinstance(arquivos, list) or not isinstance(head, str) or not head:
             raise RuntimeError("PR da correção ilegível")
-        na_pasta = [a for a in arquivos if not isinstance(a, str) or a.startswith(".fabrica/demandas/")]
-        if na_pasta:
-            self.travar_correcao(id_, it, MOTIVO_CORRECAO_NA_PASTA % str(na_pasta[0])[:200], url)
-            return
-        config = self.config_do_repo(repo, head)
+        if c.get("headSha") != head:
+            c["headSha"] = head
+            c.pop("ciPendenteDesde", None)
+            self.salvar()
+        config = self.config_do_repo(repo)
         if config is None:
             self.travar_correcao(id_, it, MOTIVO_CONFIG_ILEGIVEL, url)
             return
-        protegido = next((a for a in arquivos if any(globs.casa_glob(a, g) for g in config[0])), None)
+        # os fixos (`.fabrica/**`, `.claude/**`, `.warren/**`, como nos PRs de seed) e os do branch padrão
+        protegidos = list(despachante.PROTEGIDOS_FIXOS) + list(config[0])
+        protegido = next((a for a in arquivos if not isinstance(a, str) or any(globs.casa_glob(a, g) for g in protegidos)), None)
         if protegido is not None:
             self.travar_correcao(id_, it, MOTIVO_CORRECAO_PROTEGIDO % str(protegido)[:200], url)
             return
