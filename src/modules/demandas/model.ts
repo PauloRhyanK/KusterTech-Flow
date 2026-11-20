@@ -38,6 +38,8 @@ export interface EstadoDaDemanda {
   versaoDoDesenho: number
   desenhoAprovado: number | null
   encerrada: 'entregue' | 'orientada' | null
+  /** A espera que a demanda tinha quando travou; volta quando destrava. */
+  antesDaTrava: { espera: Espera | null; motivo: string | null } | null
 }
 
 export const ORDEM_DOS_MARCOS: readonly Marco[] = [
@@ -197,6 +199,7 @@ export function estadoInicial(
     versaoDoDesenho: 0,
     desenhoAprovado: null,
     encerrada: null,
+    antesDaTrava: null,
   }
 }
 

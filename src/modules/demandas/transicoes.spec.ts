@@ -362,3 +362,67 @@ describe('arquivos', () => {
     expect(capturaVencida(cap, null, new Date(entrega.getTime() + 2 * dias90))).toBe(false)
   })
 })
+
+describe('esperas do Paulo e trava', () => {
+  const passou = {
+    tipo: 'teste',
+    dados: { resultado: 'passou', resumo: 'r', capturas: [A, B] },
+  } as EventoAplicavel
+  const duas = ctx({
+    capturas: [
+      { id: A, tela: 'desktop' },
+      { id: B, tela: 'celular' },
+    ],
+  })
+
+  test('teste passou com a demanda em teste_falhou é recusado até a retomada', () => {
+    const parada = est({ etapaAtual: 'testada', espera: 'teste_falhou', esperaMotivo: 'r' })
+    expect(ap(parada, passou, 'fabrica', duas).ok).toBe(false)
+    const livre = ok(ap(parada, { tipo: 'retomada', dados: {} }, 'paulo'))
+    expect(ok(ap(livre, passou, 'fabrica', duas)).etapaAtual).toBe('entregue')
+  })
+
+  test.each([
+    'decidir_destino',
+    'aprovar_desenho',
+    'planejar_comigo',
+    'concluir_etapa',
+    'travada',
+  ] as const)('eventos da Fábrica que avançam são recusados em %s', (espera) => {
+    const e = est({ etapaAtual: 'desenvolvida', espera })
+    expect(ap(e, { tipo: 'etapa_concluida', dados: { marco: 'desenvolvida' } }, 'fabrica').ok).toBe(
+      false,
+    )
+  })
+
+  test('desenho_pronto segue permitido enquanto espera aprovar_desenho', () => {
+    const e = est(
+      { etapaAtual: 'desenho', espera: 'aprovar_desenho', versaoDoDesenho: 1 },
+      'aprovar_desenho',
+    )
+    expect(
+      ok(ap(e, { tipo: 'desenho_pronto', dados: { arquivoId: A } }, 'fabrica')).versaoDoDesenho,
+    ).toBe(2)
+  })
+
+  test('travada guarda a espera e destravada devolve', () => {
+    const e = est({ etapaAtual: 'testada', espera: 'teste_falhou', esperaMotivo: 'resumo' })
+    const t = ok(ap(e, { tipo: 'travada', dados: { motivo: 'CI', url: null } }, 'fabrica'))
+    expect(t.espera).toBe('travada')
+    const t2 = ok(ap(t, { tipo: 'travada', dados: { motivo: 'CI de novo', url: null } }, 'fabrica'))
+    expect(t2.antesDaTrava).toEqual(t.antesDaTrava)
+    const d = ok(ap(t2, { tipo: 'destravada', dados: {} }, 'fabrica'))
+    expect(d.espera).toBe('teste_falhou')
+    expect(d.esperaMotivo).toBe('resumo')
+    expect(d.antesDaTrava).toBeNull()
+    const r = ok(ap(t, { tipo: 'retomada', dados: {} }, 'paulo'))
+    expect(r.espera).toBe('teste_falhou')
+  })
+
+  test('o Paulo não conclui por chave uma etapa com marco', () => {
+    const e = est({ etapaAtual: 'desenho' }, 'aprovar_desenho')
+    expect(
+      ap(e, { tipo: 'etapa_concluida_pelo_paulo', dados: { chave: 'desenho' } }, 'paulo').ok,
+    ).toBe(false)
+  })
+})

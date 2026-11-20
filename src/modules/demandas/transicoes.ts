@@ -55,6 +55,17 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   etapa_concluida_pelo_paulo: ['paulo'],
 }
 
+function destravar(e: EstadoDaDemanda): EstadoDaDemanda {
+  if (e.espera !== 'travada') return { ...e, espera: null, esperaMotivo: null }
+  const antes = e.antesDaTrava
+  return {
+    ...e,
+    espera: antes?.espera ?? null,
+    esperaMotivo: antes?.motivo ?? null,
+    antesDaTrava: null,
+  }
+}
+
 const recusa = (motivo: string): ResultadoDaTransicao => ({ ok: false, motivo })
 const aceita = (estado: EstadoDaDemanda): ResultadoDaTransicao => ({ ok: true, estado })
 
@@ -69,6 +80,19 @@ export function aplicarEvento(
   }
   const atual = ctx.etapas.find((e) => e.chave === estado.etapaAtual)
   if (!atual) return recusa('A etapa atual não existe no modelo.')
+
+  const fabricaComEspera =
+    evento.ator === 'fabrica' &&
+    estado.espera !== null &&
+    evento.tipo !== 'travada' &&
+    evento.tipo !== 'destravada' &&
+    // estes dois têm recusa própria, com o motivo exato
+    !(evento.tipo === 'plano_criado' && estado.espera === 'planejar_comigo') &&
+    !(
+      evento.tipo === 'desenho_pronto' &&
+      (estado.espera === 'aprovar_desenho' || estado.espera === 'planejar_comigo')
+    )
+  if (fabricaComEspera) return recusa('A demanda está parada e não aceita este evento agora.')
 
   const concluir = (e: EstadoDaDemanda): ResultadoDaTransicao => {
     const proximo = concluirEtapaAtual(e, ctx.etapas, ctx.temTela)
@@ -168,10 +192,18 @@ export function aplicarEvento(
       return concluir(estado)
     }
     case 'travada':
-      return aceita({ ...estado, espera: 'travada', esperaMotivo: evento.dados.motivo })
+      return aceita({
+        ...estado,
+        antesDaTrava:
+          estado.espera === 'travada'
+            ? estado.antesDaTrava
+            : { espera: estado.espera, motivo: estado.esperaMotivo },
+        espera: 'travada',
+        esperaMotivo: evento.dados.motivo,
+      })
     case 'destravada':
       if (estado.espera !== 'travada') return aceita(estado)
-      return aceita({ ...estado, espera: null, esperaMotivo: null })
+      return aceita(destravar(estado))
     case 'teste': {
       if (atual.marco !== 'testada') return naoE('testada')
       const d = evento.dados
@@ -207,12 +239,16 @@ export function aplicarEvento(
       if (estado.espera !== 'travada' && estado.espera !== 'teste_falhou') {
         return recusa('A demanda não está parada.')
       }
-      return aceita({ ...estado, espera: null, esperaMotivo: null })
+      return aceita(destravar(estado))
     case 'entregue':
       if (atual.marco !== 'entregue') return naoE('entregue')
       return concluir(estado)
     case 'etapa_concluida_pelo_paulo':
-      if (atual.chave !== evento.dados.chave || !podeConcluir(atual, estado.nivel, 'paulo')) {
+      if (
+        atual.marco !== null ||
+        atual.chave !== evento.dados.chave ||
+        !podeConcluir(atual, estado.nivel, 'paulo')
+      ) {
         return recusa(`A etapa atual não é ${evento.dados.chave}.`)
       }
       return concluir(estado)

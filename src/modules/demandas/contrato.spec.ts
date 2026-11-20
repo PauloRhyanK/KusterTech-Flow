@@ -90,3 +90,13 @@ describe('planoDaSessaoSchema', () => {
     )
   })
 })
+
+describe('nomeDeArquivo (nos anexos)', () => {
+  test('recusa caminhos', () => {
+    const ok = { repositorio: 'kustertech-exemplo/alfa', titulo: 'T', temTela: false }
+    for (const nome of ['../x', '/x', 'a/b', '..', '.env']) {
+      const anexo = { nome, conteudo: 'image/png', base64: 'AA==' }
+      expect(demandaDaSessaoSchema.safeParse({ ...ok, anexos: [anexo] }).success).toBe(false)
+    }
+  })
+})

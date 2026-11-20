@@ -99,6 +99,7 @@ describe('modelo de etapas', () => {
       versaoDoDesenho: 0,
       desenhoAprovado: null,
       encerrada: null,
+      antesDaTrava: null,
     })
   })
 
