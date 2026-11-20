@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
+import { moduloAtivo } from '@/lib/modulos'
 import type { EntradaDaRecepcao } from '@/modules/fabrica/recepcao'
 import { extrairTokenDaFabrica, hashDoTokenDaFabrica } from '@/modules/fabrica/model'
 import { resumirErroParaLog } from '@/modules/github/model'
@@ -82,6 +83,7 @@ export async function registrarChegada(
   repositorioId: string,
   origem: OrigemDoPedido,
   pedido: Pick<PedidoRecebido, 'commit' | 'modo' | 'descricao'>,
+  demandaId: string | null,
   configuracao: { modoPadrao: 'IMEDIATO' | 'LOTE'; baseRedefinidaEm: Date | null } | null,
   agora: Date,
 ): Promise<Chegada> {
@@ -115,6 +117,7 @@ export async function registrarChegada(
       commit,
       modo,
       descricao: pedido.descricao ?? null,
+      demandaId,
       ...origem,
     } satisfies Partial<Prisma.PedidoDePublicacaoUncheckedCreateInput>
 
@@ -166,12 +169,27 @@ export async function receberPedidoDePublicacao(
     const repositorio = await localizarRepositorio(lido.data.repositorio)
     if (!repositorio) return { status: 404, corpo: { erro: 'Repositório não encontrado.' } }
 
+    // Leitura sem trava: o pedido só grava o id; o estado da demanda não é tocado aqui.
+    let demandaId: string | null = null
+    if (lido.data.demanda !== undefined && moduloAtivo('demandas')) {
+      const demanda = await db.demanda.findUnique({
+        where: { id: lido.data.demanda },
+        select: { id: true, repositorioId: true },
+      })
+      if (!demanda) return { status: 422, corpo: { erro: 'Demanda não encontrada.' } }
+      if (demanda.repositorioId !== repositorio.id) {
+        return { status: 422, corpo: { erro: 'A demanda não é deste repositório.' } }
+      }
+      demandaId = demanda.id
+    }
+
     await db.fonteDePublicacao.update({ where: { id: fonte.id }, data: { ultimoUsoEm: agora } })
 
     const chegada = await registrarChegada(
       repositorio.id,
       { fonteId: fonte.id },
       lido.data,
+      demandaId,
       repositorio.configuracaoDePublicacao,
       agora,
     )
