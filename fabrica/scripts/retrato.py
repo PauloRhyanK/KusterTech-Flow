@@ -60,8 +60,9 @@ class FalhaDeEnvio(Exception):
     `codigo` é o status HTTP quando a falha é uma resposta `HTTP <código>`; senão `None` (rede, timeout, …).
     """
 
-    def __init__(self, texto: str = ""):
+    def __init__(self, texto: str = "", erro: str | None = None):
         super().__init__(texto)
+        self.erro = erro  # o `erro` do corpo da resposta do Flow (só para decidir; nunca entra no texto da falha)
         achado = re.fullmatch(r"HTTP ([0-9]{3})", texto) if isinstance(texto, str) else None
         self.codigo = int(achado.group(1)) if achado else None
 
@@ -370,8 +371,13 @@ def enviar(corpo: bytes, *, url, token_file, abrir=None) -> dict | None:
     except TimeoutError:
         raise FalhaDeEnvio("timeout") from None
     except urllib.error.HTTPError as erro:
+        try:
+            corpo = _ler_resposta(erro.read(LIMITE_DA_RESPOSTA + 1))
+        except Exception:  # noqa: BLE001 - sem corpo legível a falha continua só com o código
+            corpo = None
         erro.close()
-        raise FalhaDeEnvio("HTTP %d" % erro.code) from None
+        motivo = corpo.get("erro") if isinstance(corpo, dict) and isinstance(corpo.get("erro"), str) else None
+        raise FalhaDeEnvio("HTTP %d" % erro.code, motivo[:200] if motivo else None) from None
     except urllib.error.URLError as erro:
         if isinstance(erro.reason, TimeoutError):
             raise FalhaDeEnvio("timeout") from None

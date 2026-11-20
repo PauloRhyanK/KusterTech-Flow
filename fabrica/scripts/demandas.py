@@ -1184,11 +1184,12 @@ class _Passo:
         do estado e `<raiz>/demandas/<id>/` é apagada. Com run superado ainda vivo o item fica, segurando a vaga."""
         if _run_superado_vivo(it) or isinstance(it.get("runSuperado"), dict):
             return
+        id_ = _id_valido(id_)
+        if self.raiz is not None:
+            shutil.rmtree(self.raiz / "demandas" / id_, ignore_errors=True)
         capacidade.sincronizar(self.capacidade, chave(id_), set())
         del self.sec["itens"][id_]
         self.salvar()
-        if self.raiz is not None:
-            shutil.rmtree(self.raiz / "demandas" / _id_valido(id_), ignore_errors=True)
         self.eventos.append({"evento": "demanda_encerrada", "id": id_})
 
     # ------------------------------------------------------------ desenvolvimento

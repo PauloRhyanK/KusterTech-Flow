@@ -78,6 +78,9 @@ class _AbrirFalso:
     def __call__(self, req, timeout=None):
         self.corpos.append(json.loads(req.data))
         codigo = self.codigos.pop(0)
+        if isinstance(codigo, tuple):
+            codigo, erro = codigo
+            raise urllib.error.HTTPError(req.full_url, codigo, "x", {}, io.BytesIO(json.dumps({"erro": erro}).encode()))
         if codigo >= 400:
             raise urllib.error.HTTPError(req.full_url, codigo, "x", {}, io.BytesIO(b""))
         return _Resposta(codigo, b'{"id": "y"}')
@@ -96,14 +99,14 @@ class TestesPedirComDemanda(unittest.TestCase):
         self.assertEqual(abrir.corpos, [{"repositorio": "dono/cliente", "descricao": "d", "modo": "imediato", "demanda": "d-1"}])
 
     def test_review_focus_3_flow_antigo_422_repete_sem_modo_e_demanda(self):
-        abrir = _AbrirFalso(422, 201)
+        abrir = _AbrirFalso((422, "Corpo inválido."), 201)
         self.assertEqual(self.pedir(abrir, modo="lote", demanda="d-1"), {"id": "y"})
         self.assertEqual(abrir.corpos, [
             {"repositorio": "dono/cliente", "descricao": "d", "modo": "lote", "demanda": "d-1"},
             {"repositorio": "dono/cliente", "descricao": "d"},
         ])
         # a resposta da segunda tentativa vale, inclusive a falha
-        abrir = _AbrirFalso(422, 409)
+        abrir = _AbrirFalso((422, "Corpo inválido."), 409)
         with self.assertRaises(retrato.FalhaDeEnvio) as ctx:
             self.pedir(abrir, modo="lote", demanda="d-1")
         self.assertEqual((ctx.exception.codigo, len(abrir.corpos)), (409, 2))
@@ -116,6 +119,14 @@ class TestesPedirComDemanda(unittest.TestCase):
         with self.assertRaises(retrato.FalhaDeEnvio):
             self.pedir(abrir)
         self.assertEqual(len(abrir.corpos), 1)
+
+    def test_422_que_nao_e_do_esquema_nao_repete_sem_os_campos(self):
+        for erro in ("Demanda não encontrada.", "A demanda não é deste repositório.", None):
+            with self.subTest(erro=erro):
+                abrir = _AbrirFalso((422, erro) if erro else 422)
+                with self.assertRaises(retrato.FalhaDeEnvio) as ctx:
+                    self.pedir(abrir, modo="imediato", demanda="d-1")
+                self.assertEqual((ctx.exception.codigo, len(abrir.corpos)), (422, 1))
 
     def test_so_o_422_repete(self):
         abrir = _AbrirFalso(500)
