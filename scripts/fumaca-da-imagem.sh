@@ -28,8 +28,13 @@ passo() {
   echo "==> $PASSO"
 }
 
+# Em produção o Flow exige FLOW_ARQUIVOS_DIR (sem ele, gravar arquivos de demanda falha de propósito);
+# a pasta existe na imagem com dono node, como o volume flow_arquivos da oficina.
+DIR_ARQUIVOS="/var/lib/flow/arquivos"
+
 na_imagem() {
-  docker run --rm --network "$REDE" -e NODE_ENV=production -e DATABASE_URL="$URL_BANCO" "$@"
+  docker run --rm --network "$REDE" -e NODE_ENV=production -e DATABASE_URL="$URL_BANCO" \
+    -e FLOW_ARQUIVOS_DIR="$DIR_ARQUIVOS" "$@"
 }
 
 passo "criar rede e subir o Postgres"
@@ -60,7 +65,8 @@ na_imagem -e GITHUB_FONTE=fixtures "$IMAGEM" node worker.mjs --uma-vez || falhar
 
 passo "subir o web (node server.js)"
 docker run -d --name "$WEB" --network "$REDE" -p 127.0.0.1::3000 \
-  -e NODE_ENV=production -e DATABASE_URL="$URL_BANCO" "$IMAGEM" node server.js >/dev/null || falhar
+  -e NODE_ENV=production -e DATABASE_URL="$URL_BANCO" -e FLOW_ARQUIVOS_DIR="$DIR_ARQUIVOS" \
+  "$IMAGEM" node server.js >/dev/null || falhar
 PORTA="$(docker port "$WEB" 3000/tcp | head -n1 | sed 's/.*://')"
 [ -n "$PORTA" ] || falhar
 
