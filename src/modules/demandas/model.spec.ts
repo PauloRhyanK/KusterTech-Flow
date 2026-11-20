@@ -141,6 +141,20 @@ describe('modelo de etapas', () => {
     expect(a.concluidas).toContain('entregue')
   })
 
+  test('concluirEtapaAtual não avança demanda encerrada nem etapa fora do modelo', () => {
+    const base = estadoInicial(MODELO_PADRAO, true, 'vai_sozinho')
+    const encerrada = { ...base, etapaAtual: 'entregue', encerrada: 'orientada' as const }
+    expect(concluirEtapaAtual(encerrada, MODELO_PADRAO, true)).toEqual(encerrada)
+    const fora = { ...base, etapaAtual: 'inexistente' }
+    expect(concluirEtapaAtual(fora, MODELO_PADRAO, true)).toEqual(fora)
+  })
+
+  test('podeConcluir: etapa do Paulo (marco null) não é concluída pela Fábrica nem pela sessão', () => {
+    expect(podeConcluir(extra, 'vai_sozinho', 'fabrica')).toBe(false)
+    expect(podeConcluir(extra, 'vai_sozinho', 'sessao')).toBe(false)
+    expect(podeConcluir(extra, 'vai_sozinho', 'paulo')).toBe(true)
+  })
+
   test('modoDePublicacao', () => {
     expect(modoDePublicacao('urgente')).toBe('imediato')
     expect(modoDePublicacao('lote_da_noite')).toBe('lote')

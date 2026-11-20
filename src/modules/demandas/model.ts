@@ -151,6 +151,7 @@ export function esperaOPaulo(etapa: EtapaDefinida, nivel: Nivel): boolean {
 
 export function podeConcluir(etapa: EtapaDefinida, nivel: Nivel, ator: Ator): boolean {
   const q = etapa.quemConclui
+  if (etapa.marco === null && q === 'paulo') return ator === 'paulo'
   if (esperaOPaulo(etapa, nivel)) {
     if (ator === 'fabrica') return false
     if (ator === 'paulo') return q === 'paulo' || q === 'qualquer'
@@ -205,10 +206,12 @@ export function concluirEtapaAtual(
   etapas: readonly EtapaDefinida[],
   temTela: boolean,
 ): EstadoDaDemanda {
+  if (estado.encerrada) return estado
+  const posicao = etapas.findIndex((e) => e.chave === estado.etapaAtual)
+  if (posicao < 0) return estado
   const concluidas = estado.concluidas.includes(estado.etapaAtual)
     ? estado.concluidas
     : [...estado.concluidas, estado.etapaAtual]
-  const posicao = etapas.findIndex((e) => e.chave === estado.etapaAtual)
   const proxima = etapas.slice(posicao + 1).find((e) => temTela || !e.puladaSemTela)
   if (!proxima) {
     return { ...estado, concluidas, espera: null, esperaMotivo: null, encerrada: 'entregue' }

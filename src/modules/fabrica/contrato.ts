@@ -30,7 +30,7 @@ const textoLongo = z.string().min(1).max(LIMITES.textoLongo)
 const inteiro = z.number().int().nonnegative()
 
 /** Instante UTC `AAAA-MM-DDTHH:MM:SSZ`, e uma data que existe. */
-const instante = z
+export const instante = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
   .refine((v) => {
@@ -38,7 +38,7 @@ const instante = z
     return !Number.isNaN(ms) && new Date(ms).toISOString() === v.replace('Z', '.000Z')
   }, 'instante inválido')
 
-const urlGithub = z
+export const urlGithub = z
   .string()
   .max(LIMITES.texto)
   .refine((v) => {
