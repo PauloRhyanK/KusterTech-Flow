@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { log } from '@/lib/log'
 import {
+  ArmazenamentoNaoConfigurado,
   apagarArquivo,
   cabecalhosDoArquivo,
   caminhoDoArquivo,
@@ -22,6 +24,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
   if (anterior === undefined) delete process.env.FLOW_ARQUIVOS_DIR
   else process.env.FLOW_ARQUIVOS_DIR = anterior
   await rm(dir, { recursive: true, force: true })
@@ -179,5 +183,53 @@ describe('arquivos de demandas no volume', () => {
       expect(h['Content-Disposition']).toMatch(/^attachment;/)
       expect(h['Content-Security-Policy']).toMatch(/^sandbox;/)
     }
+  })
+})
+
+describe('armazenamento em produção (I2)', () => {
+  const gravar = () =>
+    gravarArquivo(
+      randomUUID(),
+      randomUUID(),
+      corpoDe(new Uint8Array([1, 2, 3])),
+      LIMITE_POR_ARQUIVO,
+    )
+
+  test('sem FLOW_ARQUIVOS_DIR a gravação falha alto, com log de erro, e não cai no padrão do contêiner', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    delete process.env.FLOW_ARQUIVOS_DIR
+    const erro = vi.spyOn(log, 'error').mockImplementation(() => undefined as never)
+    await expect(gravar()).rejects.toBeInstanceOf(ArmazenamentoNaoConfigurado)
+    await expect(gravar()).rejects.toThrow('Armazenamento de arquivos não configurado.')
+    expect(erro).toHaveBeenCalled()
+    expect(() => diretorioDosArquivos()).toThrow(ArmazenamentoNaoConfigurado)
+  })
+
+  test('com FLOW_ARQUIVOS_DIR que não existe a gravação falha e nada é criado', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const faltando = join(dir, 'volume-que-nao-existe')
+    process.env.FLOW_ARQUIVOS_DIR = faltando
+    vi.spyOn(log, 'error').mockImplementation(() => undefined as never)
+    await expect(gravar()).rejects.toBeInstanceOf(ArmazenamentoNaoConfigurado)
+    expect(await readdir(dir)).toEqual([])
+  })
+
+  test('com FLOW_ARQUIVOS_DIR sem permissão de escrita a gravação falha', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const travado = join(dir, 'so-leitura')
+    await mkdir(travado)
+    await chmod(travado, 0o500)
+    process.env.FLOW_ARQUIVOS_DIR = travado
+    vi.spyOn(log, 'error').mockImplementation(() => undefined as never)
+    try {
+      await expect(gravar()).rejects.toBeInstanceOf(ArmazenamentoNaoConfigurado)
+    } finally {
+      await chmod(travado, 0o700)
+    }
+  })
+
+  test('com FLOW_ARQUIVOS_DIR existente e gravável a gravação segue', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    expect(await gravar()).toEqual({ ok: true, tamanho: 3 })
   })
 })

@@ -165,6 +165,7 @@ class TestesProximaAcao(unittest.TestCase):
             (item("desenvolvendo"), retrato("entregue"), "entregar"),
             (item("desenvolvendo"), retrato("entregue", encerrada="entregue"), "encerrar"),
             (item("nova"), retrato("recebida", encerrada="orientada"), "encerrar"),
+            (item("desenvolvendo"), retrato("desenvolvida", encerrada="descartada"), "encerrar"),
             (item("nova"), retrato("recebida", espera="decidir_destino"), "nada"),
             (item("desenvolvendo"), retrato("desenvolvida", espera="travada"), "nada"),
             (item("desenvolvendo"), retrato("desenvolvida", espera="concluir_etapa"), "nada"),
@@ -935,6 +936,41 @@ class TestesPlano(BasePasso):
         self.assertIn({"evento": "demanda_plano_da_sessao", "id": ID, "plano": ".fabrica/planos/exportar.json"}, eventos)
         # antes da primeira versão o desenho não espera o Paulo: o ux-ui desenha no mesmo ciclo
         self.assertEqual(self.item()["fase"], "desenhando")
+
+    def artefato_esperando_o_paulo(self):
+        """"Planejar comigo" com o artefato do Claude: o Flow entra no desenho esperando a aprovação (versão 0)."""
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="planejar_comigo", nivel="planejar_comigo"))))
+        entregue = {"caminho": ".fabrica/planos/exportar.json", "prUrl": None, "artefato": "https://claude.ai/a/1"}
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", espera="aprovar_desenho", nivel="planejar_comigo", plano=entregue), cursor="2")))
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        self.assertEqual((self.despachos(), self.saida()), ([], []))
+        return entregue
+
+    def test_planejar_comigo_com_artefato_aprovado_vai_ao_desenvolvimento_sem_ux_ui_nem_merge_de_desenho(self):
+        entregue = self.artefato_esperando_o_paulo()
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.despachos(), [])
+        aprovado = [{"id": OUTRO, "tipo": "desenho_aprovado", "origem": "paulo", "em": AGORA, "dados": {"versao": 0, "peloArtefato": True}}]
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", nivel="planejar_comigo", plano=entregue, desenho={"versao": 0, "aprovada": 0}, eventos=aprovado), cursor="3")))
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        self.assertEqual(demandas.proxima_acao(self.item(), retrato("desenvolvida", nivel="planejar_comigo", plano=entregue)), "acompanhar")
+        self.assertEqual((self.despachos(), self.saida(), self.forja.merges, self.reservas()), ([], [], [], {}))
+
+    def test_planejar_comigo_com_artefato_e_ajuste_espera_a_sessao_de_novo(self):
+        entregue = self.artefato_esperando_o_paulo()
+        ajuste = [{"id": OUTRO, "tipo": "ajuste_pedido", "origem": "paulo", "em": AGORA, "dados": {"versao": 0, "texto": "botão embaixo"}}]
+        espera_sessao = retrato("desenho", espera="planejar_comigo", nivel="planejar_comigo", plano=entregue, eventos=ajuste, ajustes=[{"versao": 0, "texto": "botão embaixo", "em": AGORA}])
+        self.passo(ClienteDeBusca(pagina(espera_sessao, cursor="3")))
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.despachos(), self.saida(), self.reservas()), ([], [], {}))
+        self.assertEqual(demandas.proxima_acao(self.item(), espera_sessao), "nada")
+        # a sessão entrega de novo: o Flow volta a esperar a aprovação, e o kit segue sem desenhar
+        de_novo = dict(entregue, artefato="https://claude.ai/a/2")
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", espera="aprovar_desenho", nivel="planejar_comigo", plano=de_novo), cursor="4")))
+        self.assertEqual((self.despachos(), self.saida(), self.item()["fase"]), ([], [], "plano_no_repo"))
+
+    def reservas(self):
+        return capacidade.ler(self.capacidade)["reservas"]
 
     def test_trava_do_orquestrador_e_solta_ao_sair_de_planejando(self):
         # sem PR: uma nova tentativa (nonce novo), depois `travada`
@@ -2042,6 +2078,69 @@ class TestesTesteNoNavegador(BasePasso):
         self.entregar_correcao(self.item()["runId"] or "x", mergeado=True)
         self.passo(ClienteDeBusca())
         self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
+
+    def test_correcao_sem_ci_nao_mergeia_e_trava_para_o_paulo_com_o_link(self):
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="ausente")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "PR de correção sem CI: revise e faça o merge", "url": PR_C}))
+        self.assertEqual((self.forja.merges, self.reservas()), ([], {}))
+        # o ciclo seguinte, com a trava no Flow e o PR ainda aberto, não faz nada
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="4")))
+        self.assertEqual((self.saida(), self.forja.merges, len(self.despachos())), ([], [], 2))
+
+    def paulo_mergeia(self, head=HEAD_C, base="main"):
+        self.forja.definir_pr(PR_C, head_sha=head, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx"], aberto=False, mergeado=True, base=base)
+
+    def test_correcao_sem_ci_mergeada_pelo_paulo_segue_sem_retomada(self):
+        self.test_correcao_sem_ci_nao_mergeia_e_trava_para_o_paulo_com_o_link()
+        self.paulo_mergeia()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="5")))
+        self.assertEqual([(e["tipo"], e["dados"]) for e in self.saida()], [("destravada", {}), ("etapa_concluida", {"marco": "desenvolvida"})])
+        self.assertEqual((self.forja.merges, len(self.despachos())), ([], 2))
+        # o Flow volta a `testada`: o ciclo seguinte testa de novo
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("testada"), cursor="6")))
+        self.assertEqual(len(self.despachos()), 3)
+
+    def test_correcao_mergeada_pelo_paulo_com_um_commit_a_mais_vale_no_branch_padrao(self):
+        self.test_correcao_sem_ci_nao_mergeia_e_trava_para_o_paulo_com_o_link()
+        self.paulo_mergeia(head="2" * 40)
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="5")))
+        self.assertEqual([e["tipo"] for e in self.saida()], ["destravada", "etapa_concluida"])
+
+    def test_correcao_mergeada_em_outro_branch_nao_vale(self):
+        self.test_correcao_sem_ci_nao_mergeia_e_trava_para_o_paulo_com_o_link()
+        self.paulo_mergeia(head="2" * 40, base="outro")
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="5")))
+        self.assertEqual(self.saida(), [])
+        # a retomada confere o PR e trava com o motivo do merge que não vale
+        self.avancar(60)
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", eventos=RETOMADA), cursor="6")))
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]["motivo"]), ("travada", "o PR da correção já estava mergeado antes de o kit conferir"))
+
+    def test_correcao_sem_ci_mergeada_pelo_paulo_e_retomada_tambem_segue(self):
+        self.test_correcao_sem_ci_nao_mergeia_e_trava_para_o_paulo_com_o_link()
+        self.paulo_mergeia(head="2" * 40)
+        self.avancar(60)
+        # o retrato já sem a trava (o Paulo retomou): a retomada confere o PR mergeado
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", eventos=RETOMADA), cursor="5")))
+        self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
+        self.assertEqual(self.forja.merges, [])
+
+    def test_descartada_pelo_paulo_com_a_correcao_no_meio_solta_a_vaga_quando_o_run_termina(self):
+        run_id = self.corrigir_depois_da_falha()
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", encerrada="descartada"), cursor="4")))
+        self.assertIn(ID, self.estado["demandas"]["itens"])  # o run superado ainda segura a vaga
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_C)  # termina com PR: não conta
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca())
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+        self.assertEqual((self.reservas(), self.saida(), self.forja.merges, len(self.despachos())), ({}, [], [], 2))
 
     def test_capturas_acima_de_40_mb_por_teste_ficam_de_fora_com_nota_no_resumo(self):
         run_id = self.abrir_teste()

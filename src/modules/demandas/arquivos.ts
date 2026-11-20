@@ -1,7 +1,9 @@
-import { mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, mkdir, open, rename, rm, stat, type FileHandle } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import type { ReadableStream as ReadableStreamDoNode } from 'node:stream/web'
+import { log } from '@/lib/log'
 import { CONTEUDOS_ACEITOS } from './transicoes'
 
 // Sem `import 'server-only'`: o módulo também roda no worker (Node puro), onde esse pacote lança.
@@ -23,8 +25,47 @@ const INLINE_SEGURO: ReadonlySet<string> = new Set(
     .filter((t) => !TIPO_ATIVO.test(t)),
 )
 
+export const ARMAZENAMENTO_NAO_CONFIGURADO = 'Armazenamento de arquivos não configurado.'
+
+/** Em produção, sem o volume dos arquivos configurado: as rotas respondem 503. */
+export class ArmazenamentoNaoConfigurado extends Error {
+  constructor() {
+    super(ARMAZENAMENTO_NAO_CONFIGURADO)
+    this.name = 'ArmazenamentoNaoConfigurado'
+  }
+}
+
+const emProducao = () => process.env.NODE_ENV === 'production'
+
+/**
+ * Em produção o diretório é sempre o `FLOW_ARQUIVOS_DIR` explícito (o volume do compose): sem ele,
+ * o padrão gravaria na camada do contêiner e os arquivos sumiriam na próxima troca de imagem.
+ */
 export function diretorioDosArquivos(): string {
-  return process.env.FLOW_ARQUIVOS_DIR || DIRETORIO_PADRAO
+  const dir = process.env.FLOW_ARQUIVOS_DIR
+  if (dir) return dir
+  if (emProducao()) {
+    log.error('FLOW_ARQUIVOS_DIR ausente em produção: os arquivos das demandas não são gravados.')
+    throw new ArmazenamentoNaoConfigurado()
+  }
+  return DIRETORIO_PADRAO
+}
+
+/** Em produção, o diretório precisa existir e aceitar escrita; nunca é criado aqui. */
+export async function exigirArmazenamento(): Promise<string> {
+  const dir = diretorioDosArquivos()
+  if (!emProducao()) return dir
+  try {
+    if (!(await stat(dir)).isDirectory()) throw new Error('não é um diretório')
+    await access(dir, constants.W_OK)
+  } catch (erro) {
+    log.error(
+      { dir, erro: (erro as Error).message },
+      'FLOW_ARQUIVOS_DIR não existe ou não aceita escrita: os arquivos das demandas não são gravados.',
+    )
+    throw new ArmazenamentoNaoConfigurado()
+  }
+  return dir
 }
 
 /** `<dir>/demandas/<demandaId>/<arquivoId>`; só ids uuid entram no caminho (nunca o nome enviado). */
@@ -79,6 +120,7 @@ export async function gravarParcial(
   limite: number,
 ): Promise<{ ok: true; tamanho: number } | { ok: false; motivo: 'grande' }> {
   const parcial = caminhoParcial(demandaId, tempId)
+  await exigirArmazenamento()
   await mkdir(resolve(parcial, '..'), { recursive: true })
 
   let arquivo: FileHandle | null = await open(parcial, 'wx', 0o600)

@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import { ARMAZENAMENTO_NAO_CONFIGURADO, ArmazenamentoNaoConfigurado } from './arquivos'
 import { log } from '@/lib/log'
 import { autenticarFonte, type EntradaDaRecepcao } from '@/modules/fabrica/recepcao'
 import { resumirErroParaLog } from '@/modules/github/model'
@@ -268,7 +269,7 @@ export async function receberArquivoDaFabrica(
   query: URLSearchParams,
   headers: Headers,
   corpo: ReadableStream<Uint8Array> | null,
-): Promise<Saida<200 | 201 | 401 | 404 | 409 | 411 | 413 | 415 | 422 | 500>> {
+): Promise<Saida<200 | 201 | 401 | 404 | 409 | 411 | 413 | 415 | 422 | 500 | 503>> {
   try {
     const fonte = await autenticarFonte(authorization)
     if (fonte === null) return { status: 401, corpo: NAO_AUTORIZADO }
@@ -322,6 +323,9 @@ export async function receberArquivoDaFabrica(
     })
     return { status: r.status, corpo: { id, tamanho: gravado.tamanho } }
   } catch (erro) {
+    if (erro instanceof ArmazenamentoNaoConfigurado) {
+      return { status: 503, corpo: { erro: ARMAZENAMENTO_NAO_CONFIGURADO } }
+    }
     return falhaInterna(erro, 'arquivo')
   }
 }

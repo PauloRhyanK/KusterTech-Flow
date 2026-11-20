@@ -12,6 +12,7 @@ import {
   iconeDoTipo,
   montarGrupos,
   rotuloDoEstado,
+  textoDoEvento,
   trilho,
   type DemandaNaLista,
 } from './apresentacao'
@@ -538,5 +539,45 @@ describe('linkDoArtefato', () => {
     ]) {
       expect(linkDoArtefato(url)).toBeNull()
     }
+  })
+})
+
+describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
+  test('aprovar_desenho na versão 0 é o artefato: título e contexto próprios, com aprovar e ajuste', () => {
+    expect(
+      faixaDaEspera(
+        {
+          id: '6f1c2b8e-0000-4000-8000-000000000001',
+          espera: 'aprovar_desenho',
+          esperaMotivo: null,
+          versaoDoDesenho: 0,
+          ultimoAjuste: null,
+          etapaAtual: 'desenho',
+          etapas: [...MODELO_PADRAO],
+        },
+        new Date('2026-11-20T12:00:00Z'),
+      ),
+    ).toEqual({
+      titulo: 'O artefato do Claude está pronto para você aprovar',
+      contexto: 'O desenho é o artefato da sessão: abra o link abaixo',
+      acoes: ['aprovar', 'ajuste'],
+    })
+  })
+
+  test('histórico: aprovação e ajuste do artefato e o encerramento', () => {
+    expect(textoDoEvento('desenho_aprovado', { versao: 0, peloArtefato: true })).toBe(
+      'Desenho aprovado (artefato do Claude)',
+    )
+    expect(textoDoEvento('ajuste_pedido', { versao: 0, texto: 'x' })).toBe(
+      'Ajuste pedido (artefato do Claude)',
+    )
+    expect(textoDoEvento('desenho_aprovado', { versao: 2 })).toBe('Desenho aprovado (versão 2)')
+    expect(textoDoEvento('encerrada_pelo_paulo', {})).toBe('Demanda encerrada')
+  })
+
+  test('descartada: rótulo "Encerrada" neutro e fora dos grupos', () => {
+    const d = demanda({ etapaAtual: 'desenvolvida', encerrada: 'descartada' })
+    expect(rotuloDoEstado(d)).toEqual({ texto: 'Encerrada', tom: 'neutro' })
+    expect(grupoDaDemanda(d)).toBeNull()
   })
 })

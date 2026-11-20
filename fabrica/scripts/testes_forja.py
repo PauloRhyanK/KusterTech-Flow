@@ -211,6 +211,10 @@ class TestesUrlsEValidacao(unittest.TestCase):
 
 
 class TestesPr(unittest.TestCase):
+    def test_base_do_pr_vem_de_base_ref(self):
+        f, _ = novo(ok(pr_json(base={"ref": "main"})), ok(arquivos(1)))
+        self.assertEqual(f.pr(PR_URL)["base"], "main")
+
     def test_campos_e_urls(self):
         f, t = novo(ok(pr_json()), ok(arquivos(2)))
         r = f.pr(PR_URL)
@@ -225,6 +229,7 @@ class TestesPr(unittest.TestCase):
                 "numero": 12,
                 "arquivos": ["src/f0.ts", "src/f1.ts"],
                 "mergeado": False,
+                "base": None,
             },
         )
         self.assertEqual(t.urls()[0], API + "/repos/acme/app/pulls/12")
@@ -1351,6 +1356,7 @@ class TestesForjaFalsa(unittest.TestCase):
                 "numero": 12,
                 "arquivos": ["a.ts", "b.ts"],
                 "mergeado": False,
+                "base": "main",
             },
         )
         r["arquivos"].append("c.ts")

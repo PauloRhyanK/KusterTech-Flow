@@ -1,6 +1,5 @@
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
+import { PASTA_DOS_ARQUIVOS_E2E } from './e2e/support/arquivos'
 import { MAQUINA_LOCAL_E2E, PASTA_DA_OFICINA } from './e2e/support/oficina'
 import { SEGREDO_DE_WEBHOOK_E2E } from './e2e/support/webhook'
 
@@ -62,8 +61,7 @@ export default defineConfig({
       // voltam ao 'vazia' (setup global) ao terminar.
       OFICINA_DIR: PASTA_DA_OFICINA,
       FLOW_MAQUINA_LOCAL: MAQUINA_LOCAL_E2E,
-      // Arquivos das demandas (desenhos, capturas, anexos) numa pasta temporária, fora do repositório.
-      FLOW_ARQUIVOS_DIR: join(tmpdir(), 'flow-e2e-arquivos'),
+      FLOW_ARQUIVOS_DIR: PASTA_DOS_ARQUIVOS_E2E,
     },
   },
 })

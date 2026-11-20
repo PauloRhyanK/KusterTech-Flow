@@ -8,7 +8,12 @@ import type { EntradaDaRecepcao } from '@/modules/fabrica/recepcao'
 import { extrairTokenDaFabrica, hashDoTokenDaFabrica } from '@/modules/fabrica/model'
 import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
 import { resumirErroParaLog } from '@/modules/github/model'
-import { apagarArquivo } from './arquivos'
+import {
+  ARMAZENAMENTO_NAO_CONFIGURADO,
+  ArmazenamentoNaoConfigurado,
+  apagarArquivo,
+  exigirArmazenamento,
+} from './arquivos'
 import {
   LIMITE_DO_CORPO_DA_DEMANDA,
   LIMITE_DO_CORPO_DO_PLANO,
@@ -94,7 +99,7 @@ async function localizarRepositorio(nome: string) {
 export async function receberDemandaDaSessao(
   e: EntradaDaRecepcao,
   agora: Date,
-): Promise<Saida<200 | 201 | 401 | 404 | 413 | 415 | 422 | 500>> {
+): Promise<Saida<200 | 201 | 401 | 404 | 413 | 415 | 422 | 500 | 503>> {
   try {
     const fonte = await autenticarFonteDeDemandas(e.authorization, agora)
     if (fonte === null) return { status: 401, corpo: NAO_AUTORIZADO }
@@ -128,6 +133,8 @@ export async function receberDemandaDaSessao(
     if (!repositorio?.projetoId) {
       return { status: 404, corpo: { erro: 'Repositório não encontrado.' } }
     }
+    // Sem onde gravar os anexos, a demanda nem abre (nada entra pela metade).
+    if (anexos.length > 0) await exigirArmazenamento()
 
     const aberta = await db.$transaction((tx) =>
       abrirDemanda(
@@ -186,6 +193,9 @@ export async function receberDemandaDaSessao(
       corpo: { id: aberta.id, etapa: 'recebida', url: `/demandas/${aberta.id}` },
     }
   } catch (erro) {
+    if (erro instanceof ArmazenamentoNaoConfigurado) {
+      return { status: 503, corpo: { erro: ARMAZENAMENTO_NAO_CONFIGURADO } }
+    }
     return falhaInterna(erro, 'abrir demanda')
   }
 }

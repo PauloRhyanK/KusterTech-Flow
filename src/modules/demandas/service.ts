@@ -11,7 +11,13 @@ import {
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
-import { apagarArquivo, caminhoDoArquivo, gravarParcial, promoverParcial } from './arquivos'
+import {
+  apagarArquivo,
+  caminhoDoArquivo,
+  exigirArmazenamento,
+  gravarParcial,
+  promoverParcial,
+} from './arquivos'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { DESTINOS, NIVEIS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
@@ -312,6 +318,7 @@ export async function criarDemanda(
     if (!a.ok) throw new ErroDeDominio(a.erro)
     usado += anexo.size
   }
+  if (e.anexos.length > 0) await exigirArmazenamento()
 
   const { id } = await db.$transaction((tx) =>
     abrirDemanda(
@@ -578,6 +585,7 @@ export async function registrarEvento(e: {
           etapas: demanda.etapas as unknown as EtapaDefinida[],
           temTela: demanda.temTela,
           capturas: capturas.map((c) => ({ id: c.id, tela: c.tela as 'desktop' | 'celular' })),
+          artefato: demanda.artefatoUrl,
         },
         e.evento,
       )
@@ -638,8 +646,9 @@ async function decisaoDoPaulo(
   if (r.resultado === 'conflito') throw new Error('idExterno novo em conflito.')
 }
 
+// A versão 0 é o artefato do Claude no "planejar comigo"; a transição só a aceita com o artefato.
 function exigirVersao(versao: number): void {
-  if (!Number.isInteger(versao) || versao < 1) throw new ErroDeDominio('Versão inválida.')
+  if (!Number.isInteger(versao) || versao < 0) throw new ErroDeDominio('Versão inválida.')
 }
 
 export async function aprovarDesenho(
@@ -649,7 +658,10 @@ export async function aprovarDesenho(
 ): Promise<void> {
   exigirPermissao(sujeito, 'projetos.gerenciar')
   exigirVersao(versao)
-  await decisaoDoPaulo(sujeito, demandaId, { tipo: 'desenho_aprovado', dados: { versao } })
+  await decisaoDoPaulo(sujeito, demandaId, {
+    tipo: 'desenho_aprovado',
+    dados: versao === 0 ? { versao, peloArtefato: true } : { versao },
+  })
 }
 
 export async function pedirAjuste(
@@ -681,6 +693,11 @@ export async function decidirDestino(
 
 export async function retomarDemanda(sujeito: Sujeito, demandaId: string): Promise<void> {
   await decisaoDoPaulo(sujeito, demandaId, { tipo: 'retomada', dados: {} })
+}
+
+/** O Paulo desiste da demanda: ela fica encerrada como `descartada` e a Fábrica para nela. */
+export async function encerrarDemanda(sujeito: Sujeito, demandaId: string): Promise<void> {
+  await decisaoDoPaulo(sujeito, demandaId, { tipo: 'encerrada_pelo_paulo', dados: {} })
 }
 
 export async function concluirEtapaPeloPaulo(

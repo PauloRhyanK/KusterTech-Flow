@@ -6,6 +6,7 @@ import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { obterPaginaDaDemanda } from '@/modules/demandas/queries'
 import { CanvasDoDesenho } from '../_componentes/canvas-do-desenho'
+import { EncerrarDemanda } from '../_componentes/encerrar-demanda'
 import { EntregaLadoALado } from '../_componentes/entrega-lado-a-lado'
 import { FaixaDaEspera } from '../_componentes/faixa-da-espera'
 import { HistoricoDaDemanda } from '../_componentes/historico-da-demanda'
@@ -66,6 +67,15 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
 
       <TrilhoGrande pontos={p.trilho} />
 
+      {p.descartada && (
+        <p
+          role="status"
+          className="rounded-padrao border border-border bg-surface-subtle px-4 py-3 text-sm text-text-secondary"
+        >
+          Você encerrou esta demanda. A Fábrica não trabalha mais nela.
+        </p>
+      )}
+
       {p.faixa && (
         <FaixaDaEspera
           demandaId={p.id}
@@ -109,6 +119,8 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
       )}
 
       <HistoricoDaDemanda eventos={p.historico} />
+
+      {p.podeEncerrar && <EncerrarDemanda demandaId={p.id} />}
     </div>
   )
 }

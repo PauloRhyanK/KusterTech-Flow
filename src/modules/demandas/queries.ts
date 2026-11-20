@@ -344,6 +344,7 @@ export async function obterPaginaDaDemanda(
   )
 
   const triagem = d.triagem as unknown as TriagemDaDemanda | null
+  const podeAgir = autorizar(sujeito, 'projetos.gerenciar')
   const chips = entregue
     ? [
         d.projeto.nome,
@@ -404,7 +405,9 @@ export async function obterPaginaDaDemanda(
       quem: quemFez(e.origem),
       quando: e.em,
     })),
-    podeAgir: autorizar(sujeito, 'projetos.gerenciar'),
+    podeAgir,
+    descartada: d.encerrada === 'descartada',
+    podeEncerrar: podeAgir && d.encerrada === null,
   }
 }
 

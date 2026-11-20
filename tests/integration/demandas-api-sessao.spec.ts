@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
@@ -11,9 +11,12 @@ import {
   receberDemandaDaSessao,
   receberPlanoDaSessao,
 } from '@/modules/demandas/recepcao-sessao'
+import { buscarDemandasParaAFabrica } from '@/modules/demandas/recepcao-fabrica'
 import {
   abrirDemanda,
+  aprovarDesenho,
   criarFonteDeDemandas,
+  pedirAjuste,
   listarFontesDeDemandas,
   registrarEvento,
   revogarFonteDeDemandas,
@@ -241,6 +244,26 @@ describe('POST /api/demandas', () => {
     expect(mentiu.status).toBe(413)
   })
 
+  test('em produção sem FLOW_ARQUIVOS_DIR, com anexo → 503 e nenhuma demanda; sem anexo abre normalmente', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    delete process.env.FLOW_ARQUIVOS_DIR
+    try {
+      const r = await receberDemandaDaSessao(
+        entrada(pedido({ anexos: [{ nome: 'tela.png', conteudo: 'image/png', base64: PNG_1KB }] })),
+        AGORA,
+      )
+      expect(r).toEqual({
+        status: 503,
+        corpo: { erro: 'Armazenamento de arquivos não configurado.' },
+      })
+      expect(await db.demanda.count()).toBe(0)
+      const sem = await receberDemandaDaSessao(entrada(pedido({ chave: randomUUID() })), AGORA)
+      expect(sem.status).toBe(201)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('um anexo png de 1 KB vira ArquivoDaDemanda ANEXO', async () => {
     const r = await receberDemandaDaSessao(
       entrada(pedido({ anexos: [{ nome: 'tela.png', conteudo: 'image/png', base64: PNG_1KB }] })),
@@ -328,7 +351,11 @@ describe('POST /api/demandas/<id>/plano', () => {
       entrada(plano({ id: eid, artefato: 'https://claude.ai/public/artifacts/x' })),
     )
     expect(r.status).toBe(201)
-    expect(r.corpo).toEqual({ resultado: 'aplicado', espera: null })
+    // com o artefato, o desenho é ele: a demanda espera o Paulo aprovar (C1)
+    expect(r.corpo).toEqual({
+      resultado: 'aplicado',
+      espera: { tipo: 'aprovar_desenho', motivo: null },
+    })
     const d = await db.demanda.findUniqueOrThrow({ where: { id } })
     expect(d.planoCaminho).toBe('.fabrica/planos/exemplo.json')
     expect(d.artefatoUrl).toBe('https://claude.ai/public/artifacts/x')
@@ -376,5 +403,96 @@ describe('POST /api/demandas/<id>/plano', () => {
     expect(r.corpo).toEqual({ erro: 'Corpo inválido.' })
     expect((await receberPlanoDaSessao(auth(), randomUUID(), entrada(plano()))).status).toBe(404)
     expect((await receberPlanoDaSessao(null, id, entrada(plano(), null))).status).toBe(401)
+  })
+})
+
+describe('planejar comigo com o artefato do Claude (ponta a ponta)', () => {
+  const ARTEFATO = 'https://claude.ai/public/artifacts/exemplo'
+  const comArtefato = () => ({ plano: '.fabrica/planos/exemplo.json', artefato: ARTEFATO })
+
+  async function retratoDaFabrica(id: string) {
+    const fabrica = await criarFonteDaFabrica(admin, `Fábrica ${randomUUID().slice(0, 8)}`)
+    const r = await buscarDemandasParaAFabrica(`Bearer ${fabrica.token}`, null, new Date())
+    expect(r.status).toBe(200)
+    const corpo = r.corpo as { demandas: Record<string, unknown>[] }
+    return corpo.demandas.find((d) => d.id === id) as {
+      etapaAtual: { marco: string | null }
+      espera: { tipo: string; motivo: string | null } | null
+      desenho: { versao: number; aprovada: number | null }
+      plano: { artefato: string | null } | null
+      eventos: { tipo: string; dados: unknown }[]
+    }
+  }
+
+  async function noArtefato() {
+    const id = await demandaDoPaulo('planejar_comigo')
+    const r = await receberPlanoDaSessao(auth(), id, entrada(comArtefato()))
+    expect(r.status).toBe(201)
+    const sessao = await consultarDemandaDaSessao(auth(), id)
+    expect(sessao.corpo).toMatchObject({
+      etapa: { chave: 'desenho' },
+      espera: { tipo: 'aprovar_desenho' },
+      desenho: null,
+      artefato: ARTEFATO,
+    })
+    return id
+  }
+
+  test('artefato → o Paulo aprova a versão 0 → desenvolvimento, com o evento marcado pelo artefato', async () => {
+    const id = await noArtefato()
+    await aprovarDesenho(admin, id, 0)
+
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d).toMatchObject({ etapaAtual: 'desenvolvida', espera: null, desenhoAprovado: 0 })
+    const ev = await db.eventoDaDemanda.findFirstOrThrow({
+      where: { demandaId: id, tipo: 'desenho_aprovado' },
+    })
+    expect(ev.dados).toEqual({ versao: 0, peloArtefato: true })
+
+    const retrato = await retratoDaFabrica(id)
+    expect(retrato.etapaAtual.marco).toBe('desenvolvida')
+    expect(retrato.espera).toBeNull()
+    expect(retrato.plano?.artefato).toBe(ARTEFATO)
+    expect(retrato.eventos.map((e) => e.tipo)).toContain('desenho_aprovado')
+  })
+
+  test('artefato → o Paulo pede ajuste → a demanda espera a sessão de novo; a nova entrega volta a esperar a aprovação', async () => {
+    const id = await noArtefato()
+    await pedirAjuste(admin, id, 0, 'o botão salvar fica embaixo')
+
+    const sessao = await consultarDemandaDaSessao(auth(), id)
+    expect(sessao.corpo).toMatchObject({
+      etapa: { chave: 'desenho' },
+      espera: {
+        tipo: 'planejar_comigo',
+        motivo: 'ajuste pedido no artefato: o botão salvar fica embaixo',
+      },
+    })
+    const retrato = await retratoDaFabrica(id)
+    expect(retrato.etapaAtual.marco).toBe('desenho')
+    expect(retrato.espera?.tipo).toBe('planejar_comigo')
+
+    const de_novo = await receberPlanoDaSessao(
+      auth(),
+      id,
+      entrada({ ...comArtefato(), artefato: `${ARTEFATO}-v2` }),
+    )
+    expect(de_novo.corpo).toEqual({
+      resultado: 'aplicado',
+      espera: { tipo: 'aprovar_desenho', motivo: null },
+    })
+    await aprovarDesenho(admin, id, 0)
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d).toMatchObject({ etapaAtual: 'desenvolvida', artefatoUrl: `${ARTEFATO}-v2` })
+  })
+
+  test('sem artefato a versão 0 não se aprova', async () => {
+    const id = await demandaDoPaulo('planejar_comigo')
+    await receberPlanoDaSessao(auth(), id, entrada({ plano: '.fabrica/planos/exemplo.json' }))
+    await expect(aprovarDesenho(admin, id, 0)).rejects.toThrow(
+      'Há uma versão mais nova do desenho.',
+    )
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d).toMatchObject({ etapaAtual: 'desenho', espera: null })
   })
 })

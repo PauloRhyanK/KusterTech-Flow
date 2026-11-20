@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { prepararPastaDosArquivos } from './arquivos'
 import { prepararPastaDaOficina } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { garantirBancoDeTeste } from '../../tests/support/banco-de-teste-compartilhado'
@@ -26,6 +27,7 @@ export default async function globalSetup(): Promise<void> {
 
   // A oficina começa vazia: sem leitura, nenhum aviso chega ao Início.
   prepararPastaDaOficina('vazia')
+  prepararPastaDosArquivos()
 
   await garantirBancoDeTeste(urlTeste)
 

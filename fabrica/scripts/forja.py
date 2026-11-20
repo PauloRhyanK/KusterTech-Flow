@@ -60,6 +60,11 @@ def _analisar_repo(repo) -> tuple[str, str]:
     return _componente(dono), _componente(nome)
 
 
+def _base_do_pr(base) -> str | None:
+    ref = base.get("ref") if isinstance(base, dict) else None
+    return ref if isinstance(ref, str) and ref else None
+
+
 def _analisar_url(url, tipo) -> tuple[str, str, int]:
     """`(dono, nome, número)` de uma URL estrita de PR (`pull`) ou issue (`issues`); `tipo` pode ser uma tupla."""
     tipos = tipo if isinstance(tipo, tuple) else (tipo,)
@@ -223,6 +228,8 @@ class ForjaGitHub:
             "numero": numero,
             "arquivos": arquivos,
             "mergeado": dados.get("merged") is True,
+            # o branch em que o PR entra (o merge commit fica nele); ausente ou torto: None
+            "base": _base_do_pr(dados.get("base")),
         }
 
     # CI
@@ -512,7 +519,7 @@ class ForjaFalsa:
     # Auxiliares de teste
 
     def definir_pr(
-        self, url: str, *, head_sha: str, branch: str, arquivos=(), aberto: bool = True, mergeado: bool = False
+        self, url: str, *, head_sha: str, branch: str, arquivos=(), aberto: bool = True, mergeado: bool = False, base: str = "main"
     ) -> None:
         dono, nome, numero = _analisar_url(url, "pull")
         _validar_sha_completo(head_sha)
@@ -524,6 +531,7 @@ class ForjaFalsa:
             "numero": numero,
             "arquivos": list(arquivos),
             "mergeado": bool(mergeado),
+            "base": base,
         }
 
     def definir_ci(self, repo: str, sha: str, resultado: str) -> None:

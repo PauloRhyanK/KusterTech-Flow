@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import { ArmazenamentoNaoConfigurado } from '@/modules/demandas/arquivos'
 import { MODELO_PADRAO, type EtapaDefinida } from '@/modules/demandas/model'
 import {
   aprovarDesenho,
@@ -238,6 +239,28 @@ describe('demandas / service (integração)', () => {
         anexos: [],
       }),
     ).rejects.toThrow(new ErroDeDominio('O repositório não é deste projeto.'))
+  })
+
+  test('criarDemanda com anexo em produção sem FLOW_ARQUIVOS_DIR → ArmazenamentoNaoConfigurado antes de abrir a demanda', async () => {
+    const { projeto, repositorio } = await cenario()
+    vi.stubEnv('NODE_ENV', 'production')
+    delete process.env.FLOW_ARQUIVOS_DIR
+    try {
+      await expect(
+        criarDemanda(admin, {
+          projetoId: projeto.id,
+          repositorioId: repositorio.id,
+          titulo: 'Com anexo',
+          descricao: null,
+          nivel: 'vai_sozinho',
+          temTela: true,
+          anexos: [new File([new Uint8Array(10)], 'tela.png', { type: 'image/png' })],
+        }),
+      ).rejects.toBeInstanceOf(ArmazenamentoNaoConfigurado)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(await db.demanda.count()).toBe(0)
   })
 
   test('criarDemanda com dois anexos grava dois ArquivoDaDemanda ANEXO e os bytes no volume', async () => {

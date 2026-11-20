@@ -8,6 +8,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { exigirModulo } from '@/lib/modulos-rota'
+import { ArmazenamentoNaoConfigurado } from '@/modules/demandas/arquivos'
 import { NIVEIS } from '@/modules/demandas/contrato'
 import { criarDemanda } from '@/modules/demandas/service'
 import { resumirErroParaLog } from '@/modules/github/model'
@@ -74,6 +75,7 @@ export async function criarDemandaAction(
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) return { erro: MENSAGEM_SEM_PERMISSAO }
     if (erro instanceof ErroDeDominio) return { erro: erro.message }
+    if (erro instanceof ArmazenamentoNaoConfigurado) return { erro: erro.message }
     log.error({ erro: resumirErroParaLog(erro) }, 'Erro inesperado ao criar a demanda.')
     return { erro: MENSAGEM_GENERICA }
   }

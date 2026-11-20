@@ -480,6 +480,22 @@ describe('POST /api/fabrica/demandas/<id>/eventos', () => {
 })
 
 describe('POST /api/fabrica/demandas/<id>/arquivos', () => {
+  test('em produção sem FLOW_ARQUIVOS_DIR → 503 "Armazenamento de arquivos não configurado." e nada gravado', async () => {
+    const id = await novaDemanda('Arquivos sem volume')
+    vi.stubEnv('NODE_ENV', 'production')
+    delete process.env.FLOW_ARQUIVOS_DIR
+    try {
+      const r = await pedirArquivo(id, queryDesenho())
+      expect(r).toEqual({
+        status: 503,
+        corpo: { erro: 'Armazenamento de arquivos não configurado.' },
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(await db.arquivoDaDemanda.count({ where: { demandaId: id } })).toBe(0)
+  })
+
   test('desenho text/html de 2 KB → 201; repetido → 200; captura sem tela → 422; sem Content-Length → 411; image/gif → 415', async () => {
     const id = await novaDemanda('Arquivos')
     const arquivoId = randomUUID()

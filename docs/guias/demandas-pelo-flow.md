@@ -95,7 +95,7 @@ A **triagem** (um agente da Fábrica que lê a demanda, o contexto do projeto e 
 
 ## Níveis
 
-O nível diz quanto o Paulo quer acompanhar. O padrão é do projeto; a sessão pode pedir outro em `nivel`, e o Paulo pode mudar depois.
+O nível diz quanto o Paulo quer acompanhar. O padrão é do projeto, e a sessão pode pedir outro em `nivel` ao abrir. Depois de aberta, o nível de uma demanda só muda sozinho: três ajustes recusados no desenho a levam a "planejar comigo".
 
 | Nível | No fio | Espera o Paulo em |
 | --- | --- | --- |
@@ -137,7 +137,7 @@ Authorization: Bearer <FLOW_DEMANDAS_TOKEN>
 | `desenho` | `null` ou `{ versao, aprovada, url }`; `url` é a tela cheia do desenho no Flow (exige login) |
 | `artefato` | o link do artefato do Claude entregue com o plano, ou `null` |
 | `plano` | `null` ou `{ caminho, prUrl }` do plano no repositório |
-| `encerrada` | `null`, `"entregue"` ou `"orientada"` |
+| `encerrada` | `null`, `"entregue"`, `"orientada"` ou `"descartada"` (o Paulo encerrou a demanda antes do fim, em "Encerrar demanda" na página dela; a Fábrica para de trabalhar nela e nada mais é entregue) |
 | `publicacao` | `null` ou `{ estado, commit }` do último pedido de publicação ligado à demanda (estados do guia de publicação) |
 
 O que cada `espera.tipo` quer dizer (em todos, quem age é o Paulo, não a sessão, exceto onde dito):
@@ -145,13 +145,13 @@ O que cada `espera.tipo` quer dizer (em todos, quem age é o Paulo, não a sess�
 | `espera.tipo` | Significado |
 | --- | --- |
 | `decidir_destino` | o Paulo precisa escolher o destino; `motivo` diz por quê |
-| `planejar_comigo` | a demanda espera uma sessão de planejamento com o Paulo; ele vai abrir uma sessão e passar o `id` (veja a seção seguinte) |
-| `aprovar_desenho` | o desenho está pronto e espera a aprovação ou um pedido de ajuste |
+| `planejar_comigo` | a demanda espera uma sessão de planejamento com o Paulo; ele vai abrir uma sessão e passar o `id` (veja a seção seguinte). Na etapa `desenho`, com `motivo` "ajuste pedido no artefato: …", o Paulo pediu um ajuste no artefato do Claude: refaça o artefato com ele e entregue o plano de novo |
+| `aprovar_desenho` | o desenho está pronto e espera a aprovação ou um pedido de ajuste; com `desenho` `null`, o desenho é o `artefato` do Claude entregue com o plano |
 | `concluir_etapa` | uma etapa do modelo do projeto que só o Paulo conclui |
 | `travada` | a Fábrica travou (`motivo` explica); o caminho de destravar é dela e do Paulo |
 | `teste_falhou` | o teste no navegador falhou duas vezes; o Paulo decide |
 
-**Consulte no máximo uma vez por minuto**, e só enquanto a sessão precisar do resultado. Uma demanda leva de horas a dias; não fique num laço esperando. Pare de consultar quando `encerrada` não for `null`. Para mostrar ao Paulo, o link é `FLOW_URL` + `url`.
+**Consulte no máximo uma vez por minuto**, e só enquanto a sessão precisar do resultado. Uma demanda leva de horas a dias; não fique num laço esperando. Pare de consultar quando `encerrada` não for `null`, qualquer que seja o valor: uma demanda `descartada` não volta a andar, e a sessão não reabre nem entrega plano para ela (o `POST` do plano responde `409` "A demanda já foi encerrada."). Se o pedido ainda fizer sentido, fale com o Paulo antes de abrir outra demanda, com uma `chave` nova. Para mostrar ao Paulo, o link é `FLOW_URL` + `url`.
 
 O `GET` responde `404` (`"Demanda não encontrada."`) para id desconhecido e `401` para token inválido.
 
@@ -196,7 +196,11 @@ Respostas:
 | `401` / `404` | `{ erro }` | token inválido / demanda não encontrada |
 | `413` / `415` / `422` | `{ erro }` | corpo maior que 16 KB / não é JSON / campos inválidos |
 
-O que muda depois: na etapa **Planejada**, o plano a conclui e a demanda segue para o desenho (ou para o desenvolvimento, sem tela). Se a demanda voltou a "planejar comigo" **no desenho** (três ajustes recusados), o plano entregue a coloca de volta em `aprovar_desenho`, e o Flow mostra o link do artefato ao lado do desenho para o Paulo aprovar.
+O que muda depois: na etapa **Planejada**, o plano a conclui e a demanda segue para o desenho (ou para o desenvolvimento, sem tela).
+
+- **Com `artefato`** (só em "planejar comigo", numa demanda com tela): o desenho é o artefato. A demanda entra no desenho esperando `aprovar_desenho`, sem versão da Fábrica (`desenho` fica `null`), e o Flow mostra o link do artefato para o Paulo. Se ele aprova, a demanda vai ao desenvolvimento sem o desenho da Fábrica. Se ele pede ajuste, a demanda volta a esperar `planejar_comigo` na etapa `desenho`, com o texto do ajuste no `motivo`: refaça o artefato com o Paulo e entregue o plano de novo (com o link novo), e ela volta a `aprovar_desenho`.
+- **Sem `artefato`**: a Fábrica desenha, e o Paulo aprova o desenho dela.
+- Se a demanda voltou a "planejar comigo" **no desenho** (três ajustes recusados), o plano entregue a coloca de volta em `aprovar_desenho`, e o Flow mostra o link do artefato ao lado do desenho para o Paulo aprovar.
 
 Só entregue plano quando o Paulo pedir, para a demanda que ele indicou.
 
@@ -222,7 +226,7 @@ Por isso, **a sessão não pede de novo pela fila a publicação de uma demanda*
 
 1. Uma vez: o Paulo cria o token em **Configurações → Demandas**; ponha `FLOW_URL` e `FLOW_DEMANDAS_TOKEN` no ambiente, nunca no repositório.
 2. Abrir: `POST /api/demandas` com `repositorio`, `titulo`, `temTela`, uma `chave` nova (UUID) e, se quiser, `descricao`, `tipo`, `nivel` e até 3 anexos de 10 MB. Guarde a `chave` até ter o `id`; em timeout, repita o mesmo corpo com a mesma `chave`. Nunca reuse uma `chave` num pedido diferente.
-3. Acompanhar: `GET /api/demandas/<id>` no máximo uma vez por minuto. `espera` diz o que o Paulo precisa fazer; `encerrada` diz que acabou.
+3. Acompanhar: `GET /api/demandas/<id>` no máximo uma vez por minuto. `espera` diz o que o Paulo precisa fazer; `encerrada` diz que acabou (`descartada`: o Paulo encerrou antes do fim; não reabra).
 4. Planejar comigo: só quando o Paulo passar o id. Planeje com as skills `fabrica-*`, faça o merge do plano com `"demanda": "<id>"` e entregue com `POST /api/demandas/<id>/plano` (com o `artefato` do Claude, se houver).
 5. Publicação: a Fábrica pede ao entregar; não peça de novo. Para o resto, siga `docs/guias/publicar-pela-fila.md`.
 6. Nunca: segredo na demanda, demanda para o próprio Flow, mão em `.fabrica/demandas/`.

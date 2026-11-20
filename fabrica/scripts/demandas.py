@@ -50,7 +50,8 @@ de celular, cada captura e depois o evento `teste` vão à caixa de saída e o P
 (ou com o `teste.json` torto), o run é refeito uma vez no mesmo branch e, na segunda, a demanda fica `travada`; o
 `nao_subiu` do qa (o projeto não sobe num run) trava com o motivo. Quem decide a correção é o Flow: na primeira falha
 volta a etapa para `desenvolvida` e o kit despacha a correção (`frontend`, `modelos.frontend`, a partir do branch
-padrão), mergeada atrás das guardas com CI `verde`/`ausente` e seguida de `etapa_concluida` (`desenvolvida`); na segunda
+padrão), mergeada atrás das guardas só com CI `verde` e seguida de `etapa_concluida` (`desenvolvida`); sem CI nenhum
+a demanda trava para o Paulo revisar e mergear o PR (o merge dele segue sem retomada); na segunda
 falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Nunca há
 dois runs da demanda ao mesmo tempo: o run que passou do teto (ou foi superado) segura a vaga até terminar.
 """
@@ -112,6 +113,10 @@ ACOES = (
     "aguardar_envio",
     "ressincronizar",
 )
+# como uma demanda termina no Flow: entregue, orientada na triagem ou descartada pelo Paulo ("Encerrar demanda").
+# Qualquer `encerrada` não nula (estes ou um valor que o kit não conhece) para a demanda: `proxima_acao` dá
+# `encerrar`, os runs em curso viram superados e seguram a vaga até terminar, e o item sai do estado.
+ENCERRAMENTOS = ("entregue", "orientada", "descartada")
 # esperas em que só o Paulo mexe: a Fábrica não faz nada até a espera sair
 ESPERAS_DO_PAULO = ("decidir_destino", "aprovar_desenho", "concluir_etapa", "travada", "teste_falhou")
 FASES_COM_VAGA = ("desenhando", "testando", "corrigindo")
@@ -831,6 +836,7 @@ MOTIVO_LINK_DA_CORRECAO = "o run da correção devolveu um link de PR inválido"
 MOTIVO_PR_DA_CORRECAO_FECHADO = "o PR da correção foi fechado sem merge"
 MOTIVO_CORRECAO_OUTRO_REPO = "o PR da correção está em outro repositório"
 MOTIVO_CORRECAO_JA_MERGEADA = "o PR da correção já estava mergeado antes de o kit conferir"
+MOTIVO_CORRECAO_SEM_CI = "PR de correção sem CI: revise e faça o merge"
 # capturas enviadas por run de teste: o teste e o reteste da primeira falha (80 MB) deixam a demanda abaixo dos
 # 100 MB do Flow, com espaço para o desenho
 LIMITE_CAPTURAS_POR_TESTE = 40 * 1024 * 1024
@@ -1077,6 +1083,7 @@ class _Passo:
                 self.largar_correcao_superada(id_, it, demanda)
                 self.seguir_desenho_superado(id_, it)
                 self.seguir_teste(id_, it, demanda)
+                self.seguir_correcao_sem_ci(id_, it, demanda)
                 self.adotar_plano_da_sessao(id_, it, demanda)
                 self.seguir_desenvolvimento(id_, it, demanda)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
@@ -2429,8 +2436,9 @@ class _Passo:
 
     def conferir_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         """As guardas do merge do PR da correção, no mesmo head: o repositório da demanda, nada em
-        `despachante.PROTEGIDOS_FIXOS` nem nos `protegidos` da `.fabrica/config.json` do branch padrão, e CI `verde` ou
-        `ausente`. CI vermelho (ou pendente acima de 2 h) trava com a URL. Já mergeado só vale no head conferido."""
+        `despachante.PROTEGIDOS_FIXOS` nem nos `protegidos` da `.fabrica/config.json` do branch padrão, e CI `verde`.
+        CI vermelho (ou pendente acima de 2 h) trava com a URL; sem CI nenhum trava para o Paulo revisar e mergear.
+        Já mergeado só vale como em `merge_da_correcao_vale`."""
         c = it["correcao"]
         url = c["prUrl"]
         repo = it.get("repo") or demanda["repositorio"]
@@ -2444,8 +2452,7 @@ class _Passo:
             return
         head = pr.get("headSha")
         if pr.get("mergeado") is True:
-            # só vale o merge do head que o kit já conferiu aberto (o ciclo caiu antes de gravar o merge)
-            if isinstance(head, str) and head and c.get("headSha") == head:
+            if self.merge_da_correcao_vale(repo, c, pr):
                 self.correcao_mergeada(id_, it, demanda)
             else:
                 self.travar_correcao(id_, it, MOTIVO_CORRECAO_JA_MERGEADA, url)
@@ -2479,13 +2486,50 @@ class _Passo:
             elif (self.agora - desde).total_seconds() > CI_PENDENTE_MAXIMO_S:
                 self.travar_correcao(id_, it, MOTIVO_CI_DA_CORRECAO_PENDENTE, url)
             return
-        if ci not in ("verde", "ausente"):
+        if ci == "ausente":
+            # código de produto sem CI nenhum não entra sozinho: o Paulo revisa e mergeia (`seguir_correcao_sem_ci`)
+            c["semCi"] = True
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_SEM_CI, url)
+            return
+        if ci != "verde":
             self.travar_correcao(id_, it, MOTIVO_CI_DA_CORRECAO, url)
             return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.correcao_mergeada(id_, it, demanda)
         else:
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def merge_da_correcao_vale(self, repo: str, c: dict, pr: dict) -> bool:
+        """O PR da correção (o `prUrl` que o run devolveu) mergeado conta só se o kit já o viu aberto (`headSha`
+        gravado): no head conferido (o ciclo caiu antes de gravar o merge) ou, com outro head (o Paulo pôs um commit
+        a mais antes de mergear), com o PR entrando no branch padrão."""
+        head, visto = pr.get("headSha"), c.get("headSha")
+        if not isinstance(visto, str) or not visto:
+            return False
+        if isinstance(head, str) and head == visto:
+            return True
+        base = pr.get("base")
+        return isinstance(base, str) and bool(base) and base == self.forja.branch_padrao(repo)
+
+    def seguir_correcao_sem_ci(self, id_: str, it: dict, demanda: dict) -> None:
+        """A correção travou por não ter CI: quando o Paulo mergeia o PR, a demanda segue sem precisar da retomada
+        (`destravada` e, na etapa `desenvolvida`, a conclusão). Roda antes de `proxima_acao`, que com a trava dá
+        `nada`. PR ainda aberto (ou fechado sem merge): nada; a retomada do Paulo confere de novo."""
+        c = it.get("correcao") if isinstance(it.get("correcao"), dict) else {}
+        if not (it.get("fase") == "corrigindo" and it.get("travaDaCorrecao") and c.get("semCi") and not c.get("mergeado")):
+            return
+        if demanda.get("encerrada") or (demanda.get("espera") or {}).get("tipo") != "travada" or not isinstance(c.get("prUrl"), str):
+            return
+        repo = it.get("repo") or demanda["repositorio"]
+        pr = despachante._dict(self.forja.pr(c["prUrl"]))
+        if pr.get("mergeado") is not True or str(pr.get("repo")).lower() != str(repo).lower():
+            return
+        if not self.merge_da_correcao_vale(repo, c, pr):
+            return
+        enfileirar_evento(self.estado, id_, "destravada", {}, agora=self.agora_texto)
+        c.pop("semCi", None)
+        it.update(travaDaCorrecao=False, inicio=self.agora_texto)
+        self.correcao_mergeada(id_, it, demanda)
 
     def correcao_mergeada(self, id_: str, it: dict, demanda: dict) -> None:
         """A correção no branch padrão: na etapa `desenvolvida` (primeira falha) vai `etapa_concluida` e o Flow volta a

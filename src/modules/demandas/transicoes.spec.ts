@@ -153,9 +153,119 @@ describe('plano', () => {
     )
     expect(e.espera).toBe('aprovar_desenho')
     expect(e.etapaAtual).toBe('desenho')
-    expect(ok(ap(e, { tipo: 'desenho_aprovado', dados: { versao: 0 } }, 'paulo')).etapaAtual).toBe(
-      'desenvolvida',
-    )
+    expect(
+      ok(
+        ap(
+          e,
+          { tipo: 'desenho_aprovado', dados: { versao: 0, peloArtefato: true } },
+          'paulo',
+          ctx({ artefato: 'https://claude.ai/x' }),
+        ),
+      ).etapaAtual,
+    ).toBe('desenvolvida')
+  })
+
+  describe('planejar comigo com o artefato do Claude', () => {
+    const ARTEFATO = 'https://claude.ai/a/1'
+    const comArtefato = {
+      tipo: 'plano_entregue',
+      dados: { plano: '.fabrica/planos/a.json', resumo: null, artefato: ARTEFATO },
+    } as EventoAplicavel
+    const noArtefato = () => ok(ap(naPlanejada('planejar_comigo'), comArtefato, 'sessao'))
+    const c = ctx({ artefato: ARTEFATO })
+
+    test('o plano com artefato entra no desenho esperando a aprovação, na versão 0', () => {
+      const e = noArtefato()
+      expect(e.etapaAtual).toBe('desenho')
+      expect(e.espera).toBe('aprovar_desenho')
+      expect(e.versaoDoDesenho).toBe(0)
+    })
+
+    test('sem artefato o desenho é da Fábrica: entra sem espera', () => {
+      const e = ok(ap(naPlanejada('planejar_comigo'), entregue as EventoAplicavel, 'sessao'))
+      expect(e.etapaAtual).toBe('desenho')
+      expect(e.espera).toBeNull()
+    })
+
+    test('sem tela não há desenho: o plano com artefato vai ao desenvolvimento', () => {
+      const base = { ...naPlanejada('planejar_comigo') }
+      const e = ok(ap(base, comArtefato, 'sessao', ctx({ temTela: false })))
+      expect(e.etapaAtual).toBe('desenvolvida')
+      expect(e.espera).toBeNull()
+    })
+
+    test('aprovar o artefato (versão 0) conclui o desenho e vai ao desenvolvimento', () => {
+      const e = ok(
+        ap(
+          noArtefato(),
+          { tipo: 'desenho_aprovado', dados: { versao: 0, peloArtefato: true } },
+          'paulo',
+          c,
+        ),
+      )
+      expect(e.etapaAtual).toBe('desenvolvida')
+      expect(e.concluidas).toContain('desenho')
+      expect(e.desenhoAprovado).toBe(0)
+      expect(e.espera).toBeNull()
+    })
+
+    test('a versão 0 só se aprova com o artefato', () => {
+      const semArtefato = est(
+        { etapaAtual: 'desenho', espera: 'aprovar_desenho', versaoDoDesenho: 0 },
+        'planejar_comigo',
+      )
+      expect(
+        recusa(ap(semArtefato, { tipo: 'desenho_aprovado', dados: { versao: 0 } }, 'paulo')),
+      ).toBe('O desenho ainda não tem versão para aprovar.')
+      expect(
+        recusa(
+          ap(semArtefato, { tipo: 'ajuste_pedido', dados: { versao: 0, texto: 'x' } }, 'paulo'),
+        ),
+      ).toBe('O desenho ainda não tem versão para aprovar.')
+    })
+
+    test('pedir ajuste no artefato volta a esperar a sessão, com o texto no motivo', () => {
+      const e = ok(
+        ap(
+          noArtefato(),
+          { tipo: 'ajuste_pedido', dados: { versao: 0, texto: 'botão embaixo' } },
+          'paulo',
+          c,
+        ),
+      )
+      expect(e.etapaAtual).toBe('desenho')
+      expect(e.espera).toBe('planejar_comigo')
+      expect(e.esperaMotivo).toBe('ajuste pedido no artefato: botão embaixo')
+      // a sessão entrega de novo: volta a esperar a aprovação
+      const f = ok(ap(e, comArtefato, 'sessao', c))
+      expect(f.espera).toBe('aprovar_desenho')
+      expect(f.etapaAtual).toBe('desenho')
+    })
+  })
+})
+
+describe('encerrar demanda (descartada pelo Paulo)', () => {
+  const encerrar = { tipo: 'encerrada_pelo_paulo', dados: {} } as EventoAplicavel
+
+  test('em qualquer etapa aberta, o Paulo encerra como descartada e limpa a espera', () => {
+    for (const base of [
+      est(),
+      est({ etapaAtual: 'desenho', espera: 'aprovar_desenho', versaoDoDesenho: 2 }),
+      est({ etapaAtual: 'desenvolvida', espera: 'travada', esperaMotivo: 'CI' }),
+    ]) {
+      const e = ok(ap(base, encerrar, 'paulo'))
+      expect(e.encerrada).toBe('descartada')
+      expect(e.espera).toBeNull()
+      expect(e.esperaMotivo).toBeNull()
+      expect(e.etapaAtual).toBe(base.etapaAtual)
+    }
+  })
+
+  test('só o Paulo encerra; encerrada não encerra de novo', () => {
+    expect(recusa(ap(est(), encerrar, 'fabrica'))).toBe('Este evento não pode vir deste ator.')
+    expect(recusa(ap(est(), encerrar, 'sessao'))).toBe('Este evento não pode vir deste ator.')
+    const e = ok(ap(est(), encerrar, 'paulo'))
+    expect(recusa(ap(e, encerrar, 'paulo'))).toBe('A demanda já foi encerrada.')
   })
 })
 

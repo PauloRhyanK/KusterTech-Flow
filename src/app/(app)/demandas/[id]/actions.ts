@@ -12,6 +12,7 @@ import {
   aprovarDesenho,
   concluirEtapaPeloPaulo,
   decidirDestino,
+  encerrarDemanda,
   pedirAjuste,
   retomarDemanda,
 } from '@/modules/demandas/service'
@@ -27,8 +28,9 @@ const MENSAGEM_GENERICA =
   'Não foi possível completar a operação agora. Tente novamente em instantes.'
 
 const demandaId = z.uuid({ error: 'Demanda inválida.' })
-// A versão que a pessoa viu: o service recusa se chegou uma mais nova (A16).
-const versao = z.coerce.number({ error: 'Versão inválida.' }).int().min(1, 'Versão inválida.')
+// A versão que a pessoa viu: o service recusa se chegou uma mais nova (A16). A 0 é o artefato do
+// Claude no "planejar comigo"; o service decide se ela vale.
+const versao = z.coerce.number({ error: 'Versão inválida.' }).int().min(0, 'Versão inválida.')
 
 function traduzirErro(erro: unknown, contexto: string): EstadoDaDecisao {
   if (erro instanceof ErroDeAutorizacao) return { erro: MENSAGEM_SEM_PERMISSAO }
@@ -124,5 +126,14 @@ export async function concluirEtapaAction(
   const chave = z.string().min(1, 'Etapa inválida.').max(60, 'Etapa inválida.')
   return decidir(form, { demandaId, chave }, 'concluir a etapa', 'Etapa concluída.', (s, d) =>
     concluirEtapaPeloPaulo(s, d.demandaId, d.chave),
+  )
+}
+
+export async function encerrarDemandaAction(
+  _estado: EstadoDaDecisao,
+  form: FormData,
+): Promise<EstadoDaDecisao> {
+  return decidir(form, { demandaId }, 'encerrar a demanda', 'Demanda encerrada.', (s, d) =>
+    encerrarDemanda(s, d.demandaId),
   )
 }

@@ -5,6 +5,7 @@ import {
   etapasAplicaveis,
   type Destino,
   type EtapaDefinida,
+  type Encerramento,
   type Espera,
   type Marco,
   type Nivel,
@@ -25,7 +26,7 @@ export interface DemandaNaLista {
   etapaAtual: string
   concluidas: readonly string[]
   espera: Espera | null
-  encerrada: 'entregue' | 'orientada' | null
+  encerrada: Encerramento | null
   destino: Destino | null
   criadaEm: Date
   esperaDesde: Date | null
@@ -129,6 +130,7 @@ export function rotuloDoEstado(d: DemandaNaLista): { texto: string; tom: TomDaDe
     return { texto, tom: travou(d.espera) ? 'erro' : 'atencao' }
   }
   if (d.encerrada === 'orientada') return { texto: 'Orientada', tom: 'neutro' }
+  if (d.encerrada === 'descartada') return { texto: 'Encerrada', tom: 'neutro' }
   const marco = etapa?.marco ?? null
   if (marco === 'recebida') return { texto: TEXTO_DO_MARCO.recebida, tom: 'neutro' }
   if (marco === null) return { texto: `Em ${rotulo}`, tom: 'execucao' }
@@ -404,6 +406,14 @@ export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | 
     case null:
       return null
     case 'aprovar_desenho': {
+      if (d.versaoDoDesenho === 0) {
+        // "Planejar comigo" com o artefato do Claude: não há versão da Fábrica.
+        return {
+          titulo: 'O artefato do Claude está pronto para você aprovar',
+          contexto: 'O desenho é o artefato da sessão: abra o link abaixo',
+          acoes: ['aprovar', 'ajuste'],
+        }
+      }
       const versao = `versão ${d.versaoDoDesenho}`
       const a = d.ultimoAjuste
       return {
@@ -523,6 +533,7 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   retomada: 'Retomada',
   teste: 'Teste no navegador',
   entregue: 'Entregue',
+  encerrada_pelo_paulo: 'Demanda encerrada',
 }
 
 const QUEM_FEZ: Record<string, string> = {
@@ -538,7 +549,8 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
   if (tipo === 'teste')
     return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'
   if ((tipo === 'desenho_aprovado' || tipo === 'ajuste_pedido') && typeof d.versao === 'number') {
-    return `${TEXTO_DO_EVENTO[tipo]} (versão ${d.versao})`
+    const qual = d.versao === 0 ? 'artefato do Claude' : `versão ${d.versao}`
+    return `${TEXTO_DO_EVENTO[tipo]} (${qual})`
   }
   if (
     tipo === 'destino_decidido' &&
@@ -587,4 +599,8 @@ export interface PaginaDaDemanda {
   temTela: boolean
   historico: EventoNoHistorico[]
   podeAgir: boolean
+  /** O Paulo encerrou a demanda antes do fim. */
+  descartada: boolean
+  /** "Encerrar demanda": quem gerencia, com a demanda ainda aberta. */
+  podeEncerrar: boolean
 }

@@ -18,7 +18,7 @@ const { obterSessaoMock } = vi.hoisted(() => ({
 vi.mock('@/lib/auth/sessao', () => ({ obterSessao: obterSessaoMock }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
-import { aprovarDesenhoAction } from '@/app/(app)/demandas/[id]/actions'
+import { aprovarDesenhoAction, encerrarDemandaAction } from '@/app/(app)/demandas/[id]/actions'
 import { GET as getArquivo } from '@/app/(app)/demandas/[id]/arquivos/[arquivoId]/route'
 
 const AGORA = new Date('2026-11-20T15:00:00.000Z')
@@ -370,4 +370,44 @@ test('aprovar pela action com a versão velha mostra "Há uma versão mais nova 
   expect(await aprovarDesenhoAction({}, form)).toEqual({ sucesso: 'Desenho aprovado.' })
   const aprovada = await db.demanda.findUniqueOrThrow({ where: { id: d.id } })
   expect(aprovada.desenhoAprovado).toBe(3)
+})
+
+test('encerrar pela action: sem sessão vai a /entrar; com sessão a demanda fica descartada, com o evento, e a página mostra o encerramento', async () => {
+  const d = await demanda('Tela de funil de vendas')
+  const form = new FormData()
+  form.set('demandaId', d.id)
+
+  obterSessaoMock.mockResolvedValueOnce(null)
+  await expect(encerrarDemandaAction({}, form)).rejects.toThrow()
+  expect((await db.demanda.findUniqueOrThrow({ where: { id: d.id } })).encerrada).toBeNull()
+
+  obterSessaoMock.mockResolvedValueOnce(sessaoDe(semPermissao))
+  expect(await encerrarDemandaAction({}, form)).toEqual({
+    erro: 'Sem permissão para esta ação.',
+  })
+
+  expect(await encerrarDemandaAction({}, form)).toEqual({ sucesso: 'Demanda encerrada.' })
+  const depois = await db.demanda.findUniqueOrThrow({ where: { id: d.id } })
+  expect(depois).toMatchObject({ encerrada: 'descartada', espera: null, esperaMotivo: null })
+  const ev = await db.eventoDaDemanda.findFirstOrThrow({
+    where: { demandaId: d.id, tipo: 'encerrada_pelo_paulo' },
+  })
+  expect(ev).toMatchObject({ origem: 'paulo', usuarioId: admin.usuarioId })
+
+  const p = await obterPaginaDaDemanda(admin, d.id, AGORA)
+  expect(p).toMatchObject({ faixa: null, descartada: true, podeEncerrar: false })
+  expect(p?.historico[0]?.evento).toBe('Demanda encerrada')
+
+  // encerrar de novo é recusado
+  expect(await encerrarDemandaAction({}, form)).toEqual({ erro: 'A demanda já foi encerrada.' })
+})
+
+test('podeEncerrar só para quem gerencia e só com a demanda aberta', async () => {
+  const d = await demanda('Tela de funil de vendas')
+  expect(await obterPaginaDaDemanda(admin, d.id, AGORA)).toMatchObject({
+    descartada: false,
+    podeEncerrar: true,
+  })
+  const entregue = await demanda('Entregue', { encerrada: 'entregue', espera: null })
+  expect((await obterPaginaDaDemanda(admin, entregue.id, AGORA))?.podeEncerrar).toBe(false)
 })

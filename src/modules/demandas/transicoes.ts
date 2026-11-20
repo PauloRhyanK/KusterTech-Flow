@@ -19,7 +19,8 @@ export type EventoAplicavel =
       [K in EventoDoFio['tipo']]: Pick<Extract<EventoDoFio, { tipo: K }>, 'tipo' | 'dados'>
     }[EventoDoFio['tipo']]
   | { tipo: 'destino_decidido'; dados: { destino: Exclude<Destino, 'decisao_do_paulo'> } }
-  | { tipo: 'desenho_aprovado'; dados: { versao: number } }
+  /** `peloArtefato`: a versão 0, aprovada olhando o artefato do Claude (planejar comigo). */
+  | { tipo: 'desenho_aprovado'; dados: { versao: number; peloArtefato?: true } }
   | { tipo: 'ajuste_pedido'; dados: { versao: number; texto: string } }
   | {
       tipo: 'plano_entregue'
@@ -27,11 +28,14 @@ export type EventoAplicavel =
     }
   | { tipo: 'retomada'; dados: Record<string, never> }
   | { tipo: 'etapa_concluida_pelo_paulo'; dados: { chave: string } }
+  | { tipo: 'encerrada_pelo_paulo'; dados: Record<string, never> }
 
 export interface ContextoDaTransicao {
   etapas: readonly EtapaDefinida[]
   temTela: boolean
   capturas: readonly { id: string; tela: 'desktop' | 'celular' }[]
+  /** O link do artefato do Claude já gravado na demanda (planejar comigo). */
+  artefato?: string | null
 }
 
 export type ResultadoDaTransicao =
@@ -53,7 +57,10 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   plano_entregue: ['sessao', 'paulo'],
   retomada: ['paulo'],
   etapa_concluida_pelo_paulo: ['paulo'],
+  encerrada_pelo_paulo: ['paulo'],
 }
+
+const SEM_VERSAO = 'O desenho ainda não tem versão para aprovar.'
 
 function destravar(e: EstadoDaDemanda): EstadoDaDemanda {
   if (e.espera !== 'travada') return { ...e, espera: null, esperaMotivo: null }
@@ -144,7 +151,21 @@ export function aplicarEvento(
       if (!podeConcluir(atual, estado.nivel, evento.ator)) {
         return recusa('A etapa de planejamento espera o Paulo.')
       }
-      return concluir(estado)
+      const r = concluir(estado)
+      // Planejar comigo com o artefato do Claude: o desenho é o artefato, e o Paulo o aprova
+      // (versão 0). Sem esta espera a Fábrica não desenha e ninguém mais move a demanda.
+      if (
+        r.ok &&
+        evento.tipo === 'plano_entregue' &&
+        evento.dados.artefato &&
+        estado.nivel === 'planejar_comigo'
+      ) {
+        const proxima = ctx.etapas.find((e) => e.chave === r.estado.etapaAtual)
+        if (proxima?.marco === 'desenho' && r.estado.espera === null) {
+          return aceita({ ...r.estado, espera: 'aprovar_desenho', esperaMotivo: null })
+        }
+      }
+      return r
     }
     case 'desenho_pronto': {
       if (atual.marco !== 'desenho') return naoE('desenho')
@@ -162,6 +183,7 @@ export function aplicarEvento(
       if (estado.espera !== 'aprovar_desenho' || evento.dados.versao !== estado.versaoDoDesenho) {
         return recusa('Há uma versão mais nova do desenho.')
       }
+      if (evento.dados.versao === 0 && !ctx.artefato) return recusa(SEM_VERSAO)
       return concluir({
         ...estado,
         desenhoAprovado: evento.dados.versao,
@@ -174,6 +196,16 @@ export function aplicarEvento(
         return recusa('Há uma versão mais nova do desenho.')
       }
       const recusas = estado.recusasDoDesenho + 1
+      if (evento.dados.versao === 0) {
+        if (!ctx.artefato) return recusa(SEM_VERSAO)
+        // O artefato é da sessão: quem refaz é ela, não a Fábrica.
+        return aceita({
+          ...estado,
+          recusasDoDesenho: recusas,
+          espera: 'planejar_comigo',
+          esperaMotivo: `ajuste pedido no artefato: ${evento.dados.texto}`,
+        })
+      }
       if (recusas >= LIMITE_DE_RECUSAS_DO_DESENHO) {
         return aceita({
           ...estado,
@@ -252,6 +284,14 @@ export function aplicarEvento(
         return recusa(`A etapa atual não é ${evento.dados.chave}.`)
       }
       return concluir(estado)
+    case 'encerrada_pelo_paulo':
+      return aceita({
+        ...estado,
+        espera: null,
+        esperaMotivo: null,
+        antesDaTrava: null,
+        encerrada: 'descartada',
+      })
   }
 }
 
