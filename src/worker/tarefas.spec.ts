@@ -2,15 +2,19 @@ import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
+vi.mock('@/modules/demandas/worker', () => ({
+  limparArquivosDeDemandas: vi.fn(async () => ({ capturas: 0, parciais: 0 })),
+}))
 
 import { log } from '@/lib/log'
 import { resolverModulosAtivos } from '@/lib/modulos'
+import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
 import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem quatro tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem cinco tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -19,6 +23,42 @@ describe('tarefas do worker', () => {
       'reconciliar-github',
       'sincronizar-execucoes-warren',
       'processar-fila-de-publicacao',
+      'limpar-arquivos-de-demandas',
+    ])
+  })
+
+  test('a tarefa limpar-arquivos-de-demandas some quando demandas não está ativo', () => {
+    const semDemandas = new Set(resolverModulosAtivos(undefined))
+    semDemandas.delete('demandas')
+    const nomes = criarTarefasDoCiclo({ ...fonte, ativos: semDemandas }).map((t) => t.nome)
+    expect(nomes).not.toContain('limpar-arquivos-de-demandas')
+    const comDemandas = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) })
+    expect(comDemandas.find((t) => t.nome === 'limpar-arquivos-de-demandas')?.modulo).toBe(
+      'demandas',
+    )
+  })
+
+  test('limpar-arquivos-de-demandas roda no máximo uma vez por hora; depois de falhar, tenta no ciclo seguinte', async () => {
+    const limpar = vi.mocked(limparArquivosDeDemandas)
+    limpar.mockClear()
+    const tarefa = criarTarefasDoCiclo({
+      ...fonte,
+      ativos: resolverModulosAtivos(undefined),
+    }).find((t) => t.nome === 'limpar-arquivos-de-demandas')!
+    const t0 = new Date('2026-11-20T12:00:00.000Z')
+    const em = (ms: number) => new Date(t0.getTime() + ms)
+
+    limpar.mockRejectedValueOnce(new Error('disco'))
+    await expect(tarefa.executar(t0)).rejects.toThrow('disco')
+    await tarefa.executar(em(30_000))
+    await tarefa.executar(em(60_000))
+    await tarefa.executar(em(30_000 + 59 * 60_000))
+    await tarefa.executar(em(30_000 + 60 * 60_000))
+
+    expect(limpar.mock.calls.map(([agora]) => agora)).toEqual([
+      t0,
+      em(30_000),
+      em(30_000 + 60 * 60_000),
     ])
   })
 
@@ -33,7 +73,7 @@ describe('tarefas do worker', () => {
     )
   })
 
-  test('com todos os módulos ligados o ciclo tem as onze tarefas na ordem original', () => {
+  test('com todos os módulos ligados o ciclo tem as doze tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
@@ -47,6 +87,7 @@ describe('tarefas do worker', () => {
       'detectar-retestes',
       'calcular-composicoes',
       'detectar-divergencias',
+      'limpar-arquivos-de-demandas',
     ])
   })
 

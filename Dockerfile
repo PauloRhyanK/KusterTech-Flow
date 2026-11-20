@@ -62,6 +62,8 @@ COPY --from=execucao --chown=node:node /app/prisma.config.ts ./prisma.config.ts
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/dist ./
+# O volume nomeado flow_arquivos herda este dono na primeira montagem.
+RUN mkdir -p /var/lib/flow/arquivos && chown node:node /var/lib/flow/arquivos
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

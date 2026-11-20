@@ -204,6 +204,7 @@ Se a imagem for privada, faça `docker login ghcr.io` como root (o timer roda co
 O script é [`scripts/infra/backup-oficina.sh`](../../scripts/infra/backup-oficina.sh) e usa restic, com criptografia no cliente, retenção de 7 diários, 4 semanais e 6 mensais, e `restic check` de 5% dos dados aos domingos. O backup leva:
 
 - o Postgres da KusterTech: `pg_dump -Fc` direto para o restic, quando o contêiner do projeto `kustertech-flow` está rodando;
+- o volume `flow_arquivos` (arquivos das demandas), junto do `postgres_data`;
 - a configuração da Fábrica: `~/fabrica` sem os clones de repositório, sem travas e sem arquivos de token, mais as units da Fábrica e da oficina e as configurações de Docker, journald e sysctl.
 
 Hoje isso dá menos de 1 MB por snapshot, mais o dump do banco.

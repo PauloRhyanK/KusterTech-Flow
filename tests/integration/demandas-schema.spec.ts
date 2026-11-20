@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { db } from '@/lib/db'
 import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
@@ -8,24 +6,6 @@ import { MODELO_PADRAO } from '@/modules/demandas/model'
 import { limparBanco } from './banco-de-teste'
 
 const agora = new Date('2026-11-20T12:00:00.000Z')
-const MARCADOR = '-- Modelo padrão'
-
-// limparBanco apaga o modelo semeado pela migration; reaplica só o trecho de semente.
-async function semearModeloPadrao() {
-  const sql = readFileSync(
-    join(process.cwd(), 'prisma/migrations/20261120120000_demandas/migration.sql'),
-    'utf8',
-  )
-  const trecho = sql.slice(sql.indexOf(MARCADOR))
-  for (const comando of trecho.split(';')) {
-    const util = comando
-      .split('\n')
-      .filter((l) => !l.trim().startsWith('--'))
-      .join('\n')
-      .trim()
-    if (util !== '' && !util.startsWith('CREATE UNIQUE INDEX')) await db.$executeRawUnsafe(util)
-  }
-}
 
 async function cenario() {
   await sincronizarCatalogo(criarFonteFixtures(), agora)
@@ -50,7 +30,6 @@ function dadosDaDemanda(projetoId: string, repositorioId: string, extra = {}) {
 
 beforeEach(async () => {
   await limparBanco()
-  await semearModeloPadrao()
 })
 
 describe('schema de Demandas', () => {
