@@ -40,7 +40,7 @@ export async function publicacaoDaDemanda(demandaId: string): Promise<Publicacao
 /** As demandas que esperam o Paulo, para o "Espera você" do Início: duas consultas, não uma por demanda. */
 export async function esperasDeDemandas(sujeito: Sujeito, agora: Date): Promise<ItemDeEspera[]> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
-  const [demandas, recebidasParadas, fonte] = await Promise.all([
+  const [demandas, recebidas, fonte] = await Promise.all([
     db.demanda.findMany({
       where: { encerrada: null, espera: { not: null }, projeto: { arquivadoEm: null } },
       select: {
@@ -55,8 +55,10 @@ export async function esperasDeDemandas(sujeito: Sujeito, agora: Date): Promise<
         projeto: { select: { nome: true } },
       },
     }),
-    db.demanda.count({
+    db.demanda.aggregate({
       where: { encerrada: null, etapaAtual: 'recebida', projeto: { arquivadoEm: null } },
+      _count: true,
+      _min: { criadaEm: true },
     }),
     db.fonteDaFabrica.aggregate({
       where: { revogadaEm: null },
@@ -75,7 +77,11 @@ export async function esperasDeDemandas(sujeito: Sujeito, agora: Date): Promise<
         (d.etapas as unknown as EtapaDefinida[]).find((e) => e.chave === d.etapaAtual)?.rotulo ??
         d.etapaAtual,
     })),
-    { buscouEm: fonte._max.demandasBuscadasEm, recebidasParadas },
+    {
+      buscouEm: fonte._max.demandasBuscadasEm,
+      recebidasParadas: recebidas._count,
+      recebidaMaisAntigaDesde: recebidas._min.criadaEm,
+    },
     agora,
   )
 }

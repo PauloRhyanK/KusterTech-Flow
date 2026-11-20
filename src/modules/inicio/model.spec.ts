@@ -165,7 +165,7 @@ describe('tipo demanda', () => {
     esperaDesde: new Date('2026-11-19T14:30:00Z'),
     rotuloDaEtapa: 'Desenho',
   }
-  const quieta = { buscouEm: agora, recebidasParadas: 0 }
+  const quieta = { buscouEm: agora, recebidasParadas: 0, recebidaMaisAntigaDesde: null }
 
   it('ORDEM_DOS_TIPOS tem demanda logo depois de decisao e ROTULO_DO_TIPO.demanda === "Demanda"', () => {
     expect(ORDEM_DOS_TIPOS[ORDEM_DOS_TIPOS.indexOf('decisao') + 1]).toBe('demanda')
@@ -198,20 +198,32 @@ describe('tipo demanda', () => {
     expect(t('travada').contexto).toBe('Projeto A · porque sim')
   })
 
-  it('esperasDasDemandas: Fábrica sem buscar há mais de 10 min com recebidas gera o aviso', () => {
-    const buscou = (min: number) => new Date(agora.getTime() - min * 60_000)
-    const avisos = (buscouEm: Date | null, recebidasParadas: number) =>
-      esperasDasDemandas([], { buscouEm, recebidasParadas }, agora)
-    expect(avisos(buscou(11), 2)).toEqual([
+  it('esperasDasDemandas: o aviso da Fábrica depende da recebida mais antiga e da última busca', () => {
+    const antes = (min: number) => new Date(agora.getTime() - min * 60_000)
+    const avisos = (buscouEm: Date | null, recebidaMaisAntigaDesde: Date | null, n = 2) =>
+      esperasDasDemandas([], { buscouEm, recebidasParadas: n, recebidaMaisAntigaDesde }, agora)
+    // demanda velha + Fábrica parada há 11 min
+    expect(avisos(antes(11), antes(30))).toEqual([
       expect.objectContaining({
         titulo: 'A Fábrica não busca demandas há 11 min',
         contexto: '2 demandas esperando a triagem',
         href: '/demandas',
       }),
     ])
-    expect(avisos(buscou(9), 2)).toEqual([])
-    expect(avisos(buscou(11), 0)).toEqual([])
-    expect(avisos(null, 1)).toHaveLength(1)
+    // demanda velha + nunca buscou
+    expect(avisos(null, antes(30), 1)).toEqual([
+      expect.objectContaining({
+        titulo: 'A Fábrica nunca buscou demandas',
+        contexto: '1 demanda esperando a triagem',
+      }),
+    ])
+    // demanda recém-criada + Fábrica parada (ou nunca buscou): sem aviso
+    expect(avisos(antes(11), antes(1))).toEqual([])
+    expect(avisos(null, antes(1))).toEqual([])
+    // demanda velha + Fábrica em dia: sem aviso
+    expect(avisos(antes(9), antes(30))).toEqual([])
+    // sem recebidas: sem aviso
+    expect(avisos(antes(11), null, 0)).toEqual([])
   })
 })
 
@@ -641,7 +653,7 @@ describe('invariante 9', () => {
               rotuloDaEtapa: 'E',
             },
           ],
-          { buscouEm: data, recebidasParadas: 0 },
+          { buscouEm: data, recebidasParadas: 0, recebidaMaisAntigaDesde: null },
           data,
         ),
       ),

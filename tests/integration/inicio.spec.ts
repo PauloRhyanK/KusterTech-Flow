@@ -229,6 +229,7 @@ test('demanda esperando aprovação aparece em "Espera você" com o tipo Demanda
       origem: 'FLOW',
       etapas: [],
       etapaAtual: 'recebida',
+      criadaEm: new Date(AGORA.getTime() - 30 * 60_000),
     },
   })
   await db.fonteDaFabrica.create({

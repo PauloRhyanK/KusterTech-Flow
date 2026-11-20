@@ -172,7 +172,11 @@ function tituloDaEspera(l: LinhaDeDemanda): string {
 // recebidas esperando a triagem.
 export function esperasDasDemandas(
   linhas: readonly LinhaDeDemanda[],
-  fabrica: { buscouEm: Date | null; recebidasParadas: number },
+  fabrica: {
+    buscouEm: Date | null
+    recebidasParadas: number
+    recebidaMaisAntigaDesde: Date | null
+  },
   agora: Date,
 ): ItemDeEspera[] {
   const itens: ItemDeEspera[] = linhas.map((l) => ({
@@ -186,9 +190,13 @@ export function esperasDasDemandas(
     tom: l.espera === 'travada' || l.espera === 'teste_falhou' ? 'erro' : 'atencao',
     desde: l.esperaDesde,
   }))
+  const passouDoLimite = (desde: Date) => agora.getTime() - desde.getTime() > FABRICA_SEM_BUSCAR_MS
+  // Só avisa quando a recebida mais antiga já esperou além do limite e a Fábrica não busca há
+  // esse mesmo tempo; demanda recém-criada não é motivo de alarme.
   const parada =
-    fabrica.buscouEm === null ||
-    agora.getTime() - fabrica.buscouEm.getTime() > FABRICA_SEM_BUSCAR_MS
+    fabrica.recebidaMaisAntigaDesde !== null &&
+    passouDoLimite(fabrica.recebidaMaisAntigaDesde) &&
+    (fabrica.buscouEm === null || passouDoLimite(fabrica.buscouEm))
   if (fabrica.recebidasParadas > 0 && parada) {
     const n = fabrica.recebidasParadas
     itens.push({
