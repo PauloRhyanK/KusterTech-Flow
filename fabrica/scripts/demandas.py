@@ -34,6 +34,14 @@ entre `fila.enfileirar` e `fila.admitir`) o deixa `segurado` pela demanda até a
 `urgente`. O `passo` acompanha a entrada da fila: `ativo` leva a demanda a `desenvolvendo`; `pausado` vira `travada`
 (uma vez, com a pausa do plano) e a volta a `ativo`, `destravada`; `concluido` vira `etapa_concluida` com o marco
 `desenvolvida`.
+
+O desenho (etapa `desenho`) é um run do `ux-ui` (`modelos.ux-ui`) com uma vaga (`demanda:<id>`, raia `ux-ui`): um
+HTML autocontido em `.fabrica/demandas/<id>/desenho.html`, num PR só com esse arquivo. O HTML do head passa em
+`validar_desenho` antes de ir ao Flow (arquivo e `desenho_pronto`, nessa ordem); inválido, o run é refeito uma vez com
+o motivo e, na segunda, a demanda fica `travada`. O ajuste pedido refaz no mesmo branch. Aprovado (o Paulo, ou o
+nível "vai sozinho" pelo Flow), o PR do desenho é mergeado no head enviado antes de o plano ser solto da fila, e a
+demanda volta a `plano_no_repo`. Toda saída de `desenhando` solta a vaga; o run que passou do teto (ou foi superado)
+a segura até terminar.
 """
 
 import contextlib
@@ -107,6 +115,35 @@ FALHA_SEM_ROTA = "HTTP 404"
 CHAVE_SAIDA_PARADA = "demandas:saida-parada"
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _CAMINHO_LOCAL = re.compile(r"demandas/(%s)/(%s)" % (_UUID.pattern, _UUID.pattern))
+# o HTML do desenho: `<script`, atributo `on…=` (depois de espaço, aspas ou `/`) e `javascript:`
+_SCRIPT_NO_HTML = re.compile(r"<script|[\s\"'/]on[a-z]+\s*=|javascript\s*:", re.IGNORECASE)
+# recurso de fora: `src=`/`href=` (e os parentes), `url(` e `@import` apontando para `http:`, `https:` ou `//`
+_FORA_DO_HTML = re.compile(
+    r"""(?:\b(?:src|href|srcset|action|poster|data|xlink:href)\s*=\s*["']?|url\(\s*["']?|@import\s+(?:url\(\s*)?["']?)\s*(?:https?:|//)""",
+    re.IGNORECASE,
+)
+# o corpo de um `data:…;base64,` (sem `<`, aspas nem parênteses) sai antes da busca: pode terminar em `/on…=` por acaso
+_CORPO_BASE64 = re.compile(r";base64,[A-Za-z0-9+/=\s]*", re.IGNORECASE)
+
+
+def validar_desenho(dados: bytes) -> str | None:
+    """O motivo de o HTML do desenho não ir ao Flow, ou `None` (válido): até 10 MB, UTF-8, sem script, sem recurso de fora.
+
+    O Flow serve o desenho num iframe sem scripts; a conferência aqui é para o kit não mandar o que não abriria igual
+    (e para o `ux-ui` refazer com o motivo).
+    """
+    if not isinstance(dados, (bytes, bytearray)) or len(dados) > LIMITE_DO_ARQUIVO:
+        return "maior que 10 MB"
+    try:
+        texto = bytes(dados).decode("utf-8")
+    except UnicodeDecodeError:
+        return "não é UTF-8"
+    texto = _CORPO_BASE64.sub(";base64,", texto)
+    if _SCRIPT_NO_HTML.search(texto):
+        return "tem script"
+    if _FORA_DO_HTML.search(texto):
+        return "carrega recurso de fora"
+    return None
 
 
 def nonce(id_: str, fase: str, tentativa: int) -> str:
@@ -267,6 +304,11 @@ def proxima_acao(item: dict, demanda: dict, *, pendente: bool = False) -> str:
         if fase == "desenhando":
             return "acompanhar"
         versao = (demanda.get("desenho") or {}).get("versao") or 0
+        if fase == "esperando_paulo" and item.get("travaDoDesenho"):
+            # o desenho travou: só a retomada do Paulo (depois da trava) desenha de novo
+            if not _retomada_nova(item, demanda):
+                return "nada"
+            return "refazer_desenho" if versao else "desenhar"
         if not versao:
             return "desenhar"
         return "refazer_desenho" if _ultimo_ajuste(demanda) >= versao else "nada"
@@ -307,6 +349,11 @@ def _chegou_ao_desenvolvimento(demanda: dict) -> bool:
     return chaves.index(atual) >= marcos.index("desenvolvida")
 
 
+def _desenho_por_mergear(it) -> bool:
+    """O desenho ainda não chegou ao branch padrão (sendo feito, ou enviado e esperando o merge da aprovação)."""
+    return isinstance(it, dict) and it.get("fase") in ("desenhando", "desenho_enviado")
+
+
 def _demanda_da_entrada(entrada: dict, por_caminho: dict):
     demanda = entrada.get("demanda")
     if isinstance(demanda, str) and _UUID.fullmatch(demanda):
@@ -345,7 +392,7 @@ def aplicar_na_fila(estado_demandas: dict, fila_: list[dict]) -> list[dict]:
             continue
         demanda = retratos.get(id_) or {}
         entrada["demanda"] = id_
-        if not _chegou_ao_desenvolvimento(demanda):
+        if not _chegou_ao_desenvolvimento(demanda) or _desenho_por_mergear(itens.get(id_)):
             if entrada.get("segurado") is not True:
                 entrada.update(segurado=True, seguradoPor="demanda")
         elif entrada.get("seguradoPor") == "demanda":
@@ -388,9 +435,15 @@ def chaves_do_orquestrador(estado: dict) -> set[str]:
 
 
 def chaves_ocupando(estado: dict) -> set[str]:
-    """As chaves de vaga (`demanda:<id>`) das fases que reservam vaga e têm run vivo."""
+    """As chaves de vaga (`demanda:<id>`) das fases que reservam vaga e têm run vivo (ou o POST em curso), mais as do
+    run superado do desenho, que segura a vaga até terminar. O coordenador as soma aos `ativos` de `limpar_orfaos`."""
     itens = (estado.get("demandas") or {}).get("itens") or {}
-    return {chave(id_) for id_, it in itens.items() if isinstance(it, dict) and it.get("fase") in FASES_COM_VAGA and it.get("runId")}
+    return {
+        chave(id_)
+        for id_, it in itens.items()
+        if isinstance(it, dict)
+        and ((it.get("fase") in FASES_COM_VAGA and (it.get("runId") or it.get("alvo") == it.get("fase"))) or isinstance(it.get("desenhoSuperado"), dict))
+    }
 
 
 # ---------------------------------------------------------------- caixa de saída
@@ -631,6 +684,22 @@ TETO_PLANO_S = 2 * 3600  # do despacho até o PR; com o PR, vale o teto do CI pe
 # o motor não cancela run: o que passou do teto (ou foi superado) segura a trava até terminar, ou até esta folga
 FOLGA_DO_RUN_SUPERADO_S = 1800
 LIMITE_ERROS_DO_PLANO = 5
+PAPEL_DO_DESENHO = "ux-ui"
+TETO_RUN_S = 2 * 3600  # do despacho do run do desenho até o PR (como o plano)
+MOTIVO_TETO_RUN = "o agente passou de 2 h"
+MOTIVO_NAO_AUTOCONTIDO = "o desenho gerado não é autocontido: %s"
+MOTIVO_SEM_DESENHO = "o PR não traz %s"
+MOTIVO_DESENHO_FORA = "o PR do desenho mexe fora de %s: %s"
+MOTIVO_DESENHO_SEM_PR = "o ux-ui terminou sem PR do desenho 2 vezes"
+MOTIVO_LINK_DO_DESENHO = "o run do desenho devolveu um link de PR inválido"
+MOTIVO_PR_DO_DESENHO_FECHADO = "o PR do desenho foi fechado sem merge"
+MOTIVO_DESENHO_OUTRO_REPO = "o PR do desenho está em outro repositório"
+MOTIVO_DESENHO_MUDOU = "o PR do desenho mudou depois do envio"
+MOTIVO_CI_DO_DESENHO = "o PR do desenho está com o CI vermelho"
+MOTIVO_CI_DO_DESENHO_PENDENTE = "o CI do desenho não terminou em 2 h"
+MOTIVO_MERGE_DO_DESENHO = "o GitHub recusou o merge do desenho"
+MOTIVO_DESENHO_RECUSADO = "o Flow recusou o desenho enviado pela Fábrica"
+MOTIVO_ERRO_DO_DESENHO = "o desenho parou: o mesmo erro %d ciclos seguidos (%s)"
 
 
 def _instante(valor):
@@ -666,13 +735,43 @@ def _ainda_no_planejamento(demanda: dict) -> bool:
     return _marco(demanda) == "planejada" and not demanda.get("espera") and not demanda.get("encerrada")
 
 
+def _versao_do_desenho(demanda: dict) -> int:
+    versao = (demanda.get("desenho") or {}).get("versao") if isinstance(demanda.get("desenho"), dict) else None
+    return versao if isinstance(versao, int) and not isinstance(versao, bool) and versao >= 0 else 0
+
+
+def _ainda_no_desenho(demanda: dict) -> bool:
+    """A demanda está na etapa `desenho`, sem espera e aberta (o desenho ainda pode entrar pela Fábrica)."""
+    return _marco(demanda) == "desenho" and not demanda.get("espera") and not demanda.get("encerrada")
+
+
+def _dados_do_desenho(it: dict) -> dict:
+    """`it["desenho"]`: o PR (`prUrl`, `branch`, `headSha`), a `versao` enviada, a `base` do run e o `invalido`."""
+    d = it.get("desenho")
+    if not isinstance(d, dict):
+        d = it["desenho"] = {}
+    return d
+
+
+def _ajustes(demanda: dict) -> list[dict]:
+    """Os ajustes pedidos (`ajustes` do retrato; sem eles, os eventos `ajuste_pedido`), do mais antigo ao mais novo."""
+    ajustes = [a for a in demanda.get("ajustes") or [] if isinstance(a, dict)]
+    if not ajustes:
+        ajustes = [
+            e["dados"]
+            for e in demanda.get("eventos") or []
+            if isinstance(e, dict) and e.get("tipo") == "ajuste_pedido" and isinstance(e.get("dados"), dict)
+        ]
+    return ajustes
+
+
 def _ainda_na_triagem(demanda: dict) -> bool:
     """A demanda ainda espera a triagem da Fábrica: na etapa `recebida`, sem espera e aberta."""
     return _marco(demanda) == "recebida" and not demanda.get("espera") and not demanda.get("encerrada")
 
 
 class _Passo:
-    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None):
+    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None):
         self.estado = estado
         self.raiz = pathlib.Path(raiz) if raiz is not None else None
         self.sec = secao(estado)
@@ -683,6 +782,8 @@ class _Passo:
         self.projetos = {str(k).lower(): v for k, v in (projetos or {}).items()}
         self.modelo_da_triagem = _modelo(modelos, PAPEL_DA_TRIAGEM)
         self.modelo_do_plano = _modelo(modelos, PAPEL_DO_PLANO)
+        self.modelo_do_desenho = _modelo(modelos, PAPEL_DO_DESENHO)
+        self.mem_disponivel_mb = mem_disponivel_mb
         self.agora = agora if isinstance(agora, datetime.datetime) else motor_.instante(agora)
         self.agora_texto = _texto_do_instante(self.agora)
         self.salvar = salvar or (lambda: None)
@@ -748,6 +849,8 @@ class _Passo:
                 self.largar_triagem_superada(id_, it, demanda)
                 self.largar_plano_superado(id_, it, demanda)
                 self.seguir_run_superado(id_, it)
+                self.largar_desenho_superado(id_, it, demanda)
+                self.seguir_desenho_superado(id_, it)
                 self.adotar_plano_da_sessao(id_, it, demanda)
                 self.seguir_desenvolvimento(id_, it, demanda)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
@@ -777,11 +880,17 @@ class _Passo:
             self.esperar_sessao(id_, it)
         elif acao == "acompanhar" and it.get("alvo") == "planejando" and it.get("fase") == "planejando":
             self.contando_erros(id_, it, lambda: self.acompanhar_plano(id_, it, demanda))
+        elif acao in ("desenhar", "refazer_desenho"):
+            self.desenhar(id_, it, demanda)
+        elif acao == "acompanhar" and it.get("alvo") == "desenhando" and it.get("fase") == "desenhando":
+            self.contando_erros(id_, it, lambda: self.acompanhar_desenho(id_, it, demanda), campo="erroDoDesenho", travar=self.travar_desenho_por_erro(id_, it))
+        elif acao == "mergear_desenho":
+            self.contando_erros(id_, it, lambda: self.mergear_desenho(id_, it, demanda), campo="erroDoDesenho", travar=self.travar_merge_por_erro(id_, it))
         elif acao == "soltar_plano":
             # quem solta a entrada da fila é `aplicar_na_fila` (no `_passo_fila`); aqui só a marca local
             it["segurado"] = False
             self.salvar()
-        # as outras ações são das Tasks 6 a 8
+        # as outras ações são das Tasks 7 e 8
 
     def largar_triagem_superada(self, id_: str, it: dict, demanda: dict) -> None:
         """O Paulo decidiu (ou encerrou) a demanda com a triagem no meio: o run segue no Warren, mas não conta mais."""
@@ -812,6 +921,21 @@ class _Passo:
         elif _ainda_no_planejamento(demanda) and it.get("fase") == "esperando_paulo":
             # a trava do plano não pegou no Flow: nada se replaneja sozinho (sem retomada), só o aviso
             self.aviso("demandas:plano:%s" % id_, "Demandas: o Flow recusou a trava do plano da demanda %s; confira a demanda" % id_[:8])
+        elif _marco(demanda) == "desenho" and not demanda.get("encerrada") and it.get("fase") == "desenho_enviado":
+            d = _dados_do_desenho(it)
+            enviada = d.get("versao") if isinstance(d.get("versao"), int) else 0
+            if _versao_do_desenho(demanda) < enviada and (demanda.get("espera") or {}).get("tipo") != "planejar_comigo":
+                # o Flow não aplicou o arquivo ou o `desenho_pronto`: a demanda vai para o Paulo (uma vez por versão)
+                if not it.get("desenhoRecusado"):
+                    it.update(desenhoRecusado=True, fase="esperando_paulo", inicio=self.agora_texto, travaDoDesenho=True)
+                    enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_DESENHO_RECUSADO, "url": d.get("prUrl")}, agora=self.agora_texto)
+                else:
+                    self.aviso_do_desenho(id_)
+        elif it.get("travaDoDesenho") and not demanda.get("encerrada") and (
+            (_marco(demanda) == "desenho" and it.get("fase") == "esperando_paulo") or it.get("fase") == "desenho_enviado"
+        ):
+            # a trava do desenho (ou do merge dele) não pegou no Flow: nada se refaz sozinho, só o aviso
+            self.aviso_do_desenho(id_)
         elif _marco(demanda) == "desenvolvida" and it.get("fase") in ("plano_no_repo", "desenvolvendo") and not demanda.get("encerrada"):
             if it.get("desenvolvida"):
                 # o plano terminou, mas o Flow não aplicou a conclusão: a demanda vai para o Paulo (uma vez)
@@ -1059,24 +1183,36 @@ class _Passo:
         else:
             self.salvar()
 
-    def contando_erros(self, id_: str, it: dict, acao) -> None:
-        """O mesmo erro em `planejando` `LIMITE_ERROS_DO_PLANO` ciclos seguidos vira `travada`; um ciclo sem erro zera."""
+    def contando_erros(self, id_: str, it: dict, acao, *, campo: str = "erroDoPlano", travar=None) -> None:
+        """O mesmo erro `LIMITE_ERROS_DO_PLANO` ciclos seguidos vira `travada`; um ciclo sem erro zera.
+
+        `travar(vezes, texto)` trava e devolve `True`, ou `False` se a fase já não é a do erro (sem ele: a do plano).
+        """
         try:
             acao()
         except Exception as exc:
             texto = ("%s: %s" % (type(exc).__name__, exc))[:200]
-            anterior = it.get("erroDoPlano") if isinstance(it.get("erroDoPlano"), dict) else {}
+            anterior = it.get(campo) if isinstance(it.get(campo), dict) else {}
             vezes = (anterior.get("vezes") or 0) + 1 if anterior.get("erro") == texto else 1
-            it["erroDoPlano"] = {"erro": texto, "vezes": vezes}
-            if vezes >= LIMITE_ERROS_DO_PLANO and it.get("fase") == "planejando" and it.get("alvo") == "planejando":
-                it.pop("erroDoPlano", None)
-                self.travar_plano(id_, it, MOTIVO_ERRO_REPETIDO % (vezes, texto), it.get("prUrl"), vivo=not it.get("prUrl"))
+            it[campo] = {"erro": texto, "vezes": vezes}
+            if vezes >= LIMITE_ERROS_DO_PLANO and (travar or self.travar_plano_por_erro(id_, it))(vezes, texto):
+                it.pop(campo, None)
+                self.salvar()
                 self.erro(id_, exc)
                 return
             self.salvar()
             raise
-        if it.pop("erroDoPlano", None) is not None:
+        if it.pop(campo, None) is not None:
             self.salvar()
+
+    def travar_plano_por_erro(self, id_: str, it: dict):
+        def travar(vezes, texto):
+            if it.get("fase") != "planejando" or it.get("alvo") != "planejando":
+                return False
+            self.travar_plano(id_, it, MOTIVO_ERRO_REPETIDO % (vezes, texto), it.get("prUrl"), vivo=not it.get("prUrl"))
+            return True
+
+        return travar
 
     def adotar_plano_da_sessao(self, id_: str, it: dict, demanda: dict) -> None:
         """"Planejar comigo": o plano entregue pela sessão (`POST /api/demandas/<id>/plano`) chega no retrato."""
@@ -1310,6 +1446,280 @@ class _Passo:
         self.eventos.append({"evento": "demanda_plano_travado", "id": id_, "motivo": motivo})
 
 
+    # ------------------------------------------------------------ desenho
+
+    def aviso_do_desenho(self, id_: str) -> None:
+        self.aviso("demandas:desenho:%s" % id_, "Demandas: o Flow recusou o desenho (ou a trava dele) da demanda %s; confira a demanda" % id_[:8])
+
+    def desenhar(self, id_: str, it: dict, demanda: dict) -> None:
+        """Um run do `ux-ui` (vaga `demanda:<id>` na raia `ux-ui`) para a versão seguinte do desenho.
+
+        Sem vaga (ou com o run superado ainda vivo) espera o ciclo seguinte. O ajuste e a retomada reaproveitam o branch
+        do PR anterior. O nonce é `versão + tentativa`, com a `tentativa` subindo a cada run: nunca repete na demanda.
+        """
+        if isinstance(it.get("desenhoSuperado"), dict):
+            return  # o run anterior ainda vive no Warren: nunca dois runs do desenho
+        d = _dados_do_desenho(it)
+        versao = _versao_do_desenho(demanda)
+        if it.get("fase") == "desenho_enviado" and isinstance(d.get("versao"), int) and versao < d["versao"]:
+            return  # o retrato ainda não tem a versão que o kit mandou (a busca não trouxe a demanda de novo)
+        projeto = self.projeto_de(demanda)
+        if projeto is None:
+            return
+        if self.modelo_do_desenho is None:
+            self.sem_modelo(PAPEL_DO_DESENHO)
+            return
+        if capacidade.ler(self.capacidade).get("drenagem"):
+            return
+        if not capacidade.reservar(self.capacidade, chave(id_), PAPEL_DO_DESENHO, mem_disponivel_mb=self.mem_disponivel_mb):
+            return  # sem vaga: o próximo ciclo tenta de novo (a urgente vem primeiro na ordem)
+        d.update(base=versao, invalido=None, semPr=0, terminou=False)
+        d.pop("ciPendenteDesde", None)
+        it.update(fase="desenhando", alvo="desenhando", projeto=projeto, repo=demanda["repositorio"], desenho=d, travaDoDesenho=False, desenhoRecusado=False)
+        it.pop("erroDoDesenho", None)
+        self.novo_run_do_desenho(id_, it, demanda)
+
+    def novo_run_do_desenho(self, id_: str, it: dict, demanda: dict) -> None:
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        base = it["desenho"]["base"]
+        it.update(nonce=nonce_do_motor(id_, "desenho", base + tentativa), tentativa=tentativa + 1, inicio=self.agora_texto, runId=None)
+        it["desenho"]["terminou"] = False
+        self.salvar()  # antes do POST pago: um coordenador que morra daqui em diante acha o run pelo nonce
+        self.despachar_desenho(id_, it, demanda)
+
+    def despachar_desenho(self, id_: str, it: dict, demanda: dict) -> None:
+        modelo = self.modelo_do_desenho
+        d = it["desenho"]
+        prompt = prompts.prompt_desenho(demanda=demanda, triagem=it.get("triagem") or {}, ajustes=_ajustes(demanda), motivo_invalido=d.get("invalido"))
+        run_id = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompt, it["nonce"]),
+            branch_existente=d.get("branch") if isinstance(d.get("branch"), str) and d.get("branch") else None,
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=it["nonce"],
+        )
+        it["runId"] = run_id
+        self.salvar()
+        self.eventos.append({"evento": "demanda_desenho", "id": id_, "runId": run_id})
+
+    def acompanhar_desenho(self, id_: str, it: dict, demanda: dict) -> None:
+        d = _dados_do_desenho(it)
+        inicio = _instante(it.get("inicio"))
+        if inicio is None or (self.agora - inicio).total_seconds() > TETO_RUN_S:
+            self.travar_desenho(id_, it, MOTIVO_TETO_RUN, d.get("prUrl"), vivo=True)
+            return
+        if not it.get("runId"):
+            # o POST pode ter criado o run: adota pelo nonce ou repete com a mesma chave
+            run_id = self.motor.procurar_run(it["projeto"], it["nonce"], self.desde(it))
+            if run_id is not None:
+                it["runId"] = run_id
+                self.salvar()
+            elif self.modelo_do_desenho is not None:
+                self.despachar_desenho(id_, it, demanda)
+            return
+        try:
+            run = despachante._dict(self.motor.run(it["runId"]))
+        except Exception as exc:
+            if not despachante._eh_404(exc):
+                raise
+            run = {"estado": "failed", "prUrl": None}  # o run sumiu do Warren: conta como sem PR
+        if run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+            return
+        if not d.get("terminou"):
+            d["terminou"] = True  # daqui em diante a vaga não espera mais o run
+            self.salvar()
+        pr_url = run.get("prUrl")
+        if isinstance(pr_url, str) and pr_url:
+            self.conferir_desenho(id_, it, demanda, pr_url)
+            return
+        d["semPr"] = (d.get("semPr") if isinstance(d.get("semPr"), int) else 0) + 1
+        if d["semPr"] >= TENTATIVAS_SEM_PR or self.modelo_do_desenho is None:
+            self.travar_desenho(id_, it, MOTIVO_DESENHO_SEM_PR, d.get("prUrl"))
+        else:
+            self.novo_run_do_desenho(id_, it, demanda)
+
+    def conferir_desenho(self, id_: str, it: dict, demanda: dict, pr_url: str) -> None:
+        """O PR do run: só o `desenho.html`, e o HTML do head passa em `validar_desenho`; inválido refaz uma vez."""
+        d = it["desenho"]
+        repo = it.get("repo") or demanda["repositorio"]
+        caminho = prompts.caminho_do_desenho(id_)
+        try:
+            pr = despachante._dict(self.forja.pr(pr_url))
+        except ValueError:  # o link que o run devolveu não é de um PR
+            self.travar_desenho(id_, it, MOTIVO_LINK_DO_DESENHO, d.get("prUrl"))
+            return
+        if str(pr.get("repo")).lower() != str(repo).lower():
+            self.travar_desenho(id_, it, MOTIVO_DESENHO_OUTRO_REPO, pr_url)
+            return
+        if pr.get("aberto") is not True:
+            self.travar_desenho(id_, it, MOTIVO_PR_DO_DESENHO_FECHADO, pr_url)
+            return
+        arquivos, head, branch = pr.get("arquivos"), pr.get("headSha"), pr.get("branch")
+        if not isinstance(arquivos, list) or not isinstance(head, str) or not head or not isinstance(branch, str) or not branch:
+            raise RuntimeError("PR do desenho ilegível")
+        d.update(prUrl=pr_url, branch=branch, headSha=head)
+        self.salvar()
+        fora = [a for a in arquivos if a != caminho]
+        if fora:
+            self.travar_desenho(id_, it, MOTIVO_DESENHO_FORA % (caminho, str(fora[0])[:200]), pr_url)
+            return
+        dados = self.forja.arquivo_bruto(repo, head, caminho)
+        motivo = MOTIVO_SEM_DESENHO % caminho if dados is None else validar_desenho(dados)
+        if motivo is None:
+            self.enviar_desenho(id_, it, bytes(dados))
+        elif d.get("invalido") is None:
+            d["invalido"] = motivo  # refaz uma vez, no mesmo branch, com o motivo no prompt
+            d["semPr"] = 0
+            self.novo_run_do_desenho(id_, it, demanda)
+        else:
+            self.travar_desenho(id_, it, MOTIVO_NAO_AUTOCONTIDO % motivo, pr_url)
+
+    def enviar_desenho(self, id_: str, it: dict, dados: bytes) -> None:
+        """O arquivo e o `desenho_pronto` vão à caixa de saída (nessa ordem) e a vaga é solta, no mesmo `salvar`."""
+        d = it["desenho"]
+        arquivo_id = enfileirar_arquivo(self.estado, self.raiz, id_, tipo="desenho", nome="desenho.html", conteudo="text/html", dados=dados, tela=None)
+        enfileirar_evento(self.estado, id_, "desenho_pronto", {"arquivoId": arquivo_id}, agora=self.agora_texto)
+        d["versao"] = (d.get("base") if isinstance(d.get("base"), int) else 0) + 1
+        self.sair_do_desenho(id_, it, fase="desenho_enviado")
+        self.eventos.append({"evento": "demanda_desenho_pronto", "id": id_, "versao": d["versao"], "prUrl": d.get("prUrl")})
+
+    def sair_do_desenho(self, id_: str, it: dict, *, vivo: bool = False, **campos) -> None:
+        """Toda saída de `desenhando`: solta a vaga e grava. `vivo`: o run pode estar rodando (o motor não cancela run);
+        a vaga fica com a demanda em `desenhoSuperado` até ele terminar (`seguir_desenho_superado`)."""
+        d = _dados_do_desenho(it)
+        if vivo and not d.get("terminou") and (it.get("runId") or it.get("nonce")):
+            it["desenhoSuperado"] = {"runId": it.get("runId"), "nonce": it.get("nonce"), "projeto": it.get("projeto"), "inicio": it.get("inicio")}
+        else:
+            capacidade.sincronizar(self.capacidade, chave(id_), set())
+        it.update(runId=None, alvo=None, **campos)
+        self.salvar()
+
+    def travar_desenho(self, id_: str, it: dict, motivo: str, url, *, vivo: bool = False) -> None:
+        """`travada` para o Paulo; a retomada dele (depois do novo `inicio`) desenha de novo com um nonce novo."""
+        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo[:300], "url": url}, agora=self.agora_texto)
+        self.sair_do_desenho(id_, it, vivo=vivo, fase="esperando_paulo", inicio=self.agora_texto, travaDoDesenho=True)
+        self.eventos.append({"evento": "demanda_desenho_travado", "id": id_, "motivo": motivo})
+
+    def travar_desenho_por_erro(self, id_: str, it: dict):
+        def travar(vezes, texto):
+            if it.get("fase") != "desenhando" or it.get("alvo") != "desenhando":
+                return False
+            self.travar_desenho(id_, it, MOTIVO_ERRO_DO_DESENHO % (vezes, texto), _dados_do_desenho(it).get("prUrl"), vivo=True)
+            return True
+
+        return travar
+
+    def largar_desenho_superado(self, id_: str, it: dict, demanda: dict) -> None:
+        """O Paulo mexeu na demanda (encerrou, travou ou passou da etapa) com o desenho no meio: o run não conta mais."""
+        if it.get("alvo") == "desenhando" and it.get("fase") == "desenhando" and not _ainda_no_desenho(demanda):
+            fase = "plano_no_repo" if _passou_do_desenho(demanda) and not demanda.get("encerrada") else "esperando_paulo"
+            self.sair_do_desenho(id_, it, vivo=True, fase=fase, inicio=self.agora_texto)
+            self.eventos.append({"evento": "demanda_desenho_superado", "id": id_})
+
+    def seguir_desenho_superado(self, id_: str, it: dict) -> None:
+        """O run do desenho que não conta mais: solta a vaga quando ele termina (ou some), ou passada a folga do teto."""
+        sup = it.get("desenhoSuperado")
+        if not isinstance(sup, dict):
+            return
+        inicio = _instante(sup.get("inicio"))
+        terminou = inicio is None or (self.agora - inicio).total_seconds() > TETO_RUN_S + FOLGA_DO_RUN_SUPERADO_S
+        if not terminou:
+            try:
+                run_id = sup.get("runId") or self.motor.procurar_run(sup.get("projeto"), sup.get("nonce"), self.desde(sup))
+                if run_id is None:
+                    terminou = True  # o POST não criou o run
+                else:
+                    sup["runId"] = run_id
+                    terminou = despachante._dict(self.motor.run(run_id)).get("estado") in despachante.TERMINAIS_DE_RUN
+            except Exception as exc:  # noqa: BLE001 - busca falha não solta; o 404 é run sumido
+                terminou = despachante._eh_404(exc)
+                if not terminou:
+                    self.erro(id_, exc)
+        if terminou:
+            it.pop("desenhoSuperado", None)
+            if it.get("fase") != "desenhando":  # nenhum run novo do desenho reservou a vaga (desenhar espera o superado)
+                capacidade.sincronizar(self.capacidade, chave(id_), set())
+            self.salvar()
+            self.eventos.append({"evento": "demanda_vaga_do_desenho_solta", "id": id_, "runId": sup.get("runId")})
+        else:
+            self.salvar()
+
+    def mergear_desenho(self, id_: str, it: dict, demanda: dict) -> None:
+        """O Paulo aprovou (ou o nível dispensou): o PR do desenho entra no branch padrão, no head que foi enviado, antes
+        de o plano ser solto da fila. Trava (CI vermelho, PR mudado ou fechado) espera a retomada do Paulo."""
+        if it.get("travaDoDesenho") and not _retomada_nova(it, demanda):
+            return
+        d = _dados_do_desenho(it)
+        url, head = d.get("prUrl"), d.get("headSha")
+        plano = demanda.get("plano") if isinstance(demanda.get("plano"), dict) else {}
+        if not isinstance(url, str) or not isinstance(head, str):
+            self.desenho_no_repo(id_, it, merge=False)
+            return
+        if demanda.get("nivel") == "planejar_comigo" and plano.get("artefato"):
+            # o desenho aprovado é o artefato da sessão; o do kit foi recusado: o PR dele fica para o Paulo
+            self.aviso(
+                "demandas:desenho:%s" % id_,
+                "Demandas: o desenho da demanda %s foi aprovado pelo artefato da sessão; o PR do desenho do kit não é mergeado" % id_[:8],
+            )
+            self.desenho_no_repo(id_, it, merge=False)
+            return
+        repo = it.get("repo") or demanda["repositorio"]
+        pr = despachante._dict(self.forja.pr(url))
+        if pr.get("mergeado") is True:
+            self.desenho_no_repo(id_, it, merge=True)  # mergeado num ciclo que caiu antes de gravar (ou pelo Paulo)
+            return
+        if pr.get("aberto") is not True:
+            self.travar_merge(id_, it, MOTIVO_PR_DO_DESENHO_FECHADO, url)
+            return
+        if pr.get("headSha") != head:
+            self.travar_merge(id_, it, MOTIVO_DESENHO_MUDOU, url)
+            return
+        ci = self.forja.ci(repo, head)
+        if ci == "pendente":
+            desde = _instante(d.get("ciPendenteDesde"))
+            if desde is None:
+                d["ciPendenteDesde"] = self.agora_texto
+                self.salvar()
+            elif (self.agora - desde).total_seconds() > CI_PENDENTE_MAXIMO_S:
+                self.travar_merge(id_, it, MOTIVO_CI_DO_DESENHO_PENDENTE, url)
+            return
+        if ci not in ("verde", "ausente"):
+            self.travar_merge(id_, it, MOTIVO_CI_DO_DESENHO, url)
+            return
+        if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
+            self.desenho_no_repo(id_, it, merge=True)
+        else:
+            self.travar_merge(id_, it, MOTIVO_MERGE_DO_DESENHO, url)
+
+    def desenho_no_repo(self, id_: str, it: dict, *, merge: bool) -> None:
+        """Fim do desenho: a demanda volta a `plano_no_repo` e o acompanhamento do desenvolvimento começa."""
+        d = _dados_do_desenho(it)
+        d.pop("ciPendenteDesde", None)
+        it.update(fase="plano_no_repo", travaDoDesenho=False, desenho=d)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_desenho_mergeado" if merge else "demanda_desenho_sem_merge", "id": id_, "prUrl": d.get("prUrl")})
+
+    def travar_merge(self, id_: str, it: dict, motivo: str, url) -> None:
+        """`travada` com a demanda já em `desenvolvida`: a fase fica `desenho_enviado` e a retomada tenta o merge de novo."""
+        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo[:300], "url": url}, agora=self.agora_texto)
+        d = _dados_do_desenho(it)
+        d.pop("ciPendenteDesde", None)
+        it.update(travaDoDesenho=True, inicio=self.agora_texto, desenho=d)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_desenho_travado", "id": id_, "motivo": motivo})
+
+    def travar_merge_por_erro(self, id_: str, it: dict):
+        def travar(vezes, texto):
+            if it.get("fase") != "desenho_enviado":
+                return False
+            self.travar_merge(id_, it, MOTIVO_ERRO_DO_DESENHO % (vezes, texto), _dados_do_desenho(it).get("prUrl"))
+            return True
+
+        return travar
+
+
 def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar) -> list[dict]:
     """Um ciclo das demandas: busca no Flow e triagem. Muta `estado["demandas"]` e devolve os eventos de log.
 
@@ -1318,10 +1728,22 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
     `<kit>/fabrica/modelos/config.json`. A triagem não reserva vaga. A caixa de saída é esvaziada por quem chama
     (`esvaziar_saida`), depois. `salvar` grava o `fila-estado.json` (antes de cada POST pago e a cada transição).
     `forja` lê e mergeia o PR do plano. `estado["fila"]` é a fila do coordenador: o `passo` acompanha a entrada do
-    plano da demanda (lendo a pausa em `<raiz>/planos/<id>/estado.json`); `mem_disponivel_mb` é das fases seguintes.
+    plano da demanda (lendo a pausa em `<raiz>/planos/<id>/estado.json`). `mem_disponivel_mb` vai à reserva de vaga
+    do desenho (`capacidade.reservar`); o HTML do desenho é copiado para `<raiz>/demandas/<id>/` antes da saída.
     """
-    del mem_disponivel_mb  # Tasks 6 a 8
-    p = _Passo(estado, cliente=cliente, motor=motor, forja=forja, capacidade_path=capacidade_path, projetos=projetos, modelos=modelos, agora=agora, salvar=salvar, raiz=raiz)
+    p = _Passo(
+        estado,
+        cliente=cliente,
+        motor=motor,
+        forja=forja,
+        capacidade_path=capacidade_path,
+        projetos=projetos,
+        modelos=modelos,
+        agora=agora,
+        salvar=salvar,
+        raiz=raiz,
+        mem_disponivel_mb=mem_disponivel_mb,
+    )
     if p.buscar():
         p.decidir()
     return p.eventos

@@ -287,20 +287,31 @@ class ForjaGitHub:
             return False
         raise RuntimeError("PUT %s: HTTP %s" % (caminho, status))
 
-    def arquivo(self, repo: str, ref: str, caminho: str) -> str | None:
+    def _conteudo(self, repo: str, ref: str, caminho: str):
+        """(alvo, bytes) do arquivo no ref, pelo `contents` cru; 404 → (alvo, None)."""
         dono, nome = _analisar_repo(repo)
         _texto_nao_vazio(ref, "ref")
         trecho = _caminho_de_arquivo(caminho)
         alvo = "/repos/%s/%s/contents/%s?ref=%s" % (dono, nome, trecho, urllib.parse.quote(ref, safe=""))
         status, bruto = self._enviar("GET", alvo, bruto=True)
         if status == 404:
-            return None
+            return alvo, None
         if status != 200:
             raise RuntimeError("GET %s: HTTP %s" % (alvo, status))
+        return alvo, bruto
+
+    def arquivo(self, repo: str, ref: str, caminho: str) -> str | None:
+        alvo, bruto = self._conteudo(repo, ref, caminho)
+        if bruto is None:
+            return None
         try:
             return bruto.decode("utf-8")
         except UnicodeDecodeError:
             raise RuntimeError("GET %s: conteúdo não é UTF-8" % alvo) from None
+
+    def arquivo_bruto(self, repo: str, ref: str, caminho: str) -> bytes | None:
+        """Os bytes do arquivo no ref (sem decodificar); 404 → `None`."""
+        return self._conteudo(repo, ref, caminho)[1]
 
     def arquivos_entre(self, repo: str, base: str, head: str) -> list[str] | None:
         """Arquivos mudados de `base` para `head`; `None` se `head` não descende de `base` ou a lista veio cortada."""
@@ -485,7 +496,7 @@ class ForjaFalsa:
         self.fechados: list[tuple[str, str]] = []
         self._prs: dict[str, dict] = {}
         self._ci: dict[tuple[str, str], str] = {}
-        self._arquivos: dict[tuple[str, str, str], str] = {}
+        self._arquivos: dict[tuple[str, str, str], str | bytes] = {}
         self._comparacoes: dict = {}
         self._branches: dict[str, str] = {}
         self._decisoes: dict[str, dict] = {}
@@ -522,7 +533,7 @@ class ForjaFalsa:
             raise ValueError("resultado de CI desconhecido: %r" % (resultado,))
         self._ci[(repo, sha)] = resultado
 
-    def definir_arquivo(self, repo: str, ref: str, caminho: str, conteudo: str) -> None:
+    def definir_arquivo(self, repo: str, ref: str, caminho: str, conteudo: str | bytes) -> None:
         _analisar_repo(repo)
         _caminho_de_arquivo(caminho)
         self._arquivos[(repo, ref, caminho)] = conteudo
@@ -599,7 +610,21 @@ class ForjaFalsa:
         _analisar_repo(repo)
         _texto_nao_vazio(ref, "ref")
         _caminho_de_arquivo(caminho)
-        return self._arquivos.get((repo, ref, caminho))
+        conteudo = self._arquivos.get((repo, ref, caminho))
+        if isinstance(conteudo, bytes):
+            try:
+                return conteudo.decode("utf-8")
+            except UnicodeDecodeError:
+                raise RuntimeError("conteúdo não é UTF-8") from None
+        return conteudo
+
+    def arquivo_bruto(self, repo: str, ref: str, caminho: str) -> bytes | None:
+        self._registrar("arquivo_bruto", repo=repo, ref=ref, caminho=caminho)
+        _analisar_repo(repo)
+        _texto_nao_vazio(ref, "ref")
+        _caminho_de_arquivo(caminho)
+        conteudo = self._arquivos.get((repo, ref, caminho))
+        return conteudo.encode("utf-8") if isinstance(conteudo, str) else conteudo
 
     def listar(self, repo: str, ref: str, diretorio: str) -> list[str] | None:
         self._registrar("listar", repo=repo, ref=ref, diretorio=diretorio)

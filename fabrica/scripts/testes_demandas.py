@@ -919,8 +919,11 @@ class TestesPlano(BasePasso):
     def test_planejar_comigo_adota_o_plano_mesmo_com_a_etapa_ja_adiante(self):
         self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="planejar_comigo", nivel="planejar_comigo"))))
         entregue = {"caminho": ".fabrica/planos/exportar.json", "prUrl": None, "artefato": None}
-        self.passo(ClienteDeBusca(pagina(retrato("desenho", nivel="planejar_comigo", plano=entregue), cursor="2")))
-        self.assertEqual((self.item()["fase"], self.item()["plano"]), ("plano_no_repo", ".fabrica/planos/exportar.json"))
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("desenho", nivel="planejar_comigo", plano=entregue), cursor="2")))
+        self.assertEqual(self.item()["plano"], ".fabrica/planos/exportar.json")
+        self.assertIn({"evento": "demanda_plano_da_sessao", "id": ID, "plano": ".fabrica/planos/exportar.json"}, eventos)
+        # antes da primeira versão o desenho não espera o Paulo: o ux-ui desenha no mesmo ciclo
+        self.assertEqual(self.item()["fase"], "desenhando")
 
     def test_trava_do_orquestrador_e_solta_ao_sair_de_planejando(self):
         # sem PR: uma nova tentativa (nonce novo), depois `travada`
@@ -1369,6 +1372,326 @@ class TestesDesenvolvimento(BasePasso):
         self.com_plano("aguardando", segurado=True)
         self.passo(ClienteDeBusca())
         self.assertIs(self.item()["segurado"], False)
+
+
+
+DESENHO = ".fabrica/demandas/%s/desenho.html" % ID
+PR_D = "https://github.com/kustertech-exemplo/app/pull/9"
+HEAD_D = "c" * 40
+HEAD_D2 = "d" * 40
+BRANCH_D = "fabrica/desenho-11111111"
+HTML_OK = (
+    b'<!doctype html><html><head><style>body{background:url(data:image/png;base64,AAAA)}</style></head>'
+    b'<body><a href="#topo">topo</a><img src="data:image/png;base64,AAAA" alt="logo"><p>Pede uma opini\xc3\xa3o</p></body></html>'
+)
+
+
+class TestesValidarDesenho(unittest.TestCase):
+    def test_validar_desenho_tabela(self):
+        casos = [
+            (HTML_OK, None),
+            (b"<p>ok</p>", None),
+            (b"<SCRIPT>alert(1)</SCRIPT>", "tem script"),
+            (b"<p>x</p><script src=a.js></script>", "tem script"),
+            (b'<button onclick="x()">a</button>', "tem script"),
+            (b"<svg/onload=x()>", "tem script"),
+            (b'<a href="javascript:x()">a</a>', "tem script"),
+            (b'<img src="https://x.exemplo/a.png">', "carrega recurso de fora"),
+            (b"<img src=http://x.exemplo/a.png>", "carrega recurso de fora"),
+            (b"<link href='//x.exemplo/a.css' rel=stylesheet>", "carrega recurso de fora"),
+            (b"<style>body{background:url(//x)}</style>", "carrega recurso de fora"),
+            (b"<style>body{background:url( 'HTTPS://x' )}</style>", "carrega recurso de fora"),
+            (b"<style>@import 'https://x.exemplo/a.css';</style>", "carrega recurso de fora"),
+            (b"<p>\xff</p>", "não é UTF-8"),
+            (b"a" * (10 * 1024 * 1024 + 1), "maior que 10 MB"),
+            (b"a" * (10 * 1024 * 1024), None),
+            (b"<p>Leia em https://x.exemplo (texto, n\xc3\xa3o recurso)</p>", None),
+            (b'<img src="data:image/png;base64,AAAA/onab=">', None),  # o base64 pode terminar em /on..=
+            (b'<img src="data:image/png;base64,AAAA" onerror="x()">', "tem script"),
+        ]
+        for dados, esperado in casos:
+            with self.subTest(dados=dados[:60]):
+                self.assertEqual(demandas.validar_desenho(dados), esperado)
+
+
+class TestesDesenho(BasePasso):
+    def setUp(self):
+        super().setUp()
+        demandas.secao(self.estado)["itens"][ID] = item("plano_no_repo", plano=CAMINHO, prUrl=PR, ultima=retrato("planejada"))
+
+    def desenhar(self, cursor="2", **extra):
+        """Um ciclo com a demanda na etapa `desenho`: o run do ux-ui fica despachado."""
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", **extra), cursor=cursor)))
+        return self.item()["runId"]
+
+    def entregar(self, run_id, html=HTML_OK, *, head=HEAD_D, arquivos=(DESENHO,), ci="verde"):
+        self.forja.definir_pr(PR_D, head_sha=head, branch=BRANCH_D, arquivos=list(arquivos))
+        self.forja.definir_arquivo(REPO, head, DESENHO, html)
+        self.forja.definir_ci(REPO, head, ci)
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_D)
+
+    def reservas(self):
+        return capacidade.ler(self.capacidade)["reservas"]
+
+    def enviado(self):
+        """O ciclo seguinte ao envio: o Flow aplicou o arquivo e o `desenho_pronto` (a saída está vazia)."""
+        self.estado["demandas"]["saida"] = []
+
+    def test_desenho_reserva_vaga_ux_ui_e_envia_arquivo_antes_do_evento(self):
+        run_id = self.desenhar()
+        (despacho,) = self.despachos()
+        ux = CONFIG_DO_KIT["modelos"]["ux-ui"]
+        self.assertEqual((despacho["agente"], despacho["modelo"], despacho["max_custo_usd"], despacho["projeto"]), (ux["agente"], ux["modelo"], ux["maxCustoUsd"], "app"))
+        hexa = demandas.nonce_do_motor(ID, "desenho", 0)
+        self.assertEqual(despacho["chave_idempotencia"], hexa)
+        self.assertTrue(despacho["prompt"].endswith("<!-- fabrica:nonce=%s -->" % hexa))
+        self.assertIsNone(despacho["branch_existente"])
+        self.assertIn(DESENHO, despacho["prompt"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["ux-ui"]})
+        self.assertEqual(demandas.chaves_ocupando(self.estado), {demandas.chave(ID)})
+        antes = [x["demandas"]["itens"][ID] for x in self.salvos if x["demandas"]["itens"][ID].get("fase") == "desenhando"]
+        self.assertEqual((antes[0]["nonce"], antes[0]["runId"]), (hexa, None))  # no disco antes do POST
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        saida = self.estado["demandas"]["saida"]
+        self.assertEqual([("arquivo" if "arquivo" in s else s["evento"]["tipo"]) for s in saida], ["arquivo", "desenho_pronto"])
+        arquivo = saida[0]["arquivo"]
+        self.assertEqual((arquivo["tipo"], arquivo["nome"], arquivo["conteudo"], arquivo["tela"]), ("desenho", "desenho.html", "text/html", None))
+        self.assertEqual((self.raiz / arquivo["caminho"]).read_bytes(), HTML_OK)
+        self.assertEqual(saida[1]["evento"]["dados"], {"arquivoId": arquivo["id"]})
+        self.assertEqual(self.item()["fase"], "desenho_enviado")
+        self.assertEqual(self.reservas(), {})
+        self.assertEqual(demandas.chaves_ocupando(self.estado), set())
+        # o retrato ainda sem a versão nova (o Flow aplicou, a busca não trouxe) não desenha de novo
+        self.enviado()
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca(pagina(retrato("desenho"), cursor="3")))
+        self.assertEqual((len(self.despachos()), self.saida(), self.reservas()), (1, [], {}))
+        # aprovar_desenho: a versão 1 espera o Paulo
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", espera="aprovar_desenho", desenho={"versao": 1, "aprovada": None}), cursor="4")))
+        self.assertEqual((len(self.despachos()), self.saida(), self.forja.merges), (1, [], []))
+
+    def test_review_focus_4_desenho_com_script_refaz_uma_vez_e_depois_trava(self):
+        run_id = self.desenhar()
+        self.entregar(run_id, b"<p>oi</p><script>fetch('/x')</script>")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.estado["demandas"]["saida"], [])
+        self.assertEqual(len(self.despachos()), 2)
+        segundo = self.despachos()[1]
+        self.assertIn("A versão anterior foi recusada pelo kit: tem script", segundo["prompt"])
+        self.assertEqual(segundo["branch_existente"], BRANCH_D)
+        self.assertEqual(segundo["chave_idempotencia"], demandas.nonce_do_motor(ID, "desenho", 1))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["ux-ui"]})
+        self.entregar(self.item()["runId"], b'<img src="https://x.exemplo/a.png">', head=HEAD_D2)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 2)
+        (s,) = self.estado["demandas"]["saida"]
+        self.assertEqual((s["evento"]["tipo"], s["evento"]["dados"]), ("travada", {"motivo": "o desenho gerado não é autocontido: carrega recurso de fora", "url": PR_D}))
+        self.assertEqual(self.reservas(), {})
+        self.assertEqual(list((self.raiz / "demandas").glob("**/*")) if (self.raiz / "demandas").exists() else [], [])
+        # a trava fica: nada se refaz sozinho; a retomada do Paulo desenha de novo
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", espera="travada"), cursor="3")))
+        self.passo(ClienteDeBusca(pagina(retrato("desenho"), cursor="4")))
+        self.assertEqual(len(self.despachos()), 2)
+        self.avancar(60)
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", eventos=retomada), cursor="5")))
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertEqual(self.despachos()[2]["chave_idempotencia"], demandas.nonce_do_motor(ID, "desenho", 2))
+        self.assertNotIn("recusada pelo kit", self.despachos()[2]["prompt"])
+
+    def test_html_acima_de_10_mb_nao_e_enviado(self):
+        run_id = self.desenhar()
+        self.entregar(run_id, b"a" * (10 * 1024 * 1024 + 1))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.estado["demandas"]["saida"], [])
+        self.assertIn("recusada pelo kit: maior que 10 MB", self.despachos()[1]["prompt"])
+
+    def test_ajuste_pedido_refaz_no_mesmo_branch_com_o_texto_do_ajuste(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        ajuste = {"versao": 1, "texto": "mais contraste no topo", "em": AGORA}
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", desenho={"versao": 1, "aprovada": None}, ajustes=[ajuste]), cursor="3")))
+        self.assertEqual(len(self.despachos()), 2)
+        segundo = self.despachos()[1]
+        self.assertEqual(segundo["branch_existente"], BRANCH_D)
+        self.assertIn("Versão 1: mais contraste no topo", segundo["prompt"])
+        self.assertEqual(segundo["chave_idempotencia"], demandas.nonce_do_motor(ID, "desenho", 2))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["ux-ui"]})
+        self.entregar(self.item()["runId"], head=HEAD_D2)
+        self.passo(ClienteDeBusca())
+        self.assertEqual([s["evento"]["tipo"] for s in self.estado["demandas"]["saida"] if "evento" in s], ["desenho_pronto"])
+        self.assertEqual((self.item()["fase"], self.item()["desenho"]["headSha"]), ("desenho_enviado", HEAD_D2))
+        self.assertEqual(self.reservas(), {})
+
+    def test_aprovacao_mergeia_o_pr_do_desenho_e_solta_a_vaga(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        # o plano segue segurado com a etapa já em `desenvolvida`, até o desenho chegar ao branch padrão
+        self.estado["fila"] = [na_fila("aguardando")]
+        self.item()["recebida"] = retrato("desenvolvida")
+        self.estado["fila"] = demandas.aplicar_na_fila(self.estado["demandas"], self.estado["fila"])
+        self.assertTrue(self.estado["fila"][0]["segurado"])
+        del self.item()["recebida"]
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", desenho={"versao": 1, "aprovada": 1}), cursor="3")))
+        self.assertEqual(self.forja.merges, [(PR_D, HEAD_D)])
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        self.assertEqual(self.reservas(), {})
+        self.assertFalse(demandas.aplicar_na_fila(self.estado["demandas"], self.estado["fila"])[0]["segurado"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.forja.merges), self.saida()), (1, []))
+
+    def test_pr_do_desenho_com_ci_vermelho_trava_uma_vez(self):
+        run_id = self.desenhar()
+        self.entregar(run_id, ci="vermelho")
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", desenho={"versao": 1, "aprovada": 1}), cursor="3")))
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o PR do desenho está com o CI vermelho", "url": PR_D}))
+        self.enviado()
+        self.passo(ClienteDeBusca())  # retrato atrasado: não trava de novo
+        self.assertEqual(self.saida(), [])
+        # o Paulo conserta o CI e retoma: mergeia
+        self.forja.definir_ci(REPO, HEAD_D, "verde")
+        self.avancar(60)
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", desenho={"versao": 1, "aprovada": 1}, eventos=retomada), cursor="4")))
+        self.assertEqual(self.forja.merges, [(PR_D, HEAD_D)])
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+
+    def test_pr_do_desenho_que_mexe_fora_do_arquivo_trava_sem_enviar(self):
+        run_id = self.desenhar()
+        self.entregar(run_id, arquivos=(DESENHO, "src/app/page.tsx"))
+        self.passo(ClienteDeBusca())
+        (s,) = self.estado["demandas"]["saida"]
+        self.assertEqual(s["evento"]["dados"], {"motivo": "o PR do desenho mexe fora de %s: src/app/page.tsx" % DESENHO, "url": PR_D})
+        self.assertEqual(self.reservas(), {})
+
+    def test_sem_vaga_o_desenho_espera_o_ciclo_seguinte(self):
+        capacidade.configurar(self.capacidade, vagas=1, ram_minima_mb=0)
+        self.assertTrue(capacidade.reservar(self.capacidade, "outro-plano", "raia-0", mem_disponivel_mb=None))
+        self.desenhar()
+        self.assertEqual(self.despachos(), [])
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        capacidade.sincronizar(self.capacidade, "outro-plano", set())
+        # duas demandas esperando a única vaga: a urgente (mais nova) passa na frente
+        urgente = retrato("desenho", id=OUTRO, destino="urgente", criadaEm="2026-11-20T09:30:00Z")
+        demandas.secao(self.estado)["itens"][OUTRO] = item("plano_no_repo", plano=".fabrica/planos/demanda-22222222.json", ultima=retrato("planejada", id=OUTRO))
+        self.passo(ClienteDeBusca(pagina(urgente, cursor="3")))
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual(self.reservas(), {demandas.chave(OUTRO): ["ux-ui"]})
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+
+    def test_espera_planejar_comigo_depois_de_tres_recusas_nao_desenha(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        ajustes = [{"versao": v, "texto": "outra", "em": AGORA} for v in (1, 2, 3)]
+        r = retrato("desenho", espera="planejar_comigo", nivel="planejar_comigo", desenho={"versao": 3, "aprovada": None}, ajustes=ajustes)
+        self.assertEqual(demandas.proxima_acao(self.item(), r), "nada")
+        self.passo(ClienteDeBusca(pagina(r, cursor="3")))
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.despachos()), self.saida(), self.reservas()), (1, [], {}))
+
+    def test_aprovado_pelo_artefato_da_sessao_nao_mergeia_o_desenho_recusado(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        plano = {"caminho": CAMINHO, "prUrl": PR, "artefato": "https://claude.ai/public/artifacts/x"}
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", nivel="planejar_comigo", plano=plano, desenho={"versao": 3, "aprovada": 3}), cursor="3")))
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        self.assertIn("demandas:desenho:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_teto_trava_segura_a_vaga_ate_o_run_terminar(self):
+        run_id = self.desenhar()
+        self.avancar(demandas.TETO_RUN_S + 1)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o agente passou de 2 h", "url": None}))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["ux-ui"]})  # o run segue no Warren
+        self.assertEqual(demandas.chaves_ocupando(self.estado), {demandas.chave(ID)})
+        self.enviado()
+        self.avancar(60)
+        em = (self.agora).strftime("%Y-%m-%dT%H:%M:%SZ")
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": em, "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", eventos=retomada), cursor="3")))
+        self.assertEqual(len(self.despachos()), 1)  # nunca dois runs do desenho
+        self.entregar(run_id)  # termina com PR: o resultado não conta
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["ux-ui"]})
+        self.assertNotIn("desenhoSuperado", self.item())
+
+    def test_o_mesmo_erro_5_ciclos_seguidos_vira_travada_e_solta_a_vaga(self):
+        run_id = self.desenhar()
+        self.motor.definir_run(run_id, estado="succeeded", prUrl=PR_D)  # a forja não conhece o PR: KeyError todo ciclo
+        for _ in range(4):
+            eventos = self.passo(ClienteDeBusca())
+            self.assertIn("erro", [e["evento"] for e in eventos])
+        self.assertEqual(self.saida(), [])
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertTrue(evento["dados"]["motivo"].startswith("o desenho parou: o mesmo erro 5 ciclos seguidos (KeyError"))
+        self.assertEqual(self.reservas(), {})
+
+    def test_sem_pr_duas_vezes_trava(self):
+        run_id = self.desenhar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 2)
+        self.motor.definir_run(self.item()["runId"], estado="failed", motivoFalha="erro")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "o ux-ui terminou sem PR do desenho 2 vezes", "url": None})
+        self.assertEqual(self.reservas(), {})
+
+    def test_queda_no_post_do_desenho_acha_o_run_pelo_nonce(self):
+        self.motor.falhar_despacho("incerta")
+        self.desenhar()
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("desenhando", None))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual(self.item()["runId"], "run-1")
+
+    def test_desenho_pronto_recusado_vira_travada_uma_vez(self):
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", "recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o Flow recusou o desenho enviado pela Fábrica", "url": PR_D}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        eventos = self.passo(ClienteDeBusca())
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 1))
+        self.assertIn("demandas:desenho:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_paulo_tira_a_demanda_do_desenho_com_o_run_no_meio(self):
+        run_id = self.desenhar()
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", encerrada="cancelada"), cursor="3")))
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("esperando_paulo", None))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["ux-ui"]})
+        self.motor.definir_run(run_id, estado="failed", motivoFalha="erro")
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.reservas(), self.saida()), ({}, []))
+
+    def test_sem_modelo_do_ux_ui_espera_com_aviso(self):
+        modelos = dict(CONFIG_DO_KIT["modelos"])
+        del modelos["ux-ui"]
+        eventos = self.passo(ClienteDeBusca(pagina(retrato("desenho"), cursor="2")), modelos=modelos)
+        self.assertEqual((self.despachos(), self.reservas()), ([], {}))
+        self.assertIn("demandas:modelo:ux-ui", [e.get("chave") for e in eventos])
 
 
 if __name__ == "__main__":
