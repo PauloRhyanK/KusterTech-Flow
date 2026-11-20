@@ -33,7 +33,11 @@ export async function limparBanco(): Promise<void> {
 // O TRUNCATE apaga o modelo semeado pela migration; reaplica só o trecho de semente (sem o índice).
 export async function semearModeloPadrao(): Promise<void> {
   const sql = readFileSync(join(process.cwd(), MIGRATION_DE_DEMANDAS), 'utf8')
-  const trecho = sql.slice(sql.indexOf(MARCADOR_DO_MODELO_PADRAO))
+  const inicio = sql.indexOf(MARCADOR_DO_MODELO_PADRAO)
+  if (inicio < 0) {
+    throw new Error(`"${MARCADOR_DO_MODELO_PADRAO}" não está em ${MIGRATION_DE_DEMANDAS}.`)
+  }
+  const trecho = sql.slice(inicio)
   for (const comando of trecho.split(';')) {
     const util = comando
       .split('\n')

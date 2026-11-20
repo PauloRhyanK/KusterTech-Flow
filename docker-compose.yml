@@ -79,5 +79,6 @@ services:
 
 volumes:
   postgres_data:
-  # Arquivos das demandas (anexos, desenhos, capturas); entra no backup junto do postgres_data.
+  # Arquivos das demandas (anexos, desenhos, capturas); scripts/infra/backup-oficina.sh os envia
+  # ao backup externo junto do dump do Postgres.
   flow_arquivos:

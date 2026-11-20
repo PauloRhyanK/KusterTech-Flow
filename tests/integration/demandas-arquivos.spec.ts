@@ -11,7 +11,7 @@ import {
   gravarArquivo,
   lerArquivo,
 } from '@/modules/demandas/arquivos'
-import { LIMITE_POR_ARQUIVO } from '@/modules/demandas/transicoes'
+import { CONTEUDOS_ACEITOS, LIMITE_POR_ARQUIVO } from '@/modules/demandas/transicoes'
 
 let dir: string
 const anterior = process.env.FLOW_ARQUIVOS_DIR
@@ -145,6 +145,38 @@ describe('arquivos de demandas no volume', () => {
       const h = cabecalhosDoArquivo(c, 'a.svg')
       expect(h['Content-Type']).toBe('application/octet-stream')
       expect(h['Content-Disposition']).toBe("attachment; filename*=UTF-8''a.svg")
+      expect(h['Content-Security-Policy']).toMatch(/^sandbox;/)
+    }
+  })
+
+  test('todo tipo aceito que não é HTML (imagens e áudios) sai inline com o próprio tipo e sem CSP', () => {
+    const aceitos = new Set(Object.values(CONTEUDOS_ACEITOS).flat())
+    aceitos.delete('text/html')
+    expect([...aceitos].sort()).toEqual(
+      [
+        'audio/mp4',
+        'audio/mpeg',
+        'audio/ogg',
+        'audio/webm',
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+      ].sort(),
+    )
+    for (const c of aceitos) {
+      const h = cabecalhosDoArquivo(c, 'a.bin')
+      expect(h['Content-Type']).toBe(c)
+      expect(h['Content-Disposition']).toBe("inline; filename*=UTF-8''a.bin")
+      expect(h['Content-Security-Policy']).toBeUndefined()
+      expect(h['X-Content-Type-Options']).toBe('nosniff')
+    }
+  })
+
+  test('tipo não aceito (pdf, text/plain, gif) também vira download sob a CSP sandbox', () => {
+    for (const c of ['application/pdf', 'text/plain', 'image/gif']) {
+      const h = cabecalhosDoArquivo(c, 'a.bin')
+      expect(h['Content-Type']).toBe('application/octet-stream')
+      expect(h['Content-Disposition']).toMatch(/^attachment;/)
       expect(h['Content-Security-Policy']).toMatch(/^sandbox;/)
     }
   })

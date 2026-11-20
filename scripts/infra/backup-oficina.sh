@@ -57,7 +57,22 @@ else
     falhar "pg_dump ou envio do dump falhou"
 fi
 
-# 2. Configuração da Fábrica e da oficina. Os clones dos repositórios (planos/*/repo e o kit) são
+# 2. Arquivos das demandas do Flow (volume flow_arquivos: anexos, desenhos aprovados e capturas).
+#    Cada arquivo é gravado em .parcial e renomeado no fim, então os completos estão sempre inteiros;
+#    os .parcial ficam de fora. O restic deduplica, então repetir o envio não duplica dados.
+vol_arquivos="${PROJETO_COMPOSE}_flow_arquivos"
+dir_arquivos=$(docker volume inspect -f '{{ .Mountpoint }}' "$vol_arquivos" 2>/dev/null)
+if [[ -z "$dir_arquivos" || ! -d "$dir_arquivos" ]]; then
+  log "volume $vol_arquivos não existe aqui: arquivos das demandas pulados"
+elif ((SIMULAR)); then
+  restic backup --dry-run -v --tag flow-arquivos --host oficina --exclude '*.parcial' \
+    "$dir_arquivos" | tail -5
+else
+  restic backup --tag flow-arquivos --host oficina --exclude '*.parcial' "$dir_arquivos" ||
+    falhar "backup dos arquivos das demandas falhou"
+fi
+
+# 3. Configuração da Fábrica e da oficina. Os clones dos repositórios (planos/*/repo e o kit) são
 #    refeitos do GitHub; tokens e travas ficam de fora (os tokens vivem em arquivos próprios fora
 #    de ~/fabrica e o coordenador.env só guarda caminhos).
 fontes=("$CASA/fabrica")

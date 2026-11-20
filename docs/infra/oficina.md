@@ -204,10 +204,10 @@ Se a imagem for privada, faça `docker login ghcr.io` como root (o timer roda co
 O script é [`scripts/infra/backup-oficina.sh`](../../scripts/infra/backup-oficina.sh) e usa restic, com criptografia no cliente, retenção de 7 diários, 4 semanais e 6 mensais, e `restic check` de 5% dos dados aos domingos. O backup leva:
 
 - o Postgres da KusterTech: `pg_dump -Fc` direto para o restic, quando o contêiner do projeto `kustertech-flow` está rodando;
-- o volume `flow_arquivos` (arquivos das demandas), junto do `postgres_data`;
+- os arquivos das demandas: o volume `flow_arquivos` (`kustertech-flow_flow_arquivos`), lido pelo ponto de montagem do Docker, sem os `.parcial`, com a tag `flow-arquivos`; os desenhos aprovados ficam para sempre e só existem ali;
 - a configuração da Fábrica: `~/fabrica` sem os clones de repositório, sem travas e sem arquivos de token, mais as units da Fábrica e da oficina e as configurações de Docker, journald e sysctl.
 
-Hoje isso dá menos de 1 MB por snapshot, mais o dump do banco.
+Hoje isso dá menos de 1 MB por snapshot, mais o dump do banco e os arquivos das demandas (até 100 MB por demanda; o restic deduplica entre snapshots).
 
 **Destino: Backblaze B2**, bucket privado `kustertech-oficina-backup` (us-east-005), configurado e testado com restauração em 18/11/2026. Os primeiros 10 GB são grátis, depois cerca de US$ 7/TB/mês. Este volume deve custar **US$ 0**. O DigitalOcean Spaces cobra no mínimo US$ 5/mês.
 

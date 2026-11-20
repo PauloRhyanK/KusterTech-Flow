@@ -2,6 +2,7 @@ import { mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import type { ReadableStream as ReadableStreamDoNode } from 'node:stream/web'
+import { CONTEUDOS_ACEITOS } from './transicoes'
 
 // Sem `import 'server-only'`: o módulo também roda no worker (Node puro), onde esse pacote lança.
 // Componentes não importam este arquivo; só services, rotas e o worker.
@@ -13,15 +14,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CSP_DO_DESENHO =
   "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:"
 
-// Tipos que o navegador mostra sem executar nada; o resto vai como download.
-const INLINE_SEGURO: Record<string, string> = {
-  'image/png': 'image/png',
-  'image/jpeg': 'image/jpeg',
-  'image/webp': 'image/webp',
-  'image/gif': 'image/gif',
-  'application/pdf': 'application/pdf',
-  'text/plain': 'text/plain; charset=utf-8',
-}
+// Tipos aceitos (CONTEUDOS_ACEITOS) que o navegador mostra sem executar nada; o HTML tem regra
+// própria e qualquer tipo ativo (svg, xml, script) fica de fora mesmo que um dia seja aceito.
+const TIPO_ATIVO = /(^text\/html$)|svg|xml|javascript|ecmascript/
+const INLINE_SEGURO: ReadonlySet<string> = new Set(
+  Object.values(CONTEUDOS_ACEITOS)
+    .flat()
+    .filter((t) => !TIPO_ATIVO.test(t)),
+)
 
 export function diretorioDosArquivos(): string {
   return process.env.FLOW_ARQUIVOS_DIR || DIRETORIO_PADRAO
@@ -131,9 +131,8 @@ export function cabecalhosDoArquivo(conteudo: string, nome: string): Record<stri
       'Content-Security-Policy': CSP_DO_DESENHO,
     }
   }
-  const seguro = INLINE_SEGURO[tipo]
-  if (seguro) {
-    return { ...base, 'Content-Disposition': `inline; ${filename}`, 'Content-Type': seguro }
+  if (INLINE_SEGURO.has(tipo)) {
+    return { ...base, 'Content-Disposition': `inline; ${filename}`, 'Content-Type': tipo }
   }
   // svg, xhtml, js e qualquer outro tipo podem executar: só como download, e ainda sob sandbox.
   return {
