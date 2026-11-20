@@ -1,6 +1,9 @@
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
+import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { esperasDasDemandas, type ItemDeEspera } from '@/modules/inicio/model'
+import type { EtapaDefinida, Espera } from './model'
 
 export type PublicacaoDaDemanda = {
   estado: EstadoDoPedido
@@ -32,4 +35,47 @@ export async function publicacaoDaDemanda(demandaId: string): Promise<Publicacao
     commit: efetivo.commit,
     noArDesde: efetivo.estado === 'PUBLICADO' ? efetivo.concluidoEm : null,
   }
+}
+
+/** As demandas que esperam o Paulo, para o "Espera você" do Início: duas consultas, não uma por demanda. */
+export async function esperasDeDemandas(sujeito: Sujeito, agora: Date): Promise<ItemDeEspera[]> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+  const [demandas, recebidasParadas, fonte] = await Promise.all([
+    db.demanda.findMany({
+      where: { encerrada: null, espera: { not: null }, projeto: { arquivadoEm: null } },
+      select: {
+        id: true,
+        titulo: true,
+        espera: true,
+        esperaMotivo: true,
+        esperaDesde: true,
+        atualizadaEm: true,
+        etapaAtual: true,
+        etapas: true,
+        projeto: { select: { nome: true } },
+      },
+    }),
+    db.demanda.count({
+      where: { encerrada: null, etapaAtual: 'recebida', projeto: { arquivadoEm: null } },
+    }),
+    db.fonteDaFabrica.aggregate({
+      where: { revogadaEm: null },
+      _max: { demandasBuscadasEm: true },
+    }),
+  ])
+  return esperasDasDemandas(
+    demandas.map((d) => ({
+      id: d.id,
+      titulo: d.titulo,
+      projeto: d.projeto.nome,
+      espera: d.espera as Espera,
+      esperaMotivo: d.esperaMotivo,
+      esperaDesde: d.esperaDesde ?? d.atualizadaEm,
+      rotuloDaEtapa:
+        (d.etapas as unknown as EtapaDefinida[]).find((e) => e.chave === d.etapaAtual)?.rotulo ??
+        d.etapaAtual,
+    })),
+    { buscouEm: fonte._max.demandasBuscadasEm, recebidasParadas },
+    agora,
+  )
 }

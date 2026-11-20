@@ -5,11 +5,13 @@ import type { TomDeEstado } from '@/lib/ui/badge-de-estado'
 import { minutosDeAtraso, retratoDesatualizado } from '@/modules/fabrica/model'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 import { apresentarEstado, type EstadoIntegracao } from '@/modules/github/model'
+import { FABRICA_SEM_BUSCAR_MS, type Espera } from '@/modules/demandas/model'
 import type { AvisoDePublicacao } from '@/modules/fila-de-publicacao/apresentacao'
 import type { AvisoDaMaquina } from '@/modules/oficina/model'
 
 export type TipoDeEspera =
   | 'decisao'
+  | 'demanda'
   | 'plano-pausado'
   | 'aviso-da-oficina'
   | 'fabrica-sem-noticias'
@@ -21,6 +23,7 @@ export type TipoDeEspera =
 
 export const ORDEM_DOS_TIPOS: readonly TipoDeEspera[] = [
   'decisao',
+  'demanda',
   'plano-pausado',
   'aviso-da-oficina',
   'fabrica-sem-noticias',
@@ -33,6 +36,7 @@ export const ORDEM_DOS_TIPOS: readonly TipoDeEspera[] = [
 
 export const ROTULO_DO_TIPO: Record<TipoDeEspera, string> = {
   decisao: 'Decisão',
+  demanda: 'Demanda',
   'plano-pausado': 'Plano pausado',
   'aviso-da-oficina': 'Oficina',
   'fabrica-sem-noticias': 'Fábrica',
@@ -47,6 +51,7 @@ export const LIMITE_DE_ESPERA = 20
 
 export const ACAO_DE_LEITURA: Record<TipoDeEspera, Acao> = {
   decisao: 'desenvolvimento.ler',
+  demanda: 'desenvolvimento.ler',
   'plano-pausado': 'desenvolvimento.ler',
   'fabrica-sem-noticias': 'desenvolvimento.ler',
   publicacao: 'desenvolvimento.ler',
@@ -134,6 +139,73 @@ export function formatarIdade(desde: Date, agora: Date): string {
   const horas = Math.floor(minutos / 60)
   if (horas < 24) return `há ${horas} h`
   return `há ${Math.floor(horas / 24)} d`
+}
+
+export interface LinhaDeDemanda {
+  id: string
+  titulo: string
+  projeto: string
+  espera: Espera
+  esperaMotivo: string | null
+  esperaDesde: Date
+  rotuloDaEtapa: string
+}
+
+function tituloDaEspera(l: LinhaDeDemanda): string {
+  switch (l.espera) {
+    case 'aprovar_desenho':
+      return `Aprovar o desenho de ${l.titulo}`
+    case 'planejar_comigo':
+      return `Planejar ${l.titulo} com você`
+    case 'decidir_destino':
+      return `Decidir o destino de ${l.titulo}`
+    case 'travada':
+      return `${l.titulo} travou`
+    case 'teste_falhou':
+      return `${l.titulo}: o teste no navegador falhou duas vezes`
+    case 'concluir_etapa':
+      return `Concluir ${l.rotuloDaEtapa} de ${l.titulo}`
+  }
+}
+
+// Uma espera por demanda, mais um aviso quando a Fábrica deixou de buscar demandas com
+// recebidas esperando a triagem.
+export function esperasDasDemandas(
+  linhas: readonly LinhaDeDemanda[],
+  fabrica: { buscouEm: Date | null; recebidasParadas: number },
+  agora: Date,
+): ItemDeEspera[] {
+  const itens: ItemDeEspera[] = linhas.map((l) => ({
+    id: `demanda:${l.id}`,
+    tipo: 'demanda',
+    titulo: tituloDaEspera(l),
+    contexto: `${l.projeto} · ${l.esperaMotivo ?? formatarIdade(l.esperaDesde, agora)}`,
+    href: `/demandas/${l.id}`,
+    externo: false,
+    rotuloDoLink: 'Ver a demanda',
+    tom: l.espera === 'travada' || l.espera === 'teste_falhou' ? 'erro' : 'atencao',
+    desde: l.esperaDesde,
+  }))
+  const parada =
+    fabrica.buscouEm === null ||
+    agora.getTime() - fabrica.buscouEm.getTime() > FABRICA_SEM_BUSCAR_MS
+  if (fabrica.recebidasParadas > 0 && parada) {
+    const n = fabrica.recebidasParadas
+    itens.push({
+      id: 'fabrica-sem-buscar-demandas',
+      tipo: 'fabrica-sem-noticias',
+      titulo: fabrica.buscouEm
+        ? `A Fábrica não busca demandas ${formatarIdade(fabrica.buscouEm, agora)}`
+        : 'A Fábrica nunca buscou demandas',
+      contexto: `${n} ${n === 1 ? 'demanda esperando' : 'demandas esperando'} a triagem`,
+      href: '/demandas',
+      externo: false,
+      rotuloDoLink: 'Ver as demandas',
+      tom: 'atencao',
+      desde: fabrica.buscouEm,
+    })
+  }
+  return itens
 }
 
 // Os mesmos estados de `planosEmCurso`: concluídos e removidos não esperam ninguém.

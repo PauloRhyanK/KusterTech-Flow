@@ -10,6 +10,7 @@ import {
   ROTULO_DO_TIPO,
   agruparHomologacoes,
   esperasDaFabrica,
+  esperasDasDemandas,
   esperasDaOficina,
   esperasDaPublicacao,
   formatarIdade,
@@ -20,6 +21,7 @@ import {
   pendenciaDeDivergencia,
   pendenciaDeIntegracao,
   type ItemDeEspera,
+  type LinhaDeDemanda,
   type LinhaDeHomologacao,
   type TipoDeEspera,
 } from './model'
@@ -114,6 +116,7 @@ describe('tipos de espera', () => {
   it('ordem, rótulos e ação de leitura de cada tipo', () => {
     expect(ORDEM_DOS_TIPOS).toEqual([
       'decisao',
+      'demanda',
       'plano-pausado',
       'aviso-da-oficina',
       'fabrica-sem-noticias',
@@ -125,6 +128,7 @@ describe('tipos de espera', () => {
     ])
     expect(ORDEM_DOS_TIPOS.map((t) => ROTULO_DO_TIPO[t])).toEqual([
       'Decisão',
+      'Demanda',
       'Plano pausado',
       'Oficina',
       'Fábrica',
@@ -136,6 +140,7 @@ describe('tipos de espera', () => {
     ])
     expect(ACAO_DE_LEITURA).toEqual({
       decisao: 'desenvolvimento.ler',
+      demanda: 'desenvolvimento.ler',
       'plano-pausado': 'desenvolvimento.ler',
       'fabrica-sem-noticias': 'desenvolvimento.ler',
       publicacao: 'desenvolvimento.ler',
@@ -146,6 +151,67 @@ describe('tipos de espera', () => {
       divergencia: 'publicacao.autorizar',
     })
     expect(LIMITE_DE_ESPERA).toBe(20)
+  })
+})
+
+describe('tipo demanda', () => {
+  const agora = new Date('2026-11-19T15:00:00Z')
+  const linha = {
+    id: 'd1',
+    titulo: 'Tela de funil de vendas',
+    projeto: 'Projeto A',
+    espera: 'aprovar_desenho' as const,
+    esperaMotivo: null,
+    esperaDesde: new Date('2026-11-19T14:30:00Z'),
+    rotuloDaEtapa: 'Desenho',
+  }
+  const quieta = { buscouEm: agora, recebidasParadas: 0 }
+
+  it('ORDEM_DOS_TIPOS tem demanda logo depois de decisao e ROTULO_DO_TIPO.demanda === "Demanda"', () => {
+    expect(ORDEM_DOS_TIPOS[ORDEM_DOS_TIPOS.indexOf('decisao') + 1]).toBe('demanda')
+    expect(ROTULO_DO_TIPO.demanda).toBe('Demanda')
+  })
+
+  it('esperasDasDemandas: aprovar_desenho leva à demanda', () => {
+    expect(esperasDasDemandas([linha], quieta, agora)).toEqual([
+      expect.objectContaining({
+        id: 'demanda:d1',
+        tipo: 'demanda',
+        titulo: 'Aprovar o desenho de Tela de funil de vendas',
+        contexto: 'Projeto A · há 30 min',
+        href: '/demandas/d1',
+        rotuloDoLink: 'Ver a demanda',
+      }),
+    ])
+  })
+
+  it('esperasDasDemandas: título de cada espera e o motivo no contexto', () => {
+    const t = (espera: LinhaDeDemanda['espera']) =>
+      esperasDasDemandas([{ ...linha, espera, esperaMotivo: 'porque sim' }], quieta, agora)[0]!
+    expect(t('planejar_comigo').titulo).toBe('Planejar Tela de funil de vendas com você')
+    expect(t('decidir_destino').titulo).toBe('Decidir o destino de Tela de funil de vendas')
+    expect(t('travada').titulo).toBe('Tela de funil de vendas travou')
+    expect(t('teste_falhou').titulo).toBe(
+      'Tela de funil de vendas: o teste no navegador falhou duas vezes',
+    )
+    expect(t('concluir_etapa').titulo).toBe('Concluir Desenho de Tela de funil de vendas')
+    expect(t('travada').contexto).toBe('Projeto A · porque sim')
+  })
+
+  it('esperasDasDemandas: Fábrica sem buscar há mais de 10 min com recebidas gera o aviso', () => {
+    const buscou = (min: number) => new Date(agora.getTime() - min * 60_000)
+    const avisos = (buscouEm: Date | null, recebidasParadas: number) =>
+      esperasDasDemandas([], { buscouEm, recebidasParadas }, agora)
+    expect(avisos(buscou(11), 2)).toEqual([
+      expect.objectContaining({
+        titulo: 'A Fábrica não busca demandas há 11 min',
+        contexto: '2 demandas esperando a triagem',
+        href: '/demandas',
+      }),
+    ])
+    expect(avisos(buscou(9), 2)).toEqual([])
+    expect(avisos(buscou(11), 0)).toEqual([])
+    expect(avisos(null, 1)).toHaveLength(1)
   })
 })
 
@@ -562,6 +628,23 @@ describe('invariante 9', () => {
           desde: data,
         },
       ]),
+      ...(['aprovar_desenho', 'travada', 'teste_falhou'] as const).flatMap((espera) =>
+        esperasDasDemandas(
+          [
+            {
+              id: 'd',
+              titulo: 'T',
+              projeto: 'P',
+              espera,
+              esperaMotivo: null,
+              esperaDesde: data,
+              rotuloDaEtapa: 'E',
+            },
+          ],
+          { buscouEm: data, recebidasParadas: 0 },
+          data,
+        ),
+      ),
       ...(['PENDENTE_DE_TESTE', 'AGUARDANDO_RETESTE', 'AGUARDANDO_DISPONIBILIZACAO'] as const).map(
         (estado) => agruparHomologacoes([linha({ estado })], ADMIN)[0] ?? null,
       ),
