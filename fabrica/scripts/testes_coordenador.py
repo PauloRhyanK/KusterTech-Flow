@@ -2274,13 +2274,24 @@ class TestesPassoDemandas(Base):
         c.ciclo()
         self.assertEqual(len(self.avisos_de_demandas()), 2)
 
+    def test_busca_recusada_401_um_aviso_e_uma_tentativa_a_cada_15_min(self):
+        c = self.coordenador_com(flow=FlowQueFalha(retrato.FalhaDeEnvio("HTTP 401")))
+        tentativas = []
+        buscar = self.flow.buscar
+        self.flow.buscar = lambda desde: tentativas.append(desde) or buscar(desde)
+        for _ in range(20):
+            c.ciclo()
+            self.instante += datetime.timedelta(minutes=1)
+        self.assertEqual(len(tentativas), 2)  # 12:00 e 12:15
+        self.assertEqual(self.avisos_de_demandas(), ["Demandas: o Flow recusou a busca (HTTP 401); tento de novo a cada 15 min"])
+
     def test_orfaos_nao_soltam_a_vaga_de_desenho_em_curso(self):
         cap = self.raiz / "capacidade.json"
         self.demanda_em(self.DEMANDA, "desenho")
         self.demanda_em(self.OUTRA, "planejada")
         dados = self.fila_estado()
-        dados["demandas"]["itens"][self.DEMANDA].update(fase="desenhando", alvo="desenhando", runId="run-9", repo=REPO)
-        dados["demandas"]["itens"][self.OUTRA].update(fase="planejando", alvo="planejando", nonce="a" * 32, repo=REPO)
+        dados["demandas"]["itens"][self.DEMANDA].update(fase="desenhando", alvo="desenhando", runId="run-9", repo=REPO, inicio="2026-11-03T10:00:00Z")
+        dados["demandas"]["itens"][self.OUTRA].update(fase="planejando", alvo="planejando", nonce="a" * 32, repo=REPO, inicio="2026-11-03T10:00:00Z")
         (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
         self.assertTrue(capacidade.reservar(cap, "demanda:" + self.DEMANDA, "ux-ui", mem_disponivel_mb=None))
         self.assertTrue(capacidade.tomar_orquestrador(cap, REPO, "demanda:" + self.OUTRA))
@@ -2290,6 +2301,61 @@ class TestesPassoDemandas(Base):
         depois = capacidade.ler(cap)
         self.assertEqual(depois["reservas"], {"demanda:" + self.DEMANDA: ["ux-ui"]})
         self.assertEqual(depois["orquestrador"], {REPO: "demanda:" + self.OUTRA})
+
+    def presas(self, inicio):
+        """Uma demanda desenhando (vaga) e outra planejando (trava do repositório), as duas desde `inicio`."""
+        cap = self.raiz / "capacidade.json"
+        self.demanda_em(self.DEMANDA, "desenho")
+        self.demanda_em(self.OUTRA, "planejada")
+        dados = self.fila_estado()
+        dados["demandas"]["itens"][self.DEMANDA].update(fase="desenhando", alvo="desenhando", runId="run-9", repo=REPO, inicio=inicio)
+        dados["demandas"]["itens"][self.OUTRA].update(fase="planejando", alvo="planejando", nonce="a" * 32, repo=REPO, inicio=inicio)
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        self.assertTrue(capacidade.reservar(cap, "demanda:" + self.DEMANDA, "ux-ui", mem_disponivel_mb=None))
+        self.assertTrue(capacidade.tomar_orquestrador(cap, REPO, "demanda:" + self.OUTRA))
+        return cap
+
+    def conferir_soltas(self, cap):
+        depois = capacidade.ler(cap)
+        self.assertEqual((depois["reservas"], depois["orquestrador"]), ({}, {}))
+        avisos = [a for a in self.avisos_de_demandas() if "passou do teto" in a]
+        self.assertEqual(
+            avisos,
+            [
+                "Demandas: a demanda %s (desenhando desde 2026-11-03T09:29:00Z) passou do teto da fase sem o passo das demandas a acompanhar; a trava e a vaga dela foram soltas" % self.DEMANDA[:8],
+                "Demandas: a demanda %s (planejando desde 2026-11-03T09:29:00Z) passou do teto da fase sem o passo das demandas a acompanhar; a trava e a vaga dela foram soltas" % self.OUTRA[:8],
+            ],
+        )
+
+    def test_flow_sem_a_rota_no_meio_da_demanda_devolve_a_vaga_e_a_trava_no_teto(self):
+        # 2 h 31 min antes do ciclo: passou do teto (2 h) + a folga (30 min); o Flow voltou para antes das demandas
+        cap = self.presas("2026-11-03T09:29:00Z")
+
+        class Flow404(FlowVazio):
+            def buscar(self, desde):
+                return None
+
+        c = self.coordenador_com(flow=Flow404())
+        c.ciclo()
+        self.conferir_soltas(cap)
+        c.ciclo()  # um aviso por vencimento
+        self.assertEqual(len([a for a in self.avisos_de_demandas() if "passou do teto" in a]), 2)
+
+    def test_passo_que_levanta_todo_ciclo_devolve_a_vaga_e_a_trava_no_teto(self):
+        cap = self.presas("2026-11-03T09:31:00Z")  # ainda no prazo: nada sai
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.demandas, "passo", side_effect=RuntimeError("quebrou")):
+            c.ciclo()
+            self.assertEqual(capacidade.ler(cap)["reservas"], {"demanda:" + self.DEMANDA: ["ux-ui"]})
+            self.instante += datetime.timedelta(minutes=2)
+            dados = self.fila_estado()
+            for id_ in (self.DEMANDA, self.OUTRA):
+                dados["demandas"]["itens"][id_]["inicio"] = "2026-11-03T09:29:00Z"
+            (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+            c.ciclo()
+        self.conferir_soltas(cap)
+        # a trava voltou: um plano comum do mesmo repositório toma o orquestrador
+        self.assertTrue(capacidade.tomar_orquestrador(cap, REPO, "plano-comum"))
 
     def test_status_mostra_as_demandas_em_curso(self):
         self.demanda_em(self.DEMANDA, "desenho", espera="aprovar_desenho")

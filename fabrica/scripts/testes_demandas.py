@@ -1147,7 +1147,71 @@ class TestesPlano(BasePasso):
         self.assertIsNone(self.trava())
 
 
+class TestesPrazoDasChaves(unittest.TestCase):
+    """A vaga e a trava de uma demanda vencem no teto da fase + 30 min (e o do CI pendente + 30 min), mesmo sem o
+    `decidir` rodar: o coordenador passa o `agora`."""
+
+    def estado(self, **it):
+        return {"demandas": com_itens(**{ID: item(**it)})}
+
+    def em(self, segundos):
+        return INSTANTE + datetime.timedelta(seconds=segundos)
+
+    def test_vaga_do_desenho_vence_no_teto_mais_a_folga(self):
+        estado = self.estado(fase="desenhando", alvo="desenhando", runId="r1", inicio=AGORA)
+        limite = demandas.TETO_RUN_S + demandas.FOLGA_DO_RUN_SUPERADO_S
+        self.assertEqual(demandas.chaves_ocupando(estado, self.em(limite)), {demandas.chave(ID)})
+        self.assertEqual(demandas.chaves_ocupando(estado, self.em(limite + 1)), set())
+        self.assertEqual(demandas.chaves_ocupando(estado), {demandas.chave(ID)})  # sem `agora`, como antes
+        self.assertEqual(demandas.chaves_vencidas(estado, self.em(limite + 1)), [(ID, "desenhando", AGORA)])
+        self.assertEqual(demandas.chaves_vencidas(estado, self.em(limite)), [])
+
+    def test_ci_pendente_e_run_superado_tem_o_proprio_prazo(self):
+        depois = "2026-11-20T11:30:00Z"  # o CI ficou pendente 1 h 30 min depois do despacho
+        estado = self.estado(fase="corrigindo", alvo="corrigindo", runId="r1", inicio=AGORA, correcao={"ciPendenteDesde": depois})
+        limite = 5400 + demandas.CI_PENDENTE_MAXIMO_S + demandas.FOLGA_DO_RUN_SUPERADO_S
+        self.assertEqual(demandas.chaves_ocupando(estado, self.em(limite)), {demandas.chave(ID)})
+        self.assertEqual(demandas.chaves_ocupando(estado, self.em(limite + 1)), set())
+        sup = self.estado(fase="esperando_paulo", testeSuperado={"runId": "r1", "inicio": AGORA})
+        self.assertEqual(demandas.chaves_ocupando(sup, self.em(demandas.TETO_RUN_S + 1800)), {demandas.chave(ID)})
+        self.assertEqual(demandas.chaves_ocupando(sup, self.em(demandas.TETO_RUN_S + 1801)), set())
+
+    def test_trava_do_plano_vence_e_inicio_ilegivel_vence_logo(self):
+        estado = self.estado(fase="planejando", alvo="planejando", inicio=AGORA, ciPendenteDesde=None)
+        limite = demandas.TETO_PLANO_S + demandas.FOLGA_DO_RUN_SUPERADO_S
+        self.assertEqual(demandas.chaves_do_orquestrador(estado, self.em(limite)), {demandas.chave(ID)})
+        self.assertEqual(demandas.chaves_do_orquestrador(estado, self.em(limite + 1)), set())
+        sup = self.estado(fase="esperando_paulo", runSuperado={"runId": "r1", "inicio": AGORA})
+        self.assertEqual(demandas.chaves_do_orquestrador(sup, self.em(limite + 1)), set())
+        torto = self.estado(fase="planejando", alvo="planejando", inicio="ontem")
+        self.assertEqual(demandas.chaves_do_orquestrador(torto, INSTANTE), set())
+        self.assertEqual(demandas.chaves_vencidas(torto, INSTANTE), [(ID, "planejando", "ontem")])
+
+
 class TestesBusca(BasePasso):
+    def test_busca_recusada_401_espera_15_min_com_um_aviso(self):
+        cliente = ClienteDeBusca(FalhaDeEnvio("HTTP 401"), FalhaDeEnvio("HTTP 401"))
+        eventos = self.passo(cliente, modelos={})
+        self.assertEqual(
+            [e["mensagem"] for e in eventos if e.get("chave") == demandas.CHAVE_BUSCA],
+            ["Demandas: o Flow recusou a busca (HTTP 401); tento de novo a cada 15 min"],
+        )
+        self.avancar(14 * 60)
+        self.assertEqual(self.passo(cliente, modelos={}), [])
+        self.assertEqual(len(cliente.desdes), 1)
+        self.avancar(60)
+        self.passo(cliente, modelos={})  # passou dos 15 min: uma tentativa, recusada de novo
+        self.assertEqual(len(cliente.desdes), 2)
+        self.avancar(15 * 60)
+        self.passo(cliente, modelos={})  # a busca voltou: a espera sai
+        self.assertEqual(len(cliente.desdes), 3)
+        self.assertNotIn("buscaRecusadaEm", self.estado["demandas"])
+        # rede e 5xx continuam tentando em todo ciclo
+        cliente = ClienteDeBusca(FalhaDeEnvio("HTTP 503"))
+        self.passo(cliente, modelos={})
+        self.passo(cliente, modelos={})
+        self.assertEqual(len(cliente.desdes), 2)
+
     def test_cursor_so_avanca_depois_de_gravar_os_itens(self):
         cliente = ClienteDeBusca(pagina(retrato(), cursor="5", mais=True), pagina(dict(retrato(), id=OUTRO), cursor="9"))
         self.passo(cliente, modelos={})

@@ -1003,7 +1003,7 @@ class Coordenador:
         """Depois de um passo sem exceção: a busca que voltou, a rota que voltou e as demandas que saíram do estado
         levam os avisos delas (a próxima falha do mesmo tipo avisa de novo)."""
         sec = demandas.secao(self.dados)
-        if demandas.CHAVE_BUSCA not in {e.get("chave") for e in eventos}:
+        if demandas.CHAVE_BUSCA not in {e.get("chave") for e in eventos} and sec.get("buscaRecusadaEm") is None:
             self._esquecer(demandas.CHAVE_BUSCA)
         if sec.get("semRotaEm") is None:
             self._esquecer(demandas.CHAVE_SEM_ROTA)
@@ -1458,13 +1458,23 @@ class Coordenador:
             # só quem não está ocupando (concluído, removido, desconhecido) perde reservas, trava e espera; um
             # conserto em andamento segura a vaga dele (`conserto:<id>`) como um plano, e uma demanda (`demanda:<id>`)
             # segura a trava do plano e a vaga do desenho, do teste e da correção (mesmo com o passo de demandas
-            # desligado ou falhando neste ciclo: as chaves vêm do `fila-estado.json`)
+            # desligado ou falhando neste ciclo: as chaves vêm do `fila-estado.json`) até o teto da fase + 30 min;
+            # depois disso, sem o passo das demandas para soltá-las, saem aqui com um aviso
+            agora = self._agora()
             ativos = ocupando | consertos.chaves_ocupando(self.dados)
-            ativos |= demandas.chaves_do_orquestrador(self.dados) | demandas.chaves_ocupando(self.dados)
+            ativos |= demandas.chaves_do_orquestrador(self.dados, agora) | demandas.chaves_ocupando(self.dados, agora)
+            vencidas = demandas.chaves_vencidas(self.dados, agora)
             removidos = capacidade.limpar_orfaos(self.capacidade, ativos)
         except Exception as exc:  # noqa: BLE001
             self._erro_de_etapa("limpar_orfaos", "capacidade", exc)
             return
+        for demanda, fase, inicio in vencidas:
+            if demandas.chave(demanda) in removidos:
+                self._aviso(
+                    "demandas:vencida:%s:%s" % (fase, demanda),
+                    "Demandas: a demanda %s (%s desde %s) passou do teto da fase sem o passo das demandas a acompanhar; "
+                    "a trava e a vaga dela foram soltas" % (demanda[:8], fase, inicio),
+                )
         if removidos:
             self._log({"evento": "orfaos", "planos": removidos})
             eventos.append({"evento": "orfaos", "planos": removidos})

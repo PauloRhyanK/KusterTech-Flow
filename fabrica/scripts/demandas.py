@@ -460,34 +460,99 @@ def _entrada_da_demanda(fila_, id_: str, it: dict, demanda: dict):
     return achada
 
 
-def chaves_do_orquestrador(estado: dict) -> set[str]:
+def _itens(estado: dict) -> dict:
+    sec = estado.get("demandas") if isinstance(estado, dict) else None
+    itens = sec.get("itens") if isinstance(sec, dict) else None
+    return itens if isinstance(itens, dict) else {}
+
+
+def _no_prazo(agora, inicio, teto_s: int, *ci_pendente) -> bool:
+    """Ainda dentro do teto da fase + `FOLGA_DO_RUN_SUPERADO_S` (e do teto do CI pendente + a folga, se houver)?
+
+    Sem `agora`, sempre (o chamador não pediu prazo). `inicio` ilegível já venceu, como no acompanhamento das fases.
+    """
+    if agora is None:
+        return True
+    agora = agora if isinstance(agora, datetime.datetime) else _instante(agora)
+    base = _instante(inicio)
+    if agora is None or base is None:
+        return False
+    fim = base + datetime.timedelta(seconds=teto_s + FOLGA_DO_RUN_SUPERADO_S)
+    for desde in ci_pendente:
+        desde = _instante(desde)
+        if desde is not None:
+            fim = max(fim, desde + datetime.timedelta(seconds=CI_PENDENTE_MAXIMO_S + FOLGA_DO_RUN_SUPERADO_S))
+    return agora <= fim
+
+
+def _ci_pendente(it: dict) -> list:
+    return [it.get("ciPendenteDesde")] + [_dados(it, nome).get("ciPendenteDesde") for nome in ("desenho", "teste", "correcao")]
+
+
+def _segura_a_trava(it: dict):
+    """`(fase, inicio, teto, ci)` de quem segura a trava de orquestrador (`planejando`, ou o run superado do plano);
+    senão `None`."""
+    if it.get("fase") == "planejando" and it.get("alvo") == "planejando":
+        return "planejando", it.get("inicio"), TETO_PLANO_S, [it.get("ciPendenteDesde")]
+    if isinstance(it.get("runSuperado"), dict):
+        return "runSuperado", it["runSuperado"].get("inicio"), TETO_PLANO_S, []
+    return None
+
+
+def _seguram_a_vaga(it: dict) -> list:
+    """`(fase, inicio, teto, ci)` de cada coisa que segura a vaga da demanda: a fase com vaga e os runs superados."""
+    seguram = []
+    if it.get("fase") in FASES_COM_VAGA and (it.get("runId") or it.get("alvo") == it.get("fase")):
+        seguram.append((it["fase"], it.get("inicio"), TETO_RUN_S, _ci_pendente(it)))
+    for campo in RUNS_SUPERADOS:
+        if isinstance(it.get(campo), dict):
+            seguram.append((campo, it[campo].get("inicio"), TETO_RUN_S, []))
+    return seguram
+
+
+def chaves_do_orquestrador(estado: dict, agora=None) -> set[str]:
     """As chaves `demanda:<id>` que seguram a trava de orquestrador: em `planejando` ou com run superado vivo.
 
-    O coordenador as soma aos `ativos` de `capacidade.limpar_orfaos` (senão a limpeza solta a trava do plano).
+    O coordenador as soma aos `ativos` de `capacidade.limpar_orfaos` (senão a limpeza solta a trava do plano). Com
+    `agora`, a chave vence no teto do plano + 30 min (ou do CI pendente + 30 min), as mesmas contas das fases: quando
+    o passo das demandas não roda (Flow sem a rota, Central desligada, passo quebrado), a trava não fica presa.
     """
-    itens = (estado.get("demandas") or {}).get("itens") or {}
-    return {
-        chave(id_)
-        for id_, it in itens.items()
-        if isinstance(it, dict) and ((it.get("fase") == "planejando" and it.get("alvo") == "planejando") or isinstance(it.get("runSuperado"), dict))
-    }
+    chaves = set()
+    for id_, it in _itens(estado).items():
+        segura = _segura_a_trava(it) if isinstance(it, dict) else None
+        if segura is not None and _no_prazo(agora, segura[1], segura[2], *segura[3]):
+            chaves.add(chave(id_))
+    return chaves
 
 
 def _run_superado_vivo(it: dict) -> bool:
     return any(isinstance(it.get(campo), dict) for campo in RUNS_SUPERADOS)
 
 
-def chaves_ocupando(estado: dict) -> set[str]:
+def chaves_ocupando(estado: dict, agora=None) -> set[str]:
     """As chaves de vaga (`demanda:<id>`) das fases que reservam vaga e têm run vivo (ou o POST em curso), mais as do
     run superado (desenho, teste ou correção), que segura a vaga até terminar. O coordenador as soma aos `ativos` de
-    `limpar_orfaos`."""
-    itens = (estado.get("demandas") or {}).get("itens") or {}
-    return {
-        chave(id_)
-        for id_, it in itens.items()
-        if isinstance(it, dict)
-        and ((it.get("fase") in FASES_COM_VAGA and (it.get("runId") or it.get("alvo") == it.get("fase"))) or _run_superado_vivo(it))
-    }
+    `limpar_orfaos`. Com `agora`, cada uma vence no teto do run + 30 min (ou do CI pendente + 30 min)."""
+    chaves = set()
+    for id_, it in _itens(estado).items():
+        if isinstance(it, dict) and any(_no_prazo(agora, inicio, teto, *ci) for _, inicio, teto, ci in _seguram_a_vaga(it)):
+            chaves.add(chave(id_))
+    return chaves
+
+
+def chaves_vencidas(estado: dict, agora) -> list[tuple]:
+    """`(demanda, fase, inicio)` de cada trava ou vaga de demanda que passou do prazo em `agora` (para o aviso)."""
+    vencidas = []
+    for id_, it in sorted(_itens(estado).items()):
+        if not isinstance(it, dict):
+            continue
+        segura = _segura_a_trava(it)
+        if segura is not None and not _no_prazo(agora, segura[1], segura[2], *segura[3]):
+            vencidas.append((id_, segura[0], segura[1]))
+        vagas = _seguram_a_vaga(it)
+        if vagas and not any(_no_prazo(agora, inicio, teto, *ci) for _, inicio, teto, ci in vagas):
+            vencidas.append((id_, vagas[0][0], vagas[0][1]))
+    return vencidas
 
 
 # ---------------------------------------------------------------- caixa de saída
@@ -682,6 +747,7 @@ def esvaziar_saida(estado: dict, cliente, raiz, *, salvar) -> list[dict]:
 
 PAGINAS_POR_CICLO = 5
 REVER_FLOW_SEM_DEMANDAS_S = 3600
+REVER_BUSCA_RECUSADA_S = 15 * 60  # 4xx na busca (fora de 404, 408 e 429): repetir a cada ciclo não conserta
 TETO_TRIAGEM_S = 1800
 PAPEL_DA_TRIAGEM = "produto"
 CHAVE_SEM_ROTA = "demandas:sem-rota"
@@ -953,12 +1019,20 @@ class _Passo:
         sem_rota = _instante(self.sec.get("semRotaEm"))
         if sem_rota is not None and (self.agora - sem_rota).total_seconds() < REVER_FLOW_SEM_DEMANDAS_S:
             return False
+        recusada = _instante(self.sec.get("buscaRecusadaEm"))
+        if recusada is not None and (self.agora - recusada).total_seconds() < REVER_BUSCA_RECUSADA_S:
+            return True  # recusa que repetir não conserta (401, 403…): uma tentativa a cada 15 min
         itens = self.sec["itens"]
         for _ in range(PAGINAS_POR_CICLO):
             try:
                 resposta = self.cliente.buscar(self.sec["cursor"])
             except FalhaDeEnvio as falha:
-                self.aviso(CHAVE_BUSCA, "Demandas: a busca no Flow falhou (%s)" % falha)
+                if falha.codigo is not None and 400 <= falha.codigo < 500 and falha.codigo not in (404, 408, 429):
+                    self.sec["buscaRecusadaEm"] = self.agora_texto
+                    self.salvar()
+                    self.aviso(CHAVE_BUSCA, "Demandas: o Flow recusou a busca (%s); tento de novo a cada 15 min" % falha)
+                else:
+                    self.aviso(CHAVE_BUSCA, "Demandas: a busca no Flow falhou (%s)" % falha)
                 return True  # segue com as demandas que já tem
             if resposta is None:
                 primeira = self.sec.get("semRotaEm") is None
@@ -968,6 +1042,7 @@ class _Passo:
                     self.aviso(CHAVE_SEM_ROTA, AVISO_SEM_ROTA)
                 return False
             self.sec["semRotaEm"] = None
+            self.sec.pop("buscaRecusadaEm", None)
             for demanda in resposta["demandas"]:
                 if not isinstance(itens.get(demanda["id"]), dict):
                     itens[demanda["id"]] = item_novo()
