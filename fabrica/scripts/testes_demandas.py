@@ -139,9 +139,14 @@ class TestesProximaAcao(unittest.TestCase):
                 "nada",
             ),
             (
-                item("esperando_paulo", inicio="2026-11-20T09:30:00Z"),
+                item("esperando_paulo", inicio="2026-11-20T09:30:00Z", ultima=retrato("testada", espera="teste_falhou")),
                 retrato("testada", eventos=[{"id": "e2", "tipo": "retomada", "origem": "paulo", "em": AGORA, "dados": {}}]),
                 "corrigir",
+            ),
+            (  # retomada de uma trava no teste (o qa não subiu o sistema): testa de novo, não corrige
+                item("esperando_paulo", inicio="2026-11-20T09:30:00Z", ultima=retrato("testada", espera="travada")),
+                retrato("testada", eventos=[{"id": "e2", "tipo": "retomada", "origem": "paulo", "em": AGORA, "dados": {}}]),
+                "testar",
             ),
             (item("esperando_paulo"), retrato("testada", espera="teste_falhou"), "nada"),
             (item("triando"), retrato("recebida"), "acompanhar"),
@@ -160,6 +165,25 @@ class TestesProximaAcao(unittest.TestCase):
         for i, (it, demanda, esperado) in enumerate(casos):
             with self.subTest(caso=i, fase=it["fase"], marco=demanda["etapaAtual"]["marco"]):
                 self.assertEqual(demandas.proxima_acao(it, demanda), esperado)
+
+    def test_saida_pendente_segura_a_decisao(self):
+        # o desenho_pronto ainda na saída: o retrato está na versão 0 (ou na v1 com o ajuste) e não pode redesenhar
+        estado = {}
+        demandas.enfileirar_evento(estado, ID, "desenho_pronto", {"arquivoId": OUTRO}, agora=AGORA)
+        self.assertTrue(demandas.tem_pendente(estado, ID))
+        self.assertFalse(demandas.tem_pendente(estado, OUTRO))
+        self.assertFalse(demandas.tem_pendente({}, ID))
+        it = item("desenho_enviado")
+        self.assertEqual(demandas.proxima_acao(it, retrato("desenho"), pendente=True), "aguardar_envio")
+        com_ajuste = retrato("desenho", desenho={"versao": 1, "aprovada": None}, ajustes=[{"versao": 1, "texto": "x", "em": AGORA}])
+        self.assertEqual(demandas.proxima_acao(it, com_ajuste, pendente=demandas.tem_pendente(estado, ID)), "aguardar_envio")
+        self.assertEqual(demandas.proxima_acao(it, retrato("entregue", encerrada="entregue"), pendente=True), "aguardar_envio")
+
+    def test_item_a_ressincronizar(self):
+        it = item("testando", precisa_ressincronizar=True)
+        self.assertEqual(demandas.proxima_acao(it, retrato("desenvolvida")), "ressincronizar")
+        self.assertEqual(demandas.proxima_acao(it, retrato("desenvolvida"), pendente=True), "aguardar_envio")
+        self.assertFalse(demandas.item_novo()["precisa_ressincronizar"])
 
     def test_proxima_acao_e_pura(self):
         it, d = item("triando"), retrato("planejada")
@@ -249,7 +273,7 @@ class TestesSaida(unittest.TestCase):
         self.assertEqual(cliente.enviados[1][3]["dados"], b"<p>oi</p>")
         self.assertEqual(self.estado["demandas"]["saida"], [])
         self.assertFalse((self.raiz / "demandas" / ID / arq).exists())
-        self.assertEqual(salvos, [1, 0])
+        self.assertEqual(salvos, [2, 1, 0])  # salva antes do primeiro envio e depois de cada item
 
     def test_review_focus_1_saida_reenvia_o_mesmo_id_depois_de_reiniciar(self):
         id_ = demandas.enfileirar_evento(self.estado, ID, "etapa_concluida", {"marco": "desenvolvida"}, agora=AGORA)
@@ -290,6 +314,78 @@ class TestesSaida(unittest.TestCase):
         self.assertEqual(avisos[0]["chave"], "demandas:recusa:%s" % ID)
         self.assertIn("etapa_concluida", avisos[0]["mensagem"])
         self.assertIn("Evento fora de ordem.", avisos[0]["mensagem"])
+
+    def test_queda_no_meio_do_primeiro_post_guarda_o_id(self):
+        class Queda(BaseException):
+            pass
+
+        self.salvar()  # o estado de antes do ciclo, sem a saída
+        id_ = demandas.enfileirar_evento(self.estado, ID, "etapa_concluida", {"marco": "desenvolvida"}, agora=AGORA)
+        with self.assertRaises(Queda):  # quem chama não salvou: esvaziar_saida salva antes do POST
+            demandas.esvaziar_saida(self.estado, ClienteFalso(Queda()), self.raiz, salvar=self.salvar)
+        self.recarregar()
+        cliente = ClienteFalso("repetido")
+        demandas.esvaziar_saida(self.estado, cliente, self.raiz, salvar=self.salvar)
+        self.assertEqual([e[2] for e in cliente.enviados], [id_])
+        self.assertEqual(self.estado["demandas"]["saida"], [])
+
+    def test_descarte_marca_a_demanda_para_ressincronizar(self):
+        secao = demandas.secao(self.estado)
+        secao["itens"][ID] = item("testando")
+        secao["itens"][OUTRO] = item("desenvolvendo")
+        demandas.enfileirar_evento(self.estado, ID, "etapa_concluida", {"marco": "desenvolvida"}, agora=AGORA)
+        demandas.enfileirar_evento(self.estado, OUTRO, "destravada", {}, agora=AGORA)
+        demandas.enfileirar_evento(self.estado, TERCEIRO, "destravada", {}, agora=AGORA)  # sem item: nada a marcar
+        cliente = ClienteFalso("recusado", "aplicado", FalhaDeEnvio("HTTP 413"))
+        avisos = demandas.esvaziar_saida(self.estado, cliente, self.raiz, salvar=lambda: None)
+        self.assertEqual([a["chave"] for a in avisos], ["demandas:recusa:%s" % ID, "demandas:recusa:%s" % TERCEIRO])
+        self.assertTrue(secao["itens"][ID]["precisa_ressincronizar"])
+        self.assertFalse(secao["itens"][OUTRO]["precisa_ressincronizar"])
+        self.assertNotIn(TERCEIRO, secao["itens"])
+
+    def test_404_pausa_a_saida_com_um_aviso_e_nunca_descarta(self):
+        demandas.secao(self.estado)["itens"][ID] = item("desenvolvendo")
+        id_ = demandas.enfileirar_evento(self.estado, ID, "destravada", {}, agora=AGORA)
+        avisos = []
+        for _ in range(demandas.LIMITE_DE_FALHAS_IGUAIS * 3):
+            avisos += demandas.esvaziar_saida(self.estado, ClienteFalso(FalhaDeEnvio("HTTP 404")), self.raiz, salvar=lambda: None)
+        self.assertEqual([a["chave"] for a in avisos], ["demandas:saida-parada"])
+        self.assertIn("404", avisos[0]["mensagem"])
+        self.assertEqual([s["evento"]["id"] for s in self.estado["demandas"]["saida"]], [id_])
+        self.assertFalse(self.estado["demandas"]["itens"][ID]["precisa_ressincronizar"])
+
+    def test_falha_que_nao_descarta_avisa_uma_vez_no_limite_e_o_sucesso_limpa(self):
+        demandas.enfileirar_evento(self.estado, ID, "destravada", {}, agora=AGORA)
+        demandas.enfileirar_evento(self.estado, OUTRO, "destravada", {}, agora=AGORA)
+        for falha in ("HTTP 500", "HTTP 401", "HTTP 403", "Flow inacessível (ConnectionRefusedError)"):
+            with self.subTest(falha=falha):
+                avisos = []
+                for _ in range(demandas.LIMITE_DE_FALHAS_IGUAIS - 1):
+                    avisos += demandas.esvaziar_saida(self.estado, ClienteFalso(FalhaDeEnvio(falha)), self.raiz, salvar=lambda: None)
+                self.assertEqual(avisos, [])
+                for _ in range(demandas.LIMITE_DE_FALHAS_IGUAIS * 2):
+                    avisos += demandas.esvaziar_saida(self.estado, ClienteFalso(FalhaDeEnvio(falha)), self.raiz, salvar=lambda: None)
+                self.assertEqual([a["chave"] for a in avisos], ["demandas:saida-parada"])
+                self.assertIn(falha, avisos[0]["mensagem"])
+                self.assertEqual(len(self.estado["demandas"]["saida"]), 2)
+        # o primeiro sai; o segundo falha de novo do zero e a marca de parada já foi limpa pelo sucesso
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", FalhaDeEnvio("HTTP 500")), self.raiz, salvar=lambda: None)
+        self.assertIsNone(self.estado["demandas"]["saidaParada"])
+        avisos = []
+        for _ in range(demandas.LIMITE_DE_FALHAS_IGUAIS):
+            avisos += demandas.esvaziar_saida(self.estado, ClienteFalso(FalhaDeEnvio("HTTP 500")), self.raiz, salvar=lambda: None)
+        self.assertEqual([a["chave"] for a in avisos], ["demandas:saida-parada"])
+
+    def test_item_torto_na_saida_sai_com_aviso(self):
+        secao = demandas.secao(self.estado)
+        secao["saida"] += [{"demanda": ID}, "lixo", {"demanda": ID, "arquivo": {"id": OUTRO}}]
+        seguinte = demandas.enfileirar_evento(self.estado, OUTRO, "destravada", {}, agora=AGORA)
+        cliente = ClienteFalso("aplicado")
+        avisos = demandas.esvaziar_saida(self.estado, cliente, self.raiz, salvar=lambda: None)
+        self.assertEqual(len(avisos), 3)
+        self.assertEqual([e[2] for e in cliente.enviados], [seguinte])
+        self.assertEqual(secao["saida"], [])
+        self.assertEqual(demandas.ordenar({ID: "lixo", OUTRO: item(ultima=retrato())}), [OUTRO, ID])
 
     def test_recusa_de_arquivo_apaga_o_local(self):
         arq = demandas.enfileirar_arquivo(self.estado, self.raiz, ID, tipo="captura", nome="c.png", conteudo="image/png", dados=b"png", tela="celular")

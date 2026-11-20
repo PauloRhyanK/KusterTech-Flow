@@ -56,6 +56,8 @@ ACOES = (
     "entregar",
     "encerrar",
     "nada",
+    "aguardar_envio",
+    "ressincronizar",
 )
 # esperas em que só o Paulo mexe: a Fábrica não faz nada até a espera sair
 ESPERAS_DO_PAULO = ("decidir_destino", "aprovar_desenho", "concluir_etapa", "travada", "teste_falhou")
@@ -68,7 +70,10 @@ FALHAS_PERMANENTES = ("HTTP 411", "HTTP 413", "HTTP 415")
 # seguidas também tira o item; rede, timeout e 5xx nunca tiram
 LIMITE_DE_FALHAS_IGUAIS = 5
 _HTTP_4XX = re.compile(r"HTTP (4\d\d)")
-_4XX_QUE_PASSAM = ("401", "403", "408", "429")
+_4XX_QUE_PASSAM = ("401", "403", "404", "408", "429")
+# 404 numa rota da demanda: Flow sem o módulo de demandas (ou a demanda sumiu); nunca descarta, só pausa a saída
+FALHA_SEM_ROTA = "HTTP 404"
+CHAVE_SAIDA_PARADA = "demandas:saida-parada"
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _CAMINHO_LOCAL = re.compile(r"demandas/(%s)/(%s)" % (_UUID.pattern, _UUID.pattern))
 
@@ -92,6 +97,7 @@ def item_novo() -> dict:
         "branch": None,
         "plano": None,
         "segurado": False,
+        "precisa_ressincronizar": False,
         "ultima": {},
     }
 
@@ -103,6 +109,7 @@ def secao(estado: dict) -> dict:
         sec = estado["demandas"] = {}
     sec.setdefault("cursor", None)
     sec.setdefault("semRotaEm", None)
+    sec.setdefault("saidaParada", None)
     for nome, tipo in (("itens", dict), ("saida", list)):
         if not isinstance(sec.get(nome), tipo):
             sec[nome] = tipo()
@@ -128,9 +135,11 @@ def ordenar(itens: dict) -> list[str]:
     """Os ids na ordem de atendimento: urgente primeiro, depois a mais antiga (`criadaEm` da `ultima`)."""
 
     def chave_da_ordem(id_):
-        ultima = (itens[id_] or {}).get("ultima") or {}
+        it = itens[id_] if isinstance(itens[id_], dict) else {}
+        ultima = it.get("ultima") if isinstance(it.get("ultima"), dict) else {}
         criada = ultima.get("criadaEm")
-        return (0 if ultima.get("destino") == "urgente" else 1, criada if isinstance(criada, str) else "", id_)
+        tem_data = isinstance(criada, str)  # sem `criadaEm` (item torto) vai para o fim
+        return (0 if ultima.get("destino") == "urgente" else 1, not tem_data, criada if tem_data else "", id_)
 
     return sorted(itens, key=chave_da_ordem)
 
@@ -166,25 +175,41 @@ def _passou_do_desenho(demanda: dict) -> bool:
     return chaves.index(atual) > marcos.index("desenho")
 
 
-def proxima_acao(item: dict, demanda: dict) -> str:
+def tem_pendente(estado: dict, demanda_id: str) -> bool:
+    """Há item da demanda ainda na caixa de saída (o Flow ainda não viu o que o kit já decidiu)."""
+    saida = (estado.get("demandas") or {}).get("saida") or []
+    return any(isinstance(s, dict) and s.get("demanda") == demanda_id for s in saida)
+
+
+def proxima_acao(item: dict, demanda: dict, *, pendente: bool = False) -> str:
     """A ação que cabe agora à Fábrica para a demanda (pura: não muda `item` nem `demanda`).
 
     `item` é o estado local (a `fase`, `segurado`, `inicio`); `demanda` é o retrato do Flow. Um marco que o modelo
     da demanda não tem (sem tela não há `desenho` nem `testada`) nunca aparece em `etapaAtual`, então a fase pula
     sozinha. Enquanto um run da fase anda (`triando`, `planejando`, `desenhando`, `testando`, `corrigindo`,
     `entregando`) a ação é `acompanhar`, para a mesma entrega repetida não despachar de novo.
+
+    `pendente` (de `tem_pendente`): com item da demanda na caixa de saída o retrato está atrasado em relação à
+    fase local, e a ação é `aguardar_envio` (nada é despachado). Um item descartado da saída marca
+    `precisa_ressincronizar`, e a ação é `ressincronizar`: o `passo` refaz a fase local pelo retrato antes de
+    decidir. `item["ultima"]` é o retrato *anterior* a `demanda` (o `passo` só o troca depois de decidir).
     """
+    if pendente:
+        return "aguardar_envio"
+    if item.get("precisa_ressincronizar"):
+        return "ressincronizar"
     fase = item.get("fase")
     if demanda.get("encerrada"):
         return "encerrar"
     espera = (demanda.get("espera") or {}).get("tipo")
     marco = (demanda.get("etapaAtual") or {}).get("marco")
 
-    if espera == "teste_falhou" or (espera is None and marco == "testada" and fase == "esperando_paulo"):
-        if _retomada_nova(item, demanda):
-            return "corrigir"
-        if espera is not None:
-            return "nada"
+    if espera == "teste_falhou":
+        return "corrigir" if _retomada_nova(item, demanda) else "nada"
+    if espera is None and marco == "testada" and fase == "esperando_paulo" and _retomada_nova(item, demanda):
+        # o Flow limpa a espera ao aplicar a retomada: só o retrato anterior diz se era teste falho ou trava
+        anterior = ((item.get("ultima") or {}).get("espera") or {}).get("tipo")
+        return "corrigir" if anterior == "teste_falhou" else "testar"
     if espera in ESPERAS_DO_PAULO:
         return "nada"
     if fase == "desenho_enviado" and _passou_do_desenho(demanda):
@@ -251,7 +276,11 @@ def _gravar_bytes_atomico(caminho: pathlib.Path, dados: bytes) -> None:
 
 
 def enfileirar_evento(estado: dict, demanda_id: str, tipo: str, dados: dict, *, agora) -> str:
-    """Põe o evento na caixa de saída com um id novo (uuid4) e devolve o id; `salvar` fica com quem chama."""
+    """Põe o evento na caixa de saída com um id novo (uuid4) e devolve o id.
+
+    O id tem de estar no disco antes do POST: `esvaziar_saida` salva antes do primeiro envio, e quem enfileira e
+    não esvazia no mesmo ciclo salva por conta própria. Nunca enfileire de novo o mesmo evento: reenviar é a saída.
+    """
     id_ = str(uuid.uuid4())
     evento = {"id": id_, "em": _texto_do_instante(agora), "tipo": tipo, "dados": dados}
     secao(estado)["saida"].append({"demanda": _id_valido(demanda_id), "evento": evento})
@@ -298,18 +327,29 @@ def _apagar_local(raiz, caminho) -> None:
             os.unlink(pathlib.Path(raiz) / caminho)
 
 
-def _enviar(item: dict, cliente, raiz) -> str:
-    if "evento" in item:
+class _ItemTorto(Exception):
+    pass
+
+
+def _enviar(item, cliente, raiz) -> str:
+    if not isinstance(item, dict) or not isinstance(item.get("demanda"), str):
+        raise _ItemTorto()
+    if isinstance(item.get("evento"), dict) and isinstance(item["evento"].get("id"), str):
         return cliente.enviar_evento(item["demanda"], item["evento"])
-    a = item["arquivo"]
+    a = item.get("arquivo")
+    if not isinstance(a, dict) or not all(isinstance(a.get(k), str) for k in ("id", "tipo", "nome", "conteudo")):
+        raise _ItemTorto()
     dados = _ler_local(raiz, a.get("caminho"))
     return cliente.enviar_arquivo(item["demanda"], id_=a["id"], tipo=a["tipo"], nome=a["nome"], conteudo=a["conteudo"], dados=dados, tela=a.get("tela"))
 
 
-def _descricao(item: dict) -> str:
-    if "evento" in item:
+def _descricao(item) -> str:
+    if not isinstance(item, dict):
+        return "item torto"
+    if isinstance(item.get("evento"), dict):
         return "evento %s" % item["evento"].get("tipo")
-    return "arquivo %s (%s)" % (item["arquivo"].get("nome"), item["arquivo"].get("tipo"))
+    a = item.get("arquivo") if isinstance(item.get("arquivo"), dict) else {}
+    return "arquivo %s (%s)" % (a.get("nome"), a.get("tipo"))
 
 
 def _falha_conta(motivo: str) -> bool:
@@ -317,27 +357,50 @@ def _falha_conta(motivo: str) -> bool:
     return m is not None and m.group(1) not in _4XX_QUE_PASSAM
 
 
-def _aviso(item: dict, motivo: str) -> dict:
-    demanda = str(item.get("demanda"))
+def _aviso(item, motivo: str) -> dict:
+    demanda = str(item.get("demanda")) if isinstance(item, dict) else "?"
     mensagem = "demanda %s: %s descartado (%s)" % (demanda[:8], _descricao(item), motivo)
     return {"evento": "aviso", "chave": "demandas:recusa:%s" % demanda, "mensagem": mensagem[:300]}
+
+
+def _aviso_de_parada(sec: dict, motivo: str, mensagem: str) -> list[dict]:
+    """Um aviso por parada da saída: repete só quando o motivo muda; um envio bem-sucedido limpa a marca."""
+    if sec.get("saidaParada") == motivo:
+        return []
+    sec["saidaParada"] = motivo
+    return [{"evento": "aviso", "chave": CHAVE_SAIDA_PARADA, "mensagem": mensagem[:300]}]
 
 
 def esvaziar_saida(estado: dict, cliente, raiz, *, salvar) -> list[dict]:
     """Manda a caixa de saída na ordem e devolve os eventos de aviso.
 
-    `aplicado`/`repetido` tiram o item (e apagam o arquivo local); `recusado` (409/422), arquivo local sumido,
-    `FALHAS_PERMANENTES` e a mesma 4xx `LIMITE_DE_FALHAS_IGUAIS` vezes seguidas tiram o item com um aviso
-    `demandas:recusa:<demanda>`; qualquer outra `FalhaDeEnvio` para no primeiro e deixa o resto para o ciclo
-    seguinte. `salvar()` roda depois de cada item; o arquivo local só é apagado depois de salvar.
+    Antes do primeiro envio, `salvar()`: um id gerado neste ciclo fica no disco antes do POST, e um coordenador que
+    cai no meio do POST reenvia o mesmo id. Depois, por item:
+
+    - `aplicado`/`repetido` tiram o item (e apagam o arquivo local, só depois de salvar);
+    - `recusado` (409/422), cópia local sumida, item torto, `FALHAS_PERMANENTES` e a mesma 4xx (fora de 401, 403,
+      404, 408 e 429) `LIMITE_DE_FALHAS_IGUAIS` vezes seguidas tiram o item com um aviso
+      `demandas:recusa:<demanda>` e marcam `precisa_ressincronizar` no item da demanda (a fase local já contava
+      com o evento que o Flow não aplicou);
+    - `HTTP 404` (Flow sem o módulo, ou a demanda sumiu) pausa a saída com um aviso `demandas:saida-parada`, sem
+      contar para o descarte;
+    - qualquer outra `FalhaDeEnvio` para no primeiro e deixa o resto para o ciclo seguinte; a mesma falha
+      `LIMITE_DE_FALHAS_IGUAIS` vezes seguidas (5xx, 401, 403, rede) dá um aviso `demandas:saida-parada`.
+
+    `salvar()` roda depois de cada item.
     """
-    saida = secao(estado)["saida"]
+    sec = secao(estado)
+    saida = sec["saida"]
     avisos = []
+    if saida:
+        salvar()
     while saida:
         item = saida[0]
         motivo = None
         try:
             resultado = _enviar(item, cliente, raiz)
+        except _ItemTorto:
+            motivo = "item torto na caixa de saída"
         except _ArquivoSumido:
             motivo = "cópia local do arquivo sumiu"
         except FalhaDeEnvio as falha:
@@ -348,16 +411,28 @@ def esvaziar_saida(estado: dict, cliente, raiz, *, salvar) -> list[dict]:
                 motivo = texto
             else:
                 item["falha"] = {"motivo": texto, "vezes": vezes}
+                if texto == FALHA_SEM_ROTA:
+                    avisos += _aviso_de_parada(
+                        sec, texto, "caixa de saída das demandas pausada: o Flow respondeu 404 (sem o módulo de demandas, ou a demanda %s sumiu)" % item["demanda"][:8]
+                    )
+                elif vezes >= LIMITE_DE_FALHAS_IGUAIS:
+                    avisos += _aviso_de_parada(
+                        sec, texto, "caixa de saída das demandas parada: %s %d vezes seguidas em %s da demanda %s" % (texto, vezes, _descricao(item), item["demanda"][:8])
+                    )
                 salvar()
                 break
         else:
+            sec["saidaParada"] = None
             if resultado == "recusado":
                 recusa = getattr(cliente, "ultima_recusa", None)
                 motivo = "recusado pelo Flow: %s" % recusa if recusa else "recusado pelo Flow"
         if motivo is not None:
             avisos.append(_aviso(item, motivo))
+            alvo = sec["itens"].get(item.get("demanda")) if isinstance(item, dict) else None
+            if isinstance(alvo, dict):
+                alvo["precisa_ressincronizar"] = True
         saida.pop(0)
         salvar()
-        if "arquivo" in item:
+        if isinstance(item, dict) and isinstance(item.get("arquivo"), dict):
             _apagar_local(raiz, item["arquivo"].get("caminho"))
     return avisos
