@@ -136,6 +136,7 @@ LIMITE_PRS = 20
 RECUSAS_DA_PUBLICACAO = (404, 409, 422)
 CHAVE_SAIDA_PARADA = "demandas:saida-parada"
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_FEATURE_DA_DEMANDA = re.compile(r"demanda-([0-9a-f]{8})(?:-[a-z0-9]+)*")
 _CAMINHO_LOCAL = re.compile(r"demandas/(%s)/(%s)" % (_UUID.pattern, _UUID.pattern))
 # o HTML do desenho: `<script`, atributo `on…=` (depois de espaço, aspas ou `/`) e `javascript:`
 _SCRIPT_NO_HTML = re.compile(r"<script|[\s\"'/]on[a-z]+\s*=|javascript\s*:", re.IGNORECASE)
@@ -380,22 +381,28 @@ def _desenho_por_mergear(it) -> bool:
     return isinstance(it, dict) and it.get("fase") in ("desenhando", "desenho_enviado")
 
 
-def _demanda_da_entrada(entrada: dict, por_caminho: dict):
+def _demanda_da_entrada(entrada: dict, por_caminho: dict, por_prefixo: dict):
     demanda = entrada.get("demanda")
     if isinstance(demanda, str) and _UUID.fullmatch(demanda):
         return demanda
     repo, caminho = entrada.get("repo"), entrada.get("caminho")
-    if isinstance(repo, str) and isinstance(caminho, str):
-        return por_caminho.get((repo.lower(), caminho))
-    return None
+    if not isinstance(repo, str) or not isinstance(caminho, str):
+        return None
+    if (repo.lower(), caminho) in por_caminho:
+        return por_caminho[(repo.lower(), caminho)]
+    # sem o campo e sem o caminho no retrato (um plano do "planejar comigo"): a feature `demanda-<id8>[-...]`
+    feature = entrada.get("feature")
+    m = _FEATURE_DA_DEMANDA.fullmatch(feature) if isinstance(feature, str) else None
+    return por_prefixo.get((repo.lower(), m.group(1))) if m else None
 
 
 def aplicar_na_fila(estado_demandas: dict, fila_: list[dict]) -> list[dict]:
     """Uma cópia da fila com o plano de cada demanda segurado até a etapa `desenvolvida` (pura).
 
     `estado_demandas` é a seção `demandas` do `fila-estado.json`. Só as entradas `aguardando` ligadas a uma demanda
-    mudam: pelo campo `demanda` (o uuid, vindo do plano) ou pelo `caminho` igual ao `plano.caminho` do retrato no
-    mesmo repositório (a ligação fica gravada em `demanda`). Enquanto a etapa atual da demanda está antes de
+    mudam: pelo campo `demanda` (o uuid, vindo do plano), pelo `caminho` igual ao `plano.caminho` do retrato no
+    mesmo repositório ou, sem os dois, pela feature `demanda-<id8>` de uma demanda conhecida do mesmo repositório (a
+    ligação fica gravada em `demanda`). Enquanto a etapa atual da demanda está antes de
     `desenvolvida`, `segurado: True` e `seguradoPor: "demanda"`; ao chegar lá (ou depois), `segurado: False`, mas só
     se quem segurou foi a demanda: o segurado pelo Paulo (sem `seguradoPor`) nunca é solto aqui. A demanda que o kit
     não conhece (ou de retrato torto) segura. `urgente` é `destino == "urgente"`.
@@ -409,11 +416,17 @@ def aplicar_na_fila(estado_demandas: dict, fila_: list[dict]) -> list[dict]:
         repo, caminho = demanda.get("repositorio"), plano.get("caminho")
         if isinstance(repo, str) and isinstance(caminho, str) and caminho:
             por_caminho.setdefault((repo.lower(), caminho), id_)
+    # o prefixo de 8 caracteres só liga quando é de uma demanda só, no mesmo repositório
+    prefixos = {}
+    for id_, demanda in retratos.items():
+        if isinstance(demanda.get("repositorio"), str) and _UUID.fullmatch(str(id_)):
+            prefixos.setdefault((demanda["repositorio"].lower(), id_[:8]), set()).add(id_)
+    por_prefixo = {chave_: next(iter(ids)) for chave_, ids in prefixos.items() if len(ids) == 1}
     nova = copy.deepcopy(fila_) if isinstance(fila_, list) else []
     for entrada in nova:
         if not isinstance(entrada, dict) or entrada.get("estado") != "aguardando":
             continue
-        id_ = _demanda_da_entrada(entrada, por_caminho)
+        id_ = _demanda_da_entrada(entrada, por_caminho, por_prefixo)
         if id_ is None:
             continue
         demanda = retratos.get(id_) or {}

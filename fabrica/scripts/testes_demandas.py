@@ -1261,6 +1261,20 @@ class TestesAplicarNaFila(unittest.TestCase):
         self.assertEqual((nova[0]["demanda"], nova[0]["segurado"], nova[0]["urgente"]), (ID, True, True))
         self.assertEqual(nova[1], na_fila(demanda=None, repo="kustertech-exemplo/outro", id_="x"))
 
+    def test_aplicar_na_fila_liga_pelo_prefixo_da_feature_sem_o_campo_demanda(self):
+        # "planejar comigo": a sessão pode entregar o plano sem o campo `demanda` e o retrato sem o caminho
+        itens = com_itens(**{ID: item("esperando_sessao", ultima=retrato("planejada", espera="planejar_comigo"))})
+        sem_campo = na_fila(demanda=None)
+        outro_repo = na_fila(demanda=None, repo="kustertech-exemplo/outro", id_="x")
+        outra_feature = na_fila(demanda=None, caminho=".fabrica/planos/demanda-11111111x.json", id_="y")
+        nova = demandas.aplicar_na_fila(itens, [sem_campo, outro_repo, outra_feature])
+        self.assertEqual((nova[0]["demanda"], nova[0]["segurado"], nova[0]["seguradoPor"]), (ID, True, "demanda"))
+        self.assertEqual(nova[1:], [outro_repo, outra_feature])
+        # o prefixo só liga a uma demanda que o kit conhece: um plano qualquer chamado demanda-<algo> segue livre
+        self.assertEqual(demandas.aplicar_na_fila(com_itens(), [sem_campo]), [sem_campo])
+        com_sufixo = na_fila(demanda=None, caminho=".fabrica/planos/demanda-11111111-tela.json")
+        self.assertEqual(demandas.aplicar_na_fila(itens, [com_sufixo])[0]["demanda"], ID)
+
     def test_aplicar_na_fila_segura_plano_de_demanda_desconhecida_e_nao_toca_no_resto(self):
         outras = [
             na_fila(demanda=None, caminho=".fabrica/planos/login.json", id_="login"),

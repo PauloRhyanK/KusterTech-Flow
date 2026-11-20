@@ -16,6 +16,7 @@ sys.path.insert(0, str(RAIZ_DOS_SCRIPTS))
 
 import capacidade  # noqa: E402
 import coordenador  # noqa: E402
+import despachante  # noqa: E402
 import fila  # noqa: E402
 import forja  # noqa: E402
 import motor  # noqa: E402
@@ -134,6 +135,26 @@ class PrepararFalso:
         return dict(self.resultados[0])
 
 
+class FlowVazio:
+    """O cliente das rotas de demandas sem nenhuma demanda: guarda com que URL e token foi criado e cada busca."""
+
+    def __init__(self, url_central=None, token_file=None):
+        self.url_central, self.token_file = url_central, token_file
+        self.desdes, self.enviados, self.ultima_recusa = [], [], None
+
+    def buscar(self, desde):
+        self.desdes.append(desde)
+        return {"cursor": desde or "0", "mais": False, "demandas": []}
+
+    def enviar_evento(self, demanda_id, evento):
+        self.enviados.append(("evento", demanda_id, evento))
+        return "aplicado"
+
+    def enviar_arquivo(self, demanda_id, **arquivo):
+        self.enviados.append(("arquivo", demanda_id, arquivo))
+        return "aplicado"
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -169,6 +190,7 @@ class Base(unittest.TestCase):
             clonar=self.clonar,
             ambiente={"WARREN_API": "http://127.0.0.1:8080", "WARREN_TOKEN_FILE": "/seg/warren", "GH_TOKEN_FILE": "/seg/gh"},
             segredos=(TOKEN,),
+            cliente_do_flow=FlowVazio,
         )
         argumentos.update(extra)
         return coordenador.Coordenador(**argumentos)
@@ -2136,6 +2158,170 @@ class TestesPublicacao(Base):
         self.assertEqual(coordenador.configuracao_central({}, self.raiz)["publicacao_token_file"], "/seg/p")
         self.assertEqual(coordenador.configuracao_central({"FABRICA_PUBLICACAO_TOKEN_FILE": "/seg/q"}, self.raiz)["publicacao_token_file"], "/seg/q")
         self.assertNotIn("FABRICA_PUBLICACAO_TOKEN_FILE", coordenador.ler_coordenador_env(self.raiz))
+
+
+class FlowQueFalha(FlowVazio):
+    """A busca levanta a exceção dada enquanto `falha` não for `None`."""
+
+    def __init__(self, falha):
+        super().__init__()
+        self.falha = falha
+
+    def buscar(self, desde):
+        if self.falha is not None:
+            raise self.falha
+        return super().buscar(desde)
+
+
+class TestesPassoDemandas(Base):
+    DEMANDA = testes_demandas.ID
+    OUTRA = testes_demandas.OUTRO
+
+    def coordenador_com(self, central=PUBLICACAO, flow=None, **extra):
+        self.flow = flow or FlowVazio()
+        self.criados = []
+
+        def cliente(url, token_file):
+            self.criados.append((url, token_file))
+            return self.flow
+
+        self.enviar = EnviarFalso()
+        return self.novo(central=central, enviar=self.enviar, cliente_do_flow=cliente, **extra)
+
+    def avisos_de_demandas(self):
+        return [a for a in self.avisos() if a.startswith("Demandas:")]
+
+    def test_ciclo_sem_central_nao_roda_demandas(self):
+        c = self.coordenador_com(central=None)
+        with unittest.mock.patch.object(coordenador.demandas, "passo") as passo, unittest.mock.patch.object(coordenador.demandas, "esvaziar_saida") as esvaziar:
+            c.ciclo()
+        passo.assert_not_called()
+        esvaziar.assert_not_called()
+        self.assertEqual(self.criados, [])
+        self.assertIn("demandas: desligado", c.status())
+
+    def test_passo_recebe_o_cliente_do_flow_a_publicacao_e_o_estado_do_ciclo(self):
+        c = self.coordenador_com(kit=coordenador.KIT_PADRAO)
+        with unittest.mock.patch.object(coordenador.demandas, "passo", return_value=[]) as passo:
+            c.ciclo()
+        self.assertEqual(self.criados, [(CENTRAL["url"], CENTRAL["token_file"])])
+        (estado,), argumentos = passo.call_args
+        self.assertIs(estado, c.dados)
+        self.assertIs(argumentos["cliente"], self.flow)
+        self.assertEqual(argumentos["publicacao"], {"url": "https://central.exemplo.com/api/publicacoes", "token_file": "/seg/publicacao"})
+        self.assertIs(argumentos["pedir_publicacao"], c._pedir_publicacao)
+        self.assertEqual(argumentos["projetos"], {REPO: "cliente"})
+        self.assertEqual((argumentos["raiz"], argumentos["capacidade_path"], argumentos["agora"]), (self.raiz, self.raiz / "capacidade.json", INICIO))
+        self.assertEqual(argumentos["modelos"]["produto"]["modelo"], "claude-haiku-5-5")  # da config do kit
+
+    def test_sem_token_de_publicacao_o_passo_roda_sem_pedido(self):
+        c = self.coordenador_com(central=CENTRAL)
+        with unittest.mock.patch.object(coordenador.demandas, "passo", return_value=[]) as passo:
+            c.ciclo()
+        self.assertIsNone(passo.call_args.kwargs["publicacao"])
+        self.assertEqual(passo.call_args.kwargs["modelos"], {})  # kit sem config: cada fase avisa o papel sem modelo
+
+    def test_falha_no_passo_de_demandas_nao_para_o_ciclo_e_o_retrato_vai(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.demandas, "passo", side_effect=RuntimeError("quebrou")), unittest.mock.patch.object(
+            coordenador.demandas, "esvaziar_saida", return_value=[]
+        ) as esvaziar:
+            c.ciclo()
+            esvaziar.assert_called_once()  # a caixa de saída vai mesmo com o passo quebrado
+            self.instante += datetime.timedelta(minutes=1)
+            c.ciclo()
+        self.assertEqual(self.estados(), {a: "ativo"})
+        self.assertEqual(len(self.enviar.chamadas), 2)
+        self.assertEqual(self.avisos_de_demandas(), ["Demandas: o passo falhou (RuntimeError); tento de novo no próximo ciclo"])
+        c.ciclo()  # um passo bom esquece o aviso
+        self.assertNotIn("demandas:passo", self.fila_estado()["chaves"])
+
+    def test_falha_na_caixa_de_saida_avisa_uma_vez_com_o_passo_bom(self):
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.demandas, "esvaziar_saida", side_effect=KeyError("x")):
+            c.ciclo()
+            c.ciclo()
+        self.assertEqual(self.avisos_de_demandas(), ["Demandas: o envio da caixa de saída falhou (KeyError); tento de novo no próximo ciclo"])
+        c.ciclo()
+        self.assertNotIn("demandas:saida", self.fila_estado()["chaves"])
+
+    def test_excecao_inesperada_na_busca_ou_no_cliente_nao_para_o_ciclo(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.coordenador_com(flow=FlowQueFalha(ValueError("resposta torta")))
+        c.ciclo()
+        self.assertEqual(self.estados(), {a: "ativo"})
+        self.assertEqual(len(self.enviar.chamadas), 1)
+        self.assertEqual(self.avisos_de_demandas(), ["Demandas: o passo falhou (ValueError); tento de novo no próximo ciclo"])
+
+        def quebrado(url, token_file):
+            raise OSError("sem rede")
+
+        c = self.novo(central=PUBLICACAO, enviar=self.enviar, cliente_do_flow=quebrado)
+        c.ciclo()
+        self.assertEqual(len(self.enviar.chamadas), 2)
+        self.assertEqual(self.avisos_de_demandas()[-1], "Demandas: o passo falhou (OSError); tento de novo no próximo ciclo")
+
+    def test_avisos_do_passo_saem_uma_vez_por_categoria_e_a_busca_boa_os_esquece(self):
+        c = self.coordenador_com(flow=FlowQueFalha(retrato.FalhaDeEnvio("HTTP 503")))
+        c.ciclo()
+        c.ciclo()
+        self.assertEqual(self.avisos_de_demandas(), ["Demandas: a busca no Flow falhou (HTTP 503)"])
+        self.flow.falha = None
+        c.ciclo()
+        self.assertNotIn("demandas:busca", self.fila_estado()["chaves"])
+        self.flow.falha = retrato.FalhaDeEnvio("HTTP 503")
+        c.ciclo()
+        self.assertEqual(len(self.avisos_de_demandas()), 2)
+
+    def test_orfaos_nao_soltam_a_vaga_de_desenho_em_curso(self):
+        cap = self.raiz / "capacidade.json"
+        self.demanda_em(self.DEMANDA, "desenho")
+        self.demanda_em(self.OUTRA, "planejada")
+        dados = self.fila_estado()
+        dados["demandas"]["itens"][self.DEMANDA].update(fase="desenhando", alvo="desenhando", runId="run-9", repo=REPO)
+        dados["demandas"]["itens"][self.OUTRA].update(fase="planejando", alvo="planejando", nonce="a" * 32, repo=REPO)
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        self.assertTrue(capacidade.reservar(cap, "demanda:" + self.DEMANDA, "ux-ui", mem_disponivel_mb=None))
+        self.assertTrue(capacidade.tomar_orquestrador(cap, REPO, "demanda:" + self.OUTRA))
+        self.assertTrue(capacidade.reservar(cap, "plano-sumido", "raia-0", mem_disponivel_mb=None))
+        c = self.novo()  # sem a Central o passo de demandas não roda, mas a limpeza conta com ele
+        c.ciclo()
+        depois = capacidade.ler(cap)
+        self.assertEqual(depois["reservas"], {"demanda:" + self.DEMANDA: ["ux-ui"]})
+        self.assertEqual(depois["orquestrador"], {REPO: "demanda:" + self.OUTRA})
+
+    def test_status_mostra_as_demandas_em_curso(self):
+        self.demanda_em(self.DEMANDA, "desenho", espera="aprovar_desenho")
+        self.demanda_em(self.OUTRA, "planejada")
+        dados = self.fila_estado()
+        dados["demandas"]["cursor"] = "42"
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        self.assertIn("demandas: 2 em curso (1 esperando o Paulo), cursor 42", coordenador.status(self.raiz, CENTRAL))
+        self.assertIn("demandas: desligado", coordenador.status(self.raiz, None))
+        dados["demandas"]["semRotaEm"] = "2026-11-03T12:00:00Z"
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        self.assertIn("demandas: Flow sem a rota", coordenador.status(self.raiz, CENTRAL))
+
+    def test_soltar_plano_segurado_pela_demanda_recusa_e_diz_como_tirar(self):
+        self.demanda_em(self.DEMANDA, "desenho")
+        id_ = self.publicar_da_demanda(self.DEMANDA, ["src/tela/**"])
+        c = self.novo()
+        c.ciclo()
+        self.assertIn("%s: aguardando (segurado pela demanda %s)" % (id_, self.DEMANDA[:8]), c.status())
+        mensagem = (
+            "pedido soltar de %s recusado: o plano espera a demanda %s chegar ao desenvolvimento (aprove o desenho ou "
+            "conclua a etapa no Flow); para tirá-lo da fila, coordenador.py remover %s" % (id_, self.DEMANDA[:8], id_)
+        )
+        with self.assertRaises(coordenador.ErroDeEntrada) as erro:
+            c.pedir("soltar", id_)
+        self.assertEqual(erro.exception.erros, [mensagem])
+        # um pedido que já estava na caixa também é recusado, com o mesmo texto
+        despachante.enfileirar_pedido(self.raiz, {"comando": "soltar", "id": id_})
+        c.ciclo()
+        entrada = [e for e in self.fila_estado()["fila"] if e["id"] == id_][-1]
+        self.assertEqual((entrada["segurado"], entrada["seguradoPor"]), (True, "demanda"))
+        self.assertIn(mensagem, self.avisos())
 
 
 class TestesConfiguracaoDaCentral(Base):

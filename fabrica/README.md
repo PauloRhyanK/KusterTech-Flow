@@ -227,6 +227,49 @@ Quando uma publicação falha na fila do Flow, a resposta do envio do retrato tr
 
 **Voltar o Flow para uma versão sem consertos.** Um Flow anterior aos consertos responde 400 a todo retrato que traga o campo `consertos`. Nesse caso o coordenador reenvia o mesmo retrato uma vez sem o campo, avisa uma vez (`Central: o Flow recusou o retrato com os consertos…`) e, com o retrato aceito, tira do estado os consertos já encerrados (`com_pr`, `desistiu`), que esse Flow não teria como receber. Os consertos em curso seguem até o fim (teto de 1 h e vaga), sem atender novos; quando terminam, saem do estado pelo mesmo caminho. O painel da Fábrica não congela e não há passo manual no rollback.
 
+### Demandas
+
+O Paulo pede uma demanda no Flow (defeito, ideia, ajuste ou função nova, com ou sem tela) e a Fábrica a leva até a entrega. O passo das demandas roda em todo ciclo, depois de observar os planos e antes do pedido de publicação por seed. Ele usa as mesmas variáveis do `~/fabrica/coordenador.env`:
+
+- `FABRICA_CENTRAL_URL` e `FABRICA_CENTRAL_TOKEN_FILE`: as rotas `GET /api/fabrica/demandas` e `POST .../<id>/eventos` e `.../<id>/arquivos` ficam no mesmo host do retrato e usam o token da fonte da Fábrica. Sem a URL, o passo não roda e o `status` mostra `demandas: desligado`;
+- `FABRICA_PUBLICACAO_TOKEN_FILE` (opcional): sem ele, a entrega só envia o `entregue`, sem pedir a publicação.
+
+**O que o coordenador faz por ciclo.** Ele busca até 5 páginas de demandas novas a partir do cursor gravado e decide uma ação por demanda, com a urgente primeiro e depois a mais antiga. No fim do passo esvazia a caixa de saída: eventos e arquivos vão ao Flow na ordem em que foram gerados. Cada etapa avança assim:
+
+1. **Triagem.** Um run do papel `produto` (`modelos.produto`), sem vaga. Ele classifica a demanda e escolhe o destino: `urgente`, `lote_da_noite`, `fila_de_agentes`, `decisao_do_paulo` ou `orientada`. A orientada fecha aqui, com a resposta. Resposta fora do formato, run falho ou mais de 30 min vão para a decisão do Paulo.
+2. **Plano.** Um run do orquestrador (`modelos.orquestrador`, prompt `nova_spec` com a demanda e a triagem) sob a trava de orquestrador do repositório, também sem vaga. Ele abre um PR com `.fabrica/planos/demanda-<id8>.json` (`<id8>`: os 8 primeiros caracteres do id da demanda). Nos níveis "vai sozinho" e "aprovar desenho", a Fábrica mergeia esse PR atrás das guardas descritas abaixo. Em "planejar comigo" nada é despachado: o plano vem da sessão com o Paulo.
+3. **Plano segurado.** Mergeado, o plano entra na fila como qualquer outro, mas fica segurado até a etapa `desenvolvida` da demanda, no mesmo ciclo em que é descoberto. Enquanto isso, o `status` mostra `(segurado pela demanda <id8>)`.
+4. **Desenho**, só nas demandas com tela. Um run do `ux-ui` (`modelos.ux-ui`) numa vaga gera `.fabrica/demandas/<id>/desenho.html`: um HTML autocontido, sem `<script>`, sem recurso de fora e com até 10 MB. O kit confere o arquivo antes de mandá-lo ao Flow; um desenho recusado é refeito uma vez e, na segunda recusa, a demanda trava. O ajuste pedido no Flow refaz o desenho no mesmo branch. Aprovado, o PR do desenho é mergeado no head da versão aprovada (nunca outra) e o plano sai da espera no ciclo seguinte.
+5. **Desenvolvimento.** O plano roda pela fila de sempre (o urgente é visto primeiro na admissão, sem tirar vaga de quem roda). Um plano `pausado` trava a demanda e, quando volta a `ativo`, a destrava. Um plano `concluido` conclui a etapa `desenvolvida`.
+6. **Teste no navegador**, só nas demandas com tela. Um run do `qa` (`modelos.qa`) numa vaga sobe o sistema no próprio run e grava `.fabrica/demandas/<id>/teste.json` e `.fabrica/demandas/<id>/capturas/{desktop,celular}-NN.png` num PR em rascunho. As capturas (até 40 MB por teste) e o resultado vão ao Flow, e esse PR é fechado sem merge. Sem as duas telas, o teste é refeito uma vez. Na primeira falha o Flow volta a etapa para `desenvolvida` e o kit despacha uma correção (`frontend`, `modelos.frontend`); na segunda, a demanda espera o Paulo.
+7. **Entrega.** O pedido de publicação é feito uma vez por demanda, com o `modo` do destino (`imediato` no urgente, `lote` no lote da noite) e o id da demanda. Depois vai o `entregue` com os PRs das seeds mergeadas. Os planos de demanda nunca entram no pedido de publicação por seed.
+
+Papel sem modelo em `fabrica/modelos/config.json` deixa a fase esperando, com o aviso `configure modelos.<papel>`.
+
+**Vagas e travas.** A triagem não ocupa vaga. O plano usa a trava de orquestrador do repositório com a chave `demanda:<id>`. Desenho, teste e correção reservam uma vaga com a mesma chave `demanda:<id>`, na raia do papel. A limpeza de órfãos do coordenador nunca solta essas chaves enquanto a demanda está na fase, nem quando o passo das demandas está desligado ou falha num ciclo. O motor não cancela run, então um run que passou do teto (ou foi superado por uma decisão do Paulo) segura a vaga ou a trava até terminar. Nunca há dois runs da mesma demanda ao mesmo tempo.
+
+**Tetos.** Triagem: 30 min. Plano, desenho, teste e correção: 2 h do despacho até o PR. O CI pendente no PR do plano, do desenho ou da correção também tem teto de 2 h. Um run superado segura a trava do plano até terminar, ou por mais 30 min depois do teto. O mesmo erro 5 ciclos seguidos numa fase trava a demanda. Arquivo: até 10 MB, como no Flow, e o kit não manda o que o Flow recusaria.
+
+**Guardas dos merges automáticos.** A Fábrica só mergeia sozinha o PR do plano, o do desenho e o da correção do teste, sempre no head que conferiu (o GitHub recusa se o head andou):
+
+- **Plano:** só nos níveis "vai sozinho" e "aprovar desenho". O PR pode mexer só no próprio `.fabrica/planos/demanda-<id8>.json`, em `.fabrica/planejamento/**` e em `.seeds/**`, e em nenhum caminho dos `protegidos` da `.fabrica/config.json`. O plano precisa passar em `validar_plano` e trazer `"demanda": "<id>"`. O CI precisa estar verde (ausente só vale com `ciObrigatorioNoPlano` falso).
+- **Desenho:** o PR pode mexer só no `desenho.html` da demanda. Só a versão aprovada é mergeada, e só se o head for o mesmo do envio. O CI precisa estar verde ou ausente.
+- **Correção do teste:** o PR não pode mexer em `.warren/**`, `.fabrica/**` ou `.claude/**` (`PROTEGIDOS_FIXOS`, que valem sempre) nem nos `protegidos` da config. O CI precisa estar verde ou ausente.
+- A `.fabrica/config.json` (`protegidos`, `ciObrigatorioNoPlano`) é lida do **branch padrão**, nunca do head do PR, que poderia reescrevê-la para passar.
+- Guarda que falha trava a demanda para o Paulo, com o motivo e o link do PR. A retomada dele no Flow refaz a fase com um run novo. O PR do teste nunca é mergeado.
+
+**Liberar um plano segurado por uma demanda.** O plano de uma demanda espera a etapa `desenvolvida`. Para ele andar, aprove o desenho ou conclua a etapa no Flow, e o plano sai da espera sozinho no ciclo seguinte. `coordenador.py soltar <id>` recusa esse plano e diz o caminho, porque a espera é da demanda e voltaria no mesmo ciclo. `coordenador.py segurar <id>` transfere a espera para o Paulo: o plano continua segurado depois da aprovação, até um `soltar`. Para tirar o plano da fila, use `coordenador.py remover <id> --manter-arquivo` (o arquivo continua no branch padrão sem reentrar). A demanda fica parada no Flow, na etapa em que estava: encerre-a ou conclua a etapa por lá.
+
+**Onde ficam as coisas.** No repositório do projeto, ficam `.fabrica/planos/demanda-<id8>.json`, `.fabrica/demandas/<id>/desenho.html`, `.fabrica/demandas/<id>/teste.json` e `.fabrica/demandas/<id>/capturas/`. Na máquina, o estado fica em `~/fabrica/fila-estado.json`, na chave `demandas`, com o cursor, uma entrada por demanda e a caixa de saída. As cópias dos arquivos ainda não enviados ficam em `~/fabrica/demandas/<id>/`, e a pasta é apagada quando a demanda acaba. Cada envio é gravado antes do POST, e cada run é gravado com o nonce antes do despacho. Por isso um coordenador reiniciado no meio reenvia o mesmo id (o Flow responde `repetido`), acha o run pelo nonce e nunca despacha duas vezes.
+
+**Status.** `coordenador.py status` mostra uma de três linhas:
+
+- `demandas: N em curso (M esperando o Paulo), cursor <c>`;
+- `demandas: desligado`, sem a URL;
+- `demandas: Flow sem a rota`.
+
+**Flow de antes das demandas.** Um `404` na busca desliga o passo com um aviso único (`Demandas: o Flow não tem a rota de demandas…`) e o kit tenta de novo uma hora depois. Retrato, fila, consertos e publicação por seed seguem como antes. Um `422` "Corpo inválido." no pedido de publicação com `demanda` e `modo` é repetido uma vez sem esses campos. Uma falha inesperada no passo (no cliente, na busca ou numa fase) vira o aviso `Demandas: o passo falhou (<classe>)` (na caixa de saída, `Demandas: o envio da caixa de saída falhou (<classe>)`), sai do aviso quando um passo dá certo e nunca para o ciclo nem muda a fila.
+
 ### Riscos conhecidos
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
