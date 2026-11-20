@@ -7,6 +7,7 @@ import {
   type EtapaDefinida,
   type Espera,
   type Marco,
+  type Nivel,
   type Origem,
   type TipoDeDemanda,
 } from './model'
@@ -305,4 +306,285 @@ export function avisoDeFabricaSemBuscar(
   if (f.buscouEm === null) return 'a Fábrica nunca buscou demandas'
   if (!passou(f.buscouEm)) return null
   return `a Fábrica não busca ${formatarIdade(f.buscouEm, agora)}`
+}
+
+// ——— Página da demanda ———
+
+/** O que a página lê da triagem; o resto do JSON da triagem não aparece aqui. */
+export interface TriagemDaDemanda {
+  tamanho: 'pequeno' | 'medio' | 'grande'
+  mexeEm: string
+  risco: 'baixo' | 'medio' | 'alto'
+  dados: 'nenhum' | 'so_leitura' | 'escrita' | 'migracao'
+  impacto: { podeQuebrar: readonly string[]; autorizacao: boolean; caminhoProtegido: boolean }
+}
+
+export interface QuadroDeImpacto {
+  rotulo: 'Tamanho' | 'Mexe em' | 'Risco' | 'Dados'
+  valor: string
+}
+
+const TAMANHO: Record<TriagemDaDemanda['tamanho'], string> = {
+  pequeno: 'Pequeno',
+  medio: 'Médio',
+  grande: 'Grande',
+}
+const RISCO: Record<TriagemDaDemanda['risco'], string> = {
+  baixo: 'Baixo',
+  medio: 'Médio',
+  alto: 'Alto',
+}
+const DADOS: Record<TriagemDaDemanda['dados'], string> = {
+  nenhum: 'Nenhum',
+  so_leitura: 'Só leitura',
+  escrita: 'Escrita',
+  migracao: 'Migração',
+}
+
+export function quadrosDeImpacto(triagem: TriagemDaDemanda | null): QuadroDeImpacto[] {
+  if (!triagem) return []
+  return [
+    { rotulo: 'Tamanho', valor: TAMANHO[triagem.tamanho] },
+    { rotulo: 'Mexe em', valor: triagem.mexeEm },
+    { rotulo: 'Risco', valor: RISCO[triagem.risco] },
+    { rotulo: 'Dados', valor: DADOS[triagem.dados] },
+  ]
+}
+
+/** O que vai abaixo dos quadros: a lista curta do que pode quebrar e as pílulas de atenção. */
+export function avisosDoImpacto(triagem: TriagemDaDemanda | null): {
+  podeQuebrar: string[]
+  pilulas: string[]
+} {
+  if (!triagem) return { podeQuebrar: [], pilulas: [] }
+  const pilulas: string[] = []
+  if (triagem.impacto.autorizacao) pilulas.push('mexe em autorização')
+  if (triagem.impacto.caminhoProtegido) pilulas.push('caminho protegido')
+  return { podeQuebrar: [...triagem.impacto.podeQuebrar], pilulas }
+}
+
+export type AcaoDaFaixa = 'aprovar' | 'ajuste' | 'destino' | 'retomar' | 'concluir'
+
+export interface FaixaDaEspera {
+  titulo: string
+  contexto: string
+  acoes: AcaoDaFaixa[]
+}
+
+export interface DemandaEmEspera {
+  id: string
+  espera: Espera | null
+  esperaMotivo: string | null
+  versaoDoDesenho: number
+  ultimoAjuste: { texto: string; em: Date } | null
+  etapaAtual: string
+  etapas: readonly EtapaDefinida[]
+}
+
+const DIA_DO_MES = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: FUSO,
+  day: '2-digit',
+  month: '2-digit',
+})
+
+/** "DD/MM" no fuso de São Paulo. */
+export function diaEMes(data: Date): string {
+  return DIA_DO_MES.format(data)
+}
+
+/** Hoje → "há 2 h"; o dia anterior em São Paulo → "ontem"; antes → "em DD/MM". */
+export function quandoFoi(data: Date, agora: Date): string {
+  if (ehDeHoje(data, agora)) return formatarIdade(data, agora)
+  if (ehDeHoje(data, new Date(agora.getTime() - 24 * 60 * 60_000))) return 'ontem'
+  return `em ${diaEMes(data)}`
+}
+
+export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | null {
+  switch (d.espera) {
+    case null:
+      return null
+    case 'aprovar_desenho': {
+      const versao = `versão ${d.versaoDoDesenho}`
+      const a = d.ultimoAjuste
+      return {
+        titulo: 'O desenho está pronto para você aprovar',
+        contexto: a ? `${versao} · ajuste pedido ${quandoFoi(a.em, agora)}: "${a.texto}"` : versao,
+        acoes: ['aprovar', 'ajuste'],
+      }
+    }
+    case 'planejar_comigo':
+      return {
+        titulo: 'Esta demanda espera uma sessão de planejamento com você',
+        contexto: `Na sessão do Claude Code do projeto, use o id ${d.id}`,
+        acoes: [],
+      }
+    case 'decidir_destino':
+      return {
+        titulo: 'A triagem deixou o destino com você',
+        contexto: d.esperaMotivo ?? '',
+        acoes: ['destino'],
+      }
+    case 'travada':
+      return { titulo: d.esperaMotivo ?? 'A demanda travou', contexto: '', acoes: ['retomar'] }
+    case 'teste_falhou':
+      return {
+        titulo: 'O teste no navegador falhou duas vezes',
+        contexto: d.esperaMotivo ?? '',
+        acoes: ['retomar'],
+      }
+    case 'concluir_etapa': {
+      const rotulo = d.etapas.find((e) => e.chave === d.etapaAtual)?.rotulo ?? d.etapaAtual
+      return {
+        titulo: `Conclua ${rotulo} quando estiver pronto`,
+        contexto: '',
+        acoes: ['concluir'],
+      }
+    }
+  }
+}
+
+export interface PublicacaoNaEntrega {
+  estado: string
+  commit: string | null
+  noArDesde: Date | null
+}
+
+const PUBLICACAO_NA_FILA = new Set(['na_fila', 'verificando', 'publicando'])
+
+export function cabecalhoDaEntrega(publicacao: PublicacaoNaEntrega | null, agora: Date): string {
+  if (publicacao?.estado === 'publicado' && publicacao.noArDesde) {
+    return `✓ Entregue · no ar há ${semHa(formatarIdade(publicacao.noArDesde, agora))}`
+  }
+  if (publicacao && PUBLICACAO_NA_FILA.has(publicacao.estado)) {
+    return '✓ Entregue · publicação na fila'
+  }
+  return '✓ Entregue'
+}
+
+/** O link do artefato só sai para `https://claude.ai/…`, sem usuário nem porta (de novo na tela). */
+export function linkDoArtefato(url: string | null): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    const ok =
+      u.protocol === 'https:' && u.hostname === 'claude.ai' && !u.username && !u.password && !u.port
+    return ok ? u.href : null
+  } catch {
+    return null
+  }
+}
+
+export const ROTULO_DO_NIVEL: Record<Nivel, string> = {
+  planejar_comigo: 'Planejar comigo',
+  aprovar_desenho: 'Aprovar desenho',
+  vai_sozinho: 'Vai sozinho',
+}
+
+export const ROTULO_DO_DESTINO: Record<Destino, string> = {
+  urgente: 'Urgente',
+  lote_da_noite: 'Lote da noite',
+  fila_de_agentes: 'Fila de agentes',
+  decisao_do_paulo: 'Decisão sua',
+  orientada: 'Orientada',
+}
+
+const QUEM_ABRIU: Record<Origem, string> = {
+  flow: 'você',
+  sessao: 'uma sessão',
+  fabrica: 'a Fábrica',
+  usuario: 'um usuário',
+}
+
+export function chipDeAbertura(origem: Origem, criadaEm: Date, agora: Date): string {
+  return `aberta por ${QUEM_ABRIU[origem]} · ${formatarIdade(criadaEm, agora)}`
+}
+
+/** "PR #318" do último PR da lista; url sem número → null. */
+export function chipDoPr(prs: readonly string[]): string | null {
+  const numero = prs.at(-1)?.match(/\/pull\/(\d+)(?:[/?#]|$)/)?.[1]
+  return numero ? `PR #${numero}` : null
+}
+
+const TEXTO_DO_EVENTO: Record<string, string> = {
+  criada: 'Demanda aberta',
+  anexo: 'Anexo recebido',
+  triagem: 'Triagem feita',
+  triagem_falhou: 'A triagem falhou',
+  destino_decidido: 'Destino escolhido',
+  plano_criado: 'Plano criado',
+  plano_entregue: 'Plano entregue',
+  desenho_pronto: 'Desenho enviado',
+  desenho_aprovado: 'Desenho aprovado',
+  ajuste_pedido: 'Ajuste pedido',
+  etapa_concluida: 'Etapa concluída',
+  etapa_concluida_pelo_paulo: 'Etapa concluída',
+  travada: 'Travou',
+  destravada: 'Destravou',
+  retomada: 'Retomada',
+  teste: 'Teste no navegador',
+  entregue: 'Entregue',
+}
+
+const QUEM_FEZ: Record<string, string> = {
+  fabrica: 'a Fábrica',
+  paulo: 'você',
+  sessao: 'uma sessão',
+  flow: 'você',
+  usuario: 'um usuário',
+}
+
+export function textoDoEvento(tipo: string, dados: unknown): string {
+  const d = (dados ?? {}) as Record<string, unknown>
+  if (tipo === 'teste')
+    return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'
+  if ((tipo === 'desenho_aprovado' || tipo === 'ajuste_pedido') && typeof d.versao === 'number') {
+    return `${TEXTO_DO_EVENTO[tipo]} (versão ${d.versao})`
+  }
+  if (
+    tipo === 'destino_decidido' &&
+    typeof d.destino === 'string' &&
+    d.destino in ROTULO_DO_DESTINO
+  ) {
+    return `Destino: ${ROTULO_DO_DESTINO[d.destino as Destino]}`
+  }
+  return TEXTO_DO_EVENTO[tipo] ?? tipo
+}
+
+export function quemFez(origem: string): string {
+  return QUEM_FEZ[origem] ?? origem
+}
+
+export interface DesenhoNaPagina {
+  arquivoId: string
+  versao: number
+  nome: string
+  ehHtml: boolean
+}
+
+export interface EventoNoHistorico {
+  id: string
+  evento: string
+  quem: string
+  quando: Date
+}
+
+export interface PaginaDaDemanda {
+  id: string
+  titulo: string
+  icone: ReturnType<typeof iconeDoTipo>
+  chips: string[]
+  /** Só na entregue: "✓ Entregue · …". */
+  entrega: string | null
+  trilho: ReturnType<typeof trilho>
+  etapaAtual: string
+  faixa: FaixaDaEspera | null
+  impacto: { quadros: QuadroDeImpacto[]; podeQuebrar: string[]; pilulas: string[] }
+  /** Na entregue, o desenho aprovado; antes disso, a versão mais nova. */
+  desenho: DesenhoNaPagina | null
+  artefatoUrl: string | null
+  capturas: { id: string; tela: 'desktop' | 'celular' }[]
+  capturasApagadasEm: Date | null
+  temTela: boolean
+  historico: EventoNoHistorico[]
+  podeAgir: boolean
 }

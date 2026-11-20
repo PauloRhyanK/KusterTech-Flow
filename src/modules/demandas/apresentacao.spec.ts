@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import {
   avisoDeFabricaSemBuscar,
+  avisosDoImpacto,
+  cabecalhoDaEntrega,
   ehDeHoje,
+  faixaDaEspera,
+  linkDoArtefato,
+  quadrosDeImpacto,
   fluxoDeEntrada,
   grupoDaDemanda,
   iconeDoTipo,
@@ -343,5 +348,195 @@ describe('avisoDeFabricaSemBuscar', () => {
         AGORA,
       ),
     ).toBeNull()
+  })
+})
+
+const TRIAGEM = {
+  tamanho: 'medio' as const,
+  mexeEm: '2 telas, 1 rota',
+  risco: 'baixo' as const,
+  dados: 'so_leitura' as const,
+  impacto: {
+    podeQuebrar: ['a exportação do funil'],
+    autorizacao: true,
+    caminhoProtegido: false,
+  },
+}
+
+describe('quadrosDeImpacto', () => {
+  test('quadrosDeImpacto: medio, "2 telas, 1 rota", baixo, so_leitura → Médio / 2 telas, 1 rota / Baixo / Só leitura', () => {
+    expect(quadrosDeImpacto(TRIAGEM)).toEqual([
+      { rotulo: 'Tamanho', valor: 'Médio' },
+      { rotulo: 'Mexe em', valor: '2 telas, 1 rota' },
+      { rotulo: 'Risco', valor: 'Baixo' },
+      { rotulo: 'Dados', valor: 'Só leitura' },
+    ])
+  })
+
+  test('os outros valores e sem triagem → []', () => {
+    expect(
+      quadrosDeImpacto({ ...TRIAGEM, tamanho: 'grande', risco: 'alto', dados: 'migracao' }).map(
+        (q) => q.valor,
+      ),
+    ).toEqual(['Grande', '2 telas, 1 rota', 'Alto', 'Migração'])
+    expect(
+      quadrosDeImpacto({ ...TRIAGEM, tamanho: 'pequeno', risco: 'medio', dados: 'nenhum' }).map(
+        (q) => q.valor,
+      ),
+    ).toEqual(['Pequeno', '2 telas, 1 rota', 'Médio', 'Nenhum'])
+    expect(quadrosDeImpacto({ ...TRIAGEM, dados: 'escrita' })[3]?.valor).toBe('Escrita')
+    expect(quadrosDeImpacto(null)).toEqual([])
+  })
+
+  test('avisosDoImpacto: pode quebrar e as pílulas de autorização e caminho protegido', () => {
+    expect(avisosDoImpacto(TRIAGEM)).toEqual({
+      podeQuebrar: ['a exportação do funil'],
+      pilulas: ['mexe em autorização'],
+    })
+    expect(
+      avisosDoImpacto({
+        ...TRIAGEM,
+        impacto: { podeQuebrar: [], autorizacao: true, caminhoProtegido: true },
+      }).pilulas,
+    ).toEqual(['mexe em autorização', 'caminho protegido'])
+    expect(avisosDoImpacto(null)).toEqual({ podeQuebrar: [], pilulas: [] })
+  })
+})
+
+describe('faixaDaEspera', () => {
+  const base = {
+    id: '6f1c2b8e-0000-4000-8000-000000000001',
+    espera: null,
+    esperaMotivo: null,
+    versaoDoDesenho: 2,
+    ultimoAjuste: null,
+    etapaAtual: 'desenho',
+    etapas: [...MODELO_PADRAO],
+  }
+
+  test('faixaDaEspera aprovar_desenho com ajuste ontem → contexto "versão 2 · ajuste pedido ontem: \"menos texto no topo\"" e ações aprovar e ajuste', () => {
+    const faixa = faixaDaEspera(
+      {
+        ...base,
+        espera: 'aprovar_desenho',
+        ultimoAjuste: { texto: 'menos texto no topo', em: new Date('2026-11-19T18:00:00Z') },
+      },
+      AGORA,
+    )
+    expect(faixa).toEqual({
+      titulo: 'O desenho está pronto para você aprovar',
+      contexto: 'versão 2 · ajuste pedido ontem: "menos texto no topo"',
+      acoes: ['aprovar', 'ajuste'],
+    })
+  })
+
+  test('aprovar_desenho sem ajuste → "versão N"; ajuste hoje → "há 2 h"', () => {
+    expect(faixaDaEspera({ ...base, espera: 'aprovar_desenho' }, AGORA)?.contexto).toBe('versão 2')
+    expect(
+      faixaDaEspera(
+        {
+          ...base,
+          espera: 'aprovar_desenho',
+          ultimoAjuste: { texto: 'mais contraste', em: new Date(AGORA.getTime() - 120 * MIN) },
+        },
+        AGORA,
+      )?.contexto,
+    ).toBe('versão 2 · ajuste pedido há 2 h: "mais contraste"')
+  })
+
+  test('as outras esperas: textos e ações; sem espera → null', () => {
+    expect(faixaDaEspera({ ...base, espera: 'planejar_comigo' }, AGORA)).toEqual({
+      titulo: 'Esta demanda espera uma sessão de planejamento com você',
+      contexto: `Na sessão do Claude Code do projeto, use o id ${base.id}`,
+      acoes: [],
+    })
+    expect(
+      faixaDaEspera({ ...base, espera: 'decidir_destino', esperaMotivo: 'pode ir de dia' }, AGORA),
+    ).toEqual({
+      titulo: 'A triagem deixou o destino com você',
+      contexto: 'pode ir de dia',
+      acoes: ['destino'],
+    })
+    expect(
+      faixaDaEspera({ ...base, espera: 'travada', esperaMotivo: 'CI vermelho no PR' }, AGORA),
+    ).toEqual({ titulo: 'CI vermelho no PR', contexto: '', acoes: ['retomar'] })
+    expect(
+      faixaDaEspera({ ...base, espera: 'teste_falhou', esperaMotivo: 'botão sumiu' }, AGORA),
+    ).toEqual({
+      titulo: 'O teste no navegador falhou duas vezes',
+      contexto: 'botão sumiu',
+      acoes: ['retomar'],
+    })
+    const extra: EtapaDefinida = {
+      chave: 'revisao',
+      nome: 'Revisão do Paulo',
+      rotulo: 'Revisão',
+      marco: null,
+      quemConclui: 'paulo',
+      puladaSemTela: false,
+      esperaEm: ['planejar_comigo', 'aprovar_desenho', 'vai_sozinho'],
+    }
+    expect(
+      faixaDaEspera(
+        {
+          ...base,
+          espera: 'concluir_etapa',
+          etapaAtual: 'revisao',
+          etapas: [...MODELO_PADRAO, extra],
+        },
+        AGORA,
+      ),
+    ).toEqual({
+      titulo: 'Conclua Revisão quando estiver pronto',
+      contexto: '',
+      acoes: ['concluir'],
+    })
+    expect(faixaDaEspera(base, AGORA)).toBeNull()
+  })
+})
+
+describe('cabecalhoDaEntrega', () => {
+  test('cabecalhoDaEntrega: publicado há 2 h → "✓ Entregue · no ar há 2 h"', () => {
+    expect(
+      cabecalhoDaEntrega(
+        {
+          estado: 'publicado',
+          commit: '9d2e41b0',
+          noArDesde: new Date(AGORA.getTime() - 120 * MIN),
+        },
+        AGORA,
+      ),
+    ).toBe('✓ Entregue · no ar há 2 h')
+  })
+
+  test('na fila ou publicando → "publicação na fila"; sem pedido → "✓ Entregue"', () => {
+    for (const estado of ['na_fila', 'verificando', 'publicando'] as const) {
+      expect(cabecalhoDaEntrega({ estado, commit: null, noArDesde: null }, AGORA)).toBe(
+        '✓ Entregue · publicação na fila',
+      )
+    }
+    expect(cabecalhoDaEntrega(null, AGORA)).toBe('✓ Entregue')
+    expect(cabecalhoDaEntrega({ estado: 'falhou', commit: null, noArDesde: null }, AGORA)).toBe(
+      '✓ Entregue',
+    )
+  })
+})
+
+describe('linkDoArtefato', () => {
+  test('só https de claude.ai passa; o resto vira null', () => {
+    expect(linkDoArtefato('https://claude.ai/public/artifacts/abc')).toBe(
+      'https://claude.ai/public/artifacts/abc',
+    )
+    for (const url of [
+      null,
+      'http://claude.ai/x',
+      'https://claude.ai.exemplo.test/x',
+      'https://user@claude.ai/x',
+      'javascript:alert(1)',
+      'https://claude.ai:8443/x',
+      'https://exemplo.test/claude.ai/',
+    ]) {
+      expect(linkDoArtefato(url)).toBeNull()
+    }
   })
 })
