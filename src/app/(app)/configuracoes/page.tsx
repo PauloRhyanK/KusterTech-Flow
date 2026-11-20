@@ -77,6 +77,17 @@ export default async function PaginaConfiguracoes() {
             </span>
           </Link>
         )}
+        {podeGerenciarConfiguracoes && moduloAtivo('demandas') && (
+          <Link
+            href="/configuracoes/demandas"
+            className="flex flex-col gap-1 rounded-padrao border border-border bg-surface p-5 transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          >
+            <span className="text-[15px] font-[600] leading-[1.4] text-text-primary">Demandas</span>
+            <span className="text-sm text-text-secondary">
+              Tokens que as sessões do Claude Code usam para abrir e acompanhar demandas.
+            </span>
+          </Link>
+        )}
       </div>
 
       <section className="space-y-3">

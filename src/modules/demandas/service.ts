@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   Prisma,
   type DestinoDaDemanda,
@@ -12,7 +12,8 @@ import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { apagarArquivo, caminhoDoArquivo, gravarParcial, promoverParcial } from './arquivos'
-import { DESTINOS, NIVEIS } from './contrato'
+import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
+import { DESTINOS, NIVEIS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
   estadoInicial,
   validarModelo,
@@ -745,4 +746,51 @@ export async function criarModeloDeEtapas(
     if (ehUnicoRepetido(erro)) throw new ErroDeDominio('Já existe um modelo com este nome.')
     throw erro
   }
+}
+
+// O token é devolvido só aqui; no banco fica apenas o hash (o mesmo hash da Fábrica).
+export async function criarFonteDeDemandas(
+  sujeito: Sujeito,
+  nome: string,
+): Promise<{ id: string; token: string }> {
+  exigirPermissao(sujeito, 'configuracoes.gerenciar')
+
+  const validado = validarNomeDaFonteDaFabrica(nome)
+  if (!validado.ok) throw new ErroDeDominio(validado.erro)
+
+  const token = `${PREFIXO_DO_TOKEN_DE_DEMANDAS}${randomBytes(32).toString('base64url')}`
+  const criada = await db.fonteDeDemandas.create({
+    data: {
+      nome: validado.nome,
+      tokenHash: hashDoTokenDaFabrica(token),
+      criadaPorId: sujeito.usuarioId,
+    },
+    select: { id: true },
+  })
+  return { id: criada.id, token }
+}
+
+export async function revogarFonteDeDemandas(sujeito: Sujeito, fonteId: string): Promise<void> {
+  exigirPermissao(sujeito, 'configuracoes.gerenciar')
+
+  const { count } = await db.fonteDeDemandas.updateMany({
+    where: { id: fonteId, revogadaEm: null },
+    data: { revogadaEm: new Date() },
+  })
+  if (count > 0) return
+
+  const existe = await db.fonteDeDemandas.findUnique({
+    where: { id: fonteId },
+    select: { id: true },
+  })
+  throw new ErroDeDominio(existe ? 'Esta fonte já foi revogada.' : 'Fonte não encontrada.')
+}
+
+export async function listarFontesDeDemandas(sujeito: Sujeito) {
+  exigirPermissao(sujeito, 'configuracoes.gerenciar')
+
+  return db.fonteDeDemandas.findMany({
+    orderBy: { criadoEm: 'desc' },
+    select: { id: true, nome: true, criadoEm: true, ultimoUsoEm: true, revogadaEm: true },
+  })
 }
