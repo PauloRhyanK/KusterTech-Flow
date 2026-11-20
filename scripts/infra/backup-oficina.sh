@@ -34,6 +34,25 @@ falhar() {
   exit 1
 }
 
+# `restic backup` de arquivos. O código 3 quer dizer que o snapshot foi gravado, mas algum arquivo
+# sumiu ou não pôde ser lido no meio (a limpeza do worker, uma demanda desfeita): é aviso, não falha,
+# e o resto da noite (configuração da Fábrica, forget, check) segue. Qualquer outro código não zero
+# continua sendo falha. O dump do Postgres não passa por aqui: lá um erro de leitura é dump incompleto.
+AVISOS=0
+backup_de_arquivos() {
+  local descricao=$1
+  shift
+  restic backup "$@"
+  local rc=$?
+  if ((rc == 3)); then
+    AVISOS=$((AVISOS + 1))
+    log "AVISO: $descricao: o restic não leu alguns arquivos (código 3); o snapshot foi gravado"
+    logger -t oficina-backup -p user.warning "$descricao: arquivos não lidos (restic código 3)"
+    return 0
+  fi
+  return "$rc"
+}
+
 [[ -r "$ENV_BACKUP" ]] || falhar "$ENV_BACKUP ausente: destino do backup ainda não configurado"
 set -a
 # shellcheck disable=SC1090
@@ -68,7 +87,8 @@ elif ((SIMULAR)); then
   restic backup --dry-run -v --tag flow-arquivos --host oficina --exclude '*.parcial' \
     "$dir_arquivos" | tail -5
 else
-  restic backup --tag flow-arquivos --host oficina --exclude '*.parcial' "$dir_arquivos" ||
+  backup_de_arquivos "arquivos das demandas" --tag flow-arquivos --host oficina \
+    --exclude '*.parcial' "$dir_arquivos" ||
     falhar "backup dos arquivos das demandas falhou"
 fi
 
@@ -85,13 +105,15 @@ exclusoes=(--exclude "$CASA/fabrica/planos/*/repo" --exclude "$CASA/fabrica/kit"
 if ((SIMULAR)); then
   restic backup --dry-run -v --tag fabrica --host oficina "${exclusoes[@]}" "${fontes[@]}" | tail -5
 else
-  restic backup --tag fabrica --host oficina "${exclusoes[@]}" "${fontes[@]}" ||
+  backup_de_arquivos "configuração da Fábrica" --tag fabrica --host oficina \
+    "${exclusoes[@]}" "${fontes[@]}" ||
     falhar "backup da configuração da Fábrica falhou"
   # retenção: 7 diários, 4 semanais, 6 mensais
   restic forget --host oficina --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune ||
     falhar "restic forget/prune falhou"
   # aos domingos, confere a integridade de uma amostra dos dados
   if [[ "$(date +%u)" == 7 ]]; then restic check --read-data-subset=5% || falhar "restic check falhou"; fi
-  printf '{"em":"%s","ok":true}\n' "$(date --iso-8601=seconds)" >"$DIR_ESTADO/backup-ultimo.json"
+  printf '{"em":"%s","ok":true,"avisos":%d}\n' "$(date --iso-8601=seconds)" "$AVISOS" \
+    >"$DIR_ESTADO/backup-ultimo.json"
 fi
 log "=== fim do backup"

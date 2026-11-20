@@ -207,6 +207,8 @@ O script é [`scripts/infra/backup-oficina.sh`](../../scripts/infra/backup-ofici
 - os arquivos das demandas: o volume `flow_arquivos` (`kustertech-flow_flow_arquivos`), lido pelo ponto de montagem do Docker, sem os `.parcial`, com a tag `flow-arquivos`; os desenhos aprovados ficam para sempre e só existem ali;
 - a configuração da Fábrica: `~/fabrica` sem os clones de repositório, sem travas e sem arquivos de token, mais as units da Fábrica e da oficina e as configurações de Docker, journald e sysctl.
 
+Um arquivo que some ou não pode ser lido no meio do backup (a limpeza do worker apagando uma captura, por exemplo) faz o restic terminar com o código 3. Nos arquivos das demandas e na configuração da Fábrica isso é só um aviso no log e no syslog (`user.warning`): o snapshot foi gravado, o resto da noite segue, e o `backup-ultimo.json` conta os avisos em `avisos`. No dump do Postgres, o código 3 continua sendo falha.
+
 Hoje isso dá menos de 1 MB por snapshot, mais o dump do banco e os arquivos das demandas (até 100 MB por demanda; o restic deduplica entre snapshots).
 
 **Destino: Backblaze B2**, bucket privado `kustertech-oficina-backup` (us-east-005), configurado e testado com restauração em 18/11/2026. Os primeiros 10 GB são grátis, depois cerca de US$ 7/TB/mês. Este volume deve custar **US$ 0**. O DigitalOcean Spaces cobra no mínimo US$ 5/mês.
