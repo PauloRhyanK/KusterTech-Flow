@@ -13,6 +13,7 @@ import despachante  # noqa: E402
 import forja as forja_  # noqa: E402
 import motor  # noqa: E402
 import prompts  # noqa: E402
+import publicar  # noqa: E402
 from retrato import FalhaDeEnvio  # noqa: E402
 from testes_raias import plano_referencia  # noqa: E402
 
@@ -513,7 +514,7 @@ class BasePasso(unittest.TestCase):
         self.estado = {"fila": [], "avisos": [], "chaves": {}}
         self.salvos = []
 
-    def passo(self, cliente, *, modelos=None, projetos=None):
+    def passo(self, cliente, *, modelos=None, projetos=None, publicacao=None, pedir_publicacao=None):
         return demandas.passo(
             self.estado,
             cliente=cliente,
@@ -526,6 +527,8 @@ class BasePasso(unittest.TestCase):
             agora=self.agora,
             mem_disponivel_mb=None,
             salvar=lambda: self.salvos.append(json.loads(json.dumps(self.estado))),
+            publicacao=publicacao,
+            pedir_publicacao=pedir_publicacao,
         )
 
     def despachos(self):
@@ -2085,6 +2088,140 @@ class TestesTesteNoNavegador(BasePasso):
         self.passo(ClienteDeBusca(pagina(retrato("entregue", etapas=etapas), cursor="3")))
         self.assertEqual((self.despachos(), self.reservas()), ([], {}))
         self.assertNotIn("teste", self.item())
+
+
+PLANO_ID = "plano-da-demanda"
+PR_S1 = "https://github.com/kustertech-exemplo/app/pull/11"
+PR_S2 = "https://github.com/kustertech-exemplo/app/pull/12"
+PUBLICACAO = {"url": "https://central.exemplo/api/publicacoes", "token_file": "/tmp/token-de-publicacao"}
+
+
+class PedirFalso:
+    """Substitui `publicar.pedir`: cada chamada consome uma resposta (`None` = sucesso; exceção = falha)."""
+
+    def __init__(self, *respostas):
+        self.respostas, self.chamadas = list(respostas), []
+
+    def __call__(self, **kwargs):
+        self.chamadas.append(kwargs)
+        r = self.respostas.pop(0) if self.respostas else None
+        if isinstance(r, BaseException):
+            raise r
+        return {"id": "p"}
+
+
+class TestesEntrega(BasePasso):
+    def setUp(self):
+        super().setUp()
+        demandas.secao(self.estado)["itens"][ID] = item("testando", plano=CAMINHO, desenvolvida=True, planoNaFila=PLANO_ID, ultima=retrato("testada"))
+        pasta = self.raiz / "planos" / PLANO_ID
+        pasta.mkdir(parents=True)
+        seeds = {
+            "s1": {"estado": "mergeada", "pr": PR_S1},
+            "s2": {"estado": "mergeada", "pr": PR_S2},
+            "s3": {"estado": "em_andamento", "pr": "https://github.com/kustertech-exemplo/app/pull/13"},
+            "s4": {"estado": "mergeada", "pr": "https://exemplo.com/fora"},
+        }
+        (pasta / "estado.json").write_text(json.dumps({"seeds": seeds}), encoding="utf-8")
+
+    def entregue(self, cursor="2", **extra):
+        extra.setdefault("titulo", "Corrigir a listagem de clientes")
+        return pagina(retrato("entregue", **extra), cursor=cursor)
+
+    def test_entregar_urgente_pede_imediato_com_a_demanda_e_envia_entregue_com_os_prs(self):
+        pedir = PedirFalso()
+        self.passo(ClienteDeBusca(self.entregue(destino="urgente", publicacao={"modo": "imediato"})), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual(
+            pedir.chamadas,
+            [{"repo": REPO, "descricao": "Corrigir a listagem de clientes", "url": PUBLICACAO["url"], "token_file": PUBLICACAO["token_file"], "modo": "imediato", "demanda": ID}],
+        )
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("entregue", {"prs": [PR_S1, PR_S2]}))
+        self.assertEqual((self.item()["fase"], self.item()["pedida"]), ("entregando", True))
+
+    def test_entregar_lote_da_noite_pede_modo_lote(self):
+        pedir = PedirFalso()
+        self.passo(ClienteDeBusca(self.entregue(destino="lote_da_noite", publicacao={"modo": "lote"}, titulo="x" * 300)), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        (chamada,) = pedir.chamadas
+        self.assertEqual((chamada["modo"], len(chamada["descricao"])), ("lote", 200))
+
+    def test_reinicio_depois_do_pedido_nao_pede_de_novo(self):
+        pedir = PedirFalso()
+        self.passo(ClienteDeBusca(self.entregue(publicacao={"modo": "lote"})), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        # queda antes de gravar o evento: o item volta sem a fase, mas com a marca do pedido
+        self.item().update(fase="testando")
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca(self.entregue(cursor="3", publicacao={"modo": "lote"})), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual(len(pedir.chamadas), 1)
+        self.assertEqual([e["tipo"] for e in self.saida()], ["entregue"])
+        # a fase `entregando` nunca repete o evento
+        self.passo(ClienteDeBusca(self.entregue(cursor="4", publicacao={"modo": "lote"})), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual((len(pedir.chamadas), len(self.saida())), (1, 1))
+
+    def test_sem_token_de_publicacao_so_envia_entregue(self):
+        pedir = PedirFalso()
+        self.passo(ClienteDeBusca(self.entregue(publicacao={"modo": "lote"})), publicacao=None, pedir_publicacao=pedir)
+        self.assertEqual(pedir.chamadas, [])
+        self.assertEqual([e["tipo"] for e in self.saida()], ["entregue"])
+
+    def test_fila_de_publicacao_ausente_404_so_envia_entregue_com_aviso(self):
+        pedir = PedirFalso(FalhaDeEnvio("HTTP 404"))
+        eventos = self.passo(ClienteDeBusca(self.entregue()), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual([e["tipo"] for e in self.saida()], ["entregue"])
+        self.assertIn("demandas:publicacao:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_recusa_definitiva_avisa_e_segue_sem_repetir(self):
+        for codigo in (409, 422):
+            with self.subTest(codigo=codigo):
+                self.setUp()
+                pedir = PedirFalso(FalhaDeEnvio("HTTP %d" % codigo))
+                eventos = self.passo(ClienteDeBusca(self.entregue()), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+                self.assertEqual(([e["tipo"] for e in self.saida()], len(pedir.chamadas)), (["entregue"], 1))
+                self.assertIn("demandas:publicacao:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_falha_transitoria_tenta_no_ciclo_seguinte_sem_enviar_entregue(self):
+        pedir = PedirFalso(FalhaDeEnvio("timeout"), FalhaDeEnvio("HTTP 503"))
+        for cursor in ("2", "3"):
+            self.passo(ClienteDeBusca(self.entregue(cursor=cursor)), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+            self.assertEqual((self.saida(), self.item()["fase"], self.item().get("pedida")), ([], "testando", None))
+        self.passo(ClienteDeBusca(self.entregue(cursor="4")), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual(([e["tipo"] for e in self.saida()], len(pedir.chamadas)), (["entregue"], 3))
+
+    def test_demanda_sem_tela_entrega_sem_passar_pelo_teste(self):
+        etapas = [e for e in MODELO if e["marco"] not in ("desenho", "testada")]
+        self.item().update(ultima=retrato("desenvolvida", etapas=etapas))
+        pedir = PedirFalso()
+        self.passo(ClienteDeBusca(pagina(retrato("entregue", etapas=etapas, titulo="t", publicacao={"modo": "lote"}))), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual((len(pedir.chamadas), [e["tipo"] for e in self.saida()], self.despachos()), (1, ["entregue"], []))
+
+    def test_entregue_recusado_pelo_flow_so_avisa(self):
+        pedir = PedirFalso()
+        self.passo(ClienteDeBusca(self.entregue()), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        eventos = self.passo(ClienteDeBusca(self.entregue(cursor="3")), publicacao=PUBLICACAO, pedir_publicacao=pedir)
+        self.assertEqual((self.saida(), len(pedir.chamadas), self.item()["precisa_ressincronizar"]), ([], 1, False))
+        self.assertIn("demandas:entrega:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_encerrada_sai_do_estado_e_apaga_os_arquivos_locais(self):
+        arq = demandas.enfileirar_arquivo(self.estado, self.raiz, ID, tipo="desenho", nome="d.html", conteudo="text/html", dados=b"x", tela=None)
+        pasta = self.raiz / "demandas" / ID
+        self.assertTrue((pasta / arq).exists())
+        # com a saída da demanda ainda cheia, o item fica
+        self.passo(ClienteDeBusca(pagina(retrato("entregue", encerrada="entregue"), cursor="2")))
+        self.assertIn(ID, self.estado["demandas"]["itens"])
+        self.assertTrue(pasta.exists())
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca())
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+        self.assertFalse(pasta.exists())
+        self.passo(ClienteDeBusca())  # sem a demanda no estado, nada volta
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+
+    def test_encerrada_com_run_superado_vivo_espera_o_run_terminar(self):
+        self.motor.definir_run("r1", estado="running", prUrl=None)
+        self.item().update(testeSuperado={"runId": "r1", "projeto": "app", "nonce": "n", "inicio": AGORA})
+        self.passo(ClienteDeBusca(pagina(retrato("testada", encerrada="orientada"), cursor="2")))
+        self.assertIn(ID, self.estado["demandas"]["itens"])
 
 
 if __name__ == "__main__":

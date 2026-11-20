@@ -63,6 +63,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sys
 import uuid
 
@@ -73,7 +74,9 @@ import despachante  # noqa: E402
 import globs  # noqa: E402
 import motor as motor_  # noqa: E402
 import prompts  # noqa: E402
+import publicar  # noqa: E402
 import raias  # noqa: E402
+import retrato as retrato_  # noqa: E402
 from retrato import FORMATO_INSTANTE, FalhaDeEnvio  # noqa: E402
 
 FASES = (
@@ -125,6 +128,12 @@ _HTTP_4XX = re.compile(r"HTTP (4\d\d)")
 _4XX_QUE_PASSAM = ("401", "403", "404", "408", "429")
 # 404 numa rota da demanda: Flow sem o módulo de demandas (ou a demanda sumiu); nunca descarta, só pausa a saída
 FALHA_SEM_ROTA = "HTTP 404"
+# a entrega: o pedido de publicação leva a descrição (o título, no máximo) e o `entregue` leva até 20 PRs
+LIMITE_DESCRICAO = 200
+LIMITE_PRS = 20
+# respostas do pedido de publicação que repetir não conserta (as mesmas do coordenador): 404 é Flow sem a fila
+# de publicação, 409 e 422 recusa do pedido; o resto (rede, timeout, 5xx) tenta de novo no ciclo seguinte
+RECUSAS_DA_PUBLICACAO = (404, 409, 422)
 CHAVE_SAIDA_PARADA = "demandas:saida-parada"
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _CAMINHO_LOCAL = re.compile(r"demandas/(%s)/(%s)" % (_UUID.pattern, _UUID.pattern))
@@ -893,7 +902,7 @@ def _ainda_na_triagem(demanda: dict) -> bool:
 
 
 class _Passo:
-    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None):
+    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None, publicacao=None, pedir_publicacao=None):
         self.estado = estado
         self.raiz = pathlib.Path(raiz) if raiz is not None else None
         self.sec = secao(estado)
@@ -908,6 +917,8 @@ class _Passo:
         self.modelo_do_teste = _modelo(modelos, PAPEL_DO_TESTE)
         self.modelo_da_correcao = _modelo(modelos, PAPEL_DA_CORRECAO)
         self.mem_disponivel_mb = mem_disponivel_mb
+        self.publicacao = publicacao if isinstance(publicacao, dict) and publicacao.get("url") and publicacao.get("token_file") else None
+        self.pedir_publicacao = pedir_publicacao or publicar.pedir
         self.agora = agora if isinstance(agora, datetime.datetime) else motor_.instante(agora)
         self.agora_texto = _texto_do_instante(self.agora)
         self.salvar = salvar or (lambda: None)
@@ -1025,7 +1036,10 @@ class _Passo:
             self.corrigir(id_, it, demanda)
         elif acao == "acompanhar" and it.get("fase") == "corrigindo":
             self.contando_erros(id_, it, lambda: self.acompanhar_correcao(id_, it, demanda), campo="erroDaCorrecao", travar=self.travar_correcao_por_erro(id_, it))
-        # as outras ações são da Task 8
+        elif acao == "entregar":
+            self.entregar(id_, it, demanda)
+        elif acao == "encerrar":
+            self.encerrar(id_, it)
 
     def largar_triagem_superada(self, id_: str, it: dict, demanda: dict) -> None:
         """O Paulo decidiu (ou encerrou) a demanda com a triagem no meio: o run segue no Warren, mas não conta mais."""
@@ -1091,6 +1105,9 @@ class _Passo:
                 enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_CORRECAO_RECUSADA, "url": c.get("prUrl")}, agora=self.agora_texto)
             else:
                 self.aviso_do_teste(id_)
+        elif it.get("fase") == "entregando" and _marco(demanda) == "entregue" and not demanda.get("encerrada"):
+            # o Flow não aplicou o `entregue`: mandar de novo seria recusado outra vez; só o aviso
+            self.aviso("demandas:entrega:%s" % id_, "Demandas: o Flow recusou a entrega da demanda %s; confira a demanda" % id_[:8])
         elif _marco(demanda) == "desenvolvida" and it.get("fase") in ("plano_no_repo", "desenvolvendo") and not demanda.get("encerrada"):
             if it.get("desenvolvida"):
                 # o plano terminou, mas o Flow não aplicou a conclusão: a demanda vai para o Paulo (uma vez)
@@ -1104,6 +1121,75 @@ class _Passo:
                     "Demandas: o Flow recusou o aviso de pausa (ou de retomada) do plano da demanda %s; confira a demanda" % id_[:8],
                 )
         self.salvar()
+
+    # ------------------------------------------------------------ entrega
+
+    def prs_do_plano(self, id_: str, it: dict, demanda: dict) -> list[str]:
+        """Os PRs mergeados das seeds do plano da demanda (até `LIMITE_PRS`); plano ilegível ou sumido: nenhum."""
+        entrada = _entrada_da_demanda(self.estado.get("fila"), id_, it, demanda)
+        plano_id = entrada["id"] if entrada is not None else it.get("planoNaFila")
+        if self.raiz is None or not isinstance(plano_id, str) or not plano_id:
+            return []
+        estado = retrato_.ler_planos(self.raiz / DIR_PLANOS, [plano_id])[plano_id]["estado"]
+        seeds = estado.get("seeds") if isinstance(estado, dict) and isinstance(estado.get("seeds"), dict) else {}
+        prs = []
+        for seed in seeds.values():
+            pr = seed.get("pr") if isinstance(seed, dict) and seed.get("estado") == "mergeada" else None
+            if retrato_.url_do_github(pr) and pr not in prs:
+                prs.append(pr)
+        return prs[:LIMITE_PRS]
+
+    def pedir_a_publicacao(self, id_: str, it: dict, demanda: dict) -> bool:
+        """Pede a publicação da demanda ao Flow (uma vez: a marca `pedida` vai ao disco logo depois). `False`: falha
+        transitória, o pedido e o `entregue` esperam o ciclo seguinte. Sem token, ou sem a fila de publicação
+        (`404`), ou com recusa definitiva: segue só com o `entregue` (os dois últimos com um aviso)."""
+        if self.publicacao is not None:
+            titulo = demanda.get("titulo") if isinstance(demanda.get("titulo"), str) else ""
+            publicacao = demanda.get("publicacao") if isinstance(demanda.get("publicacao"), dict) else {}
+            try:
+                self.pedir_publicacao(
+                    repo=demanda["repositorio"],
+                    descricao=(titulo.strip() or "demanda %s" % id_[:8])[:LIMITE_DESCRICAO],
+                    url=self.publicacao["url"],
+                    token_file=self.publicacao["token_file"],
+                    modo=publicacao.get("modo"),
+                    demanda=id_,
+                )
+            except FalhaDeEnvio as falha:
+                if falha.codigo not in RECUSAS_DA_PUBLICACAO:
+                    self.aviso("demandas:publicacao-envio", "Demandas: o pedido de publicação da demanda %s falhou (%s); tenta no próximo ciclo" % (id_[:8], falha))
+                    return False
+                self.aviso(
+                    "demandas:publicacao:%s" % id_,
+                    "Demandas: o Flow recusou o pedido de publicação da demanda %s (%s); confira a publicação no projeto" % (id_[:8], falha),
+                )
+        it["pedida"] = True
+        self.salvar()  # a marca no disco antes do evento: um reinício não pede duas vezes
+        return True
+
+    def entregar(self, id_: str, it: dict, demanda: dict) -> None:
+        """A etapa `entregue`: pede a publicação (com o modo da demanda) e envia o `entregue` com os PRs, uma vez.
+
+        Só chega aqui depois do teste no navegador (ou sem ele, nas demandas sem tela): o Flow só põe a demanda na
+        etapa `entregue` depois da `testada`. O evento e a fase `entregando` vão ao disco juntos."""
+        if not it.get("pedida") and not self.pedir_a_publicacao(id_, it, demanda):
+            return
+        enfileirar_evento(self.estado, id_, "entregue", {"prs": self.prs_do_plano(id_, it, demanda)}, agora=self.agora_texto)
+        it.update(fase="entregando", inicio=self.agora_texto)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_entregue", "id": id_})
+
+    def encerrar(self, id_: str, it: dict) -> None:
+        """A demanda acabou (entregue ou orientada) e a saída dela esvaziou (quem decide é `proxima_acao`): o item sai
+        do estado e `<raiz>/demandas/<id>/` é apagada. Com run superado ainda vivo o item fica, segurando a vaga."""
+        if _run_superado_vivo(it) or isinstance(it.get("runSuperado"), dict):
+            return
+        capacidade.sincronizar(self.capacidade, chave(id_), set())
+        del self.sec["itens"][id_]
+        self.salvar()
+        if self.raiz is not None:
+            shutil.rmtree(self.raiz / "demandas" / _id_valido(id_), ignore_errors=True)
+        self.eventos.append({"evento": "demanda_encerrada", "id": id_})
 
     # ------------------------------------------------------------ desenvolvimento
 
@@ -2358,7 +2444,7 @@ class _Passo:
             self.eventos.append({"evento": "demanda_correcao_superada", "id": id_})
 
 
-def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar) -> list[dict]:
+def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar, publicacao=None, pedir_publicacao=None) -> list[dict]:
     """Um ciclo das demandas: busca no Flow e triagem. Muta `estado["demandas"]` e devolve os eventos de log.
 
     `cliente` é o `ClienteDoFlow`; `projetos` mapeia o repositório (`fila.json`) para o projeto do Warren (repositório
@@ -2367,7 +2453,8 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
     (`esvaziar_saida`), depois. `salvar` grava o `fila-estado.json` (antes de cada POST pago e a cada transição).
     `forja` lê e mergeia o PR do plano. `estado["fila"]` é a fila do coordenador: o `passo` acompanha a entrada do
     plano da demanda (lendo a pausa em `<raiz>/planos/<id>/estado.json`). `mem_disponivel_mb` vai à reserva de vaga
-    do desenho (`capacidade.reservar`); o HTML do desenho é copiado para `<raiz>/demandas/<id>/` antes da saída.
+    do desenho (`capacidade.reservar`); `publicacao` (`{"url", "token_file"}`, a rota já derivada por
+    `publicar.url_da_rota`; `None` desliga o pedido) e `pedir_publicacao` (padrão `publicar.pedir`) são da entrega; o HTML do desenho é copiado para `<raiz>/demandas/<id>/` antes da saída.
     """
     p = _Passo(
         estado,
@@ -2381,6 +2468,8 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
         salvar=salvar,
         raiz=raiz,
         mem_disponivel_mb=mem_disponivel_mb,
+        publicacao=publicacao,
+        pedir_publicacao=pedir_publicacao,
     )
     if p.buscar():
         p.decidir()
