@@ -160,6 +160,10 @@ Além do estado do pedido, a **fila do repositório** tem uma situação, visív
 
 Durante o conserto, não tente "resolver" publicando por fora nem reenviando o mesmo commit: corrija por PR em `main` como sempre; o pedido de publicação do conserto tem a vez.
 
+## Demandas
+
+Quando o trabalho vem de uma **demanda** do Flow, a publicação já faz parte da entrega: ao entregar, a Fábrica pede a publicação com o campo `demanda` (o id da demanda) no `POST /api/publicacoes`, e o pedido aparece ligado à demanda. A sessão não pede de novo a publicação dessa demanda. Para abrir, acompanhar e planejar demandas, siga o guia [Demandas pelo KusterTech Flow](demandas-pelo-flow.md).
+
 ## Resumo para a sessão
 
 1. Trabalhe em branch, abra PR, faça o merge em `main`.

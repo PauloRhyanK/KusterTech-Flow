@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Desenho de exemplo</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: rgb(255, 255, 255);
+        color: rgb(30, 41, 59);
+      }
+      .tela {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 18px;
+        padding: 22px;
+      }
+      .menu,
+      .bloco {
+        background: rgb(236, 241, 245);
+        border-radius: 8px;
+      }
+      .menu {
+        min-height: 300px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+      .bloco {
+        height: 90px;
+        margin-bottom: 12px;
+      }
+      .bloco.alto {
+        height: 150px;
+      }
+      @media (max-width: 600px) {
+        .tela {
+          grid-template-columns: 1fr;
+        }
+        .menu {
+          min-height: 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="tela">
+      <nav class="menu" aria-label="Menu do exemplo"></nav>
+      <section>
+        <h1 id="titulo">Funil de vendas</h1>
+        <div class="bloco"></div>
+        <div class="bloco alto"></div>
+      </section>
+    </main>
+    <!-- Prova do sandbox: no Flow este script nunca roda, e o título continua o original. -->
+    <script>
+      document.title = 'O script rodou'
+      document.getElementById('titulo').textContent = 'O script rodou'
+    </script>
+  </body>
+</html>

@@ -3,6 +3,8 @@ import { cn } from '@/lib/utils'
 import type { PontoDeEtapa } from './trilho-de-etapas'
 
 // Pontos de 14 px ligados por uma linha; o ponto da etapa atual ganha um anel no tom dela.
+// Cada etapa tem largura mínima para o rótulo mais longo ("Desenvolvida"): no celular o trilho
+// rola na horizontal em vez de sobrepor os rótulos.
 const CLASSE_DO_PONTO: Record<PontoDoTrilho, string> = {
   feito: 'bg-marca-flow',
   atual: 'border-[3px] border-execucao bg-surface',
@@ -26,7 +28,10 @@ export function TrilhoGrande({ pontos }: { pontos: readonly PontoDeEtapa[] }) {
         <li
           key={p.chave}
           aria-current={p.ponto !== 'feito' && p.ponto !== 'futuro' ? 'step' : undefined}
-          className={cn('relative min-w-16 flex-1 text-center text-xs', CLASSE_DO_ROTULO[p.ponto])}
+          className={cn(
+            'relative min-w-[78px] flex-1 whitespace-nowrap text-center text-xs',
+            CLASSE_DO_ROTULO[p.ponto],
+          )}
         >
           {i > 0 && (
             <span

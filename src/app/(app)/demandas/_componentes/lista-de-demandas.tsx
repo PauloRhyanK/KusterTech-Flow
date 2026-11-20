@@ -37,7 +37,7 @@ function Linha({ linha }: { linha: LinhaDeDemanda }) {
         >
           {linha.estado.texto}
         </span>
-        <span className="ml-auto w-14 shrink-0 text-right text-xs text-text-tertiary md:ml-0">
+        <span className="ml-auto shrink-0 whitespace-nowrap text-right text-xs text-text-tertiary md:ml-0 md:w-[92px]">
           {linha.idade}
         </span>
       </Link>

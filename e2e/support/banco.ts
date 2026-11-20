@@ -1156,3 +1156,52 @@ export async function semearPedidoDePublicacaoNoBanco(
     },
   })
 }
+
+// Demandas dos repositórios de exemplo (eventos e arquivos saem em cascata; os arquivos em disco
+// ficam na pasta temporária do E2E). Projetos que as capturas mostram como "Projeto Alfa" voltam a
+// ter o prefixo "E2E " para o setup global apagá-los.
+export async function limparDemandasNoBanco(): Promise<void> {
+  const dosExemplos = { repositorio: { nomeCompleto: { startsWith: 'kustertech-exemplo/' } } }
+  await db.pedidoDePublicacao.updateMany({
+    where: { demanda: dosExemplos },
+    data: { demandaId: null },
+  })
+  await db.demanda.deleteMany({ where: dosExemplos })
+  const exibidos = await db.projeto.findMany({
+    where: { nome: { not: { startsWith: 'E2E ' } }, nomeNormalizado: { startsWith: 'e2e ' } },
+    select: { id: true, nomeNormalizado: true },
+  })
+  for (const p of exibidos) {
+    await db.projeto.update({
+      where: { id: p.id },
+      data: { nome: `E2E ${p.nomeNormalizado}`, arquivadoEm: new Date() },
+    })
+  }
+}
+
+// Projeto de teste mostrado com um nome curto nas capturas (o normalizado continua único).
+export async function exibirProjetoComoNoBanco(projetoId: string, nome: string): Promise<void> {
+  await db.projeto.update({ where: { id: projetoId }, data: { nome } })
+}
+
+// Fonte de demandas (`fd_`) criada pelo admin do E2E; o token volta só aqui, como na tela.
+export async function criarFonteDeDemandasNoBanco(nome: string): Promise<string> {
+  const criadaPorId = process.env.E2E_ADMIN_ID
+  if (!criadaPorId) throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
+  const token = `fd_${randomBytes(32).toString('base64url')}`
+  await db.fonteDeDemandas.create({
+    data: { nome, tokenHash: hashDoTokenDaFabrica(token), criadaPorId },
+  })
+  return token
+}
+
+// Fonte da Fábrica (`ff_`) criada pelo admin do E2E, para simular a Fábrica pela API.
+export async function criarFonteDaFabricaNoBanco(nome: string): Promise<string> {
+  const criadaPorId = process.env.E2E_ADMIN_ID
+  if (!criadaPorId) throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
+  const token = `ff_${randomBytes(32).toString('base64url')}`
+  await db.fonteDaFabrica.create({
+    data: { nome, tokenHash: hashDoTokenDaFabrica(token), criadaPorId },
+  })
+  return token
+}
