@@ -230,6 +230,23 @@ class TestesEnfileirar(unittest.TestCase):
             ],
         )
 
+    def test_enfileirar_copia_demanda_do_plano(self):
+        demanda = "11111111-2222-4333-8444-555555555555"
+        com = achado("demanda-11111111", ["src/a/"])
+        com["plano"]["demanda"] = demanda
+        nova = fila.enfileirar([], [com, achado("login", ["src/login/"])], self.AGORA)
+        por_feature = {e["feature"]: e for e in nova}
+        self.assertEqual(por_feature["demanda-11111111"]["demanda"], demanda)
+        self.assertNotIn("demanda", por_feature["login"])  # sem o campo, a entrada é a de hoje
+        # quem aguarda e ganha o campo depois também o recebe; um valor que não é uuid fica de fora
+        sem = fila.enfileirar([], [achado("demanda-11111111", ["src/a/"])], self.AGORA)
+        self.assertNotIn("demanda", sem[0])
+        atualizada = fila.enfileirar(sem, [com], self.AGORA)
+        self.assertEqual(atualizada[0]["demanda"], demanda)
+        torto = achado("x", ["src/x/"])
+        torto["plano"]["demanda"] = "nao-e-uuid"
+        self.assertNotIn("demanda", fila.enfileirar([], [torto], self.AGORA)[0])
+
     def test_plano_legado_vira_feature_plano(self):
         item = {"repo": REPO, "caminho": ".fabrica/plano.json", "plano": plano_com(["a/"])}
         nova = fila.enfileirar([], [item], self.AGORA)
@@ -439,6 +456,35 @@ class TestesAdmitir(unittest.TestCase):
         fila.admitir(lista)
         self.assertEqual(lista, antes)
 
+    def test_admitir_poe_urgente_antes_do_aguardando_mais_antigo_que_nao_colide(self):
+        lista = [
+            entrada("velho", ["src/a/"], entrou="2026-11-03T01:00:00Z"),
+            dict(entrada("urgente", ["src/b/"], entrou="2026-11-03T05:00:00Z"), urgente=True),
+        ]
+        self.assertEqual(fila.admitir(lista), [lista[1]["id"], lista[0]["id"]])
+
+    def test_admitir_urgente_nao_passa_de_quem_colide_com_ele(self):
+        # quem já roda (ativo, pausado, admitindo) manda: o urgente espera e não toma o lugar de ninguém
+        for estado in ("ativo", "pausado", "admitindo"):
+            with self.subTest(estado=estado):
+                lista = [
+                    entrada("rodando", ["src/a/"], estado=estado, entrou="2026-11-03T01:00:00Z"),
+                    dict(entrada("urgente", ["src/a/x.ts"], entrou="2026-11-03T05:00:00Z"), urgente=True),
+                ]
+                self.assertEqual(fila.admitir(lista), [])
+        # entre dois urgentes que colidem, vale o mais antigo
+        lista = [
+            dict(entrada("u2", ["src/a/"], entrou="2026-11-03T05:00:00Z"), urgente=True),
+            dict(entrada("u1", ["src/a/x.ts"], entrou="2026-11-03T04:00:00Z"), urgente=True),
+        ]
+        self.assertEqual(fila.admitir(lista), [lista[1]["id"]])
+        # urgente segurado não entra nem bloqueia
+        lista = [
+            dict(entrada("urgente", ["src/a/"], entrou="2026-11-03T01:00:00Z"), urgente=True, segurado=True),
+            entrada("outro", ["src/a/"], entrou="2026-11-03T05:00:00Z"),
+        ]
+        self.assertEqual(fila.admitir(lista), [lista[1]["id"]])
+
 
 class TestesMarcar(unittest.TestCase):
     def test_muda_so_o_estado_da_entrada(self):
@@ -499,6 +545,18 @@ class TestesSegurarERemover(unittest.TestCase):
         f = fila.segurar(f, velho["id"], False)
         self.assertNotIn("segurado", f[0])
         self.assertEqual(fila.admitir(f), [velho["id"]])
+
+    def test_segurar_e_soltar_pelo_paulo_tiram_a_marca_da_demanda(self):
+        velho, _ = self.dois_sobrepostos()
+        pela_demanda = dict(velho, segurado=True, seguradoPor="demanda")
+        f = fila.segurar([pela_demanda], velho["id"], True)
+        self.assertIs(f[0]["segurado"], True)
+        self.assertNotIn("seguradoPor", f[0])  # agora é do Paulo: a demanda não solta
+        f = fila.segurar([pela_demanda], velho["id"], False)
+        self.assertNotIn("segurado", f[0])
+        self.assertNotIn("seguradoPor", f[0])
+        f = fila.remover([pela_demanda], velho["id"], manter_arquivo=False)
+        self.assertNotIn("seguradoPor", f[0])
 
     def test_segurar_fora_de_aguardando_recusa(self):
         ativo = entrada("ativo", ["src/a/**"], estado="ativo")

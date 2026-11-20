@@ -1191,5 +1191,185 @@ class TestesBusca(BasePasso):
         self.assertEqual(len(self.despachos()), 1)
 
 
+ID_DO_PLANO = "kustertech-exemplo--app--demanda-11111111--abc123"
+
+
+def na_fila(estado="aguardando", *, demanda=ID, caminho=CAMINHO, repo=REPO, id_=ID_DO_PLANO, **extra):
+    base = {
+        "id": id_,
+        "repo": repo,
+        "feature": caminho.rsplit("/", 1)[-1][: -len(".json")],
+        "caminho": caminho,
+        "entrouEm": "2026-11-20T09:30:00Z",
+        "estado": estado,
+        "arquivos": ["src/a/**"],
+        "hash": "h",
+    }
+    if demanda is not None:
+        base["demanda"] = demanda
+    base.update(extra)
+    return base
+
+
+def com_itens(**itens):
+    return {"cursor": None, "semRotaEm": None, "saida": [], "itens": {i: it for i, it in itens.items()}}
+
+
+class TestesAplicarNaFila(unittest.TestCase):
+    def test_aplicar_na_fila_segura_ate_a_etapa_desenvolvida_e_solta_depois(self):
+        fila_ = [na_fila()]
+        for marco in ("recebida", "planejada", "desenho"):
+            with self.subTest(marco=marco):
+                nova = demandas.aplicar_na_fila(com_itens(**{ID: item("plano_no_repo", ultima=retrato(marco))}), fila_)
+                self.assertEqual((nova[0]["segurado"], nova[0]["seguradoPor"], nova[0]["urgente"]), (True, "demanda", False))
+        self.assertNotIn("segurado", fila_[0])  # pura: a fila de entrada não muda
+        segurada = demandas.aplicar_na_fila(com_itens(**{ID: item("plano_no_repo", ultima=retrato("desenho"))}), fila_)
+        # o retrato recém-chegado (`recebida`) vale mais que a `ultima`
+        it = item("plano_no_repo", ultima=retrato("desenho"), recebida=retrato("desenvolvida", destino="urgente"))
+        solta = demandas.aplicar_na_fila(com_itens(**{ID: it}), segurada)
+        self.assertIs(solta[0]["segurado"], False)
+        self.assertNotIn("seguradoPor", solta[0])
+        self.assertIs(solta[0]["urgente"], True)
+        # depois de desenvolvida (o Paulo concluiu a etapa) também fica solta
+        depois = demandas.aplicar_na_fila(com_itens(**{ID: item("plano_no_repo", ultima=retrato("testada"))}), segurada)
+        self.assertIs(depois[0]["segurado"], False)
+        # sem tela não há desenho: o plano fica segurado só até desenvolvida
+        sem_tela = [e for e in MODELO if e["marco"] not in ("desenho", "testada")]
+        nova = demandas.aplicar_na_fila(com_itens(**{ID: item("plano_no_repo", ultima=retrato("planejada", etapas=sem_tela))}), fila_)
+        self.assertIs(nova[0]["segurado"], True)
+        nova = demandas.aplicar_na_fila(com_itens(**{ID: item("plano_no_repo", ultima=retrato("desenvolvida", etapas=sem_tela))}), nova)
+        self.assertIs(nova[0]["segurado"], False)
+
+    def test_aplicar_na_fila_liga_pelo_caminho_do_plano_no_mesmo_repositorio(self):
+        plano = {"caminho": CAMINHO, "prUrl": None, "artefato": None}
+        itens = com_itens(**{ID: item("plano_no_repo", ultima=retrato("desenho", plano=plano, destino="urgente"))})
+        nova = demandas.aplicar_na_fila(itens, [na_fila(demanda=None), na_fila(demanda=None, repo="kustertech-exemplo/outro", id_="x")])
+        self.assertEqual((nova[0]["demanda"], nova[0]["segurado"], nova[0]["urgente"]), (ID, True, True))
+        self.assertEqual(nova[1], na_fila(demanda=None, repo="kustertech-exemplo/outro", id_="x"))
+
+    def test_aplicar_na_fila_segura_plano_de_demanda_desconhecida_e_nao_toca_no_resto(self):
+        outras = [
+            na_fila(demanda=None, caminho=".fabrica/planos/login.json", id_="login"),
+            na_fila("ativo", id_="ativo"),
+            na_fila("concluido", demanda=OUTRO, id_="concluido"),
+            "torta",
+        ]
+        nova = demandas.aplicar_na_fila(com_itens(), [na_fila(demanda=OUTRO), *outras])
+        self.assertEqual((nova[0]["segurado"], nova[0]["seguradoPor"]), (True, "demanda"))
+        self.assertEqual(nova[1:], outras)
+        self.assertEqual(demandas.aplicar_na_fila({}, []), [])
+
+    def test_aplicar_na_fila_nao_solta_plano_segurado_pelo_paulo(self):
+        pelo_paulo = [na_fila(segurado=True)]
+        for marco in ("desenho", "desenvolvida"):
+            with self.subTest(marco=marco):
+                nova = demandas.aplicar_na_fila(com_itens(**{ID: item("plano_no_repo", ultima=retrato(marco))}), pelo_paulo)
+                self.assertIs(nova[0]["segurado"], True)
+                self.assertNotIn("seguradoPor", nova[0])
+
+
+class TestesDesenvolvimento(BasePasso):
+    def com_plano(self, estado="ativo", *, fase="plano_no_repo", marco="desenvolvida", **extra):
+        self.estado["fila"] = [na_fila(estado)]
+        demandas.secao(self.estado)["itens"][ID] = item(fase, plano=CAMINHO, ultima=retrato(marco), **extra)
+
+    def na_fila_fica(self, estado):
+        self.estado["fila"][0]["estado"] = estado
+
+    def pausa_do_plano(self, motivo):
+        pasta = self.raiz / "planos" / ID_DO_PLANO
+        pasta.mkdir(parents=True, exist_ok=True)
+        (pasta / "estado.json").write_text(json.dumps({"pausado": motivo}), encoding="utf-8")
+
+    def tipos(self):
+        return [(e["tipo"], e["dados"]) for e in self.saida()]
+
+    def test_plano_ativo_vira_desenvolvendo(self):
+        self.com_plano("aguardando")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.item()["fase"], "plano_no_repo")
+        self.na_fila_fica("ativo")
+        eventos = self.passo(ClienteDeBusca())
+        self.assertEqual(self.item()["fase"], "desenvolvendo")
+        self.assertIn({"evento": "demanda_desenvolvendo", "id": ID, "plano": ID_DO_PLANO}, eventos)
+        self.assertEqual(self.saida(), [])
+        self.assertEqual(self.despachos(), [])
+
+    def test_plano_concluido_vira_etapa_concluida_desenvolvida(self):
+        self.com_plano("ativo")
+        self.passo(ClienteDeBusca())
+        self.na_fila_fica("concluido")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.tipos(), [("etapa_concluida", {"marco": "desenvolvida"})])
+        self.passo(ClienteDeBusca())
+        self.demandas_enviadas()
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])  # uma vez só
+        # concluído antes do coordenador ver o `ativo`: também conclui
+        self.com_plano("concluido")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.tipos(), [("etapa_concluida", {"marco": "desenvolvida"})])
+
+    def demandas_enviadas(self):
+        demandas.esvaziar_saida(self.estado, ClienteFalso(*["aplicado"] * len(self.saida())), self.raiz, salvar=lambda: None)
+
+    def test_plano_pausado_vira_travada_uma_vez_e_destravada_ao_voltar(self):
+        self.com_plano("ativo")
+        self.passo(ClienteDeBusca())
+        self.na_fila_fica("pausado")
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.tipos(), [("travada", {"motivo": "plano pausado", "url": None})])
+        self.demandas_enviadas()
+        # o Flow mostra a trava: a Fábrica ainda acompanha o plano
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="2")))
+        self.assertEqual(self.saida(), [])
+        self.na_fila_fica("ativo")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.tipos(), [("destravada", {})])
+        self.demandas_enviadas()
+        # a pausa da fábrica no plano vai como motivo
+        self.pausa_do_plano("cota")
+        self.na_fila_fica("pausado")
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        self.assertEqual(self.tipos(), [("travada", {"motivo": "cota", "url": None})])
+        # concluído ainda travado: destrava antes de concluir
+        self.na_fila_fica("concluido")
+        self.passo(ClienteDeBusca())
+        self.assertEqual([t for t, _ in self.tipos()], ["travada", "destravada", "etapa_concluida"])
+
+    def test_desenvolvimento_concluido_pelo_paulo_nao_manda_etapa_concluida(self):
+        self.com_plano("ativo", fase="desenvolvendo", marco="testada")
+        self.na_fila_fica("concluido")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertTrue(self.item()["desenvolvida"])
+
+    def test_etapa_concluida_recusada_vira_travada_uma_vez(self):
+        self.com_plano("concluido", fase="desenvolvendo")
+        self.passo(ClienteDeBusca())
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.tipos(), [("travada", {"motivo": "o Flow recusou a conclusão do desenvolvimento", "url": None})])
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        eventos = self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertFalse(self.item()["precisa_ressincronizar"])
+        self.assertNotIn("demandas:desenvolvimento:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_trava_da_pausa_recusada_so_avisa(self):
+        self.com_plano("pausado", fase="desenvolvendo")
+        self.passo(ClienteDeBusca())
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        eventos = self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])  # não manda de novo (o Flow recusaria outra vez)
+        self.assertIn("demandas:desenvolvimento:%s" % ID, [e.get("chave") for e in eventos])
+
+    def test_soltar_plano_limpa_a_marca_local(self):
+        self.com_plano("aguardando", segurado=True)
+        self.passo(ClienteDeBusca())
+        self.assertIs(self.item()["segurado"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

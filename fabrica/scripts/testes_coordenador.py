@@ -20,6 +20,7 @@ import fila  # noqa: E402
 import forja  # noqa: E402
 import motor  # noqa: E402
 import retrato  # noqa: E402
+import testes_demandas  # noqa: E402
 import testes_retrato  # noqa: E402
 
 REPO = "dono/cliente"
@@ -211,6 +212,24 @@ class Base(unittest.TestCase):
         if com_chave:
             estado["chavesAcordadas"] = ["fase_concluida:unica"]
         self.gravar_estado_do_plano(id_, estado)
+
+    def publicar_da_demanda(self, demanda, *grupos, repo=REPO):
+        """O plano de uma demanda (`demanda-<id8>`, com o uuid no campo `demanda`) no branch padrão."""
+        feature = "demanda-%s" % demanda[:8]
+        plano = plano_com(*grupos)
+        plano["demanda"] = demanda
+        self.forja.definir_arquivo(repo, "main", ".fabrica/planos/%s.json" % feature, json.dumps(plano))
+        return fila.id_do_plano(repo, feature)
+
+    def demanda_em(self, demanda, marco, **extra):
+        """Grava no `fila-estado.json` o item da demanda com o retrato na etapa `marco`."""
+        caminho = pathlib.Path(self.raiz / "fila-estado.json")
+        dados = json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else {"fila": []}
+        sec = dados.setdefault("demandas", {"cursor": None, "semRotaEm": None, "saida": [], "itens": {}})
+        retrato_ = testes_demandas.retrato(marco, repositorio=REPO, **extra)
+        retrato_["id"] = demanda
+        sec["itens"][demanda] = testes_demandas.item("plano_no_repo", plano=".fabrica/planos/demanda-%s.json" % demanda[:8], ultima=retrato_)
+        caminho.write_text(json.dumps(dados), encoding="utf-8")
 
     def iniciados(self):
         return [env["FABRICA_PLANO_ID"] for _, env in self.executar.chamadas]
@@ -498,6 +517,68 @@ class TestesAdmissao(Base):
         self.novo().ciclo()
         self.assertEqual(self.estados(), {a: "ativo", b: "ativo"})
         self.assertIn("FABRICA_PROJETO=outro", (self.pasta(b) / "plano.env").read_text(encoding="utf-8"))
+
+
+class TestesFilaDeDemandas(Base):
+    DEMANDA = testes_demandas.ID
+    URGENTE = testes_demandas.OUTRO
+
+    def entrada(self, id_):
+        return [e for e in self.fila_estado()["fila"] if e["id"] == id_][-1]
+
+    def test_review_focus_2_plano_de_demanda_descoberto_antes_da_aprovacao_nao_e_admitido_no_mesmo_ciclo(self):
+        self.demanda_em(self.DEMANDA, "desenho")
+        id_ = self.publicar_da_demanda(self.DEMANDA, ["src/tela/**"])
+        c = self.novo()
+        c.ciclo()  # descoberto neste ciclo, com vaga e trava livres
+        self.assertEqual(self.estados(), {id_: "aguardando"})
+        entrada = self.entrada(id_)
+        self.assertEqual((entrada["demanda"], entrada["segurado"], entrada["seguradoPor"]), (self.DEMANDA, True, "demanda"))
+        self.assertEqual(self.iniciados(), [])
+        self.assertEqual(self.ligados(), [])
+        c.ciclo()
+        self.assertEqual(self.iniciados(), [])
+        # o desenho foi aprovado: a etapa atual passa a ser a `desenvolvida`, e o plano entra no ciclo seguinte
+        self.demanda_em(self.DEMANDA, "desenvolvida")
+        c.ciclo()
+        self.assertEqual(self.estados(), {id_: "ativo"})
+        self.assertIs(self.entrada(id_)["segurado"], False)
+        self.assertEqual(self.iniciados(), [id_])
+
+    def test_segurar_do_paulo_num_plano_segurado_pela_demanda_vale_depois_da_aprovacao(self):
+        self.demanda_em(self.DEMANDA, "desenho")
+        id_ = self.publicar_da_demanda(self.DEMANDA, ["src/tela/**"])
+        c = self.novo()
+        c.ciclo()
+        c.pedir("segurar", id_)
+        c.ciclo()
+        self.assertNotIn("seguradoPor", self.entrada(id_))
+        self.demanda_em(self.DEMANDA, "desenvolvida")
+        c.ciclo()
+        self.assertEqual(self.estados(), {id_: "aguardando"})
+        self.assertIs(self.entrada(id_)["segurado"], True)
+
+    def test_review_focus_5_plano_urgente_admitido_antes_sem_tirar_vaga_de_quem_roda(self):
+        cap = self.raiz / "capacidade.json"
+        capacidade.configurar(cap, vagas=1, ram_minima_mb=0)
+        rodando = self.publicar("rodando", ["src/a/**"])
+        c = self.novo()
+        c.ciclo()
+        self.assertTrue(capacidade.reservar(cap, rodando, "raia-0", mem_disponivel_mb=None))
+        reservas = capacidade.ler(cap)["reservas"]
+        self.instante += datetime.timedelta(minutes=1)
+        velho = self.publicar("velho", ["src/a/**", "src/b/**"])  # colide com quem roda: espera
+        c.ciclo()
+        self.instante += datetime.timedelta(minutes=1)
+        self.demanda_em(self.URGENTE, "desenvolvida", destino="urgente")
+        urgente = self.publicar_da_demanda(self.URGENTE, ["src/b/**"])  # colide só com o velho, que espera
+        comum = self.publicar("comum", ["src/b/**"])  # o mesmo, sem urgência: espera o velho
+        c.ciclo()
+        self.assertEqual(self.estados(), {rodando: "ativo", velho: "aguardando", urgente: "ativo", comum: "aguardando"})
+        self.assertIs(self.entrada(urgente)["urgente"], True)
+        self.assertEqual(self.iniciados(), [rodando, urgente])
+        self.assertEqual(capacidade.ler(cap)["reservas"], reservas)  # ninguém perdeu a vaga
+        self.assertEqual(self.systemd.de("disable"), [])
 
 
 class TestesObservacao(Base):
@@ -2020,6 +2101,25 @@ class TestesPublicacao(Base):
         c.ciclo()
         self.assertEqual(len(vistos), 2)
         self.assertEqual(sorted(vistos[1].values(), key=len), [[], ["s1"]])
+
+    def test_passo_publicar_nao_pede_publicacao_por_seed_de_plano_de_demanda(self):
+        demanda = testes_demandas.ID
+        self.demanda_em(demanda, "desenvolvida")
+        id_ = self.publicar_da_demanda(demanda, ["src/tela/**"])
+        comum = self.publicar("login", ["src/login/**"])
+        c = self.coordenador_com()
+        c.ciclo()
+        self.assertEqual(self.estados(), {id_: "ativo", comum: "ativo"})
+        for plano in (id_, comum):
+            self.seeds(plano, a="em_andamento")
+        c.ciclo()
+        for plano in (id_, comum):
+            self.seeds(plano, a="mergeada")
+        c.ciclo()
+        c.ciclo()
+        # a demanda pede a publicação uma vez, na entrega; o plano comum segue pedindo por seed
+        self.assertEqual([p["descricao"] for p in self.pedir.chamadas], ["login · a"])
+        self.assertEqual(self.fila_estado()["publicacao"]["vistas"], {comum: ["a"]})
 
     def test_sem_token_de_publicacao_o_passo_nao_roda(self):
         id_ = self.publicar("login", ["src/login/**"])

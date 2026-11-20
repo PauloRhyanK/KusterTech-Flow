@@ -14,8 +14,10 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
    desligada, as issues de pausa e de decisão (comentário fixo), marca `removido` e solta reservas e trava.
    Warren ou GitHub fora deixa o pedido na caixa e o ciclo seguinte refaz as etapas, todas idempotentes. Nunca
    apaga código, branch, PR de seed nem a pasta do plano; `--manter-arquivo` impede o mesmo plano de reentrar;
-4. aplica a fila (`fila.enfileirar` e `fila.admitir`): para cada admitido, clona o repositório, grava o
-   `plano.env`, roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
+4. aplica a fila (`fila.enfileirar`, `demandas.aplicar_na_fila` e `fila.admitir`): o plano de uma demanda do
+   Flow fica `segurado` até a etapa `desenvolvida` da demanda (no mesmo ciclo em que é descoberto) e o urgente é
+   visto primeiro na admissão, sem vaga reservada; para cada admitido, clona o repositório, grava o `plano.env`,
+   roda `despachante.py iniciar` (só sem `estado.json`) e liga `fabrica-plano@<id>`;
 5. observa os ativos: unit `failed` ou parada vira `pausado`, pausa da fábrica no plano também, e um plano
    concluído (`estado.plano_concluido`) tem a unit desligada, as reservas soltas e vira `concluido`;
 6. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
@@ -50,6 +52,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import consertos  # noqa: E402
+import demandas  # noqa: E402
 import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
@@ -688,8 +691,8 @@ class Coordenador:
         if entrada is None:
             self._aviso(chave, "pedido %s de %s recusado: plano desconhecido" % (comando, id_))
             return
-        if valor and entrada.get("segurado"):
-            return  # já segurado: nada a fazer, nem aviso
+        if valor and entrada.get("segurado") and entrada.get("seguradoPor") != "demanda":
+            return  # já segurado pelo Paulo: nada a fazer, nem aviso (o da demanda passa a ser do Paulo)
         if valor and entrada.get("estado") != "aguardando":
             self._aviso(chave, "pedido segurar de %s recusado: o plano está %s" % (id_, entrada.get("estado")))
             return
@@ -842,6 +845,8 @@ class Coordenador:
     def _passo_publicar(self) -> None:
         """Pede ao Flow a publicação depois do merge de uma seed: um pedido por plano por ciclo. Nunca levanta.
 
+        O plano de uma demanda (entrada com `demanda`) fica de fora: a demanda pede a publicação uma vez, na entrega.
+
         Desligado sem `FABRICA_CENTRAL_URL` e `FABRICA_PUBLICACAO_TOKEN_FILE`. A primeira leitura de um plano só
         grava as seeds já mergeadas (linha de base). Falha transitória (rede, timeout, 5xx) não marca a seed como
         vista (tenta no ciclo seguinte) e encerra o passo; o aviso sai só quando a categoria muda, e um ciclo sem
@@ -861,7 +866,7 @@ class Coordenador:
             vistas = publicacao.get("vistas") if isinstance(publicacao, dict) else None
             vistas = {k: [n for n in v if isinstance(n, str)] for k, v in vistas.items() if isinstance(v, list)} if isinstance(vistas, dict) else {}
             falha = None
-            planos = _atuais(self.dados["fila"])
+            planos = {id_: e for id_, e in _atuais(self.dados["fila"]).items() if not e.get("demanda")}
             lidos = retrato.ler_planos(self.raiz / DIR_PLANOS, planos)
             for id_ in planos:  # linha de base primeiro: a primeira falha abaixo não deixa plano sem ela
                 if id_ not in vistas and lidos[id_]["estado"] is not None:
@@ -1146,6 +1151,15 @@ class Coordenador:
         for i, entrada in enumerate(anterior):
             if isinstance(entrada, dict) and entrada.get("estado") == "aguardando" and nova[i].get("estado") == "removido":
                 self._log({"evento": "removido", "id": entrada.get("id")})
+        # o plano de uma demanda espera a etapa `desenvolvida` (antes do `admitir`, no mesmo ciclo da descoberta)
+        segurados_antes = {e.get("id") for e in nova if isinstance(e, dict) and e.get("seguradoPor") == "demanda"}
+        nova = demandas.aplicar_na_fila(self.dados.get("demandas") or {}, nova)
+        for entrada in nova:
+            if isinstance(entrada, dict) and entrada.get("estado") == "aguardando":
+                pela_demanda = entrada.get("seguradoPor") == "demanda"
+                if pela_demanda != (entrada.get("id") in segurados_antes):
+                    evento = "segurado_pela_demanda" if pela_demanda else "solto_pela_demanda"
+                    self._log({"evento": evento, "id": entrada.get("id"), "demanda": entrada.get("demanda")})
         self.dados["fila"] = nova
         self._salvar()
         for id_ in fila.admitir(self.dados["fila"]):

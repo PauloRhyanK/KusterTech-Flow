@@ -28,9 +28,16 @@ O PR do plano é mergeado pela Fábrica só atrás das guardas (`guardar_merge`)
 `travada` para o Paulo (fase `esperando_paulo`; a retomada dele planeja de novo com nonce novo). Toda saída de
 `planejando` solta a trava. Em "planejar comigo" nada é despachado (`esperando_sessao`): o plano entregue pela
 sessão chega no retrato (`plano.caminho`) e a demanda vai para `plano_no_repo`.
+
+O plano no repositório entra na fila como qualquer outro, mas `aplicar_na_fila` (no `_passo_fila` do coordenador,
+entre `fila.enfileirar` e `fila.admitir`) o deixa `segurado` pela demanda até a etapa `desenvolvida`, e marca o
+`urgente`. O `passo` acompanha a entrada da fila: `ativo` leva a demanda a `desenvolvendo`; `pausado` vira `travada`
+(uma vez, com a pausa do plano) e a volta a `ativo`, `destravada`; `concluido` vira `etapa_concluida` com o marco
+`desenvolvida`.
 """
 
 import contextlib
+import copy
 import datetime
 import hashlib
 import json
@@ -274,6 +281,97 @@ def proxima_acao(item: dict, demanda: dict, *, pendente: bool = False) -> str:
     if marco == "entregue":
         return "acompanhar" if fase == "entregando" else "entregar"
     return "nada"  # etapa do Paulo (marco nulo) ou espera que a Fábrica não conhece
+
+
+# ---------------------------------------------------------------- fila: plano segurado e urgente
+
+
+def _retrato_atual(it) -> dict:
+    """O retrato mais novo do item: o recém-chegado (`recebida`) ou a `ultima`."""
+    if not isinstance(it, dict):
+        return {}
+    for nome in ("recebida", "ultima"):
+        if isinstance(it.get(nome), dict) and it[nome]:
+            return it[nome]
+    return {}
+
+
+def _chegou_ao_desenvolvimento(demanda: dict) -> bool:
+    """A etapa atual é a de marco `desenvolvida` ou uma depois dela. Retrato torto (ou sem o marco): `False`."""
+    etapas = [e for e in demanda.get("etapas") or [] if isinstance(e, dict)]
+    chaves = [e.get("chave") for e in etapas]
+    marcos = [e.get("marco") for e in etapas]
+    atual = (demanda.get("etapaAtual") or {}).get("chave") if isinstance(demanda.get("etapaAtual"), dict) else None
+    if "desenvolvida" not in marcos or atual not in chaves:
+        return False
+    return chaves.index(atual) >= marcos.index("desenvolvida")
+
+
+def _demanda_da_entrada(entrada: dict, por_caminho: dict):
+    demanda = entrada.get("demanda")
+    if isinstance(demanda, str) and _UUID.fullmatch(demanda):
+        return demanda
+    repo, caminho = entrada.get("repo"), entrada.get("caminho")
+    if isinstance(repo, str) and isinstance(caminho, str):
+        return por_caminho.get((repo.lower(), caminho))
+    return None
+
+
+def aplicar_na_fila(estado_demandas: dict, fila_: list[dict]) -> list[dict]:
+    """Uma cópia da fila com o plano de cada demanda segurado até a etapa `desenvolvida` (pura).
+
+    `estado_demandas` é a seção `demandas` do `fila-estado.json`. Só as entradas `aguardando` ligadas a uma demanda
+    mudam: pelo campo `demanda` (o uuid, vindo do plano) ou pelo `caminho` igual ao `plano.caminho` do retrato no
+    mesmo repositório (a ligação fica gravada em `demanda`). Enquanto a etapa atual da demanda está antes de
+    `desenvolvida`, `segurado: True` e `seguradoPor: "demanda"`; ao chegar lá (ou depois), `segurado: False`, mas só
+    se quem segurou foi a demanda: o segurado pelo Paulo (sem `seguradoPor`) nunca é solto aqui. A demanda que o kit
+    não conhece (ou de retrato torto) segura. `urgente` é `destino == "urgente"`.
+    """
+    sec = estado_demandas if isinstance(estado_demandas, dict) else {}
+    itens = sec.get("itens") if isinstance(sec.get("itens"), dict) else {}
+    retratos = {id_: _retrato_atual(it) for id_, it in itens.items()}
+    por_caminho = {}
+    for id_, demanda in retratos.items():
+        plano = demanda.get("plano") if isinstance(demanda.get("plano"), dict) else {}
+        repo, caminho = demanda.get("repositorio"), plano.get("caminho")
+        if isinstance(repo, str) and isinstance(caminho, str) and caminho:
+            por_caminho.setdefault((repo.lower(), caminho), id_)
+    nova = copy.deepcopy(fila_) if isinstance(fila_, list) else []
+    for entrada in nova:
+        if not isinstance(entrada, dict) or entrada.get("estado") != "aguardando":
+            continue
+        id_ = _demanda_da_entrada(entrada, por_caminho)
+        if id_ is None:
+            continue
+        demanda = retratos.get(id_) or {}
+        entrada["demanda"] = id_
+        if not _chegou_ao_desenvolvimento(demanda):
+            if entrada.get("segurado") is not True:
+                entrada.update(segurado=True, seguradoPor="demanda")
+        elif entrada.get("seguradoPor") == "demanda":
+            entrada["segurado"] = False
+            entrada.pop("seguradoPor")
+        entrada["urgente"] = demanda.get("destino") == "urgente"
+    return nova
+
+
+def _entrada_da_demanda(fila_, id_: str, it: dict, demanda: dict):
+    """A entrada mais recente da fila do plano da demanda (pelo `demanda`, ou pelo caminho no mesmo repositório)."""
+    caminho = it.get("plano")
+    repo = demanda.get("repositorio")
+    achada = None
+    for entrada in fila_ if isinstance(fila_, list) else []:
+        if not isinstance(entrada, dict) or not isinstance(entrada.get("id"), str):
+            continue
+        if entrada.get("demanda") == id_ or (
+            "demanda" not in entrada
+            and isinstance(caminho, str)
+            and entrada.get("caminho") == caminho
+            and isinstance(repo, str)
+            and str(entrada.get("repo")).lower() == repo.lower()
+        ):
+            achada = entrada
+    return achada
 
 
 def chaves_do_orquestrador(estado: dict) -> set[str]:
@@ -523,6 +621,9 @@ MOTIVO_PLANO_RECUSADO = "o Flow recusou o plano criado pela Fábrica"
 MOTIVO_NIVEL = "o nível da demanda não deixa a Fábrica mergear o plano"
 MOTIVO_TETO_PLANO = "o plano passou de 2 h sem PR"
 MOTIVO_ERRO_REPETIDO = "o plano parou: o mesmo erro %d ciclos seguidos (%s)"
+MOTIVO_PLANO_PAUSADO = "plano pausado"
+MOTIVO_DESENVOLVIDA_RECUSADA = "o Flow recusou a conclusão do desenvolvimento"
+DIR_PLANOS = "planos"  # `<raiz>/planos/<id do plano>/estado.json`, a pasta de cada plano do coordenador
 # só nestes níveis a Fábrica planeja sem sessão e mergeia o PR do plano; qualquer outro (ausente, nulo, desconhecido)
 # espera o Paulo, como "planejar comigo"
 NIVEIS_SEM_SESSAO = ("vai_sozinho", "aprovar_desenho")
@@ -571,8 +672,9 @@ def _ainda_na_triagem(demanda: dict) -> bool:
 
 
 class _Passo:
-    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar):
+    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None):
         self.estado = estado
+        self.raiz = pathlib.Path(raiz) if raiz is not None else None
         self.sec = secao(estado)
         self.cliente = cliente
         self.motor = motor
@@ -647,6 +749,7 @@ class _Passo:
                 self.largar_plano_superado(id_, it, demanda)
                 self.seguir_run_superado(id_, it)
                 self.adotar_plano_da_sessao(id_, it, demanda)
+                self.seguir_desenvolvimento(id_, it, demanda)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
                 if acao == "aguardar_envio":
                     continue  # o retrato está atrasado: decide de novo quando a saída esvaziar
@@ -674,7 +777,11 @@ class _Passo:
             self.esperar_sessao(id_, it)
         elif acao == "acompanhar" and it.get("alvo") == "planejando" and it.get("fase") == "planejando":
             self.contando_erros(id_, it, lambda: self.acompanhar_plano(id_, it, demanda))
-        # as outras ações são das Tasks 5 a 8
+        elif acao == "soltar_plano":
+            # quem solta a entrada da fila é `aplicar_na_fila` (no `_passo_fila`); aqui só a marca local
+            it["segurado"] = False
+            self.salvar()
+        # as outras ações são das Tasks 6 a 8
 
     def largar_triagem_superada(self, id_: str, it: dict, demanda: dict) -> None:
         """O Paulo decidiu (ou encerrou) a demanda com a triagem no meio: o run segue no Warren, mas não conta mais."""
@@ -705,7 +812,67 @@ class _Passo:
         elif _ainda_no_planejamento(demanda) and it.get("fase") == "esperando_paulo":
             # a trava do plano não pegou no Flow: nada se replaneja sozinho (sem retomada), só o aviso
             self.aviso("demandas:plano:%s" % id_, "Demandas: o Flow recusou a trava do plano da demanda %s; confira a demanda" % id_[:8])
+        elif _marco(demanda) == "desenvolvida" and it.get("fase") in ("plano_no_repo", "desenvolvendo") and not demanda.get("encerrada"):
+            if it.get("desenvolvida"):
+                # o plano terminou, mas o Flow não aplicou a conclusão: a demanda vai para o Paulo (uma vez)
+                if not it.get("desenvolvidaRecusada"):
+                    it["desenvolvidaRecusada"] = True
+                    enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_DESENVOLVIDA_RECUSADA, "url": None}, agora=self.agora_texto)
+            else:
+                # `travada`/`destravada` da pausa recusados: mandar de novo seria recusado outra vez; só o aviso
+                self.aviso(
+                    "demandas:desenvolvimento:%s" % id_,
+                    "Demandas: o Flow recusou o aviso de pausa (ou de retomada) do plano da demanda %s; confira a demanda" % id_[:8],
+                )
         self.salvar()
+
+    # ------------------------------------------------------------ desenvolvimento
+
+    def pausa_do_plano(self, id_do_plano: str) -> str:
+        """O motivo da pausa da fábrica no `estado.json` do plano; sem ele (unit parada ou falha): "plano pausado"."""
+        if self.raiz is not None:
+            with contextlib.suppress(Exception):
+                pausa = despachante._dict(despachante._ler_json(self.raiz / DIR_PLANOS / id_do_plano / despachante.ARQ_ESTADO)).get("pausado")
+                if isinstance(pausa, str) and pausa.strip():
+                    return pausa.strip()[:300]
+        return MOTIVO_PLANO_PAUSADO
+
+    def seguir_desenvolvimento(self, id_: str, it: dict, demanda: dict) -> None:
+        """A entrada da fila do plano da demanda: `ativo` → `desenvolvendo`; `pausado` → `travada` (uma vez) e de volta
+        a `ativo` → `destravada`; `concluido` → `etapa_concluida {marco: "desenvolvida"}` (uma vez).
+
+        Roda antes de `proxima_acao`: com a demanda `travada` pela pausa, a ação é `nada`, mas a volta do plano ainda
+        tem de chegar ao Flow.
+        """
+        fase = it.get("fase")
+        if fase not in ("plano_no_repo", "desenvolvendo") or it.get("desenvolvida") or demanda.get("encerrada"):
+            return
+        entrada = _entrada_da_demanda(self.estado.get("fila"), id_, it, demanda)
+        situacao = entrada.get("estado") if entrada is not None else None
+        if situacao not in ("ativo", "pausado", "concluido"):
+            return
+        if fase == "plano_no_repo":
+            it.update(fase="desenvolvendo", planoNaFila=entrada["id"])
+            self.salvar()
+            self.eventos.append({"evento": "demanda_desenvolvendo", "id": id_, "plano": entrada["id"]})
+        if situacao == "pausado":
+            if not it.get("travadaPelaPausa"):
+                it["travadaPelaPausa"] = True
+                enfileirar_evento(self.estado, id_, "travada", {"motivo": self.pausa_do_plano(entrada["id"]), "url": None}, agora=self.agora_texto)
+                self.salvar()
+                self.eventos.append({"evento": "demanda_plano_pausado", "id": id_, "plano": entrada["id"]})
+            return
+        if it.get("travadaPelaPausa"):
+            it["travadaPelaPausa"] = False
+            enfileirar_evento(self.estado, id_, "destravada", {}, agora=self.agora_texto)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_plano_retomado", "id": id_, "plano": entrada["id"]})
+        if situacao == "concluido":
+            it["desenvolvida"] = True
+            if _marco(demanda) == "desenvolvida":  # o Paulo pode ter concluído a etapa: o Flow recusaria
+                enfileirar_evento(self.estado, id_, "etapa_concluida", {"marco": "desenvolvida"}, agora=self.agora_texto)
+            self.salvar()
+            self.eventos.append({"evento": "demanda_desenvolvida", "id": id_, "plano": entrada["id"]})
 
     # ------------------------------------------------------------ triagem
 
@@ -1150,10 +1317,11 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
     fora dele: a demanda espera, com um aviso por repositório); `modelos` é o `modelos` de
     `<kit>/fabrica/modelos/config.json`. A triagem não reserva vaga. A caixa de saída é esvaziada por quem chama
     (`esvaziar_saida`), depois. `salvar` grava o `fila-estado.json` (antes de cada POST pago e a cada transição).
-    `forja` lê e mergeia o PR do plano; `raiz` e `mem_disponivel_mb` são das fases seguintes.
+    `forja` lê e mergeia o PR do plano. `estado["fila"]` é a fila do coordenador: o `passo` acompanha a entrada do
+    plano da demanda (lendo a pausa em `<raiz>/planos/<id>/estado.json`); `mem_disponivel_mb` é das fases seguintes.
     """
-    del raiz, mem_disponivel_mb  # Tasks 5 a 8
-    p = _Passo(estado, cliente=cliente, motor=motor, forja=forja, capacidade_path=capacidade_path, projetos=projetos, modelos=modelos, agora=agora, salvar=salvar)
+    del mem_disponivel_mb  # Tasks 6 a 8
+    p = _Passo(estado, cliente=cliente, motor=motor, forja=forja, capacidade_path=capacidade_path, projetos=projetos, modelos=modelos, agora=agora, salvar=salvar, raiz=raiz)
     if p.buscar():
         p.decidir()
     return p.eventos
