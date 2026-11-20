@@ -277,6 +277,34 @@ describe('montarGrupos', () => {
   })
 })
 
+describe('montarGrupos com o filtro "orientada"', () => {
+  test('quarto grupo "Orientadas hoje" com as orientadas, estado "Orientada" e o ponto da triagem feito', () => {
+    const orientada = demanda({
+      id: 'ori',
+      titulo: 'Como exportar o relatório',
+      tipo: 'ideia',
+      destino: 'orientada',
+      encerrada: 'orientada',
+      atualizadaEm: new Date(AGORA.getTime() - 20 * MIN),
+    })
+    const grupos = montarGrupos([], AGORA, [orientada])
+    expect(grupos.map((g) => [g.chave, g.titulo, g.contagem])).toEqual([
+      ['espera_voce', 'Espera você', '0'],
+      ['em_andamento', 'Em andamento', '0'],
+      ['na_fila', 'Na fila', 'entram na ordem'],
+      ['orientadas_hoje', 'Orientadas hoje', '1'],
+    ])
+    expect(grupos[3]?.linhas[0]).toMatchObject({
+      id: 'ori',
+      href: '/demandas/ori',
+      estado: { texto: 'Orientada', tom: 'neutro' },
+      idade: '20 min',
+    })
+    expect(grupos[3]?.linhas[0]?.trilho[0]?.ponto).toBe('feito')
+    expect(montarGrupos([], AGORA)).toHaveLength(3)
+  })
+})
+
 describe('avisoDeFabricaSemBuscar', () => {
   test('recebida parada e Fábrica sem buscar há 12 min → "a Fábrica não busca há 12 min"', () => {
     expect(

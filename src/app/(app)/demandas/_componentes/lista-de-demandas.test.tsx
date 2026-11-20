@@ -63,6 +63,32 @@ describe('ListaDeDemandas', () => {
     expect(within(link).getByText('F')).toBeVisible()
   })
 
+  test('mostra o grupo "Orientadas hoje" quando vem com linhas', () => {
+    render(
+      <ListaDeDemandas
+        grupos={[
+          ...grupos,
+          {
+            chave: 'orientadas_hoje',
+            titulo: 'Orientadas hoje',
+            contagem: '1',
+            linhas: [
+              linha('o', {
+                titulo: 'Como exportar o relatório',
+                estado: { texto: 'Orientada', tom: 'neutro' },
+              }),
+            ],
+          },
+        ]}
+        filtrada
+      />,
+    )
+    expect(screen.getByRole('heading', { name: 'Orientadas hoje' })).toBeVisible()
+    const link = screen.getByRole('link', { name: /Como exportar o relatório/ })
+    expect(link).toHaveAttribute('href', '/demandas/o')
+    expect(within(link).getByText('Orientada')).toBeVisible()
+  })
+
   test('grupo vazio não aparece; tudo vazio mostra o estado vazio', () => {
     const { rerender } = render(
       <ListaDeDemandas

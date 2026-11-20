@@ -55,8 +55,8 @@ export interface LinhaDeDemanda {
 export type ChaveDoGrupo = 'espera_voce' | 'em_andamento' | 'na_fila'
 
 export interface GrupoDeDemandas {
-  chave: ChaveDoGrupo
-  titulo: 'Espera você' | 'Em andamento' | 'Na fila'
+  chave: ChaveDoGrupo | 'orientadas_hoje'
+  titulo: 'Espera você' | 'Em andamento' | 'Na fila' | 'Orientadas hoje'
   contagem: string
   linhas: LinhaDeDemanda[]
 }
@@ -127,6 +127,7 @@ export function rotuloDoEstado(d: DemandaNaLista): { texto: string; tom: TomDaDe
     const texto = d.espera === 'concluir_etapa' ? `Concluir ${rotulo}` : TEXTO_DA_ESPERA[d.espera]
     return { texto, tom: travou(d.espera) ? 'erro' : 'atencao' }
   }
+  if (d.encerrada === 'orientada') return { texto: 'Orientada', tom: 'neutro' }
   const marco = etapa?.marco ?? null
   if (marco === 'recebida') return { texto: TEXTO_DO_MARCO.recebida, tom: 'neutro' }
   if (marco === null) return { texto: `Em ${rotulo}`, tom: 'execucao' }
@@ -140,7 +141,13 @@ export function trilho(
   const posicaoAtual = etapas.findIndex((e) => e.chave === d.etapaAtual)
   return etapas.map((e, i) => {
     let ponto: PontoDoTrilho = 'futuro'
-    if (d.encerrada === 'entregue' || d.concluidas.includes(e.chave) || i < posicaoAtual) {
+    if (
+      d.encerrada === 'entregue' ||
+      d.concluidas.includes(e.chave) ||
+      i < posicaoAtual ||
+      // A orientada termina na triagem: o ponto dela está feito.
+      (d.encerrada === 'orientada' && i === posicaoAtual)
+    ) {
       ponto = 'feito'
     } else if (i === posicaoAtual) {
       if (travou(d.espera)) ponto = 'travado'
@@ -223,13 +230,13 @@ const TITULO_DO_GRUPO: Record<ChaveDoGrupo, GrupoDeDemandas['titulo']> = {
   na_fila: 'Na fila',
 }
 
-function desdeDe(d: DemandaNaLista, grupo: ChaveDoGrupo): Date {
+function desdeDe(d: DemandaNaLista, grupo: GrupoDeDemandas['chave']): Date {
   if (grupo === 'espera_voce') return d.esperaDesde ?? d.atualizadaEm
   if (grupo === 'na_fila') return d.criadaEm
   return d.atualizadaEm
 }
 
-function linhaDe(d: DemandaNaLista, grupo: ChaveDoGrupo, agora: Date): LinhaDeDemanda {
+function linhaDe(d: DemandaNaLista, grupo: GrupoDeDemandas['chave'], agora: Date): LinhaDeDemanda {
   return {
     id: d.id,
     href: `/demandas/${d.id}`,
@@ -246,7 +253,12 @@ function linhaDe(d: DemandaNaLista, grupo: ChaveDoGrupo, agora: Date): LinhaDeDe
  * "Espera você": a que espera há mais tempo primeiro; "Em andamento": a que andou por último
  * primeiro; "Na fila": urgente primeiro e depois a mais antiga, a ordem em que entram.
  */
-export function montarGrupos(demandas: readonly DemandaNaLista[], agora: Date): GrupoDeDemandas[] {
+export function montarGrupos(
+  demandas: readonly DemandaNaLista[],
+  agora: Date,
+  /** Só com o filtro "orientada": as encerradas como orientadas hoje, num quarto grupo. */
+  orientadasHoje: readonly DemandaNaLista[] | null = null,
+): GrupoDeDemandas[] {
   const por: Record<ChaveDoGrupo, DemandaNaLista[]> = {
     espera_voce: [],
     em_andamento: [],
@@ -261,12 +273,25 @@ export function montarGrupos(demandas: readonly DemandaNaLista[], agora: Date): 
   )
   por.em_andamento.sort((a, b) => b.atualizadaEm.getTime() - a.atualizadaEm.getTime())
   por.na_fila.sort(compararNaFila)
-  return (Object.keys(por) as ChaveDoGrupo[]).map((chave) => ({
+  const grupos: GrupoDeDemandas[] = (Object.keys(por) as ChaveDoGrupo[]).map((chave) => ({
     chave,
     titulo: TITULO_DO_GRUPO[chave],
     contagem: chave === 'na_fila' ? 'entram na ordem' : String(por[chave].length),
     linhas: por[chave].map((d) => linhaDe(d, chave, agora)),
   }))
+  if (orientadasHoje === null) return grupos
+  const orientadas = orientadasHoje
+    .filter((d) => d.encerrada === 'orientada')
+    .sort((a, b) => b.atualizadaEm.getTime() - a.atualizadaEm.getTime())
+  return [
+    ...grupos,
+    {
+      chave: 'orientadas_hoje',
+      titulo: 'Orientadas hoje',
+      contagem: String(orientadas.length),
+      linhas: orientadas.map((d) => linhaDe(d, 'orientadas_hoje', agora)),
+    },
+  ]
 }
 
 /** A mesma regra do Início: só avisa com recebida parada além do limite e a Fábrica sem buscar. */

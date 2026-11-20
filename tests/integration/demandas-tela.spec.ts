@@ -159,6 +159,36 @@ test('Fábrica sem buscar há 12 min com recebidas → fabricaSemBuscar "a Fábr
   expect((await obterListaDeDemandas(admin, null, AGORA)).fabricaSemBuscar).toBeNull()
 })
 
+test('?destino=orientada traz o grupo "Orientadas hoje" só com as orientadas de hoje', async () => {
+  await demanda('Orientada hoje', {
+    destino: 'ORIENTADA',
+    encerrada: 'orientada',
+    atualizadaEm: minutos(-20),
+  })
+  await demanda('Orientada ontem', {
+    destino: 'ORIENTADA',
+    encerrada: 'orientada',
+    criadaEm: new Date('2026-11-19T12:00:00.000Z'),
+    atualizadaEm: new Date('2026-11-20T02:00:00.000Z'),
+  })
+  await demanda('Entregue hoje', { encerrada: 'entregue', etapaAtual: 'entregue' })
+  await demanda('Aberta', { etapaAtual: 'desenvolvida' })
+
+  const tela = await obterListaDeDemandas(admin, 'orientada', AGORA)
+  expect(tela.grupos.map((g) => [g.titulo, g.linhas.map((l) => l.titulo)])).toEqual([
+    ['Espera você', []],
+    ['Em andamento', []],
+    ['Na fila', []],
+    ['Orientadas hoje', ['Orientada hoje']],
+  ])
+  expect(tela.grupos[3]?.linhas[0]?.estado).toEqual({ texto: 'Orientada', tom: 'neutro' })
+
+  const semFiltro = await obterListaDeDemandas(admin, null, AGORA)
+  expect(semFiltro.grupos.map((g) => g.titulo)).not.toContain('Orientadas hoje')
+  const urgentes = await obterListaDeDemandas(admin, 'urgente', AGORA)
+  expect(urgentes.grupos.map((g) => g.titulo)).not.toContain('Orientadas hoje')
+})
+
 test('projeto arquivado some da lista e dos quadros', async () => {
   await demanda('Do arquivado', { etapaAtual: 'desenvolvida' })
   await db.projeto.update({ where: { id: projetoId }, data: { arquivadoEm: AGORA } })

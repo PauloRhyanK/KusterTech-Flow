@@ -98,6 +98,7 @@ export async function esperasDeDemandas(sujeito: Sujeito, agora: Date): Promise<
 
 const minusculo = <T extends string>(v: string) => v.toLowerCase() as T
 const DIA_MS = 24 * 60 * 60_000
+const LIMITE_DE_ORIENTADAS = 200
 
 /** A tela Demandas: o fluxo de entrada de hoje, os três grupos e o aviso da Fábrica parada. */
 export async function obterListaDeDemandas(
@@ -107,56 +108,68 @@ export async function obterListaDeDemandas(
 ): Promise<TelaDeDemandas> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
   const ativo = { projeto: { arquivadoEm: null } }
-  const [abertas, recentes, decidindo, config, retrato, recebidas, fonte] = await Promise.all([
-    db.demanda.findMany({
-      where: {
-        ...ativo,
-        encerrada: null,
-        ...(filtro ? { destino: filtro.toUpperCase() as Uppercase<Destino> } : {}),
-      },
-      select: {
-        id: true,
-        titulo: true,
-        tipo: true,
-        etapas: true,
-        temTela: true,
-        etapaAtual: true,
-        concluidas: true,
-        espera: true,
-        encerrada: true,
-        destino: true,
-        criadaEm: true,
-        esperaDesde: true,
-        atualizadaEm: true,
-        projeto: { select: { nome: true } },
-      },
-    }),
-    // Um dia e meio para trás cobre o começo do dia em São Paulo; o corte exato é `ehDeHoje`.
-    db.demanda.findMany({
-      where: { ...ativo, criadaEm: { gte: new Date(agora.getTime() - 1.5 * DIA_MS) } },
-      select: { origem: true, destino: true, encerrada: true, criadaEm: true },
-    }),
-    db.demanda.findMany({
-      where: { ...ativo, encerrada: null, espera: 'decidir_destino' },
-      select: { esperaDesde: true, atualizadaEm: true },
-    }),
-    db.configuracaoDePublicacao.findFirst({
-      orderBy: { horaDoLote: 'asc' },
-      select: { horaDoLote: true },
-    }),
-    obterRetratoMaisRecente(sujeito).catch(() => null),
-    db.demanda.aggregate({
-      where: { ...ativo, encerrada: null, etapaAtual: 'recebida' },
-      _count: true,
-      _min: { criadaEm: true },
-    }),
-    db.fonteDaFabrica.aggregate({
-      where: { revogadaEm: null },
-      _max: { demandasBuscadasEm: true },
-    }),
-  ])
+  const selecao = {
+    id: true,
+    titulo: true,
+    tipo: true,
+    etapas: true,
+    temTela: true,
+    etapaAtual: true,
+    concluidas: true,
+    espera: true,
+    encerrada: true,
+    destino: true,
+    criadaEm: true,
+    esperaDesde: true,
+    atualizadaEm: true,
+    projeto: { select: { nome: true } },
+  } as const
+  const umDiaEMeio = new Date(agora.getTime() - 1.5 * DIA_MS)
+  const [abertas, orientadas, recentes, decidindo, config, retrato, recebidas, fonte] =
+    await Promise.all([
+      db.demanda.findMany({
+        where: {
+          ...ativo,
+          encerrada: null,
+          ...(filtro ? { destino: filtro.toUpperCase() as Uppercase<Destino> } : {}),
+        },
+        select: selecao,
+      }),
+      // Só com o filtro "orientada": as encerradas como orientadas, com teto; o corte do dia é `ehDeHoje`.
+      filtro === 'orientada'
+        ? db.demanda.findMany({
+            where: { ...ativo, encerrada: 'orientada', atualizadaEm: { gte: umDiaEMeio } },
+            orderBy: { atualizadaEm: 'desc' },
+            take: LIMITE_DE_ORIENTADAS,
+            select: selecao,
+          })
+        : null,
+      // Um dia e meio para trás cobre o começo do dia em São Paulo; o corte exato é `ehDeHoje`.
+      db.demanda.findMany({
+        where: { ...ativo, criadaEm: { gte: umDiaEMeio } },
+        select: { origem: true, destino: true, encerrada: true, criadaEm: true },
+      }),
+      db.demanda.findMany({
+        where: { ...ativo, encerrada: null, espera: 'decidir_destino' },
+        select: { esperaDesde: true, atualizadaEm: true },
+      }),
+      db.configuracaoDePublicacao.findFirst({
+        orderBy: { horaDoLote: 'asc' },
+        select: { horaDoLote: true },
+      }),
+      obterRetratoMaisRecente(sujeito).catch(() => null),
+      db.demanda.aggregate({
+        where: { ...ativo, encerrada: null, etapaAtual: 'recebida' },
+        _count: true,
+        _min: { criadaEm: true },
+      }),
+      db.fonteDaFabrica.aggregate({
+        where: { revogadaEm: null },
+        _max: { demandasBuscadasEm: true },
+      }),
+    ])
 
-  const demandas: DemandaNaLista[] = abertas.map((d) => ({
+  const naLista = (d: (typeof abertas)[number]): DemandaNaLista => ({
     id: d.id,
     titulo: d.titulo,
     tipo: d.tipo ? minusculo<TipoDeDemanda>(d.tipo) : null,
@@ -171,7 +184,7 @@ export async function obterListaDeDemandas(
     criadaEm: d.criadaEm,
     esperaDesde: d.esperaDesde,
     atualizadaEm: d.atualizadaEm,
-  }))
+  })
 
   const vagas = retrato?.retrato.vagas
   return {
@@ -188,7 +201,11 @@ export async function obterListaDeDemandas(
       vagas: vagas ? { ocupadas: vagas.ocupadas, efetivas: vagas.efetivas } : null,
       agora,
     }),
-    grupos: montarGrupos(demandas, agora),
+    grupos: montarGrupos(
+      abertas.map(naLista),
+      agora,
+      orientadas && orientadas.filter((d) => ehDeHoje(d.atualizadaEm, agora)).map(naLista),
+    ),
     fabricaSemBuscar: avisoDeFabricaSemBuscar(
       {
         buscouEm: fonte._max.demandasBuscadasEm,
