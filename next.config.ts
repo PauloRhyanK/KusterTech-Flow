@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  // Nova demanda aceita três anexos de 10 MB (mais o corpo do formulário).
+  experimental: { serverActions: { bodySizeLimit: '31mb' } },
   // Imagem enxuta: o servidor sai em .next/standalone com só as dependências usadas.
   output: 'standalone',
   outputFileTracingExcludes: {

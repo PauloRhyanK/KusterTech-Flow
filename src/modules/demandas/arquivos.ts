@@ -32,7 +32,7 @@ export function caminhoDoArquivo(demandaId: string, arquivoId: string): string {
   if (!UUID.test(demandaId) || !UUID.test(arquivoId)) {
     throw new Error('Identificador de arquivo inválido.')
   }
-  const raiz = resolve(diretorioDosArquivos())
+  const raiz = resolve(/* turbopackIgnore: true */ diretorioDosArquivos())
   const caminho = resolve(raiz, 'demandas', demandaId, arquivoId)
   if (!caminho.startsWith(raiz + sep)) throw new Error('Caminho fora do diretório de arquivos.')
   return caminho

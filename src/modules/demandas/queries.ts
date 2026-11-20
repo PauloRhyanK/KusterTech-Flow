@@ -3,6 +3,7 @@ import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
 import { HORA_DO_LOTE_PADRAO } from '@/modules/fila-de-publicacao/model'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
 import { moduloAtivo } from '@/lib/modulos'
 import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { esperasDasDemandas, type ItemDeEspera } from '@/modules/inicio/model'
@@ -426,4 +427,75 @@ export async function obterArquivoParaExibir(
   const corpo = await lerArquivo(demandaId, arquivoId)
   if (!corpo) return null
   return { corpo, cabecalhos: cabecalhosDoArquivo(a.conteudo, a.nome) }
+}
+
+export interface FormularioDeDemanda {
+  projetos: {
+    id: string
+    nome: string
+    nivelPadrao: Nivel
+    repositorios: { id: string; nomeCompleto: string }[]
+  }[]
+}
+
+/** O que o formulário "Nova demanda" oferece: projetos ativos com repositório, e o nível padrão de cada um. */
+export async function obterFormularioDeDemanda(sujeito: Sujeito): Promise<FormularioDeDemanda> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  const projetos = await db.projeto.findMany({
+    where: { arquivadoEm: null, repositorios: { some: { removidoDaInstalacaoEm: null } } },
+    orderBy: { nome: 'asc' },
+    select: {
+      id: true,
+      nome: true,
+      nivelPadraoDeDemanda: true,
+      repositorios: {
+        where: { removidoDaInstalacaoEm: null },
+        orderBy: { nomeCompleto: 'asc' },
+        select: { id: true, nomeCompleto: true },
+      },
+    },
+  })
+  return {
+    projetos: projetos.map((p) => ({
+      id: p.id,
+      nome: p.nome,
+      nivelPadrao: minusculo<Nivel>(p.nivelPadraoDeDemanda),
+      repositorios: p.repositorios,
+    })),
+  }
+}
+
+export interface DemandasDoProjeto {
+  modeloId: string
+  nivelPadrao: Nivel
+  modelos: { id: string; nome: string; etapas: { chave: string; rotulo: string }[] }[]
+}
+
+/** Os modelos de etapas e o que o projeto usa (o padrão quando não escolheu). */
+export async function obterDemandasDoProjeto(
+  sujeito: Sujeito,
+  projetoId: string,
+): Promise<DemandasDoProjeto> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  const projeto = await db.projeto.findUnique({
+    where: { id: projetoId },
+    select: { modeloDeEtapasId: true, nivelPadraoDeDemanda: true },
+  })
+  if (!projeto) throw new ErroDeDominio('Projeto não encontrado.')
+  const modelos = await db.modeloDeEtapas.findMany({
+    orderBy: [{ padrao: 'desc' }, { nome: 'asc' }],
+    select: {
+      id: true,
+      nome: true,
+      padrao: true,
+      etapas: { orderBy: { ordem: 'asc' }, select: { chave: true, rotulo: true } },
+    },
+  })
+  const atual =
+    modelos.find((m) => m.id === projeto.modeloDeEtapasId) ?? modelos.find((m) => m.padrao)
+  return {
+    modeloId: atual?.id ?? '',
+    nivelPadrao: minusculo<Nivel>(projeto.nivelPadraoDeDemanda),
+    modelos: modelos.map(({ id, nome, etapas }) => ({ id, nome, etapas })),
+  }
 }
