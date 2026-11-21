@@ -361,3 +361,479 @@ body,
   --pixel-sirene-clara: #ffb347;
   --pixel-sirene-luz: #ff3b3b70;
 }
+
+/* Escritório da Fábrica: cenário, prédio e animações (classes esc-*, ver src/app/(app)/fabrica/_componentes/escritorio/classes.ts). */
+
+/* ---------------------------------------------------------------- prédio */
+.esc-predio {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+  image-rendering: pixelated;
+}
+.esc-ceu {
+  padding: 18px 10px 10px;
+  border-radius: 12px;
+  background: linear-gradient(var(--pixel-ceu), var(--pixel-ceu-baixo));
+}
+.esc-andares {
+  max-height: 560px;
+  overflow-y: auto;
+}
+.esc-teto {
+  position: relative;
+  height: 56px;
+  margin: 0 -6px;
+  border-radius: 6px 6px 0 0;
+  background: var(--pixel-borda);
+}
+.esc-placa {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border-radius: 4px;
+  background: var(--pixel-placa);
+  color: var(--pixel-placa-texto);
+  font:
+    700 13px/1 'Courier New',
+    monospace;
+  letter-spacing: 0.14em;
+  box-shadow: 0 3px 0 var(--pixel-contorno);
+}
+.esc-antena {
+  position: absolute;
+  right: 26px;
+  top: -20px;
+  width: 4px;
+  height: 20px;
+  background: var(--pixel-madeira-escura);
+}
+.esc-antena::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--pixel-led-vermelho);
+  animation: esc-piscar 0.9s steps(2) infinite;
+}
+.esc-andar {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 118px;
+  padding: 0;
+  border: 0;
+  border-left: 8px solid var(--pixel-pilar);
+  border-right: 8px solid var(--pixel-pilar);
+  border-bottom: 8px solid var(--pixel-rodape);
+  background: var(--pixel-andar);
+  cursor: pointer;
+  text-align: left;
+}
+.esc-andar:focus-visible,
+.esc-andar[data-selecionado='true'] {
+  outline: 4px solid var(--pixel-papel-frontend);
+  outline-offset: -4px;
+}
+.esc-vidro {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 8px;
+  height: 72px;
+  overflow: hidden;
+  border: 4px solid var(--pixel-madeira-escura);
+  border-radius: 3px;
+  background: var(--pixel-luz);
+}
+.esc-andar[data-apagado='true'] .esc-vidro {
+  background: var(--pixel-apagado);
+}
+.esc-chao {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+  background: var(--pixel-madeira);
+}
+.esc-gente {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+}
+.esc-alerta .esc-vidro::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 25%,
+    var(--pixel-sirene-luz) 45%,
+    var(--pixel-sirene-luz) 55%,
+    transparent 75%
+  );
+  background-size: 300% 100%;
+  animation: esc-varrer 1.6s linear infinite;
+}
+.esc-sirene {
+  position: absolute;
+  top: 2px;
+  z-index: 2;
+  width: 16px;
+  height: 10px;
+  border: 2px solid var(--pixel-contorno);
+  border-radius: 8px 8px 2px 2px;
+  background: var(--pixel-sirene);
+  animation: esc-sirene 0.5s steps(2) infinite;
+}
+.esc-sirene[data-sirene='esquerda'] {
+  left: 22px;
+}
+.esc-sirene[data-sirene='direita'] {
+  right: 22px;
+  animation-delay: 0.25s;
+}
+.esc-info {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.esc-numero {
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--pixel-placa);
+  color: var(--pixel-placa-texto);
+  font:
+    700 10px 'Courier New',
+    monospace;
+}
+.esc-titulo {
+  flex: 1;
+  overflow: hidden;
+  color: var(--pixel-madeira-escura);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.esc-barrinha {
+  width: 46px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--pixel-madeira-sombra);
+}
+.esc-barrinha > i {
+  display: block;
+  height: 100%;
+  background: var(--pixel-folha);
+}
+.esc-zz {
+  position: absolute;
+  right: 20px;
+  top: 14px;
+  color: var(--pixel-servidor);
+  font:
+    700 12px 'Courier New',
+    monospace;
+  animation: esc-zz 2.4s infinite;
+}
+.esc-terreo {
+  position: relative;
+  height: 96px;
+  border-left: 8px solid var(--pixel-pilar);
+  border-right: 8px solid var(--pixel-pilar);
+  border-bottom: 10px solid var(--pixel-terra);
+  background: var(--pixel-terreo);
+}
+.esc-toldo {
+  position: absolute;
+  left: 30px;
+  right: 30px;
+  top: 6px;
+  height: 14px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--pixel-toldo) 0 14px,
+    var(--pixel-toldo-claro) 14px 28px
+  );
+}
+.esc-recepcao {
+  position: absolute;
+  left: 8px;
+  top: 28px;
+  padding: 2px 4px;
+  border: 2px solid var(--pixel-madeira-escura);
+  border-radius: 3px;
+  background: var(--pixel-toldo-claro);
+  font:
+    700 9px 'Courier New',
+    monospace;
+}
+.esc-porta {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 54px;
+  height: 62px;
+  transform: translateX(-50%);
+  border: 4px solid var(--pixel-madeira-escura);
+  border-bottom: 0;
+  background: var(--pixel-vidro);
+}
+.esc-calcada {
+  height: 14px;
+  margin: 0 -6px;
+  border-radius: 0 0 6px 6px;
+  background: var(--pixel-calcada);
+}
+
+/* ---------------------------------------------------------------- mapa */
+.esc-palco {
+  position: relative;
+  width: 100%;
+}
+.esc-mapa {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1100px;
+  height: 680px;
+  overflow: hidden;
+  transform-origin: 0 0;
+  border: 10px solid var(--pixel-borda);
+  border-radius: 16px;
+  background: var(--pixel-piso);
+  background-image:
+    repeating-linear-gradient(0deg, var(--pixel-piso-linha) 0 2px, transparent 2px 26px),
+    repeating-linear-gradient(90deg, transparent 0 78px, var(--pixel-piso-junta) 78px 80px);
+  image-rendering: pixelated;
+}
+.esc-parede {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 50px;
+  border-bottom: 8px solid var(--pixel-rodape);
+  background: var(--pixel-parede);
+}
+.esc-area {
+  position: absolute;
+  border-radius: 12px;
+  opacity: 0.95;
+}
+.esc-area[data-atual='true'] {
+  box-shadow: 0 0 0 3px var(--pixel-papel-frontend);
+}
+.esc-rotulo {
+  position: absolute;
+  top: -11px;
+  left: 12px;
+  z-index: 7;
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: var(--pixel-placa);
+  color: var(--pixel-placa-texto);
+  font:
+    700 10px/1 'Courier New',
+    monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 3px 0 var(--pixel-contorno);
+}
+.esc-area[data-atual='true'] .esc-rotulo {
+  background: var(--pixel-papel-frontend);
+  color: var(--pixel-branco);
+}
+.esc-objeto {
+  position: absolute;
+  z-index: 2;
+}
+.esc-gestao {
+  position: absolute;
+  z-index: 3;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+.esc-gestao:hover,
+.esc-gestao:focus-visible {
+  box-shadow: 0 0 0 3px var(--pixel-doca-entrada);
+}
+.esc-agente {
+  position: absolute;
+  z-index: 5;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+.esc-agente[data-trabalhando='true'] svg {
+  animation: esc-digitar 0.35s steps(1) infinite;
+}
+.esc-balao {
+  position: absolute;
+  bottom: 42px;
+  left: 50%;
+  z-index: 6;
+  width: max-content;
+  max-width: 140px;
+  padding: 3px 7px;
+  transform: translateX(-50%);
+  border: 2px solid var(--pixel-contorno);
+  border-radius: 9px;
+  background: var(--pixel-branco);
+  color: var(--pixel-contorno);
+  font:
+    600 10px/13px system-ui,
+    sans-serif;
+  text-align: center;
+  box-shadow: 2px 2px 0 var(--pixel-contorno);
+}
+.esc-agente[data-trabalhando='false'] .esc-balao {
+  background: var(--pixel-papel);
+  color: var(--pixel-servidor);
+}
+.esc-computador {
+  position: absolute;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.esc-computador:hover,
+.esc-computador:focus-visible {
+  filter: drop-shadow(0 0 6px var(--pixel-tela-acesa));
+}
+.esc-caixa {
+  position: absolute;
+  z-index: 3;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+.esc-etiqueta {
+  position: absolute;
+  top: -17px;
+  left: 50%;
+  padding: 0 4px;
+  transform: translateX(-50%);
+  border: 1px solid var(--pixel-placa);
+  border-radius: 4px;
+  background: var(--pixel-branco);
+  color: var(--pixel-contorno);
+  font:
+    700 9px system-ui,
+    sans-serif;
+  white-space: nowrap;
+}
+.esc-esteira {
+  position: absolute;
+  z-index: 1;
+  border: 3px solid var(--pixel-placa);
+  background: var(--pixel-esteira);
+}
+.esc-esteiraH {
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--pixel-esteira-faixa) 0 6px,
+    var(--pixel-esteira-faixa-clara) 6px 18px
+  );
+}
+.esc-esteiraV {
+  background-image: repeating-linear-gradient(
+    0deg,
+    var(--pixel-esteira-faixa) 0 6px,
+    var(--pixel-esteira-faixa-clara) 6px 18px
+  );
+}
+.esc-andando .esc-esteiraH {
+  animation: esc-correrH 1s linear infinite;
+}
+.esc-andando .esc-esteiraV {
+  animation: esc-correrV 1s linear infinite;
+}
+.esc-prateleira {
+  position: absolute;
+  z-index: 2;
+  border: 3px solid var(--pixel-madeira-escura);
+  border-radius: 4px;
+  background: var(--pixel-rodape);
+}
+.esc-doca {
+  position: absolute;
+  border-radius: 12px;
+  opacity: 0.45;
+}
+
+@keyframes esc-piscar {
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes esc-sirene {
+  50% {
+    background: var(--pixel-sirene-clara);
+    box-shadow: 0 0 14px 6px var(--pixel-sirene-luz);
+  }
+}
+@keyframes esc-varrer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+@keyframes esc-zz {
+  0% {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+}
+@keyframes esc-digitar {
+  50% {
+    transform: translateY(-1px);
+  }
+}
+@keyframes esc-correrH {
+  to {
+    background-position: 18px 0;
+  }
+}
+@keyframes esc-correrV {
+  to {
+    background-position: 0 18px;
+  }
+}

@@ -2,7 +2,7 @@
 
 // O prédio da Fábrica: um andar por demanda em execução, a equipe pela janela e sirenes onde o Paulo é esperado.
 import type { Andar, ItemDaRecepcao } from '@/modules/fabrica/escritorio/model'
-import s from './escritorio.module.css'
+import { s } from './classes'
 import { Boneco } from './pixel'
 
 export interface PredioProps {
@@ -64,8 +64,8 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
                   </span>
                   {andar.esperaPaulo && (
                     <>
-                      <span className={s.sirene} data-sirene="" />
-                      <span className={s.sirene} data-sirene="" />
+                      <span className={s.sirene} data-sirene="esquerda" />
+                      <span className={s.sirene} data-sirene="direita" />
                     </>
                   )}
                   {andar.semAgentes && <span className={s.zz}>z</span>}

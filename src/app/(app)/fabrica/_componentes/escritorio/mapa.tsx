@@ -9,7 +9,7 @@ import type {
   Area,
   Caixa as CaixaDoModelo,
 } from '@/modules/fabrica/escritorio/model'
-import s from './escritorio.module.css'
+import { s } from './classes'
 import { Boneco, Cadeira, Caixa, Mesa, Objeto } from './pixel'
 
 export interface MapaProps {
@@ -252,9 +252,8 @@ export function Mapa({
           )
         })}
 
-        <button
-          type="button"
-          className={s.gestao}
+        <div
+          className={s.area}
           style={{
             left: GESTAO.x,
             top: GESTAO.y,
@@ -262,6 +261,11 @@ export function Mapa({
             height: GESTAO.h,
             background: 'var(--pixel-area-gestao)',
           }}
+        />
+        <button
+          type="button"
+          className={s.gestao}
+          style={{ left: GESTAO.x, top: GESTAO.y, width: GESTAO.w, height: GESTAO.h }}
           aria-label="Sala de gestão: gráficos e previsão"
           onClick={onAbrirGestao}
         >

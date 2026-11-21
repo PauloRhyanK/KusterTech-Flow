@@ -120,6 +120,9 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
         </aside>
       </div>
 
+      {/* detalhes técnicos em linha: no celular sempre; na tela grande, só sem demanda (senão ficam na sala de gestão) */}
+      <div className={andares.length === 0 ? undefined : 'md:hidden'}>{tecnico}</div>
+
       <TelaDoAgente
         agente={agenteDaTela}
         parte={parteDaTela}

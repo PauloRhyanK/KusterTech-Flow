@@ -71,6 +71,93 @@ export function retratoDeTeste(
   }
 }
 
+// Retrato v2 (escritório da Fábrica): dois planos, um esperando o Paulo (decisão aberta), com uma execução
+// de frontend que tem linhas para a tela do agente.
+export function retratoV2DeTeste(
+  feature: string,
+  geradoEm: Date = new Date(),
+): Record<string, unknown> {
+  const agora = instanteUTC(geradoEm)
+  const ha = (min: number) => instanteUTC(new Date(geradoEm.getTime() - min * 60_000))
+  const raia = (
+    id: string,
+    situacao: string | null,
+    inicio: string | null,
+    fim: string | null,
+  ) => ({
+    id,
+    estado: situacao === 'mergeada' ? 'concluida' : situacao ? 'executando' : 'planejada',
+    papel: 'frontend',
+    dependeDe: [],
+    criterios: ['Primeiro critério', 'Segundo critério'],
+    seedId: situacao ? `seed-${id}` : null,
+    inicio,
+    fim,
+    prUrl: null,
+    situacao,
+    criteriosVeredito:
+      situacao === 'mergeada'
+        ? [
+            { indice: 0, cumprido: true },
+            { indice: 1, cumprido: true },
+          ]
+        : null,
+  })
+  const plano = (id: string, nome: string, decisoes: unknown[]) => ({
+    id,
+    repo: 'kustertech-exemplo/automacao',
+    feature: nome,
+    estado: 'ativo',
+    entrouEm: ha(60),
+    faseAtual: 'fase-1',
+    fases: [
+      {
+        id: 'fase-1',
+        raias: [
+          raia('base', 'mergeada', ha(50), ha(20)),
+          raia('tela', 'executando', ha(15), null),
+          raia('ajuste', null, null, null),
+        ],
+      },
+    ],
+    pausado: null,
+    decisoes,
+    orquestradorAtivo: false,
+    demanda: null,
+  })
+  return {
+    ...retratoDeTeste(feature, geradoEm),
+    versao: 2,
+    planos: [
+      plano('kustertech-exemplo--automacao--esperando--aaa111', `${feature} (espera)`, [
+        {
+          titulo: 'Aprovar a fase',
+          url: 'https://github.com/kustertech-exemplo/automacao/issues/8',
+        },
+      ]),
+      plano('kustertech-exemplo--automacao--andando--bbb222', feature, []),
+    ],
+    execucoes: [
+      {
+        runId: 'run-e2e-tela',
+        papel: 'frontend',
+        planoId: 'kustertech-exemplo--automacao--andando--bbb222',
+        raia: 'tela',
+        demanda: null,
+        estado: 'running',
+        inicio: ha(15),
+        custoUsd: 0.42,
+        modelo: 'claude-sonnet-5-5',
+        ultimaAcao: { texto: 'Edit src/tela.tsx', em: agora },
+        linhas: [
+          { em: ha(10), tipo: 'texto', texto: 'lendo o catálogo do kit' },
+          { em: agora, tipo: 'ferramenta', texto: 'Edit src/tela.tsx' },
+        ],
+      },
+    ],
+  }
+}
+
 // Envia um retrato ao endpoint da Fábrica; sem token, omite o cabeçalho Authorization.
 export async function enviarRetratoDaFabrica(
   request: APIRequestContext,
