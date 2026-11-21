@@ -35,7 +35,7 @@ describe('AtividadeDoProjeto', () => {
     expect(screen.getByText('4')).toBeVisible()
     expect(screen.getByText('Origem')).toBeVisible()
     expect(screen.getByText('dados de há 6 min')).toBeVisible()
-    const item = screen.getByRole('listitem')
+    const item = within(screen.getByRole('list', { name: 'Últimos merges' })).getByRole('listitem')
     expect(within(item).getByText('Corrige PDF cortado')).toBeVisible()
     expect(within(item).getByText('Sessão')).toHaveAttribute('data-tom', 'informacao')
     expect(within(item).getByText('12 min')).toBeVisible()
@@ -68,5 +68,33 @@ describe('AtividadeDoProjeto', () => {
     )
     expect(screen.getByText('Nenhum PR mergeado neste projeto.')).toBeVisible()
     expect(screen.getByText('Desatualizado')).toHaveAttribute('data-tom', 'atencao')
+  })
+
+  it('mostra a legenda das três origens', () => {
+    render(<AtividadeDoProjeto atividade={dados()} agora={AGORA} />)
+    const legenda = screen.getByRole('list', { name: 'Legenda da origem' })
+    expect(
+      within(legenda)
+        .getAllByRole('listitem')
+        .map((i) => i.textContent),
+    ).toEqual(['Sessão', 'Fábrica', 'Outro'])
+  })
+
+  it('URL que não é https vira texto, sem link', () => {
+    render(
+      <AtividadeDoProjeto
+        atividade={dados({
+          ultimosMerges: [{ ...dados().ultimosMerges[0]!, url: 'javascript:alert(1)' }],
+        })}
+        agora={AGORA}
+      />,
+    )
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText('#42')).toBeVisible()
+  })
+
+  it('falha de leitura degrada para um aviso curto', () => {
+    render(<AtividadeDoProjeto atividade="falha" agora={AGORA} />)
+    expect(screen.getByText('Não foi possível ler a atividade agora.')).toBeVisible()
   })
 })

@@ -27,3 +27,22 @@ export function FaixaDeOrigem({ porOrigem }: { porOrigem: Record<Origem, number>
     </div>
   )
 }
+
+export function LegendaDaOrigem() {
+  return (
+    <ul
+      aria-label="Legenda da origem"
+      className="mt-1.5 flex gap-3 text-[11.5px] text-text-tertiary"
+    >
+      {(Object.keys(ROTULO_DA_ORIGEM) as Origem[]).map((o) => (
+        <li key={o} className="flex items-center gap-1">
+          <span
+            aria-hidden="true"
+            className={`${COR_DA_ORIGEM[o]} inline-block size-2 rounded-sm`}
+          />
+          {ROTULO_DA_ORIGEM[o]}
+        </li>
+      ))}
+    </ul>
+  )
+}

@@ -78,11 +78,16 @@ export default async function PaginaDesenvolvimentoDoProjeto({
   const { p } = await params
 
   const agora = new Date()
-  let atividade: Awaited<ReturnType<typeof obterAtividadeDoProjeto>> | null = null
+  let atividade: Awaited<ReturnType<typeof obterAtividadeDoProjeto>> | 'falha' | null = null
   try {
     await obterProjetoParaResumo(sessao.sujeito, p, null)
     if (podeVerAtividade(sessao.sujeito)) {
-      atividade = await obterAtividadeDoProjeto(sessao.sujeito, p, agora)
+      try {
+        atividade = await obterAtividadeDoProjeto(sessao.sujeito, p, agora)
+      } catch (erro) {
+        if (erro instanceof ErroDeAutorizacao || erro instanceof ErroDeDominio) throw erro
+        atividade = 'falha'
+      }
     }
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {

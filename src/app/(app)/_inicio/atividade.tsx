@@ -1,15 +1,10 @@
 import Link from 'next/link'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
-import {
-  LIMITE_NO_INICIO,
-  ROTULO_DA_ORIGEM,
-  type LinhaDeAtividade,
-  type Origem,
-} from '@/modules/atividade/model'
+import { LIMITE_NO_INICIO, type LinhaDeAtividade } from '@/modules/atividade/model'
 import type { AtividadeGeral } from '@/modules/atividade/queries'
 import { formatarIdade } from '@/modules/inicio/model'
 import { CLASSE_DO_CARTAO, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
-import { COR_DA_ORIGEM, FaixaDeOrigem } from './faixa-de-origem'
+import { FaixaDeOrigem, LegendaDaOrigem } from './faixa-de-origem'
 
 export interface AtividadeProps {
   atividade: AtividadeGeral | 'falha'
@@ -46,25 +41,6 @@ function Linha({ linha }: { linha: LinhaDeAtividade }) {
         </div>
       </div>
     </li>
-  )
-}
-
-function Legenda() {
-  return (
-    <ul
-      aria-label="Legenda da origem"
-      className="mt-1.5 flex gap-3 text-[11.5px] text-text-tertiary"
-    >
-      {(Object.keys(ROTULO_DA_ORIGEM) as Origem[]).map((o) => (
-        <li key={o} className="flex items-center gap-1">
-          <span
-            aria-hidden="true"
-            className={`${COR_DA_ORIGEM[o]} inline-block size-2 rounded-sm`}
-          />
-          {ROTULO_DA_ORIGEM[o]}
-        </li>
-      ))}
-    </ul>
   )
 }
 
@@ -126,7 +102,7 @@ export function Atividade({ atividade, agora }: AtividadeProps) {
               </details>
             )}
           </div>
-          <Legenda />
+          <LegendaDaOrigem />
         </>
       )}
     </section>

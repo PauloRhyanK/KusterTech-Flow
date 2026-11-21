@@ -1209,3 +1209,83 @@ export async function criarFonteDaFabricaNoBanco(nome: string): Promise<string> 
   })
   return token
 }
+
+const BASE_GITHUB_ID_ATIVIDADE = BigInt(9_200_000_000)
+
+// Dois repositórios próprios do teste de Atividade, vinculados ao projeto, com PRs recentes.
+// Esperado na linha do projeto: 4 mergeados hoje e 2 abertos.
+export async function semearAtividadeNoBanco(
+  projetoId: string,
+  projectName: string,
+  agora: Date,
+): Promise<void> {
+  const atras = (minutos: number): Date => new Date(agora.getTime() - minutos * 60_000)
+  const repos = [
+    {
+      sufixo: 'um',
+      prs: [
+        { estado: 'MERGEADO', min: 12, branch: 'claude/x', titulo: 'Corrige PDF cortado' },
+        { estado: 'MERGEADO', min: 40, branch: 'warren/run_1', titulo: 'Ajusta o cadastro' },
+        { estado: 'MERGEADO', min: 180, branch: 'feat/x', titulo: 'Nova tela de relatórios' },
+        { estado: 'ABERTO', min: 5, branch: 'claude/aberto-um', titulo: 'Em revisão um' },
+      ],
+    },
+    {
+      sufixo: 'dois',
+      prs: [
+        { estado: 'MERGEADO', min: 60, branch: 'claude/y', titulo: 'Melhora a busca' },
+        { estado: 'ABERTO', min: 8, branch: 'feat/aberto-dois', titulo: 'Em revisão dois' },
+        { estado: 'MERGEADO', min: 30 * 60, branch: 'feat/antigo', titulo: 'Entrega antiga' },
+      ],
+    },
+  ] as const
+
+  let seq = 0
+  for (const [i, repo] of repos.entries()) {
+    const nomeCompleto = `kustertech-exemplo/atividade-${projectName}-${repo.sufixo}`
+    const base =
+      BASE_GITHUB_ID_ATIVIDADE + BigInt(projectName === 'mobile' ? 1000 : 0) + BigInt(i * 100)
+    const criado = await db.repositorioGitHub.create({
+      data: {
+        githubId: base,
+        instalacaoId: BigInt(1),
+        nomeCompleto,
+        urlHtml: `https://github.com/${nomeCompleto}`,
+        privado: true,
+        projetoId,
+        vinculadoEm: agora,
+        sincronizadoEm: agora,
+        catalogadoEm: agora,
+      },
+      select: { id: true },
+    })
+    for (const [n, pr] of repo.prs.entries()) {
+      seq += 1
+      const quando = atras(pr.min)
+      await db.pullRequestGitHub.create({
+        data: {
+          githubId: base + BigInt(1 + n),
+          repositorioId: criado.id,
+          numero: n + 1,
+          titulo: pr.titulo,
+          estado: pr.estado,
+          rascunho: false,
+          urlHtml: `https://github.com/${nomeCompleto}/pull/${n + 1}`,
+          branch: pr.branch,
+          shaHead: `sha${seq}`,
+          issuesReferenciadas: [],
+          atualizadoNoGitHub: quando,
+          mergeadoNoGitHub: pr.estado === 'MERGEADO' ? quando : null,
+          criadoNoGitHub: quando,
+          sincronizadoEm: agora,
+        },
+      })
+    }
+  }
+}
+
+export async function limparAtividadeNoBanco(): Promise<void> {
+  const repositorio = { githubId: { gte: BASE_GITHUB_ID_ATIVIDADE } }
+  await db.pullRequestGitHub.deleteMany({ where: { repositorio } })
+  await db.repositorioGitHub.deleteMany({ where: repositorio })
+}

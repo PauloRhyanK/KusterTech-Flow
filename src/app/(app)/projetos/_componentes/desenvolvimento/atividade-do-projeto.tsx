@@ -1,4 +1,4 @@
-import { FaixaDeOrigem } from '@/app/(app)/_inicio/faixa-de-origem'
+import { FaixaDeOrigem, LegendaDaOrigem } from '@/app/(app)/_inicio/faixa-de-origem'
 import { BadgeDeEstado, type TomDeEstado } from '@/lib/ui/badge-de-estado'
 import { CLASSE_DO_CARTAO, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 import { QuadroDeMetrica } from '@/lib/ui/quadro-de-metrica'
@@ -12,7 +12,30 @@ const TOM_DA_ORIGEM: Record<Origem, TomDeEstado> = {
   outro: 'neutro',
 }
 
-export function AtividadeDoProjeto({ atividade, agora }: { atividade: Dados; agora: Date }) {
+function ehHttps(url: string): boolean {
+  try {
+    return new URL(url).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+export function AtividadeDoProjeto({
+  atividade,
+  agora,
+}: {
+  atividade: Dados | 'falha'
+  agora: Date
+}) {
+  if (atividade === 'falha') {
+    return (
+      <section aria-label="Atividade do projeto">
+        <div className={`${CLASSE_DO_CARTAO} px-4 py-3 text-sm text-text-secondary`}>
+          Não foi possível ler a atividade agora.
+        </div>
+      </section>
+    )
+  }
   return (
     <section aria-label="Atividade do projeto" className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -25,6 +48,7 @@ export function AtividadeDoProjeto({ atividade, agora }: { atividade: Dados; ago
         <div className={`${CLASSE_DO_CARTAO} space-y-3 p-4`}>
           <p className="text-[13px] text-text-secondary">Origem</p>
           <FaixaDeOrigem porOrigem={atividade.porOrigem} />
+          <LegendaDaOrigem />
         </div>
       </div>
 
@@ -66,15 +90,19 @@ export function AtividadeDoProjeto({ atividade, agora }: { atividade: Dados; ago
                 <span className="w-16 text-right text-xs text-text-tertiary">
                   {tempoDesde(m.mergeadoEm, agora)}
                 </span>
-                <a
-                  href={m.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Abrir PR #${m.numero} no GitHub`}
-                  className="text-text-link hover:underline"
-                >
-                  ↗
-                </a>
+                {ehHttps(m.url) ? (
+                  <a
+                    href={m.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Abrir PR #${m.numero} no GitHub`}
+                    className="text-text-link hover:underline"
+                  >
+                    ↗
+                  </a>
+                ) : (
+                  <span className="text-text-tertiary">#{m.numero}</span>
+                )}
               </li>
             ))}
           </ul>
