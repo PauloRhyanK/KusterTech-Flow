@@ -77,11 +77,12 @@ O despachante só lê o veredito neste formato, como a última coisa da sua mens
 
 - o marcador `FABRICA_VEREDITO_INICIO` sozinho numa linha, depois o JSON cru (sem bloco de código, sem negrito), depois o marcador `FABRICA_VEREDITO_FIM` sozinho numa linha;
 - campos: `sha` (o SHA completo do head que você revisou, o mesmo do prompt), `resultado` (`aprovado` ou `correcoes`) e `achados`, uma lista de `{"arquivo": "...", "motivo": "..."}`, um por problema real; com `aprovado`, `achados` é `[]`.
+- `criterios`: um item por critério de aceite da raia, na ordem em que aparecem, `{"indice": 0, "cumprido": true, "motivo": null}` (`indice` começa em 0; `motivo` diz por que não foi cumprido). O escritório da Fábrica mostra cada critério em verde ou vermelho a partir daqui.
 
 Exemplo de forma (o `sha` de 40 zeros nunca é um head: um veredito copiado daqui vale como veredito ausente):
 
 FABRICA_VEREDITO_INICIO
-{"sha": "0000000000000000000000000000000000000000", "resultado": "correcoes", "achados": [{"arquivo": "src/modules/pedidos/service.ts", "motivo": "cancelarPedido não chama exigirPermissao antes de gravar"}]}
+{"sha": "0000000000000000000000000000000000000000", "resultado": "correcoes", "achados": [{"arquivo": "src/modules/pedidos/service.ts", "motivo": "cancelarPedido não chama exigirPermissao antes de gravar"}], "criterios": [{"indice": 0, "cumprido": false, "motivo": "cancelar sem permissão grava"}]}
 FABRICA_VEREDITO_FIM
 
 Não faça commit nem push: o revisor só lê e avalia.

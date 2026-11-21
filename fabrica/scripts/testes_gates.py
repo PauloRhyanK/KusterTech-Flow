@@ -348,3 +348,28 @@ class CiAusenteRecenteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CriteriosDoVereditoTest(unittest.TestCase):
+    """Escritório da Fábrica: o revisor marca cada critério de aceite; o retrato mostra verde ou vermelho."""
+
+    H = "a" * 40
+
+    def test_veredito_com_criterios_valido(self):
+        v = {"sha": self.H, "resultado": "aprovado", "achados": [], "criterios": [{"indice": 0, "cumprido": True, "motivo": None}]}
+        self.assertTrue(gates._veredito_valido(v, self.H))
+        self.assertEqual(gates.criterios_do_veredito(v), [{"indice": 0, "cumprido": True}])
+
+    def test_criterio_mal_formado_vira_none_sem_invalidar_o_veredito(self):
+        v = {"sha": self.H, "resultado": "aprovado", "achados": [], "criterios": [{"indice": "0", "cumprido": "sim"}]}
+        self.assertIsNone(gates.criterios_do_veredito(v))
+        self.assertTrue(gates._veredito_valido(v, self.H))
+
+    def test_veredito_sem_criterios_continua_valido(self):
+        v = {"sha": self.H, "resultado": "correcoes", "achados": [{"arquivo": "a", "motivo": "b"}]}
+        self.assertTrue(gates._veredito_valido(v, self.H))
+        self.assertIsNone(gates.criterios_do_veredito(v))
+
+    def test_indice_negativo_ou_booleano_e_recusado(self):
+        for item in ({"indice": -1, "cumprido": True}, {"indice": True, "cumprido": True}):
+            self.assertIsNone(gates.criterios_do_veredito({"criterios": [item]}))
