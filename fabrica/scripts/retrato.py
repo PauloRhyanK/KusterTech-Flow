@@ -28,12 +28,14 @@ import urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import despachante  # noqa: E402
+import gates  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
 import capacidade as cap  # noqa: E402
 import motor_warren  # noqa: E402
 
-LIMITES = {"planos": 50, "avisos": 50, "decisoes": 50, "fases": 20, "raias": 50, "textoLongo": 300, "texto": 200}
+LIMITES = {"planos": 50, "avisos": 50, "decisoes": 50, "fases": 20, "raias": 50, "textoLongo": 300, "texto": 200,
+           "execucoes": 40, "criterios": 20, "linhas": 30, "dependencias": 20}
 LIMITE_BYTES = 256 * 1024
 LIMITE_DA_RESPOSTA = 262_144
 LIMITE_CONSERTOS = 20
@@ -188,7 +190,42 @@ def _decisoes(estado: dict) -> list:
     return achadas[: LIMITES["decisoes"]]
 
 
-def _fases(plano: dict, estado: dict) -> list:
+TIPOS_DE_LINHA = ("texto", "ferramenta", "estado")
+
+
+def _textos(valor, maximo: int) -> list:
+    return [t for t in (_texto(v, LIMITES["texto"]) for v in _lista(valor)) if t][:maximo]
+
+
+def _seed_da_raia(estado: dict, raia_id: str):
+    """A seed vigente da raia: a última que não está `obsoleta` (a ordem do dicionário é a da criação)."""
+    achada = (None, {})
+    for seed_id, seed in _dict(estado.get("seeds")).items():
+        seed = _dict(seed)
+        if seed.get("raia") == raia_id and seed.get("estado") != "obsoleta" and isinstance(seed_id, str):
+            achada = (seed_id, seed)
+    return achada
+
+
+def _detalhe_da_raia(raia_id: str, plano: dict, estado: dict) -> dict:
+    """Os campos do retrato v2 de uma raia: do `plano.json` (papel, dependências, critérios) e da seed vigente."""
+    definicao = next((_dict(r) for r in _lista(plano.get("raias")) if _dict(r).get("id") == raia_id), {})
+    seed_id, seed = _seed_da_raia(estado, raia_id)
+    situacao = seed.get("estado")
+    return {
+        "papel": _texto(definicao.get("papel"), LIMITES["texto"]),
+        "dependeDe": _textos(definicao.get("dependeDe"), LIMITES["dependencias"]),
+        "criterios": _textos(definicao.get("criteriosAceite"), LIMITES["criterios"]),
+        "seedId": _texto(seed_id, LIMITES["texto"]),
+        "inicio": _instante(seed.get("inicio")),
+        "fim": _instante(seed.get("fim")),
+        "prUrl": seed["pr"] if url_do_github(seed.get("pr")) else None,
+        "situacao": _texto(situacao, LIMITES["texto"]) if isinstance(situacao, str) else None,
+        "criteriosVeredito": (gates.criterios_do_veredito(seed.get("veredito")) or None),
+    }
+
+
+def _fases(plano: dict, estado: dict, versao: int = 1) -> list:
     raias = _dict(estado.get("raias"))
     fases = []
     for fase in _lista(plano.get("fases")):
@@ -202,27 +239,34 @@ def _fases(plano: dict, estado: dict) -> list:
             if raia_id is None:
                 continue
             situacao = _dict(raias.get(raia_id)).get("estado")
-            itens.append({"id": raia_id, "estado": situacao if situacao in ESTADOS_DA_RAIA else "planejada"})
+            item = {"id": raia_id, "estado": situacao if situacao in ESTADOS_DA_RAIA else "planejada"}
+            if versao >= 2:
+                item.update(_detalhe_da_raia(raia_id, plano, estado))
+            itens.append(item)
         fases.append({"id": id_, "raias": itens[: LIMITES["raias"]]})
     return fases[: LIMITES["fases"]]
 
 
-def _plano(entrada: dict, lidos: dict, agora: str) -> dict:
+def _plano(entrada: dict, lidos: dict, agora: str, versao: int = 1) -> dict:
     estado, plano = lidos.get("estado"), lidos.get("plano")
     legivel = estado is not None and plano is not None
     id_ = entrada["id"]
-    return {
+    resultado = {
         "id": id_,
         "repo": _texto(entrada.get("repo"), LIMITES["texto"]) or "desconhecido",
         "feature": _texto(entrada.get("feature"), LIMITES["texto"]) or id_,
         "estado": entrada["estado"],
         "entrouEm": _instante(entrada.get("entrouEm")) or agora,
         "faseAtual": _texto(plano.get("faseAtual"), LIMITES["texto"]) if legivel else None,
-        "fases": _fases(plano, estado) if legivel else [],
+        "fases": _fases(plano, estado, versao) if legivel else [],
         "pausado": _texto(estado.get("pausado"), LIMITES["textoLongo"]) if estado is not None else None,
         "decisoes": _decisoes(estado) if estado is not None else [],
         "orquestradorAtivo": est.orquestrador_em_curso(estado) if estado is not None else False,
     }
+    if versao >= 2:
+        demanda = entrada.get("demanda") or (_dict(plano).get("demanda") if plano is not None else None)
+        resultado["demanda"] = _texto(demanda, LIMITES["texto"]) if isinstance(demanda, str) else None
+    return resultado
 
 
 def _conserto(item, agora: str):
@@ -240,7 +284,43 @@ def _conserto(item, agora: str):
     }
 
 
-def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem_disponivel_mb, consertos=None) -> dict:
+def _custo(valor):
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)) or valor != valor or valor < 0 or valor > 1e6:
+        return None
+    return round(float(valor), 4)
+
+
+def _execucao(item):
+    """Uma execução ativa do retrato v2, limpa; None se faltar o `runId`."""
+    item = _dict(item)
+    run_id = _texto(item.get("runId"), LIMITES["texto"])
+    if run_id is None:
+        return None
+    linhas = []
+    for linha in _lista(item.get("linhas")):
+        linha = _dict(linha)
+        texto = _texto(linha.get("texto"), LIMITES["texto"])
+        if texto and linha.get("tipo") in TIPOS_DE_LINHA:
+            linhas.append({"em": _instante(linha.get("em")), "tipo": linha["tipo"], "texto": texto})
+    linhas = linhas[-LIMITES["linhas"] :]
+    ultima = _dict(item.get("ultimaAcao"))
+    ultima_texto = _texto(ultima.get("texto"), LIMITES["texto"])
+    return {
+        "runId": run_id,
+        "papel": _texto(item.get("papel"), LIMITES["texto"]),
+        "planoId": _texto(item.get("planoId"), LIMITES["texto"]),
+        "raia": _texto(item.get("raia"), LIMITES["texto"]),
+        "demanda": _texto(item.get("demanda"), LIMITES["texto"]),
+        "estado": _texto(item.get("estado"), LIMITES["texto"]),
+        "inicio": _instante(item.get("inicio")),
+        "custoUsd": _custo(item.get("custoUsd")),
+        "modelo": _texto(item.get("modelo"), LIMITES["texto"]),
+        "ultimaAcao": {"texto": ultima_texto, "em": _instante(ultima.get("em"))} if ultima_texto else None,
+        "linhas": linhas,
+    }
+
+
+def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem_disponivel_mb, consertos=None, versao: int = 1, execucoes=None) -> dict:
     """O retrato v1. Pura: tudo vem dos argumentos, já lidos.
 
     `fila_estado` é o `fila-estado.json`; `capacidade`, o `capacidade.json` já validado; `planos`, o
@@ -257,7 +337,7 @@ def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem
         if mensagem and em:
             avisos.append({"em": em, "mensagem": mensagem})
     resultado = {
-        "versao": 1,
+        "versao": 2 if versao >= 2 else 1,
         "geradoEm": agora,
         "vagas": {
             "efetivas": cap.vagas_efetivas(capacidade),
@@ -269,12 +349,14 @@ def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem
         },
         "drenagem": _instante(capacidade.get("drenagem")),
         "warren": {"preparo": _texto(preparado.get("estado"), LIMITES["texto"]), "em": _instante(preparado.get("em"))},
-        "planos": [_plano(e, _dict(_dict(planos).get(e["id"])), agora) for e in entradas],
+        "planos": [_plano(e, _dict(_dict(planos).get(e["id"])), agora, versao) for e in entradas],
         "avisos": avisos[-LIMITES["avisos"] :],
     }
     limpos = [c for c in (_conserto(item, agora) for item in _lista(consertos)) if c is not None]
     if limpos:
         resultado["consertos"] = limpos[:LIMITE_CONSERTOS]
+    if versao >= 2:
+        resultado["execucoes"] = [e for e in (_execucao(i) for i in _lista(execucoes)) if e is not None][: LIMITES["execucoes"]]
     return resultado
 
 
@@ -301,6 +383,11 @@ def ajustar(retrato: dict, limite_bytes: int = LIMITE_BYTES):
         if len(r["planos"]) > LIMITES["planos"]:
             return None
     r["avisos"] = r["avisos"][-LIMITES["avisos"] :]
+    execucoes = r.get("execucoes") or []
+    while len(serializar(r)) > limite_bytes and any(e["linhas"] for e in execucoes):
+        # v2: saem primeiro as linhas mais antigas da execução que mais tem linhas (cortando várias de uma vez)
+        maior = max(execucoes, key=lambda e: len(e["linhas"]))
+        del maior["linhas"][: max(1, len(maior["linhas"]) // 4)]
     while len(serializar(r)) > limite_bytes:
         if encerrados:
             saiu = encerrados.pop(0)

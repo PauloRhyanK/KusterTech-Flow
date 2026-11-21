@@ -189,6 +189,7 @@ Variáveis novas do `coordenador.env`:
 
 - `FABRICA_CENTRAL_URL`: o endereço completo de `POST /api/fabrica/estado`. Precisa ser `https://`; `http://` só vale com o host exatamente `localhost` ou `127.0.0.1` (teste, ou o túnel reverso do Mac). Outra URL é recusada com um aviso, sem enviar.
 - `FABRICA_CENTRAL_TOKEN_FILE`: o caminho do arquivo com o token. Ele é lido a cada envio e nunca aparece em log, argumento, erro ou aviso.
+- `FABRICA_CENTRAL_RETRATO_V2=1` (opcional): liga o retrato v2 do escritório da Fábrica (papel, critérios, horários e o que cada agente está fazendo). Ligue só depois de publicar o Flow que aceita o v2: se o Flow responder 400, o coordenador manda o v1 no mesmo ciclo e por 1 h, e avisa uma vez.
 
 Estas duas não entram no `plano.env` dos planos e não mudam o que `ler_coordenador_env` devolve. Uma variável do ambiente vale mais que o arquivo.
 

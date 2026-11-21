@@ -65,6 +65,7 @@ import fila  # noqa: E402
 import motor as motor_  # noqa: E402
 import publicar  # noqa: E402
 import raias  # noqa: E402
+import resumo_de_execucao  # noqa: E402
 import retrato  # noqa: E402
 from despachante import ErroDeEntrada  # noqa: E402
 
@@ -96,6 +97,12 @@ VARIAVEIS_REPASSADAS = ("WARREN_API", "WARREN_TOKEN_FILE", "GH_TOKEN_FILE")
 # envio do retrato à Central: leitura própria, fora de VARIAVEIS_REPASSADAS (não vai para o plano.env)
 VARIAVEL_CENTRAL_URL = "FABRICA_CENTRAL_URL"
 VARIAVEL_CENTRAL_TOKEN = "FABRICA_CENTRAL_TOKEN_FILE"
+# Escritório da Fábrica: liga o retrato v2 (papel, critérios, horários e execuções). Só depois do Flow que o aceita.
+VARIAVEL_CENTRAL_V2 = "FABRICA_CENTRAL_RETRATO_V2"
+V1_DEPOIS_DE_RECUSA = datetime.timedelta(hours=1)
+AVISO_FLOW_SEM_V2 = "Central: o Flow ainda não aceita o retrato v2; vai o v1 por 1 h"
+# fase da demanda em curso → papel da execução no escritório
+PAPEL_DA_FASE_DA_DEMANDA = {"triando": "produto", "planejando": "orquestrador", "desenhando": "ux-ui", "testando": "qa", "corrigindo": "frontend"}
 # pedido de publicação ao Flow (token de uma fonte de publicação): sem ele o passo fica desligado
 VARIAVEL_PUBLICACAO_TOKEN = "FABRICA_PUBLICACAO_TOKEN_FILE"
 LIMITE_DESCRICAO = 200
@@ -211,13 +218,15 @@ def configuracao_central(ambiente, raiz):
         arquivo = _ler_variaveis_do_env(raiz)
     except ErroDeEntrada:
         arquivo = {}
-    chaves = (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN, VARIAVEL_PUBLICACAO_TOKEN)
+    chaves = (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN, VARIAVEL_PUBLICACAO_TOKEN, VARIAVEL_CENTRAL_V2)
     valores = {chave: (ambiente.get(chave) or arquivo.get(chave) or None) for chave in chaves}
     if not valores[VARIAVEL_CENTRAL_URL]:
         return None
     configuracao = {"url": valores[VARIAVEL_CENTRAL_URL], "token_file": valores[VARIAVEL_CENTRAL_TOKEN]}
     if valores[VARIAVEL_PUBLICACAO_TOKEN]:
         configuracao["publicacao_token_file"] = valores[VARIAVEL_PUBLICACAO_TOKEN]
+    if str(valores[VARIAVEL_CENTRAL_V2] or "").strip().lower() in ("1", "true", "sim"):
+        configuracao["retrato_v2"] = True
     return configuracao
 
 
@@ -355,6 +364,7 @@ class Coordenador:
         self._segredos = tuple(sorted((s for s in conhecidos if len(s) >= TAMANHO_MINIMO_SEGREDO), key=len, reverse=True))
         self.capacidade = self.raiz / ARQ_CAPACIDADE
         self.central = central  # {"url", "token_file"} ou None (envio desligado)
+        self._v1_ate = None  # depois de o Flow recusar o v2 (400), vai o v1 até este instante
         self._enviar = enviar or retrato.enviar
         self._pedir_publicacao = pedir_publicacao or publicar.pedir
         self._cliente_do_flow = cliente_do_flow or demandas_flow.ClienteDoFlow  # (url da Central, token_file) → cliente
@@ -803,7 +813,7 @@ class Coordenador:
 
     # ------------------------------------------------------------ 7. Central
 
-    def _retrato(self, com_consertos: bool = True) -> bytes:
+    def _retrato(self, com_consertos: bool = True, versao: int = 1) -> bytes:
         """O retrato do ciclo, já cortado, em JSON. `FalhaDeEnvio` se não dá para montar ou se não cabe."""
         try:
             cap = capacidade.ler(self.capacidade)
@@ -817,11 +827,50 @@ class Coordenador:
             planos=planos,
             mem_disponivel_mb=capacidade.mem_disponivel_mb(),
             consertos=consertos.para_o_retrato(self.dados) if com_consertos else None,
+            versao=versao,
+            execucoes=self._execucoes(planos) if versao >= 2 else None,
         )
         cortado = retrato.ajustar(completo)
         if cortado is None:
             raise retrato.FalhaDeEnvio("retrato não cabe nos limites: nada enviado")
         return retrato.serializar(cortado)
+
+    def _execucao(self, run_id, papel, **extra) -> dict:
+        """Uma execução ativa para o retrato v2. Falha do Warren num run não derruba o retrato: sai sem linhas."""
+        item = dict({"runId": run_id, "papel": papel, "linhas": [], "ultimaAcao": None, "modelo": None, "custoUsd": None}, **extra)
+        with contextlib.suppress(Exception):
+            item.update(resumo_de_execucao.resumir(self.motor.eventos_brutos(run_id)))
+        with contextlib.suppress(Exception):
+            run = self.motor.run(run_id)
+            item["estado"], item["custoUsd"] = run.get("estado"), run.get("custoUsd")
+        return item
+
+    def _execucoes(self, planos: dict) -> list:
+        """As execuções ativas do ciclo: raias (código, revisor e conserto), orquestrador e runs de demanda."""
+        saida = []
+        for plano_id, lidos in (planos or {}).items():
+            estado, plano = (lidos or {}).get("estado") or {}, (lidos or {}).get("plano") or {}
+            papeis = {r.get("id"): r.get("papel") for r in plano.get("raias") or [] if isinstance(r, dict)}
+            demanda = plano.get("demanda")
+            comum = {"planoId": plano_id, "demanda": demanda if isinstance(demanda, str) else None}
+            for seed in (estado.get("seeds") or {}).values():
+                if not isinstance(seed, dict):
+                    continue
+                raia, situacao = seed.get("raia"), seed.get("estado")
+                if situacao == "executando" and seed.get("runId"):
+                    saida.append(self._execucao(seed["runId"], papeis.get(raia), raia=raia, inicio=seed.get("inicio"), **comum))
+                elif situacao == "em_revisao" and seed.get("revisaoRunId"):
+                    saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **comum))
+                elif situacao == "corrigindo" and seed.get("fixerRunId"):
+                    saida.append(self._execucao(seed["fixerRunId"], "fixer", raia=raia, **comum))
+            orquestrador = (estado.get("orquestrador") or {}).get("runId")
+            if orquestrador:
+                saida.append(self._execucao(orquestrador, "orquestrador", raia=None, **comum))
+        itens = ((self.dados.get("demandas") or {}).get("itens") or {})
+        for demanda_id, item in itens.items():
+            if isinstance(item, dict) and item.get("runId") and item.get("fase") in PAPEL_DA_FASE_DA_DEMANDA:
+                saida.append(self._execucao(item["runId"], PAPEL_DA_FASE_DA_DEMANDA[item["fase"]], raia=None, planoId=None, demanda=demanda_id, inicio=item.get("inicio")))
+        return saida
 
     def _passo_central(self) -> None:
         """Envia o retrato (sem URL, só acompanha os consertos em andamento). Nada daqui muda a fila, para o ciclo ou deixa uma exceção escapar.
@@ -838,14 +887,26 @@ class Coordenador:
             resposta, sem_consertos = None, False
             destino = {"url": self.central.get("url"), "token_file": self.central.get("token_file")}
             try:
-                corpo = self._retrato()
-                try:
-                    resposta = self._enviar(corpo, **destino)
-                except retrato.FalhaDeEnvio as exc:
-                    if exc.codigo != 400 or "consertos" not in json.loads(corpo):
-                        raise
-                    # Flow de antes dos consertos (rollback): o esquema estrito recusa o campo. Vai uma vez sem ele.
-                    resposta, sem_consertos = self._enviar(self._retrato(com_consertos=False), **destino), True
+                versao = 2 if self.central.get("retrato_v2") and not (self._v1_ate and self._agora() < self._v1_ate) else 1
+                corpo = self._retrato(versao=versao)
+                if versao == 2:
+                    try:
+                        resposta = self._enviar(corpo, **destino)
+                    except retrato.FalhaDeEnvio as exc:
+                        if exc.codigo != 400:
+                            raise
+                        # Flow de antes do escritório: o esquema estrito só conhece o v1. Vai o v1 já, e por 1 h.
+                        self._v1_ate = self._agora() + V1_DEPOIS_DE_RECUSA
+                        self._aviso("central:v2", AVISO_FLOW_SEM_V2)
+                        versao, corpo = 1, self._retrato()
+                if versao == 1:
+                    try:
+                        resposta = self._enviar(corpo, **destino)
+                    except retrato.FalhaDeEnvio as exc:
+                        if exc.codigo != 400 or "consertos" not in json.loads(corpo):
+                            raise
+                        # Flow de antes dos consertos (rollback): o esquema estrito recusa o campo. Vai uma vez sem ele.
+                        resposta, sem_consertos = self._enviar(self._retrato(com_consertos=False), **destino), True
                 falha = None
             except retrato.FalhaDeEnvio as exc:
                 falha = str(exc)

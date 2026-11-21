@@ -1946,6 +1946,64 @@ class TestesConsertos(Base):
         self.assertEqual(len([a for a in self.avisos() if "sem os consertos" in a]), 1)
         self.assertEqual(len(self.despachos()), 1)
 
+    def test_retrato_v2_desligado_por_padrao_continua_v1(self):
+        self.publicar("login", ["src/login/**"])
+        self.enviar = EnviarFalso()
+        c = self.novo(central=CENTRAL, enviar=self.enviar)
+        c.ciclo()
+        self.assertEqual(self.enviar.chamadas[0]["corpo"]["versao"], 1)
+
+    def test_retrato_v2_ligado_manda_versao_2_com_execucoes(self):
+        self.publicar("login", ["src/login/**"])
+        self.enviar = EnviarFalso()
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=self.enviar)
+        c.ciclo()
+        corpo = self.enviar.chamadas[0]["corpo"]
+        self.assertEqual(corpo["versao"], 2)
+        self.assertIsInstance(corpo["execucoes"], list)
+        self.assertIn("demanda", corpo["planos"][0])
+
+    def test_flow_que_recusa_v2_recebe_v1_no_mesmo_ciclo_e_v2_fica_desligado_por_1h(self):
+        self.publicar("login", ["src/login/**"])
+        self.enviar = EnviarFalso(retrato.FalhaDeEnvio("HTTP 400"))
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=self.enviar)
+        c.ciclo()
+        self.assertEqual([ch["corpo"]["versao"] for ch in self.enviar.chamadas], [2, 1])
+        self.instante += datetime.timedelta(minutes=30)
+        c.ciclo()
+        self.assertEqual(self.enviar.chamadas[-1]["corpo"]["versao"], 1)
+        self.instante += datetime.timedelta(minutes=31)
+        c.ciclo()
+        self.assertEqual(self.enviar.chamadas[-1]["corpo"]["versao"], 2)
+        self.assertEqual(len([a for a in self.avisos() if "retrato v2" in a]), 1)
+
+    def test_erro_do_warren_numa_execucao_nao_derruba_o_retrato(self):
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
+
+        def explode(run_id):
+            raise RuntimeError("warren fora")
+
+        c.motor.eventos_brutos = explode
+        execucoes = c._execucoes({"p": {"estado": {"seeds": {"s1": {"raia": "a", "estado": "executando", "runId": "r1"}}, "orquestrador": {}}, "plano": {"raias": [{"id": "a", "papel": "frontend"}]}}})
+        self.assertEqual([(e["runId"], e["papel"], e["linhas"], e["ultimaAcao"]) for e in execucoes], [("r1", "frontend", [], None)])
+
+    def test_execucoes_juntam_seed_revisor_e_demanda(self):
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
+        c.motor.eventos["r1"] = b'{"kind":"text","payload":{"text":"editando"}}\n'
+        c.dados.setdefault("demandas", {})["itens"] = {"d-1": {"runId": "r9", "fase": "triando", "inicio": "2026-11-03T11:00:00Z"}}
+        lidos = {"p": {"estado": {"seeds": {
+            "s1": {"raia": "a", "estado": "executando", "runId": "r1", "inicio": "2026-11-03T11:30:00Z"},
+            "s2": {"raia": "b", "estado": "em_revisao", "runId": "r2", "revisaoRunId": "r3"},
+        }, "orquestrador": {"runId": None}}, "plano": {"demanda": "d-1", "raias": [{"id": "a", "papel": "frontend"}, {"id": "b", "papel": "backend"}]}}}
+        por_run = {e["runId"]: e for e in c._execucoes(lidos)}
+        self.assertEqual(por_run["r1"]["papel"], "frontend")
+        self.assertEqual(por_run["r1"]["ultimaAcao"]["texto"], "editando")
+        self.assertEqual(por_run["r1"]["planoId"], "p")
+        self.assertEqual(por_run["r3"]["papel"], "revisor")
+        self.assertEqual(por_run["r3"]["raia"], "b")
+        self.assertEqual((por_run["r9"]["papel"], por_run["r9"]["demanda"]), ("produto", "d-1"))
+        self.assertNotIn("r2", por_run)
+
     def test_400_sem_consertos_no_retrato_nao_reenvia(self):
         self.enviar.resposta = {"resultado": "gravado"}
         self.enviar.falhas = [retrato.FalhaDeEnvio("HTTP 400")]
