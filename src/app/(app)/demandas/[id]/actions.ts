@@ -114,8 +114,17 @@ export async function retomarDemandaAction(
   _estado: EstadoDaDecisao,
   form: FormData,
 ): Promise<EstadoDaDecisao> {
-  return decidir(form, { demandaId }, 'retomar a demanda', 'A demanda voltou a andar.', (s, d) =>
-    retomarDemanda(s, d.demandaId),
+  const resposta = z
+    .string({ error: 'Resposta inválida.' })
+    .trim()
+    .max(2000, 'A resposta pode ter até 2000 caracteres.')
+    .optional()
+  return decidir(
+    form,
+    { demandaId, resposta },
+    'retomar a demanda',
+    'A demanda voltou a andar.',
+    (s, d) => retomarDemanda(s, d.demandaId, d.resposta),
   )
 }
 

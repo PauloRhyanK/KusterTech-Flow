@@ -40,6 +40,7 @@ import {
   aplicarEvento,
   avaliarArquivo,
   compararEvento,
+  dadosDaRetomada,
   type EventoAplicavel,
 } from './transicoes'
 
@@ -691,8 +692,15 @@ export async function decidirDestino(
   await decisaoDoPaulo(sujeito, demandaId, { tipo: 'destino_decidido', dados: { destino } })
 }
 
-export async function retomarDemanda(sujeito: Sujeito, demandaId: string): Promise<void> {
-  await decisaoDoPaulo(sujeito, demandaId, { tipo: 'retomada', dados: {} })
+export async function retomarDemanda(
+  sujeito: Sujeito,
+  demandaId: string,
+  resposta?: string,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  const r = dadosDaRetomada(resposta)
+  if (!r.ok) throw new ErroDeDominio(r.motivo)
+  await decisaoDoPaulo(sujeito, demandaId, { tipo: 'retomada', dados: r.dados })
 }
 
 /** O Paulo desiste da demanda: ela fica encerrada como `descartada` e a Fábrica para nela. */
