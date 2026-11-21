@@ -1,0 +1,172 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>KusterTech Flow — Atividade (desenho 20/11)</title><style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px 1fr;min-height:760px}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}
+  .logo span{color:#72d9c3}
+  aside small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}
+  aside a.on i{background:#72d9c3}
+  aside .cont{margin-left:auto;background:#a96011;color:#fff;border-radius:999px;font-size:11px;padding:0 7px;font-weight:600}
+  main{padding:26px 32px 36px}
+  h1{font-size:24px;margin:0 0 18px;letter-spacing:-.02em;font-weight:650;display:flex;align-items:center;gap:12px}
+  h1 small{font-size:13px;font-weight:400;color:var(--text-tertiary);letter-spacing:0}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-secondary);margin:0 0 10px;font-weight:600}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .btn{border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:8px 14px;font:inherit;font-weight:550;cursor:pointer}
+  .btn.p{background:var(--action);border-color:var(--action);color:#fff}
+  .dir{margin-left:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:6px;padding:2px 8px;background:var(--surface-subtle);color:var(--text-secondary);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:2px}
+  /* tipos */
+  .tipo{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+  .t-bug{background:#fbf0f0;color:var(--erro)} .t-ideia{background:#fbf4ea;color:var(--atencao)}
+  .t-ajuste{background:#eef4fd;color:var(--action)} .t-feat{background:#f4f1fa;color:var(--execucao)}
+  /* fluxo de entrada */
+  .fluxo{display:grid;grid-template-columns:150px 28px repeat(5,1fr);gap:10px;align-items:stretch;margin-bottom:26px}
+  .raia{border-radius:var(--r);padding:14px 14px 12px;background:#fff;border:1px solid var(--border);border-top:4px solid var(--border-strong);cursor:pointer}
+  .raia.sel{box-shadow:0 0 0 2px var(--midnight)}
+  .raia .n{font-size:30px;font-weight:650;letter-spacing:-.03em;line-height:1}
+  .raia .r{font-size:12.5px;color:var(--text-secondary);margin-top:6px;font-weight:550}
+  .raia .m{font-size:11.5px;color:var(--text-tertiary);margin-top:2px}
+  .entrada{background:var(--midnight);color:#e8efff;border-color:var(--midnight);border-top-color:#72d9c3}
+  .entrada .r,.entrada .m{color:#a7b4c9}
+  .seta{display:grid;place-items:center;color:var(--text-tertiary);font-size:20px}
+  .c-ori{border-top-color:#8290a1} .c-urg{border-top-color:var(--erro)} .c-noite{border-top-color:var(--action)}
+  .c-ag{border-top-color:var(--execucao)} .c-dec{border-top-color:var(--atencao)}
+  /* linhas */
+  .linha{display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid var(--border)}
+  .linha:first-child{border-top:0}
+  .tit{font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cresce{flex:1;min-width:0}
+  .etapas{display:flex;align-items:center;width:150px;flex:none}
+  .etapas i{width:9px;height:9px;border-radius:50%;background:var(--border-strong);flex:none}
+  .etapas u{height:2px;flex:1;background:var(--border)}
+  .etapas i.f,.etapas u.f{background:var(--flow)}
+  .etapas i.a{background:#fff;border:2.5px solid var(--execucao);width:12px;height:12px}
+  .etapas i.p{background:#fff;border:2.5px solid var(--atencao);width:12px;height:12px}
+  .etapas i.x{background:var(--erro)}
+  .est{width:150px;flex:none;font-size:12.5px;font-weight:550;text-align:right}
+  .grupo{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+  .grupo b{font-size:15px}.grupo span{color:var(--text-tertiary);font-size:12.5px}
+  .tempo{width:56px;flex:none;color:var(--text-tertiary);font-size:12px;text-align:right}
+  /* decidir */
+  .decidir{display:grid;grid-template-columns:230px 1fr;gap:24px}
+  .pilha .item{padding:10px 12px;border-radius:var(--rc);display:flex;gap:10px;align-items:center;margin-bottom:6px;background:#fff;border:1px solid var(--border)}
+  .pilha .item.on{border-color:var(--midnight);box-shadow:0 0 0 1px var(--midnight)}
+  .pilha .item.feito{opacity:.45}
+  .pilha .item div{font-size:12.5px;font-weight:550;line-height:1.25}
+  .prog{height:6px;border-radius:3px;background:var(--border);margin:8px 0 16px;overflow:hidden}.prog b{display:block;height:100%;width:28%;background:var(--flow)}
+  .foco{padding:26px 28px}
+  .foco h3{font-size:21px;margin:10px 0 6px;letter-spacing:-.02em}
+  .fala{background:var(--surface-subtle);border-radius:var(--r);padding:14px 16px;margin:16px 0;font-size:15px;line-height:1.5}
+  .anexos{display:flex;gap:10px;margin-top:12px;align-items:center}
+  .print{width:120px;height:74px;border-radius:8px;background:#fff;border:1px solid var(--border-strong);display:grid;place-items:center;color:var(--text-tertiary);font-size:11.5px}
+  .audio{flex:1;height:44px;border-radius:22px;background:#fff;border:1px solid var(--border-strong);display:flex;align-items:center;gap:10px;padding:0 14px;color:var(--text-secondary);font-size:12.5px}
+  .audio b{width:22px;height:22px;border-radius:50%;background:var(--midnight);flex:none}
+  .onda{flex:1;height:18px;background:repeating-linear-gradient(90deg,var(--border-strong) 0 2px,transparent 2px 5px);border-radius:2px}
+  .analise{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .analise div{border:1px solid var(--border);border-radius:var(--rc);padding:10px 12px}
+  .analise small{display:block;color:var(--text-tertiary);font-size:11.5px;margin-bottom:2px}
+  .analise b{font-size:14px}
+  .rec{display:flex;gap:10px;align-items:center;background:#f4f1fa;border:1px solid #ddd4ee;color:#4b3a78;border-radius:var(--rc);padding:10px 14px;font-size:13.5px}
+  .opcoes{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}
+  .op{border:1.5px solid var(--border-strong);border-radius:var(--r);padding:14px 10px;text-align:center;background:#fff;cursor:pointer}
+  .op b{display:block;font-size:13.5px}.op small{color:var(--text-tertiary);font-size:11.5px}
+  .op kbd{display:inline-block;margin-top:8px;font:inherit;font-size:11px;border:1px solid var(--border-strong);border-radius:4px;padding:0 6px;color:var(--text-secondary)}
+  .op.sug{border-color:var(--execucao);background:#f9f7fd}
+  .resp{margin-top:14px;display:flex;gap:10px}
+  .resp input{flex:1;border:1px solid var(--border-strong);border-radius:var(--rc);padding:9px 12px;font:inherit;color:var(--text-tertiary)}
+  /* publicação */
+  .pub{display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start}
+  .proj{padding:16px;margin-bottom:14px}
+  .proj .cab{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .proj .cab b{font-size:15px}
+  .trilho{display:flex;align-items:center;gap:8px}
+  .caixa{border-radius:var(--rc);padding:8px 12px;font-size:12.5px;border:1px solid var(--border);background:var(--surface-subtle);white-space:nowrap}
+  .caixa b{display:block;font-size:13px}
+  .caixa.ar{background:#eff7f6;border-color:#bfe3de}
+  .caixa.sub{background:#f4f1fa;border-color:#ddd4ee}
+  .caixa.noite{background:#eef4fd;border-color:#cfdff8;border-style:dashed}
+  .caixa.rec{background:#fbf0f0;border-color:#efd0d0;display:block}
+  .trilho em{font-style:normal;color:var(--text-tertiary)}
+  .lig{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);font-size:13px}
+  .lig:first-of-type{border-top:0}
+  .chave{width:34px;height:20px;border-radius:10px;background:var(--flow);position:relative;flex:none}
+  .chave::after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+  .chave.off{background:var(--border-strong)}.chave.off::after{right:auto;left:2px}
+  .anot{max-width:1280px;margin:0 auto 40px;padding:0 4px;color:#3d4a5e;font-size:13px}
+  .anot li{margin-bottom:4px}
+
+  .tela.on{grid-template-columns:210px minmax(0,1fr)} main{min-width:0}
+  .bloco{margin-bottom:22px}
+  .cabB{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+  .cabB b{font-size:15px}.cabB span{color:var(--text-tertiary);font-size:12.5px}
+  .esp{display:flex;gap:12px;align-items:center;background:#fbf4ea;border:1px solid #f0dcc0;border-radius:var(--r);padding:12px 16px;margin-bottom:8px;font-weight:550}
+  .esp i{width:8px;height:8px;border-radius:50%;background:var(--atencao)}
+  .lin{display:grid;grid-template-columns:minmax(0,1fr) 110px 80px 180px;gap:14px;align-items:center;padding:12px 16px;border-top:1px solid var(--border)}
+  .lin:first-child{border-top:0}
+  .lin .n{font-size:26px;font-weight:650;letter-spacing:-.02em;line-height:1}
+  .lin small{display:block;font-size:11.5px;color:var(--text-tertiary)}
+  .faixa{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--surface-subtle)}
+  .faixa .s{background:var(--action)} .faixa .f{background:var(--execucao)} .faixa .o{background:var(--border-strong)}
+  .leg{display:flex;gap:12px;font-size:11.5px;color:var(--text-tertiary);margin-top:6px}
+  .leg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
+  .fab{background:#fff;border:1px dashed var(--border-strong);border-radius:var(--r);padding:16px;color:var(--text-tertiary)}
+  .tres{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+  .tres>div{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:14px}
+  .tres small{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-secondary);font-weight:600}
+  .tres .n{font-size:30px;font-weight:650;margin-top:4px}
+  .merge{display:flex;gap:12px;align-items:center;padding:10px 16px;border-top:1px solid var(--border);font-size:13px}
+  .merge:first-child{border-top:0}
+  .merge .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:550}
+  .og{font-size:11.5px;border-radius:5px;padding:1px 8px;white-space:nowrap}
+  .og.s{background:#eef4fd;color:var(--action)} .og.f{background:#f4f1fa;color:var(--execucao)} .og.o{background:var(--surface-subtle);color:var(--text-secondary)}
+  .tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:18px;font-size:13.5px}
+  .tabs span{padding:8px 0;color:var(--text-secondary)} .tabs span.on{color:var(--text-primary);border-bottom:2px solid var(--midnight);font-weight:600}
+</style></head><body>
+<div class="barra"><b>KusterTech Flow · Atividade</b><button class="on" onclick="ver(0,this)">1. Início</button><button onclick="ver(1,this)">2. Projeto › Desenvolvimento</button><span class="nota">Desenho para aprovação · dados de exemplo</span></div>
+<section class="tela on"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a class="on"><i></i>Início</a><a><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<h1>Início</h1>
+<div class="bloco"><div class="cabB"><b>Espera você</b><span>2</span></div>
+<div class="esp"><i></i>Tela de funil de vendas: aprovar desenho</div><div class="esp"><i></i>Projeto Beta: publicação parada</div></div>
+<div class="bloco"><div class="cabB"><b>Atividade</b><span>31 PRs mergeados nas últimas 24 h · dados de há 6 min</span></div>
+<div class="cartao">
+<div class="lin"><b>Projeto Alfa</b><div><div class="n">18</div><small>mergeados hoje</small></div><div><div class="n" style="font-size:20px">4</div><small>abertos</small></div><div><div class="faixa"><span class="s" style="width:80%"></span><span class="f" style="width:15%"></span><span class="o" style="width:5%"></span></div></div></div>
+<div class="lin"><b>Produto Base</b><div><div class="n">9</div><small>mergeados hoje</small></div><div><div class="n" style="font-size:20px">2</div><small>abertos</small></div><div><div class="faixa"><span class="s" style="width:60%"></span><span class="f" style="width:40%"></span><span class="o" style="width:0%"></span></div></div></div>
+<div class="lin"><b>Projeto Gama</b><div><div class="n">3</div><small>mergeados hoje</small></div><div><div class="n" style="font-size:20px">1</div><small>abertos</small></div><div><div class="faixa"><span class="s" style="width:100%"></span><span class="f" style="width:0%"></span><span class="o" style="width:0%"></span></div></div></div>
+<div class="lin"><b>KusterTech Flow</b><div><div class="n">1</div><small>mergeados hoje</small></div><div><div class="n" style="font-size:20px">0</div><small>abertos</small></div><div><div class="faixa"><span class="s" style="width:100%"></span><span class="f" style="width:0%"></span><span class="o" style="width:0%"></span></div></div></div>
+</div>
+<div class="leg"><span><i style="background:var(--action)"></i>Sessão</span><span><i style="background:var(--execucao)"></i>Fábrica</span><span><i style="background:var(--border-strong)"></i>Outro</span><span style="margin-left:auto;color:var(--text-link)">ver todos</span></div></div>
+<div class="bloco"><div class="cabB"><b>Fábrica agora</b></div><div class="fab">(bloco que já existe)</div></div>
+</main></section><section class="tela"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início</a><a><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a class="on"><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<h1>Projeto Alfa</h1>
+<div class="tabs"><span>Resumo</span><span class="on">Desenvolvimento</span><span>Configuração</span></div>
+<div class="tres"><div><small>Mergeados hoje</small><div class="n">18</div></div><div><small>Abertos</small><div class="n">4</div></div><div><small>Origem</small><div class="faixa" style="margin-top:14px"><span class="s" style="width:80%"></span><span class="f" style="width:15%"></span><span class="o" style="width:5%"></span></div></div></div>
+<div class="cabB"><b>Últimos merges</b><span>dados de há 6 min</span></div>
+<div class="cartao" style="margin-bottom:20px">
+<div class="merge"><span class="t">Corrige PDF cortado na proposta</span><span class="og s">Sessão</span><span style="color:var(--text-tertiary);width:60px;text-align:right">12 min</span><span style="color:var(--text-link)">↗</span></div>
+<div class="merge"><span class="t">Importação de leads por planilha</span><span class="og f">Fábrica</span><span style="color:var(--text-tertiary);width:60px;text-align:right">40 min</span><span style="color:var(--text-link)">↗</span></div>
+<div class="merge"><span class="t">Ordena contatos por nome</span><span class="og s">Sessão</span><span style="color:var(--text-tertiary);width:60px;text-align:right">1 h</span><span style="color:var(--text-link)">↗</span></div>
+<div class="merge"><span class="t">Atualiza dependências de segurança</span><span class="og o">Outro</span><span style="color:var(--text-tertiary);width:60px;text-align:right">3 h</span><span style="color:var(--text-link)">↗</span></div>
+<div class="merge"><span class="t">Máscara de telefone no cadastro</span><span class="og s">Sessão</span><span style="color:var(--text-tertiary);width:60px;text-align:right">5 h</span><span style="color:var(--text-link)">↗</span></div>
+</div>
+<div class="cabB"><b>Fila</b></div><div class="fab">(fila de issues e PRs que já existe)</div>
+</main></section><script>function ver(i,b){document.querySelectorAll('.tela').forEach((t,n)=>t.classList.toggle('on',n===i));document.querySelectorAll('.barra button').forEach(x=>x.classList.remove('on'));b.classList.add('on');window.scrollTo(0,0)}</script></body></html>
