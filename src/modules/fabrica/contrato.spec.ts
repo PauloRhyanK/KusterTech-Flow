@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import exemplo from './retrato-exemplo.json'
-import { LIMITES, retratoV1Schema } from './contrato'
+import exemploV2 from './retrato-exemplo-v2.json'
+import { LIMITES, normalizarRetrato, retratoSchema, retratoV1Schema, retratoV2Schema } from './contrato'
 
 const clone = () => structuredClone(exemplo) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -50,7 +51,7 @@ describe('contrato do retrato v1', () => {
 
   test('recusa versão diferente de 1', () => {
     const r = clone()
-    r.versao = 2
+    r.versao = 3
     expect(retratoV1Schema.safeParse(r).success).toBe(false)
   })
 
@@ -167,5 +168,53 @@ describe('contrato do retrato v1', () => {
       JSON.stringify(Object.keys(retratoV1Schema.shape)) +
       JSON.stringify(Object.keys(retratoV1Schema.shape.planos.element.shape))
     expect(chaves).not.toMatch(/corpo|prompt|caminho|segredo|token/i)
+  })
+})
+
+const cloneV2 = () => structuredClone(exemploV2) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+
+describe('contrato do retrato v2 (escritório da Fábrica)', () => {
+  test('o exemplo v2 passa no esquema v2 e na união', () => {
+    expect(retratoV2Schema.safeParse(exemploV2).success).toBe(true)
+    expect(retratoSchema.safeParse(exemploV2).success).toBe(true)
+  })
+
+  test('a união continua aceitando o v1', () => {
+    expect(retratoSchema.safeParse(exemplo).success).toBe(true)
+  })
+
+  test('recusa versão 3', () => {
+    const r = cloneV2()
+    r.versao = 3
+    expect(retratoSchema.safeParse(r).success).toBe(false)
+  })
+
+  test('recusa linha de execução com mais de 200 caracteres', () => {
+    const r = cloneV2()
+    r.execucoes[0].linhas[0].texto = 'x'.repeat(LIMITES.texto + 1)
+    expect(retratoV2Schema.safeParse(r).success).toBe(false)
+  })
+
+  test('recusa mais de 30 linhas por execução e tipo de linha desconhecido', () => {
+    const muitas = cloneV2()
+    muitas.execucoes[0].linhas = Array.from({ length: 31 }, () => ({ em: null, tipo: 'texto', texto: 'a' }))
+    expect(retratoV2Schema.safeParse(muitas).success).toBe(false)
+    const tipo = cloneV2()
+    tipo.execucoes[0].linhas[0].tipo = 'html'
+    expect(retratoV2Schema.safeParse(tipo).success).toBe(false)
+  })
+
+  test('recusa campo desconhecido na raia v2', () => {
+    const r = cloneV2()
+    r.planos[0].fases[0].raias[0].extra = 1
+    expect(retratoV2Schema.safeParse(r).success).toBe(false)
+  })
+
+  test('normalizar o v1 dá um v2 sem execuções e raias sem detalhe', () => {
+    const v2 = normalizarRetrato(retratoV1Schema.parse(exemplo))
+    expect(v2.versao).toBe(2)
+    expect(v2.execucoes).toEqual([])
+    expect(v2.planos[0]!.demanda).toBeNull()
+    expect(v2.planos[0]!.fases[0]!.raias[0]).toMatchObject({ papel: null, criterios: [], seedId: null, criteriosVeredito: null })
   })
 })

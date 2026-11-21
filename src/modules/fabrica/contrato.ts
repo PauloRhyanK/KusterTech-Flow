@@ -11,6 +11,11 @@ export const LIMITES = {
   textoLongo: 300,
   /** demais textos */
   texto: 200,
+  /** retrato v2 (escritório da Fábrica) */
+  execucoes: 40,
+  criterios: 20,
+  linhas: 30,
+  dependencias: 20,
 } as const
 
 export const ESTADOS_DA_FILA = [
@@ -106,3 +111,86 @@ export const retratoV1Schema = z.strictObject({
 })
 
 export type RetratoV1 = z.infer<typeof retratoV1Schema>
+
+// ---------------------------------------------------------------- v2: escritório da Fábrica
+
+export const TIPOS_DE_LINHA = ['texto', 'ferramenta', 'estado'] as const
+
+const raiaV2 = z.strictObject({
+  id: texto,
+  estado: z.enum(ESTADOS_DA_RAIA),
+  papel: texto.nullable(),
+  dependeDe: z.array(texto).max(LIMITES.dependencias),
+  criterios: z.array(texto).max(LIMITES.criterios),
+  seedId: texto.nullable(),
+  inicio: instante.nullable(),
+  fim: instante.nullable(),
+  prUrl: urlGithub.nullable(),
+  situacao: texto.nullable(),
+  criteriosVeredito: z
+    .array(z.strictObject({ indice: inteiro, cumprido: z.boolean() }))
+    .max(LIMITES.criterios)
+    .nullable(),
+})
+
+const faseV2 = z.strictObject({ id: texto, raias: z.array(raiaV2).max(LIMITES.raias) })
+
+const planoV2 = plano.extend({ fases: z.array(faseV2).max(LIMITES.fases), demanda: texto.nullable() })
+
+const linha = z.strictObject({ em: instante.nullable(), tipo: z.enum(TIPOS_DE_LINHA), texto })
+
+const execucao = z.strictObject({
+  runId: texto,
+  papel: texto.nullable(),
+  planoId: texto.nullable(),
+  raia: texto.nullable(),
+  demanda: texto.nullable(),
+  estado: texto.nullable(),
+  inicio: instante.nullable(),
+  custoUsd: z.number().nonnegative().max(1_000_000).nullable(),
+  modelo: texto.nullable(),
+  ultimaAcao: z.strictObject({ texto, em: instante.nullable() }).nullable(),
+  linhas: z.array(linha).max(LIMITES.linhas),
+})
+
+export const retratoV2Schema = retratoV1Schema.extend({
+  versao: z.literal(2),
+  planos: z.array(planoV2).max(LIMITES.planos),
+  execucoes: z.array(execucao).max(LIMITES.execucoes),
+})
+
+export type RetratoV2 = z.infer<typeof retratoV2Schema>
+export type RaiaV2 = RetratoV2['planos'][number]['fases'][number]['raias'][number]
+export type ExecucaoV2 = RetratoV2['execucoes'][number]
+
+export const retratoSchema = z.discriminatedUnion('versao', [retratoV1Schema, retratoV2Schema])
+export type Retrato = z.infer<typeof retratoSchema>
+
+/** O v1 vira v2 com os campos novos vazios, para a tela ler um formato só. */
+export function normalizarRetrato(r: Retrato): RetratoV2 {
+  if (r.versao === 2) return r
+  return {
+    ...r,
+    versao: 2,
+    planos: r.planos.map((p) => ({
+      ...p,
+      demanda: null,
+      fases: p.fases.map((f) => ({
+        ...f,
+        raias: f.raias.map((raia) => ({
+          ...raia,
+          papel: null,
+          dependeDe: [],
+          criterios: [],
+          seedId: null,
+          inicio: null,
+          fim: null,
+          prUrl: null,
+          situacao: null,
+          criteriosVeredito: null,
+        })),
+      })),
+    })),
+    execucoes: [],
+  }
+}

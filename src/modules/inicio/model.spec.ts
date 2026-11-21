@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { formatarDataHora } from '@/lib/data'
-import type { RetratoV1 } from '@/modules/fabrica/contrato'
+import { normalizarRetrato, type RetratoV1 } from '@/modules/fabrica/contrato'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 import {
   ACAO_DE_LEITURA,
@@ -73,7 +73,8 @@ function plano(extra: Partial<Plano> = {}): Plano {
 
 function recebido(planos: Plano[], recebidoEm: Date = minutosAntes(1)): RetratoRecebido {
   return {
-    retrato: {
+    versaoOriginal: 1,
+    retrato: normalizarRetrato({
       versao: 1,
       geradoEm: '2026-11-19T11:59:00Z',
       vagas: {
@@ -88,7 +89,7 @@ function recebido(planos: Plano[], recebidoEm: Date = minutosAntes(1)): RetratoR
       warren: { preparo: null, em: null },
       planos,
       avisos: [],
-    },
+    }),
     geradoEm: recebidoEm,
     recebidoEm,
   }

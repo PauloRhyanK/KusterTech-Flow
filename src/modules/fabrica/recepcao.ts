@@ -7,7 +7,7 @@ import {
   type ConsertoParaAFabrica,
 } from '@/modules/fila-de-publicacao/consertos'
 import { resumirErroParaLog } from '@/modules/github/model'
-import { retratoV1Schema } from './contrato'
+import { retratoSchema } from './contrato'
 import {
   decidirGravacaoDoRetrato,
   extrairTokenDaFabrica,
@@ -106,7 +106,7 @@ export async function receberRetratoDaFabrica(
     } catch {
       return CORPO_INVALIDO
     }
-    const lido = retratoV1Schema.safeParse(json)
+    const lido = retratoSchema.safeParse(json)
     if (!lido.success) return CORPO_INVALIDO
 
     const geradoEm = new Date(lido.data.geradoEm)
