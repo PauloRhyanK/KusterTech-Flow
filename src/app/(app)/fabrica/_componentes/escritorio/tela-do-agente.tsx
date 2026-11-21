@@ -11,7 +11,7 @@ import { hora } from './hora'
 type Aba = 'agora' | 'alteracoes' | 'testes'
 
 const COMANDO_DE_VERIFICACAO =
-  /^(npm|pnpm|npx|yarn|pytest|python3? -m unittest|python3? -I -B -m unittest|go test|cargo test)\b/
+  /^(?:Bash\s+)?(npm|pnpm|npx|yarn|pytest|python3? -m unittest|python3? -I -B -m unittest|go test|cargo test)\b/
 const EDICAO = /^(Edit|Write|MultiEdit|NotebookEdit)\b/
 
 export function linhasDaAba(linhas: Agente['linhas'], aba: Aba): Agente['linhas'] {

@@ -95,7 +95,25 @@ describe('escritório: recepção e formato antigo', () => {
       demanda({ id: 'outra', titulo: 'Nova', marco: 'recebida' }),
     ])
     expect(e.recepcao).toEqual([
-      { demandaId: 'outra', titulo: 'Nova', repositorio: 'PauloRhyanK/CAISv2' },
+      { demandaId: 'outra', titulo: 'Nova', repositorio: 'PauloRhyanK/CAISv2', esperaPaulo: false },
+    ])
+  })
+
+  test('demanda sem plano que espera o Paulo (etapa dele ou com espera) vai para a recepção marcada', () => {
+    const e = escritorio(v2(), [
+      demanda(),
+      demanda({
+        id: 'desenho',
+        titulo: 'Aprovar desenho',
+        marco: 'desenho',
+        espera: 'aprovar_desenho',
+      }),
+      demanda({ id: 'paulo', titulo: 'Etapa do Paulo', marco: null }),
+      demanda({ id: 'andando', titulo: 'Sem plano no retrato', marco: 'desenvolvida' }),
+    ])
+    expect(e.recepcao.map((r) => [r.demandaId, r.esperaPaulo])).toEqual([
+      ['desenho', true],
+      ['paulo', true],
     ])
   })
 

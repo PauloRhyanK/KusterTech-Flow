@@ -21,7 +21,7 @@ def _instante(evento: dict):
     return valor if isinstance(valor, str) and valor else None
 
 
-def _linha(evento: dict):
+def _linha(evento: dict, segredos=()):
     kind, payload = evento.get("kind"), evento.get("payload")
     payload = payload if isinstance(payload, dict) else {}
     if kind == "text":
@@ -33,13 +33,13 @@ def _linha(evento: dict):
         tipo, bruto = "estado", payload.get("state")
     else:
         return None
-    texto = retrato._texto(bruto, retrato.LIMITES["texto"]) if isinstance(bruto, str) else None
+    texto = retrato._texto(retrato.redigir(bruto, segredos), retrato.LIMITES["texto"]) if isinstance(bruto, str) else None
     if not texto:
         return None
     return {"em": _instante(evento), "tipo": tipo, "texto": texto}
 
 
-def resumir(bruto: bytes, *, limite: int = LIMITE_DE_LINHAS) -> dict:
+def resumir(bruto: bytes, *, limite: int = LIMITE_DE_LINHAS, segredos=()) -> dict:
     """`{ultimaAcao, linhas, modelo}` a partir do NDJSON de `GET /runs/<id>/events?follow=0`."""
     linhas, modelo = [], None
     # O separador do NDJSON é só "\n" (o mesmo cuidado de motor_warren.ultimo_texto).
@@ -52,7 +52,7 @@ def resumir(bruto: bytes, *, limite: int = LIMITE_DE_LINHAS) -> dict:
             continue
         if modelo is None:
             modelo = _modelo_do_init(evento)
-        linha = _linha(evento)
+        linha = _linha(evento, segredos)
         if linha is not None:
             linhas.append(linha)
     linhas = linhas[-limite:] if limite > 0 else []

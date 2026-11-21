@@ -64,3 +64,18 @@ class MotorFalsoEventosTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SegredosTest(unittest.TestCase):
+    def test_tokens_e_bearer_saem_redigidos(self):
+        bruto = ev("tool", 'Bash curl -H "Authorization: Bearer fd_4KYzdUDRYZZM6JRRNBZmDbp4" https://x') + ev(
+            "text", "usei ff_abcdefgh12345678 e ghp_ABCDEFGHijklmnop123 e sk-ant-api03-xyzxyzxyz"
+        )
+        textos = " ".join(l["texto"] for l in resumir(bruto)["linhas"])
+        for segredo in ("fd_4KYzdUDRYZZM6JRRNBZmDbp4", "ff_abcdefgh12345678", "ghp_ABCDEFGHijklmnop123", "sk-ant-api03-xyzxyzxyz"):
+            self.assertNotIn(segredo, textos)
+        self.assertIn("[segredo]", textos)
+
+    def test_segredos_conhecidos_saem_redigidos(self):
+        r = resumir(ev("text", "a senha é cavalo-azul-123"), segredos=["cavalo-azul-123"])
+        self.assertEqual(r["linhas"][0]["texto"], "a senha é [segredo]")

@@ -274,6 +274,19 @@ class TestRegistrarPlano(unittest.TestCase):
         e = self.registrar([filho("s1", "running", run="r2")], e=e)
         self.assertEqual((e["seeds"]["s1"]["estado"], e["seeds"]["s1"]["runId"]), ("executando", "r2"))
 
+    def test_inicio_sobrevive_ao_primeiro_pr(self):
+        e = self.registrar([filho("s1", "running", run="r1")])
+        e["seeds"]["s1"]["inicio"] = "2026-11-21T01:30:00Z"
+        e = self.registrar([filho("s1", "pr_open", run="r1", pr="https://github.com/o/r/pull/1")], e=e)
+        self.assertEqual(e["seeds"]["s1"]["estado"], "em_revisao")
+        self.assertEqual(e["seeds"]["s1"]["inicio"], "2026-11-21T01:30:00Z")
+
+    def test_redespacho_reinicia_o_inicio(self):
+        e = self.registrar([filho("s1", "running", run="r1")])
+        e["seeds"]["s1"]["inicio"] = "2026-11-21T01:30:00Z"
+        e = self.registrar([filho("s1", "running", run="r2")], e=e)
+        self.assertNotEqual(e["seeds"]["s1"]["inicio"], "2026-11-21T01:30:00Z")
+
     def test_seed_nova_tem_o_formato_exato(self):
         e = self.registrar([filho("s1", "running", run="r1", pr=None)])
         seed = dict(e["seeds"]["s1"])

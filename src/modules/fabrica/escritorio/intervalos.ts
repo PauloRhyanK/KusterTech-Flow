@@ -16,7 +16,7 @@ async function gravar(dados: {
   chave: string
   fonteId: string | null
   repositorio: string
-  tipo: 'parte' | 'etapa'
+  tipo: 'parte' | 'etapa' | 'custo'
   papel: string | null
   etapa: string | null
   inicio: Date
@@ -25,7 +25,7 @@ async function gravar(dados: {
 }): Promise<void> {
   const existente = await db.intervaloDaFabrica.findUnique({
     where: { chave: dados.chave },
-    select: { fim: true },
+    select: { fim: true, custoUsd: true },
   })
   const custo = dados.custoUsd === null ? undefined : new Prisma.Decimal(dados.custoUsd)
   if (existente === null) {
@@ -38,7 +38,11 @@ async function gravar(dados: {
       papel: dados.papel,
       repositorio: dados.repositorio,
       ...(existente.fim === null && dados.fim !== null ? { fim: dados.fim } : {}),
-      ...(custo !== undefined ? { custoUsd: custo } : {}),
+      // o custo de uma execução só cresce: guarda o maior valor visto
+      ...(custo !== undefined &&
+      (existente.custoUsd === null || custo.greaterThan(existente.custoUsd))
+        ? { custoUsd: custo }
+        : {}),
     },
   })
 }
@@ -51,9 +55,6 @@ export async function gravarIntervalosDoRetrato(
   for (const plano of retrato.planos) {
     for (const raia of plano.fases.flatMap((f) => f.raias)) {
       if (raia.inicio === null) continue
-      const custos = retrato.execucoes
-        .filter((e) => e.planoId === plano.id && e.raia === raia.id && e.custoUsd !== null)
-        .map((e) => e.custoUsd as number)
       await gravar({
         chave: `${plano.id}:${raia.id}`,
         fonteId,
@@ -63,10 +64,39 @@ export async function gravarIntervalosDoRetrato(
         etapa: null,
         inicio: new Date(raia.inicio),
         fim: raia.fim === null ? null : new Date(raia.fim),
-        custoUsd: custos.length > 0 ? custos.reduce((s, c) => s + c, 0) : null,
+        custoUsd: null,
       })
     }
   }
+  for (const e of retrato.execucoes) {
+    if (e.planoId === null || e.custoUsd === null) continue
+    const plano = retrato.planos.find((p) => p.id === e.planoId)
+    await gravar({
+      chave: `${e.planoId}:${e.raia ?? '-'}:run:${e.runId}`,
+      fonteId,
+      repositorio: plano?.repo ?? '',
+      tipo: 'custo',
+      papel: e.papel,
+      etapa: null,
+      inicio: e.inicio ? new Date(e.inicio) : new Date(retrato.geradoEm),
+      fim: null,
+      custoUsd: e.custoUsd,
+    })
+  }
+}
+
+/** O custo registrado de cada plano (soma das execuções), por id de plano. */
+export async function gastoPorPlano(): Promise<Record<string, number>> {
+  const linhas = await db.intervaloDaFabrica.findMany({
+    where: { tipo: 'custo' },
+    select: { chave: true, custoUsd: true },
+  })
+  const gasto: Record<string, number> = {}
+  for (const l of linhas) {
+    const plano = l.chave.split(':')[0]!
+    gasto[plano] = Math.round(((gasto[plano] ?? 0) + Number(l.custoUsd ?? 0)) * 10000) / 10000
+  }
+  return gasto
 }
 
 /** Semente idempotente: partes a partir de ExecucaoAgente e etapas a partir de `etapa_concluida`. */
@@ -138,6 +168,7 @@ export async function lerHistorico(): Promise<HistoricoDaFabrica> {
   const linhas = await db.intervaloDaFabrica.findMany({
     where: { fim: { not: null } },
     select: {
+      chave: true,
       tipo: true,
       papel: true,
       etapa: true,
@@ -158,6 +189,35 @@ export async function lerHistorico(): Promise<HistoricoDaFabrica> {
     etapas: linhas
       .filter((l) => l.tipo === 'etapa' && l.etapa !== null)
       .map((l) => ({ etapa: l.etapa!, minutos: minutos(l.inicio, l.fim!) })),
-    custosPorParte: partes.filter((l) => l.custoUsd !== null).map((l) => Number(l.custoUsd)),
+    custosPorParte: await custosDasPartesTerminadas(
+      linhas.filter((l) => l.tipo === 'parte').map((l) => l.chave),
+    ),
   }
+}
+
+/** Soma do custo das execuções de cada parte terminada (`<plano>:<raia>`); a semente (`execucao:`) já traz o custo. */
+async function custosDasPartesTerminadas(chaves: string[]): Promise<number[]> {
+  if (chaves.length === 0) return []
+  const custos = await db.intervaloDaFabrica.findMany({
+    where: { tipo: 'custo' },
+    select: { chave: true, custoUsd: true },
+  })
+  const porParte = new Map<string, number>()
+  for (const c of custos) {
+    const parte = c.chave.split(':run:')[0]!
+    porParte.set(parte, (porParte.get(parte) ?? 0) + Number(c.custoUsd ?? 0))
+  }
+  const semente = await db.intervaloDaFabrica.findMany({
+    where: {
+      chave: { in: chaves.filter((c) => c.startsWith('execucao:')) },
+      custoUsd: { not: null },
+    },
+    select: { custoUsd: true },
+  })
+  return [
+    ...chaves
+      .filter((c) => porParte.has(c))
+      .map((c) => Math.round(porParte.get(c)! * 10000) / 10000),
+    ...semente.map((l) => Number(l.custoUsd)),
+  ]
 }

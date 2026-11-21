@@ -7,7 +7,7 @@ import type { Historico } from './previsao'
 
 const AGORA = new Date('2026-11-21T02:05:00Z')
 
-function cenario(historico: Historico[]) {
+function cenario(historico: Historico[], gastoRegistrado?: number) {
   const retrato = structuredClone(exemploV2) as unknown as RetratoV2
   const andar = montarEscritorio(
     {
@@ -33,6 +33,7 @@ function cenario(historico: Historico[]) {
     etapasDaDemanda: [],
     agora: AGORA,
     sorteio: () => 0.5,
+    gastoRegistrado,
   })
 }
 
@@ -76,5 +77,11 @@ describe('sala de gestão', () => {
     expect(g.custo.previsto).toBe(4.84)
     expect(g.entregas).toEqual([{ raia: 'relatos-fundacao', fim: '2026-11-21T01:52:00Z' }])
     expect(g.entregaPrevista).not.toBeNull()
+  })
+
+  test('custo gasto vem do que foi registrado por execução, não só das ativas', () => {
+    const g = cenario(historico(60), 9.5)
+    expect(g.custo.gasto).toBe(9.5)
+    expect(g.custo.previsto).toBe(12.5)
   })
 })

@@ -8,3 +8,10 @@ Capturas de 21/11/2026, tiradas com `pnpm build` + `pnpm start` e um retrato v2 
 - `celular.png`: no celular, a lista de andares e os detalhes técnicos, sem o mapa.
 
 Diferenças em relação ao rascunho: o burn-up conta partes entregues (critério não tem horário), e a caixa aparece direto no lugar novo enquanto a esteira anda, sem percorrer a rota.
+
+## Para ligar em produção
+
+1. Publique o Flow com este branch. Ele aceita o retrato v1 e o v2.
+2. Rode a semente do histórico da previsão uma vez: `pnpm semear-intervalos`, com o `DATABASE_URL` de produção. Ela é idempotente.
+3. Na máquina de agentes, atualize o kit (`fabrica/`) e ligue o retrato v2 com `FABRICA_CENTRAL_RETRATO_V2=1` no `coordenador.env`. Se o Flow ainda não aceitar o v2, o coordenador manda o v1 por 1 h e avisa.
+4. Para os critérios ficarem verdes ou vermelhos, os repositórios precisam da versão nova de `.fabrica/equipes/revisor.md` (o instalador do kit a copia).

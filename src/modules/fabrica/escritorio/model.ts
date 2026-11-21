@@ -83,6 +83,8 @@ export interface ItemDaRecepcao {
   demandaId: string
   titulo: string
   repositorio: string
+  /** a demanda ainda não tem andar, mas espera o Paulo (etapa dele ou com espera) */
+  esperaPaulo: boolean
 }
 
 export interface Escritorio {
@@ -310,7 +312,16 @@ export function montarEscritorio(entrada: EntradaDoEscritorio, agora: Date): Esc
   )
   const comPlano = new Set(planos.map((p) => p.demanda).filter((d): d is string => d !== null))
   const recepcao = entrada.demandas
-    .filter((d) => (d.marco === 'recebida' || d.marco === 'planejada') && !comPlano.has(d.id))
-    .map((d) => ({ demandaId: d.id, titulo: d.titulo, repositorio: d.repositorio }))
+    .filter((d) => !comPlano.has(d.id))
+    .map((d) => ({ d, esperaPaulo: d.espera !== null || d.marco === null }))
+    .filter(
+      ({ d, esperaPaulo }) => esperaPaulo || d.marco === 'recebida' || d.marco === 'planejada',
+    )
+    .map(({ d, esperaPaulo }) => ({
+      demandaId: d.id,
+      titulo: d.titulo,
+      repositorio: d.repositorio,
+      esperaPaulo,
+    }))
   return { andares, recepcao, formatoAntigo: entrada.recebido?.versaoOriginal === 1 }
 }

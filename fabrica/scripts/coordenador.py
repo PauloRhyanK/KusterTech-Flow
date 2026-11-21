@@ -100,6 +100,8 @@ VARIAVEL_CENTRAL_TOKEN = "FABRICA_CENTRAL_TOKEN_FILE"
 # Escritório da Fábrica: liga o retrato v2 (papel, critérios, horários e execuções). Só depois do Flow que o aceita.
 VARIAVEL_CENTRAL_V2 = "FABRICA_CENTRAL_RETRATO_V2"
 V1_DEPOIS_DE_RECUSA = datetime.timedelta(hours=1)
+# teto de tempo por ciclo para ler o Warren das execuções ativas; o que passar sai sem linhas neste ciclo
+ORCAMENTO_DAS_EXECUCOES_S = 20
 AVISO_FLOW_SEM_V2 = "Central: o Flow ainda não aceita o retrato v2; vai o v1 por 1 h"
 # fase da demanda em curso → papel da execução no escritório
 PAPEL_DA_FASE_DA_DEMANDA = {"triando": "produto", "planejando": "orquestrador", "desenhando": "ux-ui", "testando": "qa", "corrigindo": "frontend"}
@@ -365,6 +367,8 @@ class Coordenador:
         self.capacidade = self.raiz / ARQ_CAPACIDADE
         self.central = central  # {"url", "token_file"} ou None (envio desligado)
         self._v1_ate = None  # depois de o Flow recusar o v2 (400), vai o v1 até este instante
+        self._relogio = time.monotonic
+        self._prazo_das_execucoes = None
         self._enviar = enviar or retrato.enviar
         self._pedir_publicacao = pedir_publicacao or publicar.pedir
         self._cliente_do_flow = cliente_do_flow or demandas_flow.ClienteDoFlow  # (url da Central, token_file) → cliente
@@ -838,15 +842,19 @@ class Coordenador:
     def _execucao(self, run_id, papel, **extra) -> dict:
         """Uma execução ativa para o retrato v2. Falha do Warren num run não derruba o retrato: sai sem linhas."""
         item = dict({"runId": run_id, "papel": papel, "linhas": [], "ultimaAcao": None, "modelo": None, "custoUsd": None}, **extra)
+        if self._prazo_das_execucoes is not None and self._relogio() >= self._prazo_das_execucoes:
+            return item  # o orçamento do ciclo acabou: sem chamar o Warren
         with contextlib.suppress(Exception):
-            item.update(resumo_de_execucao.resumir(self.motor.eventos_brutos(run_id)))
+            item.update(resumo_de_execucao.resumir(self.motor.eventos_brutos(run_id), segredos=self._segredos))
         with contextlib.suppress(Exception):
             run = self.motor.run(run_id)
             item["estado"], item["custoUsd"] = run.get("estado"), run.get("custoUsd")
         return item
 
     def _execucoes(self, planos: dict) -> list:
-        """As execuções ativas do ciclo: raias (código, revisor e conserto), orquestrador e runs de demanda."""
+        """As execuções ativas do ciclo: raias (código, revisor e conserto), orquestrador e runs de demanda.
+        As leituras do Warren param no orçamento do ciclo (ORCAMENTO_DAS_EXECUCOES_S)."""
+        self._prazo_das_execucoes = self._relogio() + ORCAMENTO_DAS_EXECUCOES_S
         saida = []
         for plano_id, lidos in (planos or {}).items():
             estado, plano = (lidos or {}).get("estado") or {}, (lidos or {}).get("plano") or {}

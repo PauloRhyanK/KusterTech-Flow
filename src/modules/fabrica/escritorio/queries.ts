@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import type { EtapaDefinida } from '@/modules/demandas/model'
 import { obterRetratoMaisRecente, type RetratoRecebido } from '../queries'
 import { type DadosDaGestao, montarGestao } from './gestao'
-import { lerHistorico } from './intervalos'
+import { gastoPorPlano, lerHistorico } from './intervalos'
 import { type DemandaDaTela, type Escritorio, montarEscritorio } from './model'
 
 export interface DadosDoEscritorio {
@@ -58,6 +58,7 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
   const gestao: Record<string, DadosDaGestao> = {}
   if (retrato && escritorio.andares.length > 0) {
     const historico = await lerHistorico()
+    const gastos = await gastoPorPlano()
     const idsDasDemandas = escritorio.andares
       .map((a) => a.demandaId)
       .filter((d): d is string => d !== null)
@@ -89,6 +90,7 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
         historico,
         etapasDaDemanda,
         agora,
+        gastoRegistrado: gastos[plano.id],
       })
     }
   }

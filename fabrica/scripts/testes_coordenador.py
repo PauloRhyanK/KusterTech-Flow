@@ -1987,6 +1987,23 @@ class TestesConsertos(Base):
         execucoes = c._execucoes({"p": {"estado": {"seeds": {"s1": {"raia": "a", "estado": "executando", "runId": "r1"}}, "orquestrador": {}}, "plano": {"raias": [{"id": "a", "papel": "frontend"}]}}})
         self.assertEqual([(e["runId"], e["papel"], e["linhas"], e["ultimaAcao"]) for e in execucoes], [("r1", "frontend", [], None)])
 
+    def test_execucoes_respeitam_o_orcamento_de_tempo_do_ciclo(self):
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
+        relogio = [0.0]
+        c._relogio = lambda: relogio[0]
+        chamados = []
+
+        def eventos(run_id):
+            chamados.append(run_id)
+            relogio[0] += 15
+            return b'{"kind":"text","payload":{"text":"ok"}}\n'
+
+        c.motor.eventos_brutos = eventos
+        seeds = {f"s{i}": {"raia": f"r{i}", "estado": "executando", "runId": f"run{i}"} for i in range(3)}
+        execs = c._execucoes({"p": {"estado": {"seeds": seeds, "orquestrador": {}}, "plano": {"raias": []}}})
+        self.assertEqual(chamados, ["run0", "run1"])
+        self.assertEqual([len(e["linhas"]) for e in execs], [1, 1, 0])
+
     def test_execucoes_juntam_seed_revisor_e_demanda(self):
         c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
         c.motor.eventos["r1"] = b'{"kind":"text","payload":{"text":"editando"}}\n'

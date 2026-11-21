@@ -41,7 +41,7 @@ describe('prédio da Fábrica', () => {
     render(
       <Predio
         andares={e.andares}
-        recepcao={[{ demandaId: 'd', titulo: 'Nova', repositorio: 'a/b' }]}
+        recepcao={[{ demandaId: 'd', titulo: 'Nova', repositorio: 'a/b', esperaPaulo: false }]}
         selecionado={null}
         onSelecionar={onSelecionar}
       />,
@@ -49,5 +49,34 @@ describe('prédio da Fábrica', () => {
     expect(screen.getByText(/RECEPÇÃO · 1 na fila/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /1º andar/ }))
     expect(onSelecionar).toHaveBeenCalledWith(e.andares[0]!.planoId)
+  })
+
+  test('o andar que espera o Paulo vem primeiro, mesmo sendo o mais antigo', () => {
+    const base = escritorioDeTeste().andares[0]!
+    const andares = [
+      { ...base, planoId: 'velho', titulo: 'Velho', esperaPaulo: true },
+      { ...base, planoId: 'novo', titulo: 'Novo', esperaPaulo: false },
+    ]
+    render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
+    const nomes = screen
+      .getAllByRole('button', { name: /andar:/ })
+      .map((b) => b.getAttribute('aria-label'))
+    expect(nomes[0]).toMatch(/1º andar: Velho.*espera você/)
+    expect(nomes[1]).toMatch(/2º andar: Novo/)
+  })
+
+  test('a recepção avisa quantas demandas sem andar esperam o Paulo', () => {
+    render(
+      <Predio
+        andares={[]}
+        recepcao={[
+          { demandaId: 'a', titulo: 'A', repositorio: 'a/b', esperaPaulo: true },
+          { demandaId: 'b', titulo: 'B', repositorio: 'a/b', esperaPaulo: false },
+        ]}
+        selecionado={null}
+        onSelecionar={() => {}}
+      />,
+    )
+    expect(screen.getByText(/RECEPÇÃO · 2 na fila · 1 espera você/)).toBeInTheDocument()
   })
 })

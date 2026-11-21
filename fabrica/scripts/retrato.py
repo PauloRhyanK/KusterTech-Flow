@@ -94,6 +94,20 @@ def _limpar(texto: str) -> str:
     return " ".join(_CAMINHO.sub("[caminho]", texto).split())
 
 
+# Tokens que nunca saem da máquina: os do Flow (fd_, ff_, fp_), do GitHub, da Anthropic e qualquer Bearer.
+PADRAO_DE_SEGREDO = re.compile(
+    r"\b(?:fd|ff|fp|ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_-]{8,}|\bsk-ant-[A-Za-z0-9_-]{8,}|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{8,}"
+)
+
+
+def redigir(texto: str, segredos=()) -> str:
+    """Troca por `[segredo]` os tokens conhecidos pelo padrão e os segredos exatos da máquina."""
+    for segredo in segredos or ():
+        if isinstance(segredo, str) and len(segredo) >= 6:
+            texto = texto.replace(segredo, "[segredo]")
+    return PADRAO_DE_SEGREDO.sub("[segredo]", texto)
+
+
 def _texto(valor, limite: int):
     """Texto do contrato (não vazio, sem caminho da máquina, cortado) ou `None`."""
     if not isinstance(valor, str):
@@ -299,12 +313,14 @@ def _execucao(item):
     linhas = []
     for linha in _lista(item.get("linhas")):
         linha = _dict(linha)
-        texto = _texto(linha.get("texto"), LIMITES["texto"])
+        bruto = linha.get("texto")
+        texto = _texto(redigir(bruto) if isinstance(bruto, str) else bruto, LIMITES["texto"])
         if texto and linha.get("tipo") in TIPOS_DE_LINHA:
             linhas.append({"em": _instante(linha.get("em")), "tipo": linha["tipo"], "texto": texto})
     linhas = linhas[-LIMITES["linhas"] :]
     ultima = _dict(item.get("ultimaAcao"))
-    ultima_texto = _texto(ultima.get("texto"), LIMITES["texto"])
+    bruto_ultima = ultima.get("texto")
+    ultima_texto = _texto(redigir(bruto_ultima) if isinstance(bruto_ultima, str) else bruto_ultima, LIMITES["texto"])
     return {
         "runId": run_id,
         "papel": _texto(item.get("papel"), LIMITES["texto"]),

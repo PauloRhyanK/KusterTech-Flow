@@ -20,7 +20,13 @@ function rotulo(andar: Andar, numero: number): string {
 
 export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioProps) {
   // o andar mais novo fica em cima: a lista vem do mais antigo para o mais novo
-  const deCimaParaBaixo = andares.map((a, i) => ({ andar: a, numero: i + 1 })).reverse()
+  const esperam = recepcao.filter((r) => r.esperaPaulo).length
+  // em cima, quem espera o Paulo; depois, do mais novo para o mais antigo (o número do andar é a ordem de chegada)
+  const numerados = andares.map((a, i) => ({ andar: a, numero: i + 1 })).reverse()
+  const deCimaParaBaixo = [
+    ...numerados.filter((n) => n.andar.esperaPaulo),
+    ...numerados.filter((n) => !n.andar.esperaPaulo),
+  ]
   return (
     <div className={s.predio}>
       <div className={s.ceu}>
@@ -83,7 +89,10 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
         </div>
         <div className={s.terreo}>
           <span className={s.toldo} />
-          <span className={s.recepcao}>RECEPÇÃO · {recepcao.length} na fila</span>
+          <span className={s.recepcao}>
+            RECEPÇÃO · {recepcao.length} na fila
+            {esperam > 0 ? ` · ${esperam} espera${esperam > 1 ? 'm' : ''} você` : ''}
+          </span>
           <span className={s.porta} />
         </div>
         <div className={s.calcada} />

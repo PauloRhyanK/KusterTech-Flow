@@ -47,4 +47,17 @@ describe('tela do agente', () => {
     expect(screen.getByText('US$ 1,84')).toBeInTheDocument()
     expect(screen.getByText('Componente Tour')).toBeInTheDocument()
   })
+
+  test('comando com o nome da ferramenta na frente (Bash pnpm …) também entra em Testes', () => {
+    render(
+      <TelaDoAgente
+        agente={agente([{ em: null, tipo: 'ferramenta', texto: 'Bash pnpm vitest run src/a' }])}
+        parte={null}
+        aberto
+        onFechar={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Testes' }))
+    expect(screen.getByText('Bash pnpm vitest run src/a')).toBeInTheDocument()
+  })
 })

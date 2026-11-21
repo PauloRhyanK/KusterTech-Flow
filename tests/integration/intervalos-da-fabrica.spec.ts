@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import type { RetratoV2 } from '@/modules/fabrica/contrato'
 import exemploV2 from '@/modules/fabrica/retrato-exemplo-v2.json'
 import {
+  gastoPorPlano,
   gravarIntervalosDoRetrato,
   lerHistorico,
   semearIntervalos,
@@ -23,7 +24,10 @@ beforeEach(async () => {
 describe('intervalos da Fábrica (previsão do escritório)', () => {
   test('grava um intervalo por raia com início, com repositório e papel', async () => {
     await gravarIntervalosDoRetrato('fonte-1', retrato())
-    const linhas = await db.intervaloDaFabrica.findMany({ orderBy: { chave: 'asc' } })
+    const linhas = await db.intervaloDaFabrica.findMany({
+      where: { tipo: 'parte' },
+      orderBy: { chave: 'asc' },
+    })
     expect(linhas.map((l) => [l.chave, l.tipo, l.papel, l.repositorio])).toEqual([
       [CHAVE_KIT, 'parte', 'frontend', 'PauloRhyanK/CAISv2'],
       [CHAVE_FUNDACAO, 'parte', 'frontend', 'PauloRhyanK/CAISv2'],
@@ -92,5 +96,28 @@ describe('intervalos da Fábrica (previsão do escritório)', () => {
     expect((await lerHistorico()).partes).toEqual([
       { papel: 'backend', repositorio: 'kustertech-exemplo/alfa', minutos: 40 },
     ])
+  })
+
+  test('custo por execução: guarda o maior valor visto e soma por parte e por plano', async () => {
+    const r = retrato()
+    await gravarIntervalosDoRetrato('fonte-1', r)
+    const depois = retrato()
+    depois.execucoes[0]!.custoUsd = 3.5
+    await gravarIntervalosDoRetrato('fonte-1', depois)
+    const menor = retrato()
+    menor.execucoes[0]!.custoUsd = 1
+    menor.execucoes.push({
+      ...menor.execucoes[0]!,
+      runId: 'run_revisor',
+      papel: 'revisor',
+      custoUsd: 0.5,
+    })
+    await gravarIntervalosDoRetrato('fonte-1', menor)
+    expect(await gastoPorPlano()).toEqual({ 'paulorhyank--caisv2--demanda-9c44dfa8--abc123': 4 })
+    const fim = retrato()
+    fim.planos[0]!.fases[1]!.raias[0]!.fim = '2026-11-21T02:30:00Z'
+    fim.execucoes = []
+    await gravarIntervalosDoRetrato('fonte-1', fim)
+    expect((await lerHistorico()).custosPorParte).toEqual([4])
   })
 })

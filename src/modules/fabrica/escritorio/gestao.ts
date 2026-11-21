@@ -53,6 +53,8 @@ export interface EntradaDaGestao {
   etapasDaDemanda: { etapa: string; realMin: number | null }[]
   agora: Date
   sorteio?: () => number
+  /** soma do custo registrado por execução para o plano (intervalos); sem ele, só as ativas */
+  gastoRegistrado?: number
 }
 
 const minutosEntre = (de: string, ate: Date) =>
@@ -112,7 +114,8 @@ export function montarGestao(e: EntradaDaGestao): DadosDaGestao {
   })
 
   const doPlano = retrato.execucoes.filter((x) => x.planoId === plano.id)
-  const gasto = Math.round(doPlano.reduce((s, x) => s + (x.custoUsd ?? 0), 0) * 100) / 100
+  const gastoAtivas = doPlano.reduce((s, x) => s + (x.custoUsd ?? 0), 0)
+  const gasto = Math.round(Math.max(e.gastoRegistrado ?? 0, gastoAtivas) * 100) / 100
   const criterios = partes.flatMap((p) => p.criterios)
   return {
     semBase: previsao.semBase,

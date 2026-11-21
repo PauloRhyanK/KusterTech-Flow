@@ -273,10 +273,13 @@ def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
 # ---------------------------------------------------------------- observações
 
 
-def _nova_tentativa(seeds: dict, seed_id: str, seed: dict) -> dict:
-    """Seed zerada para uma nova tentativa: só a raia e o runId sobrevivem."""
+def _nova_tentativa(seeds: dict, seed_id: str, seed: dict, manter_inicio: bool = False) -> dict:
+    """Seed zerada para uma nova tentativa: só a raia e o runId sobrevivem (e o `inicio`, quando o mesmo run
+    só abriu um PR: o trabalho começou antes do PR)."""
     nova = _seed_nova(seed.get("raia"))
     nova["runId"] = seed.get("runId")
+    if manter_inicio and seed.get("inicio"):
+        nova["inicio"] = seed["inicio"]
     seeds[seed_id] = nova
     return nova
 
@@ -323,7 +326,7 @@ def _registrar_filho(estado: dict, raia_id: str, filho) -> None:
             return
         if url != seed.get("pr"):
             # PR novo: reinicia os campos da tentativa, qualquer que seja o estado
-            seed = _nova_tentativa(seeds, seed_id, seed)
+            seed = _nova_tentativa(seeds, seed_id, seed, manter_inicio=not run_novo)
             marcar_estado_da_seed(seed, "em_revisao")
             seed["pr"] = url
     elif obs == "merged":
