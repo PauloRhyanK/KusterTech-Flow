@@ -242,3 +242,122 @@ body,
     --border: var(--border-strong);
   }
 }
+
+/* Escritório da Fábrica: paleta do pixel art (as peças usam só estas variáveis; hex só aqui). */
+:root {
+  --pixel-contorno: #232733;
+  --pixel-branco: #ffffff;
+  --pixel-papel: #f2f2f2;
+  --pixel-metal: #c9d1de;
+  --pixel-vidro: #9fd4f5;
+  --pixel-tela-acesa: #7fd0ff;
+  --pixel-tela-apagada: #8b93a3;
+  --pixel-madeira-escura: #3d2e22;
+  --pixel-madeira: #a0764b;
+  --pixel-madeira-sombra: #7d5a38;
+  --pixel-moldura: #6b4b2e;
+  --pixel-terra: #5a3a22;
+  --pixel-folha: #3f9d4a;
+  --pixel-folha-escura: #2b7a35;
+  --pixel-vaso: #c96d3b;
+  --pixel-sofa: #c94a5f;
+  --pixel-sofa-claro: #e57a8c;
+  --pixel-gato: #f0a35e;
+  --pixel-vermelho: #c0485a;
+  --pixel-creme: #ffe9a8;
+  --pixel-cinza: #8a8f9c;
+  --pixel-azul: #3b6fd8;
+  --pixel-azul-claro: #7cc4ff;
+  --pixel-cortica: #c9a26b;
+  --pixel-amarelo: #ffe066;
+  --pixel-rosa: #ff9ec7;
+  --pixel-rosa-forte: #ff7eb6;
+  --pixel-verde-claro: #9be39b;
+  --pixel-tela-pintura: #fffaf0;
+  --pixel-ouro: #ffd34d;
+  --pixel-ouro-claro: #fff3b0;
+  --pixel-servidor: #4a5163;
+  --pixel-led-verde: #3ee27c;
+  --pixel-led-vermelho: #ff5b5b;
+  --pixel-chama: #ff6b3d;
+  --pixel-tela-verde: #1f9d6b;
+  --pixel-mesa-redonda: #b9895a;
+  --pixel-impressora: #9aa3b5;
+  --pixel-lixo: #7d8597;
+  --pixel-livro-amarelo: #e8b23a;
+  --pixel-fita: #f6e3b4;
+  /* papéis (camisa) e sombra */
+  --pixel-papel-frontend: #3b82f6;
+  --pixel-papel-frontend-sombra: #2c62b8;
+  --pixel-papel-backend: #10b981;
+  --pixel-papel-backend-sombra: #0c8b61;
+  --pixel-papel-revisor: #8b5cf6;
+  --pixel-papel-revisor-sombra: #6845b8;
+  --pixel-papel-planejador: #f59e0b;
+  --pixel-papel-planejador-sombra: #b87708;
+  --pixel-papel-desenho: #ec4899;
+  --pixel-papel-desenho-sombra: #b13673;
+  --pixel-papel-triagem: #64748b;
+  --pixel-papel-triagem-sombra: #4b5768;
+  --pixel-papel-teste: #14b8a6;
+  --pixel-papel-teste-sombra: #0f8a7c;
+  --pixel-papel-conserto: #ef4444;
+  --pixel-papel-conserto-sombra: #b33333;
+  /* cabelo e pele */
+  --pixel-cabelo-0: #3f2a1d;
+  --pixel-cabelo-1: #1b1b1b;
+  --pixel-cabelo-2: #a0522d;
+  --pixel-cabelo-3: #e0b33a;
+  --pixel-cabelo-4: #6b3e1f;
+  --pixel-cabelo-brilho: #ffffff40;
+  --pixel-pele-0: #f2c9a0;
+  --pixel-pele-1: #c98e63;
+  --pixel-pele-2: #8d5a3b;
+  --pixel-pele-3: #f5d0a9;
+  /* caixas: uma cor por raia */
+  --pixel-raia-0: #60a5fa;
+  --pixel-raia-1: #a78bfa;
+  --pixel-raia-2: #34d399;
+  --pixel-raia-3: #fbbf24;
+  --pixel-raia-4: #f472b6;
+  --pixel-raia-5: #2dd4bf;
+  --pixel-raia-6: #fb923c;
+  --pixel-raia-7: #94a3b8;
+  /* mapa */
+  --pixel-piso: #d6b689;
+  --pixel-piso-linha: #cba979;
+  --pixel-piso-junta: #c4a272;
+  --pixel-parede: #efe3cf;
+  --pixel-rodape: #7a5536;
+  --pixel-borda: #4b3a2c;
+  --pixel-area-triagem: #b7a6d6;
+  --pixel-area-planejamento: #e7c27a;
+  --pixel-area-desenho: #f2a7c3;
+  --pixel-area-copa: #e9d7b5;
+  --pixel-area-gestao: #d7dde6;
+  --pixel-area-desenvolvimento: #8fb3c9;
+  --pixel-area-teste: #9fd7c1;
+  --pixel-area-publicacao: #c1b4ea;
+  --pixel-area-fila: #cfc6b6;
+  --pixel-placa: #2b2f3a;
+  --pixel-placa-texto: #ffe9a8;
+  --pixel-esteira: #5b6170;
+  --pixel-esteira-faixa: #4a505d;
+  --pixel-esteira-faixa-clara: #666d7c;
+  --pixel-doca-entrada: #e8b23a;
+  --pixel-doca-entrega: #1f9d6b;
+  /* prédio */
+  --pixel-ceu: #bfe3ff;
+  --pixel-ceu-baixo: #e8f4ff;
+  --pixel-andar: #d9c4a4;
+  --pixel-pilar: #8a6440;
+  --pixel-luz: #fff2c4;
+  --pixel-apagado: #9aa7b8;
+  --pixel-terreo: #cdb592;
+  --pixel-toldo: #e8b23a;
+  --pixel-toldo-claro: #fff6d8;
+  --pixel-calcada: #9aa3b5;
+  --pixel-sirene: #ff3b3b;
+  --pixel-sirene-clara: #ffb347;
+  --pixel-sirene-luz: #ff3b3b70;
+}
