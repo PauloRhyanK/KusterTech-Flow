@@ -26,7 +26,8 @@ export type EventoAplicavel =
       tipo: 'plano_entregue'
       dados: { plano: string; resumo: string | null; artefato: string | null }
     }
-  | { tipo: 'retomada'; dados: Record<string, never> }
+  /** `resposta`: o que o Paulo responde à trava; a Fábrica só a lê na trava por pergunta do orquestrador (vai ao plano novo). */
+  | { tipo: 'retomada'; dados: { resposta?: string } }
   | { tipo: 'etapa_concluida_pelo_paulo'; dados: { chave: string } }
   | { tipo: 'encerrada_pelo_paulo'; dados: Record<string, never> }
 
@@ -293,6 +294,19 @@ export function aplicarEvento(
         encerrada: 'descartada',
       })
   }
+}
+
+export const LIMITE_DA_RESPOSTA = 2000
+
+/** Os dados da retomada: a resposta aparada; vazia não entra (os dados ficam `{}`). */
+export function dadosDaRetomada(
+  resposta: string | undefined,
+): { ok: true; dados: { resposta?: string } } | { ok: false; motivo: string } {
+  const r = resposta?.trim() ?? ''
+  if (r.length > LIMITE_DA_RESPOSTA) {
+    return { ok: false, motivo: `A resposta pode ter até ${LIMITE_DA_RESPOSTA} caracteres.` }
+  }
+  return { ok: true, dados: r ? { resposta: r } : {} }
 }
 
 function canonico(v: unknown): unknown {

@@ -770,6 +770,8 @@ TENTATIVAS_SEM_PR = 2  # a primeira e uma nova tentativa
 CAMINHO_CONFIG_DO_REPO = ".fabrica/config.json"
 PERMITIDOS_AO_PLANO = (".fabrica/planejamento/**", ".seeds/**")  # além do próprio plano da demanda
 MOTIVO_FORA = "o plano mexe fora de .fabrica: %s"
+CAMINHO_DA_PERGUNTA = ".fabrica/pergunta.md"  # o orquestrador pergunta ao Paulo em vez de planejar
+MOTIVO_PERGUNTA = "o orquestrador perguntou (responda ao tentar de novo): %s"
 MOTIVO_PROTEGIDO = "o plano mexe em caminho protegido: %s"
 MOTIVO_SEM_PLANO = "o PR não traz o plano %s"
 MOTIVO_PLANO_INVALIDO = "o plano não passa em validar_plano: %s"
@@ -874,7 +876,29 @@ def _permitido_ao_plano(caminho, caminho_do_plano: str) -> bool:
         return False
     if any(parte in ("", ".", "..") for parte in caminho.split("/")):
         return False
-    return caminho == caminho_do_plano or any(globs.casa_glob(caminho, g) for g in PERMITIDOS_AO_PLANO)
+    return caminho in (caminho_do_plano, CAMINHO_DA_PERGUNTA) or any(globs.casa_glob(caminho, g) for g in PERMITIDOS_AO_PLANO)
+
+
+def _titulo_da_pergunta(texto) -> str:
+    """A primeira linha com texto da pergunta, sem as marcas de título do Markdown."""
+    for linha in (texto if isinstance(texto, str) else "").splitlines():
+        limpa = linha.strip().lstrip("#").strip()
+        if limpa:
+            return limpa[:200]
+    return "veja %s no PR" % CAMINHO_DA_PERGUNTA
+
+
+def _resposta_da_retomada(item: dict, demanda: dict) -> str:
+    """A `resposta` da retomada mais recente do Paulo depois do início da fase atual (sem ela, vazia)."""
+    inicio = item.get("inicio")
+    resposta = ""
+    for evento in demanda.get("eventos") or []:
+        if isinstance(evento, dict) and evento.get("tipo") == "retomada":
+            em = evento.get("em")
+            if not isinstance(inicio, str) or (isinstance(em, str) and em > inicio):
+                dados = evento.get("dados") if isinstance(evento.get("dados"), dict) else {}
+                resposta = dados.get("resposta") if isinstance(dados.get("resposta"), str) else ""
+    return resposta
 
 
 def _ainda_no_planejamento(demanda: dict) -> bool:
@@ -1568,6 +1592,12 @@ class _Passo:
             self.eventos.append({"evento": "demanda_esperando_sessao", "id": id_})
 
     def planejar(self, id_: str, it: dict, demanda: dict) -> None:
+        if isinstance(it.get("pergunta"), str):
+            # a retomada responde a pergunta do orquestrador: a troca vai no contexto de todo planejamento seguinte
+            conversa = [c for c in it.get("conversa") or [] if isinstance(c, dict)]
+            conversa.append({"pergunta": it.pop("pergunta"), "resposta": _resposta_da_retomada(it, demanda)})
+            it["conversa"] = conversa[-prompts.LIMITE_CONVERSA :]
+            self.salvar()
         nivel = demanda.get("nivel")
         if nivel not in NIVEIS_SEM_SESSAO:
             if nivel != "planejar_comigo":
@@ -1599,7 +1629,7 @@ class _Passo:
 
     def despachar_plano(self, id_: str, it: dict, demanda: dict) -> None:
         modelo = self.modelo_do_plano
-        prompt = prompts.prompt_plano_da_demanda(demanda=demanda, triagem=it.get("triagem") or {})
+        prompt = prompts.prompt_plano_da_demanda(demanda=demanda, triagem=it.get("triagem") or {}, conversa=it.get("conversa"))
         run_id = self.motor.despachar_run(
             projeto=it["projeto"],
             agente=modelo["agente"],
@@ -1719,6 +1749,13 @@ class _Passo:
         fora = [a for a in arquivos if not _permitido_ao_plano(a, caminho)]
         if fora:
             self.travar_plano(id_, it, MOTIVO_FORA % fora[0], url)
+            return
+        if CAMINHO_DA_PERGUNTA in arquivos:
+            texto = self.forja.arquivo(repo, head, CAMINHO_DA_PERGUNTA)
+            texto = texto[: prompts.LIMITE_PERGUNTA] if isinstance(texto, str) else ""
+            self.travar_plano(id_, it, MOTIVO_PERGUNTA % _titulo_da_pergunta(texto), url)
+            it["pergunta"] = texto or "(a pergunta está em %s no PR %s)" % (CAMINHO_DA_PERGUNTA, url)
+            self.salvar()
             return
         if caminho not in arquivos:
             self.travar_plano(id_, it, MOTIVO_SEM_PLANO % caminho, url)
@@ -1867,7 +1904,7 @@ class _Passo:
         if not d.get("terminou"):
             d["terminou"] = True  # daqui em diante a vaga não espera mais o run
             self.salvar()
-        pr_url = run.get("prUrl")
+        pr_url = run.get("prUrl") or self.pr_que_andou(d)
         if isinstance(pr_url, str) and pr_url:
             self.conferir_desenho(id_, it, demanda, pr_url)
             return
@@ -1876,6 +1913,22 @@ class _Passo:
             self.travar_desenho(id_, it, MOTIVO_DESENHO_SEM_PR, d.get("prUrl"))
         else:
             self.novo_run_do_desenho(id_, it, demanda)
+
+    def pr_que_andou(self, dados: dict):
+        """O PR já conhecido, se o run rodou no branch dele e o head andou desde a última conferência; senão `None`.
+
+        Num branch que já tem PR, o Warren devolve o run sem `prUrl`: o trabalho está no head do mesmo PR. Um run que
+        termina em `no_changes` depois de outro que já empurrou também cai aqui, pelo head que mudou.
+        """
+        url, branch, visto = dados.get("prUrl"), dados.get("branch"), dados.get("headSha")
+        if not (isinstance(url, str) and url and isinstance(branch, str) and branch and isinstance(visto, str)):
+            return None
+        try:
+            pr = despachante._dict(self.forja.pr(url))
+        except ValueError:
+            return None
+        head = pr.get("headSha")
+        return url if pr.get("branch") == branch and isinstance(head, str) and head and head != visto else None
 
     def conferir_desenho(self, id_: str, it: dict, demanda: dict, pr_url: str) -> None:
         """O PR do run: só o `desenho.html`, e o HTML do head passa em `validar_desenho`; inválido refaz uma vez."""
@@ -2179,7 +2232,7 @@ class _Passo:
         if not t.get("terminou"):
             t["terminou"] = True  # daqui em diante a vaga não espera mais o run
             self.salvar()
-        pr_url = run.get("prUrl")
+        pr_url = run.get("prUrl") or (self.pr_que_andou(t) if t.get("refeito") else None)
         if isinstance(pr_url, str) and pr_url:
             self.conferir_teste(id_, it, demanda, pr_url)
             return

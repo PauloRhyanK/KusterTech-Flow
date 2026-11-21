@@ -371,7 +371,14 @@ export interface FaixaDaEspera {
   titulo: string
   contexto: string
   acoes: AcaoDaFaixa[]
+  /** Só na travada: o PR da trava (`https://github.com/…`). */
+  prUrl?: string
+  /** Só na trava por pergunta do orquestrador: a retomada leva a resposta do Paulo ao plano. */
+  responder?: true
 }
+
+/** O começo do motivo da trava quando o orquestrador fez uma pergunta (`MOTIVO_PERGUNTA` do kit). */
+export const PREFIXO_DA_PERGUNTA = 'o orquestrador perguntou'
 
 export interface DemandaEmEspera {
   id: string
@@ -379,6 +386,8 @@ export interface DemandaEmEspera {
   esperaMotivo: string | null
   versaoDoDesenho: number
   ultimoAjuste: { texto: string; em: Date } | null
+  /** O `dados.url` do último evento `travada`, como veio. */
+  urlDaTrava: string | null
   etapaAtual: string
   etapas: readonly EtapaDefinida[]
 }
@@ -434,8 +443,19 @@ export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | 
         contexto: d.esperaMotivo ?? '',
         acoes: ['destino'],
       }
-    case 'travada':
-      return { titulo: d.esperaMotivo ?? 'A demanda travou', contexto: '', acoes: ['retomar'] }
+    case 'travada': {
+      const prUrl = linkDoGithub(d.urlDaTrava)
+      const pergunta = d.esperaMotivo?.startsWith(PREFIXO_DA_PERGUNTA) === true
+      return {
+        titulo: d.esperaMotivo ?? 'A demanda travou',
+        contexto: pergunta
+          ? 'Leia a pergunta no PR e responda abaixo. Sem resposta, ele segue o caminho padrão que propôs.'
+          : '',
+        acoes: ['retomar'],
+        ...(prUrl ? { prUrl } : {}),
+        ...(pergunta ? { responder: true as const } : {}),
+      }
+    }
     case 'teste_falhou':
       return {
         titulo: 'O teste no navegador falhou duas vezes',
@@ -478,6 +498,23 @@ export function linkDoArtefato(url: string | null): string | null {
     const u = new URL(url)
     const ok =
       u.protocol === 'https:' && u.hostname === 'claude.ai' && !u.username && !u.password && !u.port
+    return ok ? u.href : null
+  } catch {
+    return null
+  }
+}
+
+/** O link da trava só sai para `https://github.com/…`, sem usuário nem porta. */
+export function linkDoGithub(url: string | null): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    const ok =
+      u.protocol === 'https:' &&
+      u.hostname === 'github.com' &&
+      !u.username &&
+      !u.password &&
+      !u.port
     return ok ? u.href : null
   } catch {
     return null
@@ -544,8 +581,18 @@ const QUEM_FEZ: Record<string, string> = {
   usuario: 'um usuário',
 }
 
+const LIMITE_DA_RESPOSTA_NO_HISTORICO = 120
+
 export function textoDoEvento(tipo: string, dados: unknown): string {
   const d = (dados ?? {}) as Record<string, unknown>
+  if (tipo === 'retomada' && typeof d.resposta === 'string' && d.resposta.trim()) {
+    const r = d.resposta.trim()
+    const curta =
+      r.length > LIMITE_DA_RESPOSTA_NO_HISTORICO
+        ? `${r.slice(0, LIMITE_DA_RESPOSTA_NO_HISTORICO)}…`
+        : r
+    return `Retomada com resposta: ${curta}`
+  }
   if (tipo === 'teste')
     return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'
   if ((tipo === 'desenho_aprovado' || tipo === 'ajuste_pedido') && typeof d.versao === 'number') {

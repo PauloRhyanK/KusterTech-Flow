@@ -411,9 +411,49 @@ describe('faixaDaEspera', () => {
     esperaMotivo: null,
     versaoDoDesenho: 2,
     ultimoAjuste: null,
+    urlDaTrava: null,
     etapaAtual: 'desenho',
     etapas: [...MODELO_PADRAO],
   }
+
+  test('travada por pergunta do orquestrador → campo de resposta e contexto', () => {
+    const motivo = 'o orquestrador perguntou (responda ao tentar de novo): Pergunta ao Paulo'
+    expect(faixaDaEspera({ ...base, espera: 'travada', esperaMotivo: motivo }, AGORA)).toEqual({
+      titulo: motivo,
+      contexto:
+        'Leia a pergunta no PR e responda abaixo. Sem resposta, ele segue o caminho padrão que propôs.',
+      acoes: ['retomar'],
+      responder: true,
+    })
+    expect(
+      faixaDaEspera({ ...base, espera: 'travada', esperaMotivo: 'CI vermelho' }, AGORA)?.responder,
+    ).toBeUndefined()
+  })
+
+  test('travada com url do GitHub → prUrl; url de fora do GitHub ou sem https → sem link', () => {
+    const pr = 'https://github.com/kustertech-exemplo/alfa/pull/7'
+    expect(
+      faixaDaEspera(
+        { ...base, espera: 'travada', esperaMotivo: 'CI vermelho', urlDaTrava: pr },
+        AGORA,
+      ),
+    ).toEqual({ titulo: 'CI vermelho', contexto: '', acoes: ['retomar'], prUrl: pr })
+    for (const url of [
+      'http://github.com/a/b/pull/1',
+      'https://github.com.mal.io/a/b/pull/1',
+      'https://evil.com/a',
+      'javascript:alert(1)',
+      'https://user:x@github.com/a/b/pull/1',
+    ]) {
+      expect(
+        faixaDaEspera({ ...base, espera: 'travada', urlDaTrava: url }, AGORA)?.prUrl,
+      ).toBeUndefined()
+    }
+    // Só a travada mostra o link.
+    expect(
+      faixaDaEspera({ ...base, espera: 'teste_falhou', urlDaTrava: pr }, AGORA)?.prUrl,
+    ).toBeUndefined()
+  })
 
   test('faixaDaEspera aprovar_desenho com ajuste ontem → contexto "versão 2 · ajuste pedido ontem: \"menos texto no topo\"" e ações aprovar e ajuste', () => {
     const faixa = faixaDaEspera(
@@ -552,6 +592,7 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
           esperaMotivo: null,
           versaoDoDesenho: 0,
           ultimoAjuste: null,
+          urlDaTrava: null,
           etapaAtual: 'desenho',
           etapas: [...MODELO_PADRAO],
         },
@@ -573,6 +614,15 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
     )
     expect(textoDoEvento('desenho_aprovado', { versao: 2 })).toBe('Desenho aprovado (versão 2)')
     expect(textoDoEvento('encerrada_pelo_paulo', {})).toBe('Demanda encerrada')
+  })
+
+  test('histórico: retomada com resposta mostra o texto, truncado em 120', () => {
+    expect(textoDoEvento('retomada', {})).toBe('Retomada')
+    expect(textoDoEvento('retomada', { resposta: 'use o token novo' })).toBe(
+      'Retomada com resposta: use o token novo',
+    )
+    const longa = textoDoEvento('retomada', { resposta: 'a'.repeat(300) })
+    expect(longa).toBe(`Retomada com resposta: ${'a'.repeat(120)}…`)
   })
 
   test('descartada: rótulo "Encerrada" neutro e fora dos grupos', () => {

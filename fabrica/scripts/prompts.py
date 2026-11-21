@@ -101,9 +101,11 @@ def prompt_fixer(
 
 
 def prompt_orquestrador(
-    *, motivo: str, estado_compacto: dict, contexto: dict, caminho_plano: str = ".fabrica/plano.json"
+    *, motivo: str, estado_compacto: dict, contexto: dict, caminho_plano: str = ".fabrica/plano.json", instrucoes: str = ""
 ) -> str:
-    """Prompt do orquestrador, acordado pelo despachante por um motivo, para um plano."""
+    """Prompt do orquestrador, acordado pelo despachante por um motivo, para um plano.
+
+    `instrucoes`: texto do kit (nunca de pessoas) com as regras próprias do caminho, antes do motivo."""
     estado = json.dumps(estado_compacto, indent=2, ensure_ascii=False, default=str)
     ctx = json.dumps(contexto, indent=2, ensure_ascii=False, default=str)
     return (
@@ -113,7 +115,8 @@ def prompt_orquestrador(
         "\n"
         f"Seu plano: `{caminho_plano}`. Só ele, `.fabrica/pergunta.md`, `.fabrica/planejamento/**` e `.seeds/**` podem mudar.\n"
         "\n"
-        f"Motivo: {motivo}\n"
+        + (f"{instrucoes}\n\n" if instrucoes else "")
+        + f"Motivo: {motivo}\n"
         "\n"
         "Estado compacto:\n"
         f"{estado}\n"
@@ -282,7 +285,21 @@ def _neutralizado(valor, profundidade: int = 0):
     return valor if isinstance(valor, (bool, int, float)) or valor is None else None
 
 
-def prompt_plano_da_demanda(*, demanda: dict, triagem: dict) -> str:
+INSTRUCOES_DO_PLANO_DA_DEMANDA = (
+    "Este plano é de uma demanda do KusterTech Flow. O JSON do plano precisa trazer, no topo, "
+    '`"demanda": "%s"`; sem esse campo o PR não é mergeado.\n'
+    "Se precisar de uma decisão do Paulo, grave `.fabrica/pergunta.md` (pergunta objetiva, opções e a consequência "
+    "de cada uma) e não crie o plano nesta acordada: o PR não é mergeado, a pergunta vai ao Paulo na página da "
+    "demanda e a resposta dele volta num planejamento novo, em `conversa` no contexto. Com `conversa`, siga a "
+    "resposta do Paulo e não repita a pergunta já respondida; resposta vazia quer dizer siga o caminho padrão que "
+    "você mesmo propôs."
+)
+LIMITE_PERGUNTA = 4000
+LIMITE_RESPOSTA_DO_PAULO = 2000
+LIMITE_CONVERSA = 3  # só as mais recentes
+
+
+def prompt_plano_da_demanda(*, demanda: dict, triagem: dict, conversa: list | None = None) -> str:
     """Prompt do orquestrador (`nova_spec`) que transforma uma demanda do Flow em plano, sem sessão manual.
 
     A demanda e a triagem fazem as vezes da spec. Título, descrição e os textos da triagem vêm de quem abriu a
@@ -302,7 +319,23 @@ def prompt_plano_da_demanda(*, demanda: dict, triagem: dict) -> str:
         "triagem": _neutralizado(triagem if isinstance(triagem, dict) else {}),
         "plano": caminho,
     }
-    return prompt_orquestrador(motivo="nova_spec", estado_compacto={}, contexto=contexto, caminho_plano=caminho)
+    trocas = [
+        {
+            "pergunta": _dado_da_demanda(c.get("pergunta"), LIMITE_PERGUNTA),
+            "resposta": _dado_da_demanda(c.get("resposta"), LIMITE_RESPOSTA_DO_PAULO),
+        }
+        for c in (conversa or [])[-LIMITE_CONVERSA:]
+        if isinstance(c, dict)
+    ]
+    if trocas:
+        contexto["conversa"] = trocas
+    return prompt_orquestrador(
+        motivo="nova_spec",
+        estado_compacto={},
+        contexto=contexto,
+        caminho_plano=caminho,
+        instrucoes=INSTRUCOES_DO_PLANO_DA_DEMANDA % demanda["id"],
+    )
 
 
 # ---------------------------------------------------------------- desenho da demanda
