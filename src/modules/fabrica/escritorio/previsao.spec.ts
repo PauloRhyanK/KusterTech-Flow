@@ -153,3 +153,29 @@ describe('tempo por etapa e custo previsto', () => {
     expect(custoPrevisto(10, [], 3)).toBeNull()
   })
 })
+
+describe('distribuição da previsão (sala de gestão)', () => {
+  test('a chance por janela soma 100% e a última janela contém o p85', () => {
+    let semente = 3
+    const sorteio = () => {
+      semente = (semente * 16807) % 2147483647
+      return semente / 2147483647
+    }
+    const variado = [10, 20, 30, 60, 90, 120, 200].map((m) => ({
+      papel: 'frontend',
+      repositorio: 'a/b',
+      minutos: m,
+    }))
+    const r = preverEntrega({
+      ...base,
+      sorteio,
+      restantes: [parte('A'), parte('B', { dependeDe: ['A'] })],
+      historico: variado,
+    })
+    if (r.semBase) throw new Error('esperava base')
+    const total = r.distribuicao.reduce((s, j) => s + j.chance, 0)
+    expect(total).toBeCloseTo(100, 0)
+    expect(r.distribuicao.length).toBeGreaterThan(1)
+    expect(r.distribuicao.length).toBeLessThanOrEqual(10)
+  })
+})

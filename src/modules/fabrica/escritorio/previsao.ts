@@ -36,6 +36,8 @@ export type Previsao =
       p85: Date
       caminhoCritico: string[]
       fimPrevistoPorParte: Record<string, Date>
+      /** a chance (em %) de terminar até o fim de cada janela, em até 10 janelas iguais */
+      distribuicao: { ate: Date; chance: number }[]
     }
 
 export const BASE_MINIMA = 5
@@ -51,7 +53,11 @@ export function mediana(valores: number[]): number | null {
 }
 
 /** As durações que servem de base para um papel: do repositório se houver 5 ou mais, senão de todos. */
-function amostras(historico: Historico[], papel: string | null, repositorio: string): number[] {
+export function amostras(
+  historico: Historico[],
+  papel: string | null,
+  repositorio: string,
+): number[] {
   const doPapel = historico.filter((h) => h.papel === papel)
   const doRepo = doPapel.filter((h) => h.repositorio === repositorio)
   if (doRepo.length >= BASE_MINIMA) return doRepo.map((h) => h.minutos)
@@ -165,7 +171,23 @@ export function preverEntrega(entrada: EntradaDaPrevisao): Previsao {
     p85: emData(percentil(fins, 0.85)),
     caminhoCritico: caminhoCritico(restantes, medianas),
     fimPrevistoPorParte: Object.fromEntries([...fimMediano].map(([raia, m]) => [raia, emData(m)])),
+    distribuicao: distribuir(fins).map((j) => ({ ate: emData(j.ate), chance: j.chance })),
   }
+}
+
+/** Os fins das rodadas (ordenados) em até 10 janelas iguais, com a porcentagem de rodadas em cada uma. */
+function distribuir(fins: number[]): { ate: number; chance: number }[] {
+  const menor = fins[0]!
+  const maior = fins[fins.length - 1]!
+  if (maior === menor) return [{ ate: maior, chance: 100 }]
+  const janelas = Math.min(10, Math.max(2, Math.ceil((maior - menor) / 15)))
+  const passo = (maior - menor) / janelas
+  const contagem = Array.from({ length: janelas }, () => 0)
+  for (const f of fins) contagem[Math.min(janelas - 1, Math.floor((f - menor) / passo))]! += 1
+  return contagem.map((n, i) => ({
+    ate: menor + passo * (i + 1),
+    chance: Math.round((n / fins.length) * 1000) / 10,
+  }))
 }
 
 export interface TempoDaEtapa {

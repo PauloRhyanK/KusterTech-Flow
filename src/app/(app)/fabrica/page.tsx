@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation'
 import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
-import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
+import { obterEscritorio } from '@/modules/fabrica/escritorio/queries'
 import { PainelDaFabrica } from './_componentes/painel-da-fabrica'
+import { Atualizar } from './_componentes/escritorio/atualizar'
+import { Escritorio } from './_componentes/escritorio/escritorio'
 
 export default async function PaginaDaFabrica() {
   const sessao = await obterSessao()
@@ -10,10 +12,22 @@ export default async function PaginaDaFabrica() {
     redirect('/entrar')
   }
 
+  const agora = new Date()
   const permitido = autorizar(sessao.sujeito, 'desenvolvimento.ler')
-  const retrato = permitido ? await obterRetratoMaisRecente(sessao.sujeito) : null
+  if (!permitido) {
+    return <PainelDaFabrica secao="planos" permitido={false} retrato={null} agora={agora} />
+  }
 
+  const { escritorio, gestao, recebido } = await obterEscritorio(sessao.sujeito, agora)
   return (
-    <PainelDaFabrica secao="planos" permitido={permitido} retrato={retrato} agora={new Date()} />
+    <>
+      <Atualizar />
+      <Escritorio
+        escritorio={escritorio}
+        gestao={gestao}
+        agora={agora.toISOString()}
+        tecnico={<PainelDaFabrica secao="planos" permitido retrato={recebido} agora={agora} />}
+      />
+    </>
   )
 }

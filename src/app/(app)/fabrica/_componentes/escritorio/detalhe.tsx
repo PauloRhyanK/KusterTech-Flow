@@ -2,17 +2,12 @@
 
 // Coluna da direita: a parte (raia) ou o agente clicado.
 import type { Agente, Parte } from '@/modules/fabrica/escritorio/model'
+import { hora } from './hora'
 import { Boneco, Caixa } from './pixel'
 import { ROTULO_DA_SITUACAO } from './plano-da-entrega'
 
 export type Selecao =
   { tipo: 'agente'; agente: Agente } | { tipo: 'parte'; parte: Parte; fase: string } | null
-
-function hora(instante: string | null): string {
-  if (!instante) return '··:··'
-  const d = new Date(instante)
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
-}
 
 const MARCA = {
   cinza: 'var(--pixel-metal)',

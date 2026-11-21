@@ -6,6 +6,7 @@ import { Dialog } from '@base-ui/react/dialog'
 import { useState } from 'react'
 import type { Agente, Parte } from '@/modules/fabrica/escritorio/model'
 import { cn } from '@/lib/utils'
+import { hora } from './hora'
 
 type Aba = 'agora' | 'alteracoes' | 'testes'
 
@@ -19,12 +20,6 @@ export function linhasDaAba(linhas: Agente['linhas'], aba: Aba): Agente['linhas'
   if (aba === 'alteracoes')
     return linhas.filter((l) => l.tipo === 'ferramenta' && EDICAO.test(l.texto))
   return linhas
-}
-
-function hora(instante: string | null): string {
-  if (!instante) return '··:··'
-  const d = new Date(instante)
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
 function custo(valor: number | null): string {
