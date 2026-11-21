@@ -1,7 +1,7 @@
 # Atividade real — desenho
 
 **Data:** 19/11/2026
-**Estado:** revisada com as respostas do Paulo em 20/11/2026; aguardando a aprovação por escrito
+**Estado:** aprovada pelo Paulo em 20/11/2026 (spec e desenho)
 **Tamanho:** pequeno (uma consulta, dois blocos de tela)
 
 ## 1. Por que

@@ -33,7 +33,7 @@ Deu certo quando o Paulo abre `/desenvolvimento/fabrica` na Central e vê o esta
 - **Fato:** `coordenador.ler_coordenador_env` e `Coordenador.ambiente` filtram por `VARIAVEIS_REPASSADAS`, que também vão para o `plano.env`, e `despachante._ler_token` levanta `ErroDeEntrada`, que encerra o `fabrica-fila` com saída 2. O envio tem leitura própria, fora disso.
 - **Fato:** a pausa e o Warren fora do ar guardam a issue em `decisaoPausa`, `warrenFora` e `warrenParcial`, não em `decisoes` (`fabrica/scripts/despachante.py`, `_registrar_intencao`).
 - **Decisão do Paulo (03/11):** o CI continua desligado por enquanto. Cada PR de seed para nele depois de 10 min (`repositório sem CI`), e integração e E2E rodam na homologação, no Mac.
-- **Decisão do Paulo (03/11):** a Central roda no Mac dele por enquanto. Na homologação, o Mac abre um túnel reverso para a máquina (`ssh -N -R 13000:127.0.0.1:3000 devops@100.70.15.95`) e o kit envia para `http://127.0.0.1:13000/api/fabrica/estado`, o que a regra de URL já aceita. Com o Mac desligado, o envio só falha com um aviso e a página mostra a idade dos dados.
+- **Decisão do Paulo (03/11):** a Central roda no Mac dele por enquanto. Na homologação, o Mac abre um túnel reverso para a máquina (`ssh -N -R 13000:127.0.0.1:3000 <usuario>@<ip-da-tailscale>`) e o kit envia para `http://127.0.0.1:13000/api/fabrica/estado`, o que a regra de URL já aceita. Com o Mac desligado, o envio só falha com um aviso e a página mostra a idade dos dados.
 - **Pendência (não bloqueia):** VPS, domínio com HTTPS e GitHub App ficam para depois; quando existirem, só muda a URL.
 
 - **Decisão do Paulo (03/11):** o painel v1 fica sem o motivo de espera pedido pela D59; ele quer só a visão por enquanto.

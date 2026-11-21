@@ -17,11 +17,11 @@ A oficina é a máquina interna onde rodam a Fábrica de agentes, os runners do 
 Só pela Tailscale. A porta 22 não abre na internet e nada é encaminhado no roteador.
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_dev_agents -o IdentitiesOnly=yes devops@100.70.15.95
+ssh -i ~/.ssh/id_ed25519_dev_agents -o IdentitiesOnly=yes <usuario>@<ip-da-tailscale>
 ```
 
 - SSH só por chave: `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitRootLogin no`.
-- ufw nega toda entrada por padrão e libera a porta 22 só na interface `tailscale0` e na rede local `192.168.0.0/24` (acesso de emergência no próprio local).
+- ufw nega toda entrada por padrão e libera a porta 22 só na interface `tailscale0` e na rede local `<rede-local>` (acesso de emergência no próprio local).
 - `unattended-upgrades` aplica as atualizações de segurança todos os dias.
 - **Portas publicadas pelo Docker passam por cima do ufw.** Todo serviço da oficina publica só em `127.0.0.1` e chega à rede pela Tailscale (`tailscale serve`).
 
