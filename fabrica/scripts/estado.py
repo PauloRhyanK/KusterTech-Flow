@@ -43,9 +43,36 @@ def _raia_nova(plano_seeds=None) -> dict:
     }
 
 
-def _seed_nova(raia_id: str) -> dict:
+def _instante(agora=None) -> str:
+    """`agora` (datetime) ou o relógio, em UTC, no formato AAAA-MM-DDTHH:MM:SSZ do retrato."""
+    if not isinstance(agora, datetime.datetime):
+        agora = datetime.datetime.now(datetime.timezone.utc)
+    if agora.tzinfo is None:
+        agora = agora.replace(tzinfo=datetime.timezone.utc)
+    return agora.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+FIM_DA_SEED = ("mergeada", "concluida", "falhou", "obsoleta")
+
+
+def marcar_estado_da_seed(seed: dict, novo: str, agora=None) -> None:
+    """Muda o estado da seed e grava `inicio` (primeira vez em `executando`) e `fim` (estado final).
+    Voltar a um estado não final (redespacho depois de falhar) apaga o `fim`."""
+    seed["estado"] = novo
+    if novo == "executando" and "inicio" in seed and seed.get("inicio") is None:
+        seed["inicio"] = _instante(agora)
+    if novo in FIM_DA_SEED:
+        if seed.get("fim") is None and "inicio" in seed:
+            seed["fim"] = _instante(agora)
+    elif "fim" in seed:
+        seed["fim"] = None
+
+
+def _seed_nova(raia_id: str, agora=None) -> dict:
     return {
         "raia": raia_id,
+        "inicio": _instante(agora),
+        "fim": None,
         "estado": "executando",
         "runId": None,
         "pr": None,
@@ -246,10 +273,13 @@ def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
 # ---------------------------------------------------------------- observações
 
 
-def _nova_tentativa(seeds: dict, seed_id: str, seed: dict) -> dict:
-    """Seed zerada para uma nova tentativa: só a raia e o runId sobrevivem."""
+def _nova_tentativa(seeds: dict, seed_id: str, seed: dict, manter_inicio: bool = False) -> dict:
+    """Seed zerada para uma nova tentativa: só a raia e o runId sobrevivem (e o `inicio`, quando o mesmo run
+    só abriu um PR: o trabalho começou antes do PR)."""
     nova = _seed_nova(seed.get("raia"))
     nova["runId"] = seed.get("runId")
+    if manter_inicio and seed.get("inicio"):
+        nova["inicio"] = seed["inicio"]
     seeds[seed_id] = nova
     return nova
 
@@ -296,13 +326,13 @@ def _registrar_filho(estado: dict, raia_id: str, filho) -> None:
             return
         if url != seed.get("pr"):
             # PR novo: reinicia os campos da tentativa, qualquer que seja o estado
-            seed = _nova_tentativa(seeds, seed_id, seed)
-            seed["estado"] = "em_revisao"
+            seed = _nova_tentativa(seeds, seed_id, seed, manter_inicio=not run_novo)
+            marcar_estado_da_seed(seed, "em_revisao")
             seed["pr"] = url
     elif obs == "merged":
-        seed["estado"] = "mergeada"
+        marcar_estado_da_seed(seed, "mergeada")
     elif obs == "failed":
-        seed["estado"] = "falhou"
+        marcar_estado_da_seed(seed, "falhou")
 
 
 def registrar_plano(
@@ -420,7 +450,7 @@ def registrar_fim_de_run(
                 and veredito.get("sha") == seed.get("revisaoSha")
             ):
                 seed["veredito"] = veredito
-                seed["estado"] = "aguardando_gates"
+                marcar_estado_da_seed(seed, "aguardando_gates")
         elif seed.get("fixerRunId") == run_id:
             achou = True
             seed["fixerRunId"] = None
@@ -432,7 +462,7 @@ def registrar_fim_de_run(
             elif estado_run == "succeeded":
                 seed["veredito"] = None  # o head mudou: o próximo ciclo pede revisão nova
             elif seed.get("estado") not in TERMINAIS:
-                seed["estado"] = "falhou"
+                marcar_estado_da_seed(seed, "falhou")
                 # os achados que o fixer não resolveu vão para o orquestrador
                 seed["veredito"] = seed.get("vereditoAnterior")
                 _avisar(estado, f"seed {seed_id!r}: fixer terminou em {estado_run!r}")
@@ -787,7 +817,7 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
             seed["vereditoAnterior"] = seed.get("veredito")
             seed["veredito"] = None
             seed["tentativasRevisao"] = 0
-            seed["estado"] = "corrigindo"
+            marcar_estado_da_seed(seed, "corrigindo")
         else:
             seed["fixerUsado"] = True
             _pedir_humano(estado, seed_id, seed, "despacho do fixer sem runId")
@@ -798,7 +828,7 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
         _pedir_humano(estado, seed_id, seed, "verificação com resultado inválido")
     elif tipo == "mergear":
         if resultado.get("ok") is True:
-            seed["estado"] = "mergeada"
+            marcar_estado_da_seed(seed, "mergeada")
         else:
             recusas = seed.get("tentativasMerge")
             recusas = (recusas if _inteiro(recusas) and recusas >= 0 else MAX_RECUSAS_DE_MERGE - 1) + 1
@@ -809,7 +839,7 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
                 )
     elif tipo == "aguardar_humano":
         motivos = [m for m in _lista(acao.get("motivos")) if isinstance(m, str)]
-        seed["estado"] = "bloqueada_humano"
+        marcar_estado_da_seed(seed, "bloqueada_humano")
         seed["motivoHumano"] = "; ".join(motivos) or "decisão humana necessária"
         seed["pendenteHumano"] = None
     return estado

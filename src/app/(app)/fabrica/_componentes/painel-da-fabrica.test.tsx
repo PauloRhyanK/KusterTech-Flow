@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
-import type { RetratoV1 } from '@/modules/fabrica/contrato'
+import { normalizarRetrato, type RetratoV1 } from '@/modules/fabrica/contrato'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 import exemplo from '@/modules/fabrica/retrato-exemplo.json'
 import { PainelDaFabrica } from './painel-da-fabrica'
@@ -9,7 +9,8 @@ const AGORA = new Date('2026-11-03T21:42:00Z')
 
 function retratoRecebido(sobrepor: Partial<RetratoRecebido> = {}): RetratoRecebido {
   return {
-    retrato: structuredClone(exemplo) as unknown as RetratoV1,
+    retrato: normalizarRetrato(structuredClone(exemplo) as unknown as RetratoV1),
+    versaoOriginal: 1,
     geradoEm: new Date('2026-11-03T21:40:00Z'),
     recebidoEm: new Date('2026-11-03T21:41:00Z'),
     ...sobrepor,
@@ -97,7 +98,7 @@ describe('PainelDaFabrica', () => {
   })
 
   test('URL fora de https://github.com/ não vira link', () => {
-    const retrato = structuredClone(exemplo) as unknown as RetratoV1
+    const retrato = normalizarRetrato(structuredClone(exemplo) as unknown as RetratoV1)
     retrato.planos[0]!.decisoes[0]!.url = 'https://exemplo.com/issue'
 
     render(

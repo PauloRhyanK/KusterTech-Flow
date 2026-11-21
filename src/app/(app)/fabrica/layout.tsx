@@ -25,12 +25,12 @@ export default async function LayoutDaFabrica({ children }: { children: ReactNod
       <CabecalhoDePagina
         trilhas={[{ rotulo: 'Fábrica' }]}
         titulo="Fábrica"
-        contexto="Estado da máquina de agentes, enviado pelo coordenador. Só leitura."
+        contexto="O escritório da Fábrica: cada andar é uma demanda em execução. Só leitura."
       />
       <Abas
         rotulo="Seções da Fábrica"
         abas={[
-          { rotulo: 'Planos em execução', href: '/fabrica', disponivel: true },
+          { rotulo: 'Escritório', href: '/fabrica', disponivel: true },
           {
             rotulo: 'Avisos',
             href: '/fabrica/avisos',

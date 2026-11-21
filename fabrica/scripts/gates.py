@@ -47,6 +47,23 @@ def _veredito_valido(veredito, head_sha):
     )
 
 
+def criterios_do_veredito(veredito):
+    """Os critérios de aceite marcados pelo revisor, como `[{"indice", "cumprido"}]`, ou None se faltarem ou
+    vierem mal formados. Não entra na decisão de merge: um campo torto aqui não segura o PR."""
+    criterios = veredito.get("criterios") if isinstance(veredito, dict) else None
+    if not isinstance(criterios, list) or not criterios:
+        return None
+    saida = []
+    for item in criterios:
+        if not isinstance(item, dict):
+            return None
+        indice, cumprido = item.get("indice"), item.get("cumprido")
+        if isinstance(indice, bool) or not isinstance(indice, int) or indice < 0 or not isinstance(cumprido, bool):
+            return None
+        saida.append({"indice": indice, "cumprido": cumprido})
+    return saida
+
+
 def _descrever_achados(veredito):
     achados = veredito.get("achados")
     if not isinstance(achados, list):

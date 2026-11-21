@@ -124,7 +124,8 @@ describe('obterRetratoMaisRecente', () => {
     await enviar(exemplo)
     const r = await obterRetratoMaisRecente(admin)
     expect(r?.recebidoEm).toEqual(AGORA)
-    expect(r?.retrato.versao).toBe(1)
+    expect(r?.versaoOriginal).toBe(1)
+    expect(r?.retrato.versao).toBe(2)
 
     await revogarFonteDaFabrica(admin, fonteId)
     expect(await obterRetratoMaisRecente(admin)).toBeNull()

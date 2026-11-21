@@ -4,7 +4,7 @@ import { formatarDataHora } from '@/lib/data'
 import { BadgeDeEstado, type TomDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
-import type { RetratoV1 } from '@/modules/fabrica/contrato'
+import type { RetratoV2 } from '@/modules/fabrica/contrato'
 import { minutosDeAtraso, retratoDesatualizado } from '@/modules/fabrica/model'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 
@@ -15,7 +15,7 @@ export interface PainelDaFabricaProps {
   agora: Date
 }
 
-type Plano = RetratoV1['planos'][number]
+type Plano = RetratoV2['planos'][number]
 type EstadoDoPlano = Plano['estado']
 type EstadoDaRaia = Plano['fases'][number]['raias'][number]['estado']
 

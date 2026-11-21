@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { nomeDeTeste, revogarFontesDaFabricaNoBanco } from './support/banco'
-import { enviarRetratoDaFabrica, retratoDeTeste } from './support/fabrica'
+import { enviarRetratoDaFabrica, retratoDeTeste, retratoV2DeTeste } from './support/fabrica'
 
 function obterAdmin(): { email: string; senha: string } {
   const email = process.env.E2E_ADMIN_EMAIL
@@ -57,14 +57,21 @@ test('admin cria token em Configurações, a máquina envia um retrato e a Centr
 
   await page.goto('/fabrica')
   await expect(page.getByRole('heading', { level: 1, name: 'Fábrica', exact: true })).toBeVisible()
-  await expect(page.getByText(feature)).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Vagas e memória' })).toContainText('5120 MB')
-  await expect(page.getByText(/Dados recebidos em/)).toBeVisible()
-  await expect(page.getByText(/A máquina parou de enviar/)).toHaveCount(0)
-  await expect(page.getByRole('link', { name: 'Homologar o painel da Fábrica' })).toHaveAttribute(
-    'href',
-    'https://github.com/kustertech-exemplo/automacao/issues/7',
-  )
+  // os detalhes técnicos (o painel de antes) ficam na sala de gestão; no celular, em linha
+  const celular = test.info().project.name === 'mobile'
+  if (!celular) {
+    await expect(page.getByRole('button', { name: new RegExp(`andar: ${feature}`) })).toBeVisible()
+    await page.getByRole('button', { name: /Sala de gestão/ }).click()
+  }
+  const tecnico = celular ? page.locator('#conteudo') : page.getByRole('dialog')
+  await expect(tecnico.getByText(feature).first()).toBeVisible()
+  await expect(tecnico.getByRole('region', { name: 'Vagas e memória' })).toContainText('5120 MB')
+  await expect(tecnico.getByText(/Dados recebidos em/)).toBeVisible()
+  await expect(tecnico.getByText(/A máquina parou de enviar/)).toHaveCount(0)
+  await expect(
+    tecnico.getByRole('link', { name: 'Homologar o painel da Fábrica' }),
+  ).toHaveAttribute('href', 'https://github.com/kustertech-exemplo/automacao/issues/7')
+  if (!celular) await page.keyboard.press('Escape')
 
   await page.goto('/configuracoes/fabrica')
   const linha = page.getByRole('listitem').filter({ hasText: nomeDaFonte })
@@ -108,4 +115,37 @@ test('sem retrato, /fabrica e /fabrica/avisos mostram que a Fábrica ainda não 
     await page.goto(rota)
     await expect(page.getByText('A Fábrica ainda não enviou o estado.')).toBeVisible()
   }
+})
+
+test('escritório: prédio com o andar que espera, mapa, tela do agente e sala de gestão', async ({
+  page,
+  request,
+}) => {
+  await entrarComoAdmin(page)
+  const nomeDaFonte = nomeDeTeste('Fonte do escritório')
+  const token = await criarFonte(page, nomeDaFonte)
+  const feature = nomeDeTeste('Escritório')
+  expect((await enviarRetratoDaFabrica(request, token, retratoV2DeTeste(feature))).status).toBe(200)
+
+  await page.goto('/fabrica')
+  if (test.info().project.name === 'mobile') {
+    await expect(
+      page.getByText(`${feature} (espera)`).filter({ visible: true }).first(),
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: /Sala de gestão/ })).toBeHidden()
+  } else {
+    await expect(
+      page.getByRole('button', { name: new RegExp(`andar: ${feature} \\(espera\\).*espera você`) }),
+    ).toBeVisible()
+    await page.getByRole('button', { name: new RegExp(`andar: ${feature},`) }).click()
+    await expect(page.getByRole('button', { name: /^frontend · tela:/ })).toBeVisible()
+    await page.getByRole('button', { name: /computador de frontend · tela/ }).click()
+    await expect(page.getByRole('dialog')).toContainText('lendo o catálogo do kit')
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.getByRole('button', { name: /Sala de gestão/ }).click()
+    await expect(page.getByRole('dialog')).toContainText('Entrega prevista')
+  }
+
+  await revogarFonte(page, nomeDaFonte)
 })
