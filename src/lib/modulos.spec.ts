@@ -7,8 +7,9 @@ import {
 } from './modulos'
 
 describe('catálogo de módulos', () => {
-  it('por padrão ativa clientes, projetos, github, desenvolvimento, fabrica, maquinas fila-de-publicacao e demandas; publicacao continua inativo', () => {
+  it('por padrão ativa atividade, clientes, projetos, github, desenvolvimento, fabrica, maquinas fila-de-publicacao e demandas; publicacao continua inativo', () => {
     expect([...resolverModulosAtivos(undefined)].sort()).toEqual([
+      'atividade',
       'clientes',
       'demandas',
       'desenvolvimento',
@@ -30,13 +31,13 @@ describe('catálogo de módulos', () => {
   })
   it('ligar publicacao exige a cadeia inteira', () => {
     expect(() => resolverModulosAtivos('entregas,ambientes,publicacao')).toThrow(/homologacao/)
-    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(12)
+    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(13)
   })
   it('nome desconhecido em extras é erro', () => {
     expect(() => resolverModulosAtivos('alertas')).toThrow(/alertas/)
   })
   it('vazio e espaços equivalem a nenhum extra', () => {
-    expect(resolverModulosAtivos('  ').size).toBe(8)
+    expect(resolverModulosAtivos('  ').size).toBe(9)
   })
 })
 

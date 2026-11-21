@@ -890,7 +890,7 @@ Pré-requisito: PR #166 em `main`.
 
 ### Task 16: Instalação na oficina e aceite
 
-Tarefa manual, executada por quem implementou, com o Paulo acompanhando. Acesso: `ssh -i ~/.ssh/id_ed25519_dev_agents -o IdentitiesOnly=yes devops@100.70.15.95`. Antes de começar: PR desta base mergeado em `main`, workflow `imagem.yml` verde, pacote `ghcr.io/paulorhyank/kustertech-flow` marcado como público.
+Tarefa manual, executada por quem implementou, com o Paulo acompanhando. Acesso: `ssh -i ~/.ssh/id_ed25519_dev_agents -o IdentitiesOnly=yes <usuario>@<ip-da-tailscale>`. Antes de começar: PR desta base mergeado em `main`, workflow `imagem.yml` verde, pacote `ghcr.io/paulorhyank/kustertech-flow` marcado como público.
 
 **Confirme com o Paulo antes de cada passo marcado com ⚠.**
 

@@ -5,6 +5,7 @@ import {
   aplicarEvento,
   capturaVencida,
   compararEvento,
+  dadosDaRetomada,
   jsonCanonico,
   type EventoAplicavel,
 } from './transicoes'
@@ -407,6 +408,14 @@ describe('teste', () => {
     expect(r.falhasDoTeste).toBe(2)
     expect(ap(est(), { tipo: 'retomada', dados: {} }, 'paulo').ok).toBe(false)
   })
+
+  test('retomada com resposta destrava igual à sem resposta', () => {
+    const parada = { ...est(), espera: 'teste_falhou' as const, esperaMotivo: 'r' }
+    const r = ok(
+      ap(parada, { tipo: 'retomada', dados: { resposta: 'use o seletor novo' } }, 'paulo'),
+    )
+    expect(r.espera).toBeNull()
+  })
 })
 
 describe('entregue e encerrada', () => {
@@ -534,5 +543,32 @@ describe('esperas do Paulo e trava', () => {
     expect(
       ap(e, { tipo: 'etapa_concluida_pelo_paulo', dados: { chave: 'desenho' } }, 'paulo').ok,
     ).toBe(false)
+  })
+})
+
+describe('dadosDaRetomada', () => {
+  test('sem resposta ou só espaços → {} (sem a chave)', () => {
+    expect(dadosDaRetomada(undefined)).toEqual({ ok: true, dados: {} })
+    expect(dadosDaRetomada('   ')).toEqual({ ok: true, dados: {} })
+    const r = dadosDaRetomada('')
+    expect(r.ok && 'resposta' in r.dados).toBe(false)
+  })
+
+  test('com resposta → aparada; acima de 2000 → recusa', () => {
+    expect(dadosDaRetomada('  tente com o token novo  ')).toEqual({
+      ok: true,
+      dados: { resposta: 'tente com o token novo' },
+    })
+    expect(dadosDaRetomada('a'.repeat(2000)).ok).toBe(true)
+    expect(dadosDaRetomada('a'.repeat(2001))).toEqual({
+      ok: false,
+      motivo: 'A resposta pode ter até 2000 caracteres.',
+    })
+  })
+
+  test('a mesma resposta é repetida; outra é conflito', () => {
+    const a = { tipo: 'retomada', dados: { resposta: 'x' } }
+    expect(compararEvento(a, { tipo: 'retomada', dados: { resposta: 'x' } })).toBe('repetido')
+    expect(compararEvento(a, { tipo: 'retomada', dados: {} })).toBe('conflito')
   })
 })

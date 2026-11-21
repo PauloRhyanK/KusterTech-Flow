@@ -1,7 +1,7 @@
 # Atividade real — desenho
 
 **Data:** 19/11/2026
-**Estado:** rascunho aguardando a revisão do Paulo
+**Estado:** aprovada pelo Paulo em 20/11/2026 (spec e desenho)
 **Tamanho:** pequeno (uma consulta, dois blocos de tela)
 
 ## 1. Por que
@@ -62,8 +62,8 @@ O worker reconcilia a cada 10 minutos (`GITHUB_INTERVALO_MS`). O bloco mostra a 
 - **Ponta a ponta:** o bloco no Início com e sem atividade; o perfil escopado não vê; desktop e celular, com capturas.
 - **Tela:** desenho aprovado antes (D74), conferido no navegador depois.
 
-## 6. Em aberto
+## 6. Respostas (antes "Em aberto")
 
-1. O bloco entra no Início acima ou abaixo de "Fábrica agora"? A premissa é acima, porque hoje é onde está o trabalho.
-2. Vale mostrar commits diretos em `main`? Exigiria espelhar commits, o que hoje não existe.
-3. O intervalo de 10 minutos serve, ou os webhooks do GitHub (já suportados, desligados) devem ser ligados na oficina? Com acesso só pela Tailscale, o GitHub não alcança o Flow; webhooks exigiriam um caminho de entrada.
+1. **Posição no Início:** acima de "Fábrica agora" (Paulo, 20/11). Conferido em 20/11: o bloco ainda não existia.
+2. **Commits diretos em `main`:** fora por enquanto; só PRs.
+3. **Atualização:** os 10 minutos atuais bastam; sem webhooks e sem porta aberta. O bloco mostra a idade dos dados.

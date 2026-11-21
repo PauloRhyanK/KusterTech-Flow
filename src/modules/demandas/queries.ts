@@ -329,6 +329,17 @@ export async function obterPaginaDaDemanda(
       : null
   const textoDoAjuste = (ajuste?.dados as { texto?: unknown } | undefined)?.texto
 
+  // O PR da trava vem do último `travada`, também do histórico inteiro.
+  const trava =
+    d.espera === 'travada'
+      ? await db.eventoDaDemanda.findFirst({
+          where: { demandaId: d.id, tipo: 'travada' },
+          orderBy: { seq: 'desc' },
+          select: { dados: true },
+        })
+      : null
+  const urlDaTrava = (trava?.dados as { url?: unknown } | undefined)?.url
+
   const publicacao =
     entregue && moduloAtivo('fila-de-publicacao') ? await publicacaoDaDemanda(d.id) : null
 
@@ -381,6 +392,7 @@ export async function obterPaginaDaDemanda(
               ajuste && typeof textoDoAjuste === 'string'
                 ? { texto: textoDoAjuste, em: ajuste.em }
                 : null,
+            urlDaTrava: typeof urlDaTrava === 'string' ? urlDaTrava : null,
             etapaAtual: d.etapaAtual,
             etapas,
           },

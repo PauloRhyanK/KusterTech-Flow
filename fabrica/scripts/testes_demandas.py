@@ -841,7 +841,7 @@ class TestesPlano(BasePasso):
         self.assertIsNone(self.trava())
 
     def test_plano_que_mexe_fora_de_fabrica_vira_travada_e_nao_mergeia(self):
-        for fora in ("src/app.ts", ".fabrica/planos/outra-feature.json", ".fabrica/config.json", ".fabrica/pergunta.md"):
+        for fora in ("src/app.ts", ".fabrica/planos/outra-feature.json", ".fabrica/config.json", ".fabrica/demandas/x/desenho.html"):
             with self.subTest(fora=fora):
                 self.setUp()
                 run_id = self.planejar()
@@ -852,6 +852,53 @@ class TestesPlano(BasePasso):
                 self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "o plano mexe fora de .fabrica: %s" % fora, "url": PR}))
                 self.assertEqual(self.item()["fase"], "esperando_paulo")
                 self.assertIsNone(self.trava())
+
+    PERGUNTA = "# Pergunta ao Paulo — demanda 11111111\n\nTexto longo.\n\n## 1. O que fazer\n- (a) padrão\n"
+
+    def perguntar(self, *, extras=(".fabrica/planejamento/demanda-11111111/cobertura.md", ".seeds/issues.jsonl")):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(".fabrica/pergunta.md",) + tuple(extras))
+        self.forja.definir_arquivo(REPO, HEAD, ".fabrica/pergunta.md", self.PERGUNTA)
+        self.passo(ClienteDeBusca())
+
+    def test_pergunta_do_orquestrador_vira_travada_com_a_pergunta_e_nao_mergeia(self):
+        self.perguntar()
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual(
+            (evento["tipo"], evento["dados"]),
+            ("travada", {"motivo": "o orquestrador perguntou (responda ao tentar de novo): Pergunta ao Paulo — demanda 11111111", "url": PR}),
+        )
+        self.assertEqual(self.item()["pergunta"], self.PERGUNTA)
+        self.assertEqual(self.item()["fase"], "esperando_paulo")
+        self.assertIsNone(self.trava())
+
+    def test_pergunta_com_arquivo_fora_continua_fora(self):
+        self.perguntar(extras=("src/app.ts",))
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"]["motivo"], "o plano mexe fora de .fabrica: src/app.ts")
+
+    def test_resposta_do_paulo_na_retomada_vai_na_conversa_do_planejamento_novo(self):
+        self.perguntar()
+        self.estado["demandas"]["saida"] = []
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", espera="travada"), cursor="2")))
+        self.avancar(60)
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {"resposta": "1a 2a"}}]
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", eventos=retomada), cursor="3")))
+        self.assertEqual(len(self.despachos()), 2)
+        prompt = self.despachos()[1]["prompt"]
+        ctx, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("Contexto:\n") + len("Contexto:\n"):])
+        self.assertEqual(ctx["conversa"], [{"pergunta": self.PERGUNTA.strip(), "resposta": "1a 2a"}])
+        self.assertNotIn("pergunta", self.item())
+        self.assertEqual(self.item()["conversa"], [{"pergunta": self.PERGUNTA, "resposta": "1a 2a"}])
+
+    def test_retomada_sem_resposta_tambem_leva_a_pergunta_com_resposta_vazia(self):
+        self.perguntar()
+        self.estado["demandas"]["saida"] = []
+        self.avancar(60)
+        retomada = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", eventos=retomada), cursor="3")))
+        self.assertEqual(self.item()["conversa"], [{"pergunta": self.PERGUNTA, "resposta": ""}])
 
     def test_config_do_head_do_plano_nao_vale(self):
         run_id = self.planejar()
@@ -1654,6 +1701,38 @@ class TestesDesenho(BasePasso):
         self.assertEqual((self.item()["fase"], self.item()["desenho"]["headSha"]), ("desenho_enviado", HEAD_D2))
         self.assertEqual(self.reservas(), {})
 
+    def ajustar_sem_pr_url(self, *, estado="succeeded", motivo=None, head=HEAD_D2):
+        """O ajuste roda no branch do PR que já existe: o Warren devolve o run sem `prUrl` (o PR é o mesmo)."""
+        run_id = self.desenhar()
+        self.entregar(run_id)
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        ajuste = {"versao": 1, "texto": "mais contraste no topo", "em": AGORA}
+        self.passo(ClienteDeBusca(pagina(retrato("desenho", desenho={"versao": 1, "aprovada": None}, ajustes=[ajuste]), cursor="3")))
+        self.forja.definir_pr(PR_D, head_sha=head, branch=BRANCH_D, arquivos=[DESENHO])
+        self.forja.definir_arquivo(REPO, head, DESENHO, HTML_OK)
+        self.motor.definir_run(self.item()["runId"], estado=estado, prUrl=None, motivoFalha=motivo)
+        self.passo(ClienteDeBusca())
+
+    def test_ajuste_no_mesmo_branch_sem_pr_url_confere_o_pr_que_ja_existe(self):
+        self.ajustar_sem_pr_url()
+        self.assertEqual([s["evento"]["tipo"] for s in self.estado["demandas"]["saida"] if "evento" in s], ["desenho_pronto"])
+        self.assertEqual((self.item()["fase"], self.item()["desenho"]["headSha"], self.item()["desenho"]["versao"]), ("desenho_enviado", HEAD_D2, 2))
+        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(self.reservas(), {})
+
+    def test_ajuste_sem_mudanca_e_pr_que_ja_andou_confere_o_pr(self):
+        # o run anterior já tinha empurrado a v2: o seguinte termina em `no_changes`, e o head do PR é outro
+        self.ajustar_sem_pr_url(estado="failed", motivo="no_changes")
+        self.assertEqual([s["evento"]["tipo"] for s in self.estado["demandas"]["saida"] if "evento" in s], ["desenho_pronto"])
+        self.assertEqual(len(self.despachos()), 2)
+
+    def test_ajuste_sem_pr_url_e_head_parado_conta_como_sem_pr(self):
+        self.ajustar_sem_pr_url(estado="failed", motivo="no_changes", head=HEAD_D)
+        self.assertEqual(self.estado["demandas"]["saida"], [])
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertEqual(self.item()["desenho"]["semPr"], 1)
+
     def test_aprovacao_mergeia_o_pr_do_desenho_e_solta_a_vaga(self):
         run_id = self.desenhar()
         self.entregar(run_id)
@@ -1956,6 +2035,16 @@ class TestesTesteNoNavegador(BasePasso):
         self.passo(ClienteDeBusca(pagina(retrato("testada", eventos=RETOMADA), cursor="4")))
         self.assertEqual(len(self.despachos()), 3)
         self.assertNotIn("faltaram capturas", self.despachos()[2]["prompt"])
+
+    def test_teste_refeito_no_mesmo_branch_sem_pr_url_confere_o_pr_que_ja_existe(self):
+        run_id = self.abrir_teste()
+        self.entregar_teste(run_id, telas=("desktop-01.png",))
+        self.passo(ClienteDeBusca())
+        self.entregar_teste(self.item()["runId"], head=HEAD_T2)
+        self.motor.definir_run(self.item()["runId"], estado="succeeded", prUrl=None)
+        self.passo(ClienteDeBusca())
+        self.assertEqual([s["evento"]["tipo"] for s in self.estado["demandas"]["saida"] if "evento" in s], ["teste"])
+        self.assertEqual(len(self.despachos()), 2)
 
     def test_teste_json_torto_tambem_refaz_uma_vez(self):
         run_id = self.abrir_teste()

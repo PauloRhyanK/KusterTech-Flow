@@ -15,6 +15,7 @@ import {
 } from '../[id]/actions'
 
 const LIMITE_DO_AJUSTE = 500
+const LIMITE_DA_RESPOSTA = 2000
 
 const DESTINOS = [
   { valor: 'urgente', rotulo: 'Urgente' },
@@ -72,15 +73,19 @@ export function BotoesDaDecisao({
   enviar,
   pendente,
   className,
+  responder = false,
 }: {
   ctx: Contexto
   acoes: readonly AcaoDaFaixa[]
   enviar: (form: FormData) => void
   pendente: boolean
   className?: string
+  /** Mostra o campo de resposta no "Tentar de novo" (só a pergunta do orquestrador o lê). */
+  responder?: boolean
 }) {
   const [ajustando, setAjustando] = useState(false)
   const [texto, setTexto] = useState('')
+  const [resposta, setResposta] = useState('')
   const comAjuste = acoes.includes('ajuste')
   return (
     <div className={cn('flex flex-col gap-3', className)}>
@@ -108,7 +113,7 @@ export function BotoesDaDecisao({
               </Button>
             </form>
           ))}
-        {acoes.includes('retomar') && (
+        {acoes.includes('retomar') && !responder && (
           <form action={enviar}>
             <Campos ctx={ctx} acao="retomar" />
             <Button type="submit" size="lg" disabled={pendente} aria-busy={pendente}>
@@ -125,6 +130,32 @@ export function BotoesDaDecisao({
           </form>
         )}
       </div>
+      {acoes.includes('retomar') && responder && (
+        <form action={enviar} className="flex flex-col gap-2 sm:w-96">
+          <Campos ctx={ctx} acao="retomar" />
+          <label
+            htmlFor="resposta-da-retomada"
+            className="text-[12.5px] font-[600] text-text-secondary"
+          >
+            Resposta ou orientação (opcional)
+          </label>
+          <textarea
+            id="resposta-da-retomada"
+            name="resposta"
+            maxLength={LIMITE_DA_RESPOSTA}
+            rows={3}
+            value={resposta}
+            onChange={(e) => setResposta(e.target.value)}
+            className="w-full rounded-compacto border border-border-strong bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          />
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-xs text-text-tertiary">{`${resposta.length}/${LIMITE_DA_RESPOSTA}`}</span>
+            <Button type="submit" size="lg" disabled={pendente} aria-busy={pendente}>
+              Tentar de novo
+            </Button>
+          </div>
+        </form>
+      )}
       {comAjuste && ajustando && (
         <form action={enviar} className="flex flex-col gap-2">
           <Campos ctx={ctx} acao="ajuste" />
@@ -193,6 +224,16 @@ export function FaixaDaEspera({
           {faixa.contexto && (
             <p className="break-words text-[12.5px] text-text-secondary">{faixa.contexto}</p>
           )}
+          {faixa.prUrl && (
+            <a
+              href={faixa.prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12.5px] font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+            >
+              Abrir PR
+            </a>
+          )}
         </div>
         {podeAgir && faixa.acoes.length > 0 && (
           <BotoesDaDecisao
@@ -201,6 +242,7 @@ export function FaixaDaEspera({
             enviar={enviar}
             pendente={pendente}
             className="w-full sm:w-auto"
+            responder={faixa.responder === true}
           />
         )}
       </section>

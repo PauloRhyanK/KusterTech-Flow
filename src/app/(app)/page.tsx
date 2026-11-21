@@ -5,6 +5,7 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { moduloAtivo } from '@/lib/modulos'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { obterInicio } from '@/modules/inicio/queries'
+import { Atividade } from './_inicio/atividade'
 import { EsperaVoce } from './_inicio/espera-voce'
 import { FabricaAgora } from './_inicio/fabrica-agora'
 import { QuadroDaOficina } from './_inicio/quadro-da-oficina'
@@ -47,6 +48,7 @@ export default async function PaginaInicio() {
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="min-w-0 space-y-6">
             <EsperaVoce espera={inicio.espera} agora={agora} />
+            {inicio.atividade !== null && <Atividade atividade={inicio.atividade} agora={agora} />}
             {verFabrica && (
               <FabricaAgora
                 fabrica={inicio.fabrica}

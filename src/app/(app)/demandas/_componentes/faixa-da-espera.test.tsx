@@ -95,4 +95,55 @@ describe('FaixaDaEspera', () => {
     )
     expect(screen.getByRole('button', { name: 'Concluir etapa' })).toBeInTheDocument()
   })
+
+  test('travada: campo opcional de resposta com contador e link "Abrir PR"', () => {
+    const pr = 'https://github.com/kustertech-exemplo/alfa/pull/7'
+    const { container } = render(
+      <FaixaDaEspera
+        demandaId={ID}
+        versao={0}
+        etapaAtual="desenvolvida"
+        podeAgir
+        faixa={{
+          titulo: 'o orquestrador perguntou: 1a ou 1b?',
+          contexto: '',
+          acoes: ['retomar'],
+          prUrl: pr,
+          responder: true,
+        }}
+      />,
+    )
+    const campo = screen.getByRole('textbox', { name: 'Resposta ou orientação (opcional)' })
+    expect(campo).toHaveAttribute('name', 'resposta')
+    expect(campo).toHaveAttribute('maxLength', '2000')
+    expect(campo.closest('form')?.querySelector('input[name="acao"]')).toHaveValue('retomar')
+    expect(screen.getByText('0/2000')).toBeInTheDocument()
+    fireEvent.change(campo, { target: { value: 'use o token novo' } })
+    expect(screen.getByText('16/2000')).toBeInTheDocument()
+    // Opcional: o botão segue habilitado com o campo vazio.
+    fireEvent.change(campo, { target: { value: '' } })
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeEnabled()
+
+    const link = screen.getByRole('link', { name: 'Abrir PR' })
+    expect(link).toHaveAttribute('href', pr)
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(container).toBeTruthy()
+  })
+
+  test('sem prUrl não há link "Abrir PR"', () => {
+    render(
+      <FaixaDaEspera
+        demandaId={ID}
+        versao={0}
+        etapaAtual="desenvolvida"
+        podeAgir
+        faixa={{ titulo: 'CI vermelho no PR', contexto: '', acoes: ['retomar'] }}
+      />,
+    )
+    expect(screen.queryByRole('link', { name: 'Abrir PR' })).toBeNull()
+    // Trava que não é pergunta: a Fábrica não lê resposta, então não há campo.
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeEnabled()
+  })
 })
