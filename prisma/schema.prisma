@@ -1121,3 +1121,22 @@ model FonteDeDemandas {
   criadaPor   Usuario   @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
   demandas    Demanda[]
 }
+
+// Escritório da Fábrica: quanto cada parte (raia) e cada etapa de demanda levou, para a previsão de entrega.
+// `chave` é `<planoId>:<raia>` (parte do retrato v2), `execucao:<runId>` (semente do histórico) ou
+// `<demandaId>:<marco>` (etapa). O `fim` gravado nunca é apagado.
+model IntervaloDaFabrica {
+  id          String    @id @default(uuid())
+  fonteId     String?
+  repositorio String
+  chave       String    @unique
+  tipo        String
+  papel       String?
+  etapa       String?
+  inicio      DateTime
+  fim         DateTime?
+  custoUsd    Decimal?  @db.Decimal(12, 4)
+  atualizadoEm DateTime @updatedAt
+
+  @@index([tipo, papel])
+}

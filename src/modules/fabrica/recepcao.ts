@@ -8,6 +8,7 @@ import {
 } from '@/modules/fila-de-publicacao/consertos'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { retratoSchema } from './contrato'
+import { gravarIntervalosDoRetrato } from './escritorio/intervalos'
 import {
   decidirGravacaoDoRetrato,
   extrairTokenDaFabrica,
@@ -129,6 +130,17 @@ export async function receberRetratoDaFabrica(
     // Um retrato atrasado nunca muda um conserto: só o gravado (o mais novo) conta.
     if (resultado === 'gravado' && lido.data.consertos) {
       await aplicarConsertosDoRetrato(lido.data.consertos, agora)
+    }
+    if (resultado === 'gravado' && lido.data.versao === 2) {
+      // Os intervalos só alimentam a previsão do escritório: uma falha aqui não recusa o retrato.
+      try {
+        await gravarIntervalosDoRetrato(fonte.id, lido.data)
+      } catch (erro) {
+        log.error(
+          { erro: resumirErroParaLog(erro) },
+          'intervalos do retrato da Fábrica não gravados',
+        )
+      }
     }
     return { status: 200, corpo: { resultado, consertos: await consertosParaAFabrica() } }
   } catch (erro) {
