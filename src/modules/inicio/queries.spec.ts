@@ -26,6 +26,7 @@ vi.mock('@/lib/db', () => ({
     divergenciaDeDeploy: { findMany: vi.fn() },
     integracaoGitHub: { findUnique: vi.fn() },
     repositorioGitHub: { findMany: vi.fn(), count: vi.fn() },
+    pullRequestGitHub: { findMany: vi.fn() },
     projeto: { count: vi.fn() },
     cliente: { count: vi.fn() },
     recurso: { count: vi.fn(), findUnique: vi.fn() },
@@ -50,6 +51,7 @@ beforeEach(() => {
   vi.mocked(db.integracaoGitHub.findUnique).mockResolvedValue({ configurada: true } as never)
   vi.mocked(db.repositorioGitHub.findMany).mockResolvedValue([])
   vi.mocked(db.repositorioGitHub.count).mockResolvedValue(0)
+  vi.mocked(db.pullRequestGitHub.findMany).mockResolvedValue([])
   vi.mocked(db.projeto.count).mockResolvedValue(0)
   vi.mocked(db.cliente.count).mockResolvedValue(0)
   vi.mocked(db.recurso.count).mockResolvedValue(0)

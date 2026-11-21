@@ -324,7 +324,7 @@
 
 ### Task 8: A máquina pronta e o Flow registrado (operação, controlador)
 
-This task is run by the controller, not by a subagent: it acts outside the repository, on the machine over ssh. The machine is `devops@100.70.15.95`, key `~/.ssh/id_ed25519_dev_agents`. Tokens are never printed.
+This task is run by the controller, not by a subagent: it acts outside the repository, on the machine over ssh. The machine is `<usuario>@<ip-da-tailscale>`, key `~/.ssh/id_ed25519_dev_agents`. Tokens are never printed.
 
 - [ ] **Step 1: Paulo's skill.** Change `~/.claude/skills/fabrica-preparar-execucao/scripts/pacote.py` so it writes `.fabrica/planos/<feature>.json` instead of `.fabrica/plano.json`, and update `referencia-fabrica.md` and `SKILL.md` to match (validation, commit and the "Entrada de um pacote aprovado" section: the queue picks it up on its own). Run `FABRICA_KIT=<worktree> python3 -I -B testes_pacote.py`; it has to pass.
 - [ ] **Step 2: Push the branch** (`feat/fabrica-fila-por-plano`) and run `instalar_maquina.py --branch feat/fabrica-fila-por-plano` on the machine. Expected: exit 0.

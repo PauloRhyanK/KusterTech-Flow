@@ -4,6 +4,7 @@ import { notFound, redirect } from 'next/navigation'
 import { autorizar, ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
+import { obterAtividadeDoProjeto, podeVerAtividade } from '@/modules/atividade/queries'
 import { exigirModulo } from '@/lib/modulos-rota'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { cn } from '@/lib/utils'
@@ -15,6 +16,7 @@ import {
   type FiltrosDaFila,
 } from '@/modules/desenvolvimento/queries'
 import { obterProjetoParaResumo } from '@/modules/projetos/queries'
+import { AtividadeDoProjeto } from '@/app/(app)/projetos/_componentes/desenvolvimento/atividade-do-projeto'
 import { ExecucoesAgrupadas } from '@/app/(app)/projetos/_componentes/desenvolvimento/execucoes-agrupadas'
 import { FilaDeDesenvolvimento } from '@/app/(app)/projetos/_componentes/desenvolvimento/fila-de-desenvolvimento'
 import { SituacaoDasFontes } from '@/app/(app)/projetos/_componentes/desenvolvimento/situacao-das-fontes'
@@ -75,8 +77,18 @@ export default async function PaginaDesenvolvimentoDoProjeto({
 
   const { p } = await params
 
+  const agora = new Date()
+  let atividade: Awaited<ReturnType<typeof obterAtividadeDoProjeto>> | 'falha' | null = null
   try {
     await obterProjetoParaResumo(sessao.sujeito, p, null)
+    if (podeVerAtividade(sessao.sujeito)) {
+      try {
+        atividade = await obterAtividadeDoProjeto(sessao.sujeito, p, agora)
+      } catch (erro) {
+        if (erro instanceof ErroDeAutorizacao || erro instanceof ErroDeDominio) throw erro
+        atividade = 'falha'
+      }
+    }
   } catch (erro) {
     if (erro instanceof ErroDeAutorizacao) {
       return <SemPermissao />
@@ -102,6 +114,7 @@ export default async function PaginaDesenvolvimentoDoProjeto({
 
   return (
     <div className="space-y-6">
+      {atividade && <AtividadeDoProjeto atividade={atividade} agora={agora} />}
       <nav aria-label="Visões do desenvolvimento" className="flex gap-1 border-b border-border">
         {visoes.map((v) => (
           <Link
