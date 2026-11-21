@@ -276,10 +276,13 @@ class TestRegistrarPlano(unittest.TestCase):
 
     def test_seed_nova_tem_o_formato_exato(self):
         e = self.registrar([filho("s1", "running", run="r1", pr=None)])
+        seed = dict(e["seeds"]["s1"])
+        self.assertRegex(seed.pop("inicio"), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
         self.assertEqual(
-            e["seeds"]["s1"],
+            seed,
             {
                 "raia": "a",
+                "fim": None,
                 "estado": "executando",
                 "runId": "r1",
                 "pr": None,
@@ -2078,3 +2081,32 @@ class TestCorrecaoFinalF4VereditoDoShaPedido(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHorariosDaSeed(unittest.TestCase):
+    """Escritório da Fábrica: início e fim de cada seed para o retrato v2 e a previsão."""
+
+    def test_seed_ganha_inicio_ao_executar(self):
+        seed = est._seed_nova("a", agora=datetime.datetime(2026, 11, 21, 1, 30, tzinfo=datetime.timezone.utc))
+        self.assertEqual(seed["inicio"], "2026-11-21T01:30:00Z")
+        self.assertIsNone(seed["fim"])
+
+    def test_seed_ganha_fim_ao_mergear_e_inicio_nao_muda(self):
+        seed = est._seed_nova("a", agora=datetime.datetime(2026, 11, 21, 1, 30, tzinfo=datetime.timezone.utc))
+        est.marcar_estado_da_seed(seed, "mergeada", agora=datetime.datetime(2026, 11, 21, 2, 32, tzinfo=datetime.timezone.utc))
+        self.assertEqual(seed["fim"], "2026-11-21T02:32:00Z")
+        self.assertEqual(seed["inicio"], "2026-11-21T01:30:00Z")
+        self.assertEqual(seed["estado"], "mergeada")
+
+    def test_seed_que_volta_a_executar_perde_o_fim(self):
+        seed = est._seed_nova("a", agora=datetime.datetime(2026, 11, 21, 1, 30, tzinfo=datetime.timezone.utc))
+        est.marcar_estado_da_seed(seed, "falhou", agora=datetime.datetime(2026, 11, 21, 2, 0, tzinfo=datetime.timezone.utc))
+        est.marcar_estado_da_seed(seed, "executando", agora=datetime.datetime(2026, 11, 21, 2, 10, tzinfo=datetime.timezone.utc))
+        self.assertIsNone(seed["fim"])
+        self.assertEqual(seed["inicio"], "2026-11-21T01:30:00Z")
+
+    def test_seed_antiga_sem_chaves_continua_legivel(self):
+        seed = {"raia": "a", "estado": "executando"}
+        est.marcar_estado_da_seed(seed, "em_revisao", agora=datetime.datetime(2026, 11, 21, 3, 0, tzinfo=datetime.timezone.utc))
+        self.assertIsNone(seed.get("inicio"))
+        self.assertEqual(seed["estado"], "em_revisao")
