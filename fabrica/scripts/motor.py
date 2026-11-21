@@ -181,6 +181,10 @@ class Motor(typing.Protocol):
 
     def ultimo_texto(self, run_id: str) -> str: ...
 
+    def eventos_brutos(self, run_id: str) -> bytes:
+        """O NDJSON cru de `GET /runs/<id>/events?follow=0` (escritório da Fábrica)."""
+        ...
+
     def retomar_plano(self, plan_run_id: str) -> None: ...
 
     def modelo_efetivo(self, run_id: str) -> str | None:
@@ -235,6 +239,7 @@ class MotorFalso:
         self._runs: dict[str, dict] = {}
         self._textos: dict[str, str] = {}
         self._modelos: dict[str, str] = {}
+        self.eventos: dict[str, bytes] = {}
         self._lotado: int | None = None
         self._falha_de_despacho: tuple[str, int] | None = None
         self._textos_enviados: dict[str, tuple[str, str]] = {}
@@ -509,6 +514,10 @@ class MotorFalso:
 
     def retomar_plano(self, plan_run_id: str) -> None:
         self._registrar("retomar_plano", plan_run_id=plan_run_id)
+
+    def eventos_brutos(self, run_id: str) -> bytes:
+        self._registrar("eventos_brutos", run_id=run_id)
+        return self.eventos.get(run_id, b"")
 
     def modelo_efetivo(self, run_id: str) -> str | None:
         self._registrar("modelo_efetivo", run_id=run_id)

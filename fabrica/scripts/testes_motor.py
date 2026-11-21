@@ -932,6 +932,11 @@ class TestesModeloEfetivo(unittest.TestCase):
         self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs/r-1/events?follow=0"))
         self.assertEqual(t.ultima[2]["Authorization"], "Bearer " + TOKEN)
 
+    def test_warren_eventos_brutos_le_o_ndjson_do_run(self):
+        m, t = novo((200, {}, b'{"kind": "text", "payload": {"text": "oi"}}\n'))
+        self.assertEqual(m.eventos_brutos("r-1"), b'{"kind": "text", "payload": {"text": "oi"}}\n')
+        self.assertEqual(t.ultima[0:2], ("GET", BASE + "/runs/r-1/events?follow=0"))
+
     def test_warren_le_o_formato_confirmado_do_evento_init(self):
         # formato real confirmado pelo controlador (Warren 0.19.3)
         eventos = (
