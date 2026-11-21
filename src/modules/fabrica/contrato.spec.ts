@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import exemplo from './retrato-exemplo.json'
 import exemploV2 from './retrato-exemplo-v2.json'
-import { LIMITES, normalizarRetrato, retratoSchema, retratoV1Schema, retratoV2Schema } from './contrato'
+import {
+  LIMITES,
+  normalizarRetrato,
+  retratoSchema,
+  retratoV1Schema,
+  retratoV2Schema,
+} from './contrato'
 
 const clone = () => structuredClone(exemplo) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -197,7 +203,11 @@ describe('contrato do retrato v2 (escritório da Fábrica)', () => {
 
   test('recusa mais de 30 linhas por execução e tipo de linha desconhecido', () => {
     const muitas = cloneV2()
-    muitas.execucoes[0].linhas = Array.from({ length: 31 }, () => ({ em: null, tipo: 'texto', texto: 'a' }))
+    muitas.execucoes[0].linhas = Array.from({ length: 31 }, () => ({
+      em: null,
+      tipo: 'texto',
+      texto: 'a',
+    }))
     expect(retratoV2Schema.safeParse(muitas).success).toBe(false)
     const tipo = cloneV2()
     tipo.execucoes[0].linhas[0].tipo = 'html'
@@ -215,6 +225,11 @@ describe('contrato do retrato v2 (escritório da Fábrica)', () => {
     expect(v2.versao).toBe(2)
     expect(v2.execucoes).toEqual([])
     expect(v2.planos[0]!.demanda).toBeNull()
-    expect(v2.planos[0]!.fases[0]!.raias[0]).toMatchObject({ papel: null, criterios: [], seedId: null, criteriosVeredito: null })
+    expect(v2.planos[0]!.fases[0]!.raias[0]).toMatchObject({
+      papel: null,
+      criterios: [],
+      seedId: null,
+      criteriosVeredito: null,
+    })
   })
 })

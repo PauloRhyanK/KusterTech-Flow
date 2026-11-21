@@ -28,7 +28,10 @@
               "estado": "concluida",
               "papel": "frontend",
               "dependeDe": [],
-              "criterios": ["Contrato de relatos no openapi", "Cenários suporte_ na porta de mentira"],
+              "criterios": [
+                "Contrato de relatos no openapi",
+                "Cenários suporte_ na porta de mentira"
+              ],
               "seedId": "CAISv2-212c",
               "inicio": "2026-11-21T00:50:00Z",
               "fim": "2026-11-21T01:52:00Z",
@@ -49,7 +52,10 @@
               "estado": "executando",
               "papel": "frontend",
               "dependeDe": ["relatos-fundacao"],
-              "criterios": ["Composição Suporte com abas Conversa e Meus envios", "Componente Tour"],
+              "criterios": [
+                "Composição Suporte com abas Conversa e Meus envios",
+                "Componente Tour"
+              ],
               "seedId": "CAISv2-d87a",
               "inicio": "2026-11-21T01:30:00Z",
               "fim": null,
@@ -78,10 +84,17 @@
       "inicio": "2026-11-21T01:30:00Z",
       "custoUsd": 1.84,
       "modelo": "claude-sonnet-5-5",
-      "ultimaAcao": { "texto": "Edit front/src/pecas/composicoes/suporte/Suporte.tsx", "em": "2026-11-21T02:03:00Z" },
+      "ultimaAcao": {
+        "texto": "Edit front/src/pecas/composicoes/suporte/Suporte.tsx",
+        "em": "2026-11-21T02:03:00Z"
+      },
       "linhas": [
         { "em": "2026-11-21T01:33:00Z", "tipo": "texto", "texto": "lendo o catálogo do kit" },
-        { "em": "2026-11-21T02:03:00Z", "tipo": "ferramenta", "texto": "Edit front/src/pecas/composicoes/suporte/Suporte.tsx" }
+        {
+          "em": "2026-11-21T02:03:00Z",
+          "tipo": "ferramenta",
+          "texto": "Edit front/src/pecas/composicoes/suporte/Suporte.tsx"
+        }
       ]
     }
   ]

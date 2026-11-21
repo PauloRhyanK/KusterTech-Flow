@@ -135,7 +135,10 @@ const raiaV2 = z.strictObject({
 
 const faseV2 = z.strictObject({ id: texto, raias: z.array(raiaV2).max(LIMITES.raias) })
 
-const planoV2 = plano.extend({ fases: z.array(faseV2).max(LIMITES.fases), demanda: texto.nullable() })
+const planoV2 = plano.extend({
+  fases: z.array(faseV2).max(LIMITES.fases),
+  demanda: texto.nullable(),
+})
 
 const linha = z.strictObject({ em: instante.nullable(), tipo: z.enum(TIPOS_DE_LINHA), texto })
 
