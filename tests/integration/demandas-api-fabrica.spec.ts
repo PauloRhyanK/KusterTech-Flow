@@ -10,7 +10,12 @@ import {
   receberArquivoDaFabrica,
   receberEventoDaFabrica,
 } from '@/modules/demandas/recepcao-fabrica'
-import { TRAVA_DOS_EVENTOS_SQL, abrirDemanda, aprovarDesenho } from '@/modules/demandas/service'
+import {
+  TRAVA_DOS_EVENTOS_SQL,
+  abrirDemanda,
+  aprovarDesenho,
+  decidirDestino,
+} from '@/modules/demandas/service'
 import { criarFonteDaFabrica, revogarFonteDaFabrica } from '@/modules/fabrica/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
@@ -286,6 +291,18 @@ describe('GET /api/fabrica/demandas', () => {
       const r = await buscarDemandasParaAFabrica(auth(), ruim, AGORA)
       expect(r).toEqual({ status: 400, corpo: { erro: 'Cursor inválido.' } })
     }
+  })
+
+  test('traz o escopo do último destino_decidido; demanda sem ele → null', async () => {
+    const decidida = await novaDemanda('Decidida')
+    const outra = await novaDemanda('Sem escopo')
+    await pedirEvento(decidida, triagem('decisao_do_paulo'))
+    await pedirEvento(outra, triagem('urgente'))
+    await decidirDestino(admin, decidida, 'fila_de_agentes', { escopo: 'só o botão' })
+    const r = await buscarDemandasParaAFabrica(auth(), null, AGORA)
+    const lista = (r.corpo as { demandas: { id: string; escopo: string | null }[] }).demandas
+    expect(lista.find((d) => d.id === decidida)!.escopo).toBe('só o botão')
+    expect(lista.find((d) => d.id === outra)!.escopo).toBeNull()
   })
 
   test('o corpo traz etapas aplicáveis, espera, plano, publicação, anexos e instantes sem milissegundos', async () => {

@@ -122,6 +122,18 @@ export async function buscarDemandasParaAFabrica(
       },
     })
 
+    // O escopo vem do último destino decidido pelo Paulo (pode estar fora da janela de eventos).
+    const escopos = new Map<string, string | null>()
+    const decididos = await db.eventoDaDemanda.findMany({
+      where: { demandaId: { in: ids }, tipo: 'destino_decidido' },
+      orderBy: { seq: 'asc' },
+      select: { demandaId: true, dados: true },
+    })
+    for (const e of decididos) {
+      const escopo = (e.dados as { escopo?: unknown } | null)?.escopo
+      escopos.set(e.demandaId, typeof escopo === 'string' ? escopo : null)
+    }
+
     const ordenadas = demandas
       .map((d) => ({ d, destino: d.destino ? paraOFio.destino(d.destino) : null }))
       .sort((a, b) =>
@@ -147,6 +159,7 @@ export async function buscarDemandasParaAFabrica(
             descricao: d.descricao,
             tipo: d.tipo ? paraOFio.tipo(d.tipo) : null,
             destino,
+            escopo: escopos.get(d.id) ?? null,
             nivel: paraOFio.nivel(d.nivel),
             temTela: d.temTela,
             origem: paraOFio.origem(d.origem),
