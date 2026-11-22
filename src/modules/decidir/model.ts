@@ -182,6 +182,19 @@ const ROTULO_DA_ORIGEM: Record<Origem, string> = {
   usuario: 'Usuário',
 }
 
+/** O resumo diz só o que existe: "texto", "2 anexos", "texto e 1 anexo". */
+function resumoDoRelato(d: DemandaEsperando): ItemDaPilha['relato'] {
+  const partes: string[] = []
+  if ((d.descricao ?? '').trim() !== '') partes.push('texto')
+  if (d.anexos > 0) partes.push(d.anexos === 1 ? '1 anexo' : `${d.anexos} anexos`)
+  if (partes.length === 0) return null
+  return {
+    resumo: `Relato original: ${partes.join(' e ')}`,
+    href: `/demandas/${d.id}`,
+    externo: false,
+  }
+}
+
 function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): ItemDaPilha {
   const fatos =
     d.triagem !== null
@@ -201,14 +214,7 @@ function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): Item
     linha: `${rotuloDoTipo} · ${ROTULO_DA_ORIGEM[d.origem]} · ${formatarIdade(d.esperaDesde, agora)}`,
     desde: d.esperaDesde,
     fatos,
-    relato:
-      (d.descricao ?? '').trim() !== '' || d.anexos > 0
-        ? {
-            resumo: `Relato original: texto e ${d.anexos} anexo(s)`,
-            href: `/demandas/${d.id}`,
-            externo: false,
-          }
-        : null,
+    relato: resumoDoRelato(d),
     ref: {
       tipo: 'demanda',
       demandaId: d.id,

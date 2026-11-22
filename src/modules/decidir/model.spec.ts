@@ -194,11 +194,20 @@ describe('montarPilha', () => {
       { rotulo: 'Mexe em', valor: 'Cadastro' },
     ])
     expect(itens[0]!.relato).toEqual({
-      resumo: 'Relato original: texto e 2 anexo(s)',
+      resumo: 'Relato original: texto e 2 anexos',
       href: '/demandas/d1',
       externo: false,
     })
     expect(pilha({ demandas: [demanda()] }).itens[0]!.relato).toBeNull()
+  })
+
+  it('demanda: o resumo do relato diz só o que existe', () => {
+    const resumo = (o: Partial<DemandaEsperando>) =>
+      pilha({ demandas: [demanda(o)] }).itens[0]!.relato?.resumo
+    expect(resumo({ descricao: 'texto', anexos: 0 })).toBe('Relato original: texto')
+    expect(resumo({ descricao: '   ', anexos: 2 })).toBe('Relato original: 2 anexos')
+    expect(resumo({ descricao: null, anexos: 1 })).toBe('Relato original: 1 anexo')
+    expect(resumo({ descricao: 'texto', anexos: 1 })).toBe('Relato original: texto e 1 anexo')
   })
 })
 
