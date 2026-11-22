@@ -11,7 +11,9 @@ import {
   caminhoDoArquivo,
   diretorioDosArquivos,
   gravarArquivo,
+  gravarParcial,
   lerArquivo,
+  promoverParcial,
 } from '@/modules/demandas/arquivos'
 import { CONTEUDOS_ACEITOS, LIMITE_POR_ARQUIVO } from '@/modules/demandas/transicoes'
 
@@ -105,6 +107,38 @@ describe('arquivos de demandas no volume', () => {
     await gravarArquivo(demandaId, arquivoId, corpoEmPedacos(10), 100)
     await apagarArquivo(demandaId, arquivoId)
     expect(await lerArquivo(demandaId, arquivoId)).toBeNull()
+  })
+
+  test('regressão: gravar e ler arquivo de demanda sem informar a pasta continua em <dir>/demandas/', async () => {
+    const demandaId = randomUUID()
+    const arquivoId = randomUUID()
+    const bytes = new TextEncoder().encode('anexo')
+    await gravarArquivo(demandaId, arquivoId, corpoDe(bytes), 100)
+    expect(await readdir(dir)).toEqual(['demandas'])
+    expect(await readdir(join(dir, 'demandas', demandaId))).toEqual([arquivoId])
+    expect(Buffer.from(await lerTudo((await lerArquivo(demandaId, arquivoId))!)).toString()).toBe(
+      'anexo',
+    )
+  })
+
+  test('com a pasta "conversas" o arquivo vai para <dir>/conversas/ e só é lido, apagado e promovido lá', async () => {
+    const conversaId = randomUUID()
+    const anexoId = randomUUID()
+    const bytes = new TextEncoder().encode('imagem')
+    const r = await gravarParcial(conversaId, anexoId, corpoDe(bytes), 100, 'conversas')
+    expect(r).toEqual({ ok: true, tamanho: bytes.byteLength })
+    expect(await readdir(join(dir, 'conversas', conversaId))).toEqual([`${anexoId}.parcial`])
+    await promoverParcial(conversaId, anexoId, anexoId, 'conversas')
+    expect(caminhoDoArquivo(conversaId, anexoId, 'conversas')).toBe(
+      join(dir, 'conversas', conversaId, anexoId),
+    )
+    expect(await lerArquivo(conversaId, anexoId)).toBeNull()
+    expect(await lerArquivo(conversaId, anexoId, 'conversas')).not.toBeNull()
+    await apagarArquivo(conversaId, anexoId)
+    expect(await readdir(join(dir, 'conversas', conversaId))).toEqual([anexoId])
+    await apagarArquivo(conversaId, anexoId, 'conversas')
+    expect(await readdir(join(dir, 'conversas', conversaId))).toEqual([])
+    expect(() => caminhoDoArquivo(conversaId, anexoId, '..' as 'conversas')).toThrow()
   })
 
   test('caminhoDoArquivo recusa id que não é uuid ("../x", "a/b")', () => {
