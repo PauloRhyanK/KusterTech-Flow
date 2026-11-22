@@ -168,7 +168,7 @@ export function tipoDaDecisao(titulo: string): 'fim_de_fase' | 'decisao_da_fabri
   return FIM_DE_FASE.test(titulo) ? 'fim_de_fase' : 'decisao_da_fabrica'
 }
 
-const ROTULO_DO_TIPO: Record<TipoDeDemanda, string> = {
+export const ROTULO_DO_TIPO: Record<TipoDeDemanda, string> = {
   defeito: 'Defeito',
   ideia: 'Ideia',
   ajuste: 'Ajuste',
