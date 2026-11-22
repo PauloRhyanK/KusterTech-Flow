@@ -1,6 +1,6 @@
 # GitHub App da Central — roteiro de ligação
 
-A Central lê issues, pull requests e resultado de checks dos repositórios vinculados a cada projeto por meio de uma **GitHub App**. Só o **worker** fala com o GitHub e só ele conhece a chave privada; a web lê do banco o que o worker espelhou. Durante o desenvolvimento a App é simulada por fixtures (`GITHUB_FONTE=fixtures`); este roteiro liga a App real **sem mudar código**, apenas com variáveis de ambiente.
+A Central lê issues, pull requests e resultado de checks dos repositórios vinculados a cada projeto por meio de uma **GitHub App**. O **worker** espelha o GitHub no banco, e a web lê do banco o que ele espelhou. A chave privada existe nos dois processos (worker e web): o Decidir lê o PR do fim de fase, responde as decisões da Fábrica e mergeia o PR do fim de fase a partir da web, nas Server Actions da tela, e por isso a web também recebe `GITHUB_FONTE`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` e `GITHUB_API_URL`. Durante o desenvolvimento a App é simulada por fixtures (`GITHUB_FONTE=fixtures`); este roteiro liga a App real **sem mudar código**, apenas com variáveis de ambiente.
 
 ## 1. Criar a App
 
@@ -27,7 +27,7 @@ Somente **permissões de repositório**. Nenhuma permissão de organização ou 
 | Checks | Leitura | resumo de checks dos PRs |
 | Deployments | Leitura | evidência de deploy lida pelo worker (Incremento 4) |
 
-Este incremento **não escreve** no GitHub; a escrita em Issues é concedida agora para evitar reautorizar a instalação depois.
+A Central escreve no GitHub só pelo Decidir (abaixo): comenta e fecha issues `fabrica:decisao` e mergeia o PR do orquestrador no fim de fase. A escrita em Issues também cobre a triagem de correção do Incremento 5b.
 
 As permissões não mudam com o Incremento 4 (Contents e Deployments já estavam previstas) e os eventos continuam **nenhum**. O Incremento 9 também não pede permissão nova: usa o Contents já concedido, só para leitura de arquivos.
 
@@ -57,13 +57,13 @@ GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA P
 
 Depois de apagar o `.pem` baixado, guarde a chave apenas no gerenciador de segredos do servidor.
 
-## 5. Reiniciar só o worker
+## 5. Reiniciar a web e o worker
 
 ```bash
-docker compose up -d --force-recreate worker
+docker compose up -d --force-recreate web worker
 ```
 
-A web lê só `GITHUB_WEBHOOK_SECRET` (§9) e não precisa reiniciar para estas variáveis.
+Os dois processos leem estas variáveis: o worker para espelhar o GitHub, e a web para o Decidir (ler o PR do fim de fase, responder decisões e mergear). Na oficina, use os dois arquivos: `docker compose -f docker-compose.yml -f docker-compose.oficina.yml up -d --force-recreate web worker`.
 
 ## 6. Conferir
 
