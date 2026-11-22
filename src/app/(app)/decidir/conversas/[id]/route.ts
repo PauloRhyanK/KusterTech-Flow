@@ -10,6 +10,7 @@ export const dynamic = 'force-dynamic'
 const SEM_CACHE = { 'Cache-Control': 'no-store' }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const SEQ = /^\d{1,19}$/
+const SEQ_MAXIMO = BigInt('9223372036854775807')
 
 const resposta = (status: number, erro: string) =>
   NextResponse.json({ erro }, { status, headers: SEM_CACHE })
@@ -26,7 +27,9 @@ export async function GET(
   const { id } = await params
   if (!UUID.test(id)) return resposta(404, 'Não encontrado.')
   const bruto = new URL(request.url).searchParams.get('depois') ?? '0'
-  const depois = SEQ.test(bruto) ? BigInt(bruto) : BigInt(0)
+  // `seq` é um bigint do Postgres: fora dele o banco recusaria a consulta com erro 500.
+  if (!SEQ.test(bruto) || BigInt(bruto) > SEQ_MAXIMO) return resposta(400, 'Parâmetro inválido.')
+  const depois = BigInt(bruto)
   try {
     const conversa = await obterConversaDaTela(sessao.sujeito, id, depois, new Date())
     if (!conversa) return resposta(404, 'Não encontrado.')

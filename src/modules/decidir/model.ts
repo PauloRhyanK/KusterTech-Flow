@@ -195,11 +195,18 @@ function resumoDoRelato(d: DemandaEsperando): ItemDaPilha['relato'] {
   }
 }
 
+// A triagem grava a chave sem acento; a tela mostra a palavra.
+const ROTULO_DO_TAMANHO: Record<string, string> = {
+  pequeno: 'pequeno',
+  medio: 'médio',
+  grande: 'grande',
+}
+
 function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): ItemDaPilha {
   const fatos =
     d.triagem !== null
       ? [
-          { rotulo: 'Tamanho', valor: d.triagem.tamanho },
+          { rotulo: 'Tamanho', valor: ROTULO_DO_TAMANHO[d.triagem.tamanho] ?? d.triagem.tamanho },
           { rotulo: 'Mexe em', valor: d.triagem.mexeEm },
         ]
       : []

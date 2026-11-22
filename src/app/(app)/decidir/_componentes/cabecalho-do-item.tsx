@@ -11,7 +11,7 @@ export function CabecalhoDoItem({ item }: { item: ItemDaPilha }) {
   return (
     <header className="space-y-3.5 border-b border-border bg-surface p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-secondary">
-        <IconeDoTipo icone={iconeDoItem(item)} />
+        <IconeDoTipo {...iconeDoItem(item)} />
         <span className="inline-flex min-w-0 items-center gap-1.5 rounded-compacto border border-border bg-surface-subtle px-2 py-0.5 font-[550]">
           <span aria-hidden="true" className="size-2 shrink-0 rounded-[2px] bg-marca-tech" />
           <span className="break-all">{item.projeto ?? item.repositorio}</span>

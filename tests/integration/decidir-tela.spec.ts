@@ -165,6 +165,13 @@ describe('decidir / tela (integração)', () => {
     expect((await pedirAnexo('../../etc/passwd')).status).toBe(404)
     expect((await pedirConversa(randomUUID())).status).toBe(404)
 
+    // `depois` fora de 64 bits (ou que não é número) é erro de quem pede, não do banco.
+    expect((await pedirConversa(conversaId, '9223372036854775807')).status).toBe(200)
+    expect((await pedirConversa(conversaId, '9223372036854775808')).status).toBe(400)
+    expect((await pedirConversa(conversaId, '9999999999999999999')).status).toBe(400)
+    expect((await pedirConversa(conversaId, '-1')).status).toBe(400)
+    expect((await pedirConversa(conversaId, 'abc')).status).toBe(400)
+
     obterSessaoMock.mockResolvedValue(null)
     expect((await pedirConversa(conversaId)).status).toBe(401)
     expect((await pedirAnexo(anexoId)).status).toBe(401)

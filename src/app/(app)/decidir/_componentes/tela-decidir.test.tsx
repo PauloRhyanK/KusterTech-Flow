@@ -200,6 +200,86 @@ describe('TelaDecidir', () => {
     expect(atual()).toHaveTextContent('Pedido 2')
   })
 
+  test('consulta respondida com 401 ou 403 para de consultar', async () => {
+    for (const status of [401, 403]) {
+      fetchMock.mockReset()
+      fetchMock.mockImplementation(
+        async () => new Response(JSON.stringify({ erro: 'Sem permissão.' }), { status }),
+      )
+      const { unmount } = render(
+        <TelaDecidir itens={ITENS} guardados={[]} conversas={CONVERSAS} inicial={null} podeAgir />,
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000)
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      unmount()
+    }
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(corpo()), { status: 200 }))
+  })
+
+  test('"Pular esta" e "Deixar para amanhã" ficam desabilitados enquanto a confirmação está em curso', async () => {
+    let soltar: (v: { proximaChave: null }) => void = () => {}
+    vi.mocked(confirmarCartaoAcao).mockImplementationOnce(
+      () => new Promise((resolve) => (soltar = resolve)),
+    )
+    const cartao = (estado: 'PROPOSTO' | 'CONFIRMANDO') => ({
+      id: 'cartao-1',
+      conteudo: {
+        acao: 'destino',
+        destino: 'fila_de_agentes',
+        nivel: 'aprovar_desenho',
+        tipoDeDemanda: 'ideia',
+        escopo: null,
+        resposta: null,
+      },
+      erro: null,
+      estado,
+    })
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify(corpo({ cartao: cartao('PROPOSTO') })), { status: 200 }),
+    )
+    const { unmount } = render(
+      <TelaDecidir itens={ITENS} guardados={[]} conversas={CONVERSAS} inicial={null} podeAgir />,
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(screen.getByRole('button', { name: 'Pular esta' })).toBeEnabled()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Confirmar e ir para a próxima' }))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(screen.getByRole('button', { name: 'Pular esta' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Deixar para amanhã' })).toBeDisabled()
+    await act(async () => {
+      soltar({ proximaChave: null })
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    unmount()
+
+    // Outra aba confirmando: o cartão chega em CONFIRMANDO.
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify(corpo({ cartao: cartao('CONFIRMANDO') })), { status: 200 }),
+    )
+    render(
+      <TelaDecidir itens={ITENS} guardados={[]} conversas={CONVERSAS} inicial={null} podeAgir />,
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(screen.getByRole('button', { name: 'Pular esta' })).toBeDisabled()
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(corpo()), { status: 200 }))
+  })
+
   test('pilha vazia mostra "Nada esperando por você." com "Voltar ao Início"', () => {
     render(<TelaDecidir itens={[]} guardados={[]} conversas={{}} inicial={null} podeAgir />)
     expect(screen.getByText('Nada esperando por você.')).toBeInTheDocument()

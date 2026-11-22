@@ -238,6 +238,8 @@ function ItemAberto({
   const [aguarda, setAguarda] = useState<Date | null>(null)
   const [buscou, setBuscou] = useState<Date | null>(null)
   const [encerrada, setEncerrada] = useState(false)
+  // Sessão vencida ou sem permissão: consultar de novo não muda a resposta.
+  const [semAcesso, setSemAcesso] = useState(false)
   const [agora, setAgora] = useState(() => new Date())
   const [erro, setErro] = useState<string | null>(null)
   const [erroDoCartao, setErroDoCartao] = useState<string | null>(null)
@@ -274,6 +276,10 @@ function ItemAberto({
         router.refresh()
         return
       }
+      if (res.status === 401 || res.status === 403) {
+        setSemAcesso(true)
+        return
+      }
       if (!res.ok) return
       const dados = (await res.json()) as RespostaDaConsulta
       const primeira = cursor.current === '0'
@@ -303,9 +309,10 @@ function ItemAberto({
     }
   }, [conversaId, abrir, router])
 
-  // Consulta a cada 2 s só com a aba visível; para ao esconder, ao trocar de item e ao encerrar.
+  // Consulta a cada 2 s só com a aba visível; para ao esconder, ao trocar de item, ao encerrar e
+  // quando o servidor recusa a sessão (401) ou a permissão (403).
   useEffect(() => {
-    if (conversaId === null || encerrada) return
+    if (conversaId === null || encerrada || semAcesso) return
     let timer: ReturnType<typeof setInterval> | null = null
     const iniciar = () => {
       if (timer !== null || document.visibilityState !== 'visible') return
@@ -323,7 +330,7 @@ function ItemAberto({
       parar()
       document.removeEventListener('visibilitychange', aoMudar)
     }
-  }, [conversaId, encerrada, consultar])
+  }, [conversaId, encerrada, semAcesso, consultar])
 
   // O relógio da espera só anda enquanto o agente deve uma resposta.
   useEffect(() => {
@@ -456,6 +463,7 @@ function ItemAberto({
           <Compositor onEnviar={enviar} desabilitado={conversaId === null} />
           <Rodape
             chave={item.chave}
+            desabilitado={pendente || cartao?.estado === 'CONFIRMANDO'}
             aoTerminar={(r) => (r.erro ? setErro(r.erro) : aposSair(null))}
           />
         </div>

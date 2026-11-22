@@ -12,9 +12,13 @@ export function textoDaPosicao(posicao: number, total: number): string {
   return `${posicao} de ${total} · faltam ${total - posicao + 1}`
 }
 
-/** A demanda mostra o próprio tipo; a issue da Fábrica não tem tipo de demanda. */
-export function iconeDoItem(item: ItemDaPilha) {
-  return iconeDoTipo(item.ref.tipo === 'demanda' ? item.ref.tipoDeDemanda : null)
+/** A demanda mostra o próprio tipo; a issue da Fábrica (fim de fase, decisão) leva o "F" da Fábrica. */
+export function iconeDoItem(item: ItemDaPilha): {
+  icone: ReturnType<typeof iconeDoTipo>
+  nome?: string
+} {
+  if (item.ref.tipo === 'issue') return { icone: { letra: 'F', tom: 'execucao' }, nome: 'Fábrica' }
+  return { icone: iconeDoTipo(item.ref.tipoDeDemanda) }
 }
 
 export function Guardados({
@@ -107,7 +111,7 @@ export function Pilha({
                 i < atual && 'opacity-55',
               )}
             >
-              <IconeDoTipo icone={iconeDoItem(item)} />
+              <IconeDoTipo {...iconeDoItem(item)} />
               <span className="line-clamp-2 min-w-0 break-words">{item.titulo}</span>
             </button>
           </li>

@@ -186,6 +186,14 @@ describe('montarPilha', () => {
     })
   })
 
+  it('demanda: o tamanho da triagem aparece com acento ("medio" → "médio")', () => {
+    const base = demanda()
+    const { itens } = pilha({
+      demandas: [{ ...base, triagem: { ...base.triagem!, tamanho: 'medio' } }],
+    })
+    expect(itens[0]!.fatos[0]).toEqual({ rotulo: 'Tamanho', valor: 'médio' })
+  })
+
   it('demanda: linha, fatos e relato', () => {
     const { itens } = pilha({ demandas: [demanda({ descricao: 'texto', anexos: 2 })] })
     expect(itens[0]!.linha).toBe('Defeito · Flow · há 3 h')

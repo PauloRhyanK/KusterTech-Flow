@@ -78,6 +78,36 @@ describe('Pilha', () => {
     expect(onTrazerDeVolta).toHaveBeenCalledWith(guardado.chave)
   })
 
+  test('item da Fábrica (fim de fase ou decisão) mostra o "F" no tom da Fábrica com a dica "Fábrica"', () => {
+    const daFabrica = item(8, {
+      chave: 'issue:https://github.com/kustertech-exemplo/portal/issues/41',
+      tipo: 'fim_de_fase',
+      titulo: 'Fase 2 concluída: cadastro',
+      ref: {
+        tipo: 'issue',
+        url: 'https://github.com/kustertech-exemplo/portal/issues/41',
+        repositorio: 'kustertech-exemplo/portal',
+        numero: 41,
+        planoId: 'plano-1',
+        feature: 'cadastro',
+      },
+    })
+    render(
+      <Pilha
+        itens={[daFabrica, item(1)]}
+        atual={0}
+        guardados={[]}
+        onEscolher={vi.fn()}
+        onTrazerDeVolta={vi.fn()}
+      />,
+    )
+    const icone = screen.getByTitle('Fábrica')
+    expect(icone).toHaveTextContent('F')
+    expect(icone).toHaveAttribute('data-tom', 'execucao')
+    // A demanda continua com o próprio tipo.
+    expect(screen.getByTitle('Ideia')).toHaveTextContent('I')
+  })
+
   test('FaixaDoCelular mostra "‹ 3 de 7 ›" com o título e troca de item', () => {
     const onAnterior = vi.fn()
     const onProximo = vi.fn()
