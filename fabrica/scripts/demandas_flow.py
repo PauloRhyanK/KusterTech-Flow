@@ -33,10 +33,10 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 _REPOSITORIO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
-def url_da_rota(url_central: str, *partes: str) -> str:
-    """A URL da rota de demandas na mesma Central da URL do retrato, com as `partes` no fim do caminho."""
+def url_da_rota(url_central: str, *partes: str, caminho: str = CAMINHO_DA_ROTA) -> str:
+    """A URL da rota (padrão: demandas) na mesma Central da URL do retrato, com as `partes` no fim do caminho."""
     base = urllib.parse.urlsplit(url_central)
-    caminho = "/".join([CAMINHO_DA_ROTA] + [urllib.parse.quote(str(p), safe="") for p in partes])
+    caminho = "/".join([caminho] + [urllib.parse.quote(str(p), safe="") for p in partes])
     return urllib.parse.urlunsplit((base.scheme, base.netloc, caminho, "", ""))
 
 

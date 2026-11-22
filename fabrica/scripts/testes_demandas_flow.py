@@ -82,6 +82,13 @@ class TestesDemandasFlow(Base):
             "https://central.exemplo/api/fabrica/demandas/%s/eventos" % ID,
         )
 
+    def test_url_da_rota_aceita_outro_caminho_e_o_padrao_nao_muda(self):
+        self.assertEqual(
+            demandas_flow.url_da_rota(CENTRAL, ID, "respostas", caminho="/api/fabrica/conversas"),
+            "https://central.exemplo/api/fabrica/conversas/%s/respostas" % ID,
+        )
+        self.assertEqual(demandas_flow.url_da_rota(CENTRAL, ID), "https://central.exemplo/api/fabrica/demandas/%s" % ID)
+
     def test_buscar_manda_desde_e_bearer_e_le_cursor_mais_e_demandas(self):
         corpo = json.dumps({"cursor": "12", "mais": True, "demandas": [demanda()]}).encode()
         servidor = self.flow(resposta=corpo)
