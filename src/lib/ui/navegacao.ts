@@ -1,3 +1,4 @@
+import type { ModuloId } from '@/lib/modulos'
 import {
   Bot,
   Building2,
@@ -5,6 +6,7 @@ import {
   Inbox,
   LayoutDashboard,
   type LucideIcon,
+  MessageSquareMore,
   Rocket,
   Server,
   Settings,
@@ -15,6 +17,8 @@ export interface ItemDeNavegacao {
   href: string
   icone: LucideIcon
   descricao: string
+  /** O item só aparece com este módulo ativo. */
+  modulo?: ModuloId
 }
 
 export interface GrupoDeNavegacao {
@@ -31,6 +35,13 @@ export const GRUPOS_DE_NAVEGACAO: readonly GrupoDeNavegacao[] = [
         href: '/',
         icone: LayoutDashboard,
         descricao: 'O que espera você e o resumo dos projetos',
+      },
+      {
+        rotulo: 'Decidir',
+        href: '/decidir',
+        icone: MessageSquareMore,
+        descricao: 'O que espera uma resposta sua, um item por vez',
+        modulo: 'decidir',
       },
       {
         rotulo: 'Demandas',

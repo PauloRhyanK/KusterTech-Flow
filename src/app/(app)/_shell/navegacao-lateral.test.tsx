@@ -61,4 +61,37 @@ describe('NavegacaoLateral', () => {
     const menuUsuario = screen.getByRole('button', { name: /Menu do usuário/ })
     expect(menuUsuario).toBeInTheDocument()
   })
+
+  it('Decidir aparece depois de Início com o selo e o aria-label do contador', () => {
+    pathnameMock = '/'
+    render(
+      <NavegacaoLateral
+        usuario={usuario}
+        modulosAtivos={['decidir', 'demandas']}
+        contadores={{ '/decidir': 5 }}
+      />,
+    )
+    const links = screen.getAllByRole('link').map((l) => l.getAttribute('href'))
+    expect(links.indexOf('/decidir')).toBe(links.indexOf('/') + 1)
+    const selo = screen.getByLabelText('5 esperando')
+    expect(selo).toHaveTextContent('5')
+    expect(screen.getByRole('link', { name: /Decidir/ })).toContainElement(selo)
+  })
+
+  it('com contador zero não há selo e com o módulo inativo o item não aparece', () => {
+    pathnameMock = '/'
+    const { unmount } = render(
+      <NavegacaoLateral
+        usuario={usuario}
+        modulosAtivos={['decidir']}
+        contadores={{ '/decidir': 0 }}
+      />,
+    )
+    expect(screen.getByRole('link', { name: 'Decidir' })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/esperando/)).toBeNull()
+    unmount()
+
+    render(<NavegacaoLateral usuario={usuario} modulosAtivos={['demandas']} />)
+    expect(screen.queryByRole('link', { name: /Decidir/ })).toBeNull()
+  })
 })

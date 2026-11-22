@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  CATALOGO_DE_MODULOS,
   ErroDeConfiguracaoDeModulos,
   moduloAtivo,
   modulosAtivos,
@@ -11,6 +12,7 @@ describe('catálogo de módulos', () => {
     expect([...resolverModulosAtivos(undefined)].sort()).toEqual([
       'atividade',
       'clientes',
+      'decidir',
       'demandas',
       'desenvolvimento',
       'fabrica',
@@ -23,6 +25,13 @@ describe('catálogo de módulos', () => {
   it('FLOW_MODULOS_EXTRAS sem fabrica não desliga demandas porque fabrica é ativo', () => {
     expect(resolverModulosAtivos('entregas').has('demandas')).toBe(true)
   })
+  it('decidir está ativo e depende de demandas, fabrica e github', () => {
+    expect(CATALOGO_DE_MODULOS.decidir).toEqual({
+      ativo: true,
+      dependeDe: ['demandas', 'fabrica', 'github'],
+    })
+    expect(resolverModulosAtivos(undefined).has('decidir')).toBe(true)
+  })
   it('extras ligam módulos congelados', () => {
     expect(resolverModulosAtivos('entregas, ambientes').has('entregas')).toBe(true)
   })
@@ -31,13 +40,13 @@ describe('catálogo de módulos', () => {
   })
   it('ligar publicacao exige a cadeia inteira', () => {
     expect(() => resolverModulosAtivos('entregas,ambientes,publicacao')).toThrow(/homologacao/)
-    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(13)
+    expect(resolverModulosAtivos('entregas,ambientes,homologacao,publicacao').size).toBe(14)
   })
   it('nome desconhecido em extras é erro', () => {
     expect(() => resolverModulosAtivos('alertas')).toThrow(/alertas/)
   })
   it('vazio e espaços equivalem a nenhum extra', () => {
-    expect(resolverModulosAtivos('  ').size).toBe(9)
+    expect(resolverModulosAtivos('  ').size).toBe(10)
   })
 })
 

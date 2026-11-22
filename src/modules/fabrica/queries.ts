@@ -11,7 +11,11 @@ export interface RetratoRecebido {
 // O retrato mais recente entre as fontes não revogadas; null se não há nenhum válido.
 export async function obterRetratoMaisRecente(sujeito: Sujeito): Promise<RetratoRecebido | null> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
+  return lerRetratoMaisRecente()
+}
 
+/** Sem conferir permissão: só para quem já conferiu (ou o atendente, que não tem sujeito). */
+export async function lerRetratoMaisRecente(): Promise<RetratoRecebido | null> {
   const linha = await db.retratoDaFabrica.findFirst({
     where: { fonte: { revogadaEm: null } },
     orderBy: { recebidoEm: 'desc' },

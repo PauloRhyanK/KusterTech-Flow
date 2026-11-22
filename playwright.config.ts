@@ -62,6 +62,8 @@ export default defineConfig({
       OFICINA_DIR: PASTA_DA_OFICINA,
       FLOW_MAQUINA_LOCAL: MAQUINA_LOCAL_E2E,
       FLOW_ARQUIVOS_DIR: PASTA_DOS_ARQUIVOS_E2E,
+      // O servidor fala com o GitHub de exemplo (como o worker do E2E), nunca com a App real do `.env`.
+      GITHUB_FONTE: 'fixtures',
     },
   },
 })

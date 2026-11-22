@@ -68,19 +68,31 @@ export async function exigirArmazenamento(): Promise<string> {
   return dir
 }
 
-/** `<dir>/demandas/<demandaId>/<arquivoId>`; só ids uuid entram no caminho (nunca o nome enviado). */
-export function caminhoDoArquivo(demandaId: string, arquivoId: string): string {
+/** Subpasta do volume: as demandas e as conversas do Decidir (`<dir>/<pasta>/<dono>/<arquivo>`). */
+export type Pasta = 'demandas' | 'conversas'
+
+/** `<dir>/<pasta>/<demandaId>/<arquivoId>`; só ids uuid entram no caminho (nunca o nome enviado). */
+export function caminhoDoArquivo(
+  demandaId: string,
+  arquivoId: string,
+  pasta: Pasta = 'demandas',
+): string {
   if (!UUID.test(demandaId) || !UUID.test(arquivoId)) {
     throw new Error('Identificador de arquivo inválido.')
   }
+  if (pasta !== 'demandas' && pasta !== 'conversas') throw new Error('Pasta de arquivos inválida.')
   const raiz = resolve(/* turbopackIgnore: true */ diretorioDosArquivos())
-  const caminho = resolve(raiz, 'demandas', demandaId, arquivoId)
+  const caminho = resolve(raiz, pasta, demandaId, arquivoId)
   if (!caminho.startsWith(raiz + sep)) throw new Error('Caminho fora do diretório de arquivos.')
   return caminho
 }
 
-export function caminhoParcial(demandaId: string, arquivoId: string): string {
-  return caminhoDoArquivo(demandaId, arquivoId) + SUFIXO_PARCIAL
+export function caminhoParcial(
+  demandaId: string,
+  arquivoId: string,
+  pasta: Pasta = 'demandas',
+): string {
+  return caminhoDoArquivo(demandaId, arquivoId, pasta) + SUFIXO_PARCIAL
 }
 
 export function ehParcial(nome: string): boolean {
@@ -96,13 +108,14 @@ export async function gravarArquivo(
   arquivoId: string,
   corpo: ReadableStream<Uint8Array>,
   limite: number,
+  pasta: Pasta = 'demandas',
 ): Promise<{ ok: true; tamanho: number } | { ok: false; motivo: 'grande' }> {
-  const r = await gravarParcial(demandaId, arquivoId, corpo, limite)
+  const r = await gravarParcial(demandaId, arquivoId, corpo, limite, pasta)
   if (!r.ok) return r
   try {
-    await promoverParcial(demandaId, arquivoId, arquivoId)
+    await promoverParcial(demandaId, arquivoId, arquivoId, pasta)
   } catch (err) {
-    await rm(caminhoParcial(demandaId, arquivoId), { force: true })
+    await rm(caminhoParcial(demandaId, arquivoId, pasta), { force: true })
     throw err
   }
   return r
@@ -118,8 +131,9 @@ export async function gravarParcial(
   tempId: string,
   corpo: ReadableStream<Uint8Array>,
   limite: number,
+  pasta: Pasta = 'demandas',
 ): Promise<{ ok: true; tamanho: number } | { ok: false; motivo: 'grande' }> {
-  const parcial = caminhoParcial(demandaId, tempId)
+  const parcial = caminhoParcial(demandaId, tempId, pasta)
   await exigirArmazenamento()
   await mkdir(resolve(parcial, '..'), { recursive: true })
 
@@ -154,17 +168,22 @@ export async function promoverParcial(
   demandaId: string,
   tempId: string,
   arquivoId: string,
+  pasta: Pasta = 'demandas',
 ): Promise<void> {
-  await rename(caminhoParcial(demandaId, tempId), caminhoDoArquivo(demandaId, arquivoId))
+  await rename(
+    caminhoParcial(demandaId, tempId, pasta),
+    caminhoDoArquivo(demandaId, arquivoId, pasta),
+  )
 }
 
 export async function lerArquivo(
   demandaId: string,
   arquivoId: string,
+  pasta: Pasta = 'demandas',
 ): Promise<ReadableStream<Uint8Array> | null> {
   let arquivo: FileHandle
   try {
-    arquivo = await open(caminhoDoArquivo(demandaId, arquivoId), 'r')
+    arquivo = await open(caminhoDoArquivo(demandaId, arquivoId, pasta), 'r')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
@@ -173,8 +192,12 @@ export async function lerArquivo(
 }
 
 /** Ausente não é erro. */
-export async function apagarArquivo(demandaId: string, arquivoId: string): Promise<void> {
-  const caminho = caminhoDoArquivo(demandaId, arquivoId)
+export async function apagarArquivo(
+  demandaId: string,
+  arquivoId: string,
+  pasta: Pasta = 'demandas',
+): Promise<void> {
+  const caminho = caminhoDoArquivo(demandaId, arquivoId, pasta)
   await rm(caminho, { force: true })
   await rm(caminho + SUFIXO_PARCIAL, { force: true })
 }

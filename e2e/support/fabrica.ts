@@ -117,3 +117,59 @@ export async function arquivoDaFabrica(
   })
   return { status: resposta.status(), id }
 }
+
+// Decidir: retrato com um plano em curso no portal (fase 2, seis raias concluídas) e as decisões
+// abertas dele (issues `[fábrica] orquestrador: …`).
+export function retratoComDecisoes(
+  feature: string,
+  decisoes: readonly { titulo: string; url: string }[],
+  geradoEm: Date = new Date(),
+): Record<string, unknown> {
+  const base = retratoDeTeste(feature, geradoEm)
+  const raias = ['cadastro', 'permissoes', 'perfis', 'convites', 'auditoria', 'testes']
+  return {
+    ...base,
+    planos: [
+      {
+        id: 'plano-decidir-e2e',
+        repo: 'kustertech-exemplo/portal',
+        feature,
+        estado: 'ativo',
+        entrouEm: instanteUTC(geradoEm),
+        faseAtual: '2',
+        fases: [{ id: '2', raias: raias.map((id) => ({ id, estado: 'concluida' })) }],
+        pausado: null,
+        decisoes: decisoes.map((d) => ({ titulo: d.titulo, url: d.url })),
+        orquestradorAtivo: true,
+      },
+    ],
+  }
+}
+
+// O atendente da Fábrica busca as conversas com mensagem nova do Paulo.
+export async function buscarConversas(
+  request: APIRequestContext,
+  token: string,
+): Promise<{
+  status: number
+  json: { conversas: Record<string, unknown>[]; ativaAte: string | null }
+}> {
+  const resposta = await request.get('/api/fabrica/conversas', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  return { status: resposta.status(), json: await resposta.json() }
+}
+
+// O atendente devolve a resposta (mensagem, respostas rápidas e, se houver, o cartão).
+export async function responderConversa(
+  request: APIRequestContext,
+  token: string,
+  conversaId: string,
+  corpo: Record<string, unknown>,
+): Promise<{ status: number; json: unknown }> {
+  const resposta = await request.post(`/api/fabrica/conversas/${conversaId}/respostas`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { id: randomUUID(), ...corpo },
+  })
+  return { status: resposta.status(), json: await resposta.json() }
+}

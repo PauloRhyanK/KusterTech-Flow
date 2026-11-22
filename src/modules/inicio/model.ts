@@ -10,6 +10,7 @@ import type { AvisoDePublicacao } from '@/modules/fila-de-publicacao/apresentaca
 import type { AvisoDaMaquina } from '@/modules/oficina/model'
 
 export type TipoDeEspera =
+  | 'decidir'
   | 'decisao'
   | 'demanda'
   | 'plano-pausado'
@@ -22,6 +23,7 @@ export type TipoDeEspera =
   | 'divergencia'
 
 export const ORDEM_DOS_TIPOS: readonly TipoDeEspera[] = [
+  'decidir',
   'decisao',
   'demanda',
   'plano-pausado',
@@ -35,6 +37,7 @@ export const ORDEM_DOS_TIPOS: readonly TipoDeEspera[] = [
 ]
 
 export const ROTULO_DO_TIPO: Record<TipoDeEspera, string> = {
+  decidir: 'Decidir',
   decisao: 'Decisão',
   demanda: 'Demanda',
   'plano-pausado': 'Plano pausado',
@@ -50,6 +53,7 @@ export const ROTULO_DO_TIPO: Record<TipoDeEspera, string> = {
 export const LIMITE_DE_ESPERA = 20
 
 export const ACAO_DE_LEITURA: Record<TipoDeEspera, Acao> = {
+  decidir: 'desenvolvimento.ler',
   decisao: 'desenvolvimento.ler',
   demanda: 'desenvolvimento.ler',
   'plano-pausado': 'desenvolvimento.ler',
@@ -217,7 +221,7 @@ export function esperasDasDemandas(
 }
 
 // Os mesmos estados de `planosEmCurso`: concluídos e removidos não esperam ninguém.
-const PLANO_EM_CURSO: readonly RetratoRecebido['retrato']['planos'][number]['estado'][] = [
+export const PLANO_EM_CURSO: readonly RetratoRecebido['retrato']['planos'][number]['estado'][] = [
   'ativo',
   'admitindo',
   'pausado',
@@ -531,4 +535,37 @@ export function indicadoresDeProjetos(d: {
     })
   }
   return indicadores
+}
+
+/**
+ * Com o Decidir ativo, só o que está em `pilha.itens` sai da lista: as decisões da Fábrica (pela
+ * URL da issue) e as demandas (pelo id) viram um só item "N itens esperam sua resposta". Tudo o
+ * mais fica: avisos, "planejar comigo" e o que a pilha não conta (adiado, guardado, descartado).
+ */
+export function esperasComDecidir(
+  itens: readonly ItemDeEspera[],
+  naPilha: number,
+  daPilha: { demandas?: ReadonlySet<string>; decisoes?: ReadonlySet<string> } = {},
+): ItemDeEspera[] {
+  const restantes = itens.filter(
+    (i) =>
+      !(i.tipo === 'decisao' && daPilha.decisoes?.has(i.href)) &&
+      !(i.tipo === 'demanda' && daPilha.demandas?.has(i.id.slice('demanda:'.length))),
+  )
+  if (naPilha <= 0) return restantes
+  return [
+    ...restantes,
+    {
+      id: 'decidir',
+      tipo: 'decidir',
+      titulo:
+        naPilha === 1 ? '1 item espera sua resposta' : `${naPilha} itens esperam sua resposta`,
+      contexto: 'Decisões da Fábrica e pedidos das demandas',
+      href: '/decidir',
+      externo: false,
+      rotuloDoLink: 'Abrir Decidir',
+      tom: 'atencao',
+      desde: null,
+    },
+  ]
 }

@@ -8,7 +8,9 @@ import {
   mapearExecucao,
   mapearIssue,
   mapearIssueCriada,
+  mapearPullParaMerge,
   mapearPullRequest,
+  mapearStatusCombinado,
   mapearRepositorio,
   TAMANHO_MAXIMO_ARQUIVO,
   type ComparacaoDaFonte,
@@ -18,6 +20,7 @@ import {
   type IssueDaFonte,
   type PullRequestDaFonte,
   type RefRepositorio,
+  type ResultadoDoMerge,
   type RepositorioDaFonte,
 } from './fonte'
 import type { CategoriaDeFalha, CheckDaFonte } from './model'
@@ -30,6 +33,15 @@ export interface ConfigDaApp {
 
 const MARGEM_DO_TOKEN_MS = 60_000
 const LIMITE_DE_PAGINAS = 200
+const LIMITE_DE_PAGINAS_DE_ARQUIVOS = 30
+const TEXTO_SEM_PERMISSAO = 'Resource not accessible by integration'
+/** Teto de cada chamada ao GitHub (resposta e corpo); estourou → `rede`, que é transitória. */
+export const TEMPO_DA_CHAMADA_MS = 15_000
+
+/** O corpo lido falhou porque o tempo acabou (e não porque não era JSON). */
+function tempoEsgotado(e: unknown): boolean {
+  return e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')
+}
 
 const esquemaInstalacoes = z.array(z.object({ id: z.number().int() }))
 const esquemaToken = z.object({ token: z.string().min(1), expires_at: z.string() })
@@ -43,7 +55,9 @@ export function criarFonteApp(
   config: ConfigDaApp,
   fetchImpl: typeof fetch,
   relogio: () => Date = () => new Date(),
+  tempoDaChamadaMs: number = TEMPO_DA_CHAMADA_MS,
 ): FonteGitHub {
+  const sinal = () => AbortSignal.timeout(tempoDaChamadaMs)
   const apiUrl = config.apiUrl.replace(/\/+$/, '')
   const origem = new URL(apiUrl).origin
   const tokens = new Map<bigint, { token: string; expiraEm: number }>()
@@ -76,7 +90,17 @@ export function criarFonteApp(
     return undefined
   }
 
-  function falhaDe(r: Response): ErroDeIntegracao {
+  async function corpoComecaCom(r: Response, texto: string): Promise<boolean> {
+    try {
+      const corpo: unknown = await r.json()
+      const mensagem = (corpo as { message?: unknown } | null)?.message
+      return typeof mensagem === 'string' && mensagem.startsWith(texto)
+    } catch {
+      return false
+    }
+  }
+
+  async function falhaDe(r: Response): Promise<ErroDeIntegracao> {
     const limitado =
       (r.status === 403 || r.status === 429) &&
       (r.headers.get('x-ratelimit-remaining') === '0' || r.headers.has('retry-after'))
@@ -85,6 +109,9 @@ export function criarFonteApp(
     }
     if (r.status === 401) {
       return new ErroDeIntegracao('autenticacao')
+    }
+    if (r.status === 403 && (await corpoComecaCom(r, TEXTO_SEM_PERMISSAO))) {
+      return new ErroDeIntegracao('sem-permissao')
     }
     // 410: issues desativadas no repositório.
     if (r.status === 403 || r.status === 404 || r.status === 410) {
@@ -104,16 +131,18 @@ export function criarFonteApp(
   }
 
   async function chamar(
-    metodo: 'GET' | 'POST' | 'PATCH',
+    metodo: 'GET' | 'POST' | 'PATCH' | 'PUT',
     url: string,
     autorizacao: string,
     em404?: CategoriaDeFalha | 'vazio',
     corpoJson?: unknown,
-  ): Promise<{ corpo: unknown; link: string | null }> {
+    tolerar: readonly number[] = [],
+  ): Promise<{ corpo: unknown; link: string | null; status: number }> {
     let resposta: Response
     try {
       resposta = await fetchImpl(url, {
         method: metodo,
+        signal: sinal(),
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
@@ -126,20 +155,27 @@ export function criarFonteApp(
       throw new ErroDeIntegracao('rede')
     }
     if (resposta.status === 404 && em404 === 'vazio') {
-      return { corpo: null, link: null }
+      return { corpo: null, link: null, status: resposta.status }
+    }
+    if (tolerar.includes(resposta.status)) {
+      return { corpo: null, link: null, status: resposta.status }
     }
     if (!resposta.ok) {
       throw resposta.status === 404 && em404 && em404 !== 'vazio'
         ? new ErroDeIntegracao(em404)
-        : falhaDe(resposta)
+        : await falhaDe(resposta)
     }
     if (resposta.status === 204) {
-      return { corpo: null, link: null }
+      return { corpo: null, link: null, status: resposta.status }
     }
     try {
-      return { corpo: await resposta.json(), link: resposta.headers.get('link') }
-    } catch {
-      throw new ErroDeIntegracao('resposta-invalida')
+      return {
+        corpo: await resposta.json(),
+        link: resposta.headers.get('link'),
+        status: resposta.status,
+      }
+    } catch (e) {
+      throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
     }
   }
 
@@ -222,6 +258,7 @@ export function criarFonteApp(
       resposta = await fetchImpl(url, {
         method: 'GET',
         redirect: 'manual',
+        signal: sinal(),
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
@@ -237,6 +274,7 @@ export function criarFonteApp(
         resposta = await fetchImpl(alvo.toString(), {
           method: 'GET',
           redirect: 'error',
+          signal: sinal(),
           ...(alvo.origin === origem
             ? { headers: { Authorization: `Bearer ${autorizacao}` } }
             : {}),
@@ -246,12 +284,12 @@ export function criarFonteApp(
       throw e instanceof ErroDeIntegracao ? e : new ErroDeIntegracao('rede')
     }
     if (!resposta.ok) {
-      throw falhaDe(resposta)
+      throw await falhaDe(resposta)
     }
     try {
       return await resposta.text()
-    } catch {
-      throw new ErroDeIntegracao('resposta-invalida')
+    } catch (e) {
+      throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
     }
   }
 
@@ -262,6 +300,8 @@ export function criarFonteApp(
     }
     return r.data
   }
+
+  const esquemaComentario = z.object({ id: z.number().int(), body: z.string().nullish() })
 
   const esquemaJobs = z.object({
     jobs: z.array(z.object({ id: z.number().int(), conclusion: z.string().nullish() })),
@@ -375,6 +415,7 @@ export function criarFonteApp(
       try {
         resposta = await fetchImpl(`${apiUrl}${caminhoDoRepo(repo)}/contents/${segmentos}`, {
           method: 'GET',
+          signal: sinal(),
           headers: {
             Accept: 'application/vnd.github.raw+json',
             'X-GitHub-Api-Version': '2022-11-28',
@@ -388,7 +429,7 @@ export function criarFonteApp(
         return null
       }
       if (!resposta.ok) {
-        throw falhaDe(resposta)
+        throw await falhaDe(resposta)
       }
       const tamanho = Number(resposta.headers.get('content-length'))
       if (resposta.headers.get('content-length') !== null && tamanho > TAMANHO_MAXIMO_ARQUIVO) {
@@ -397,8 +438,8 @@ export function criarFonteApp(
       let texto: string
       try {
         texto = await resposta.text()
-      } catch {
-        throw new ErroDeIntegracao('resposta-invalida')
+      } catch (e) {
+        throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
       }
       if (texto.length > TAMANHO_MAXIMO_ARQUIVO) {
         throw new ErroDeIntegracao('resposta-invalida')
@@ -489,6 +530,98 @@ export function criarFonteApp(
         throw new ErroDeIntegracao('resposta-invalida')
       }
       return issue
+    },
+
+    async lerIssue(repo, numero): Promise<IssueDaFonte | null> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo } = await chamar(
+        'GET',
+        `${apiUrl}${caminhoDoRepo(repo)}/issues/${numero}`,
+        token,
+        'vazio',
+      )
+      return corpo === null ? null : mapearIssue(corpo)
+    },
+
+    async listarComentariosDaIssue(repo, numero) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const brutos = await paginas(
+        `${caminhoDoRepo(repo)}/issues/${numero}/comments?per_page=100`,
+        token,
+        lista,
+      )
+      return brutos.map((b) => {
+        const c = validar(esquemaComentario, b)
+        return { id: BigInt(c.id), corpo: c.body ?? '' }
+      })
+    },
+
+    async comentarEFecharIssue(repo, numero, comentario, opcoes) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const raiz = `${apiUrl}${caminhoDoRepo(repo)}/issues/${numero}`
+      if (!opcoes.jaComentado) {
+        await chamar('POST', `${raiz}/comments`, token, undefined, { body: comentario })
+      }
+      try {
+        await chamar('PATCH', raiz, token, undefined, {
+          state: 'closed',
+          state_reason: 'completed',
+        })
+      } catch (e) {
+        throw e instanceof ErroDeIntegracao
+          ? new ErroDeIntegracao(e.categoria, e.tentarApos, { comentado: true })
+          : e
+      }
+      return { comentado: true, fechada: true }
+    },
+
+    async lerPullRequestParaMerge(repo, numero) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const raiz = `${caminhoDoRepo(repo)}/pulls/${numero}`
+      const { corpo } = await chamar('GET', `${apiUrl}${raiz}`, token, 'vazio')
+      if (corpo === null) {
+        return null
+      }
+      const arquivos: unknown[] = []
+      let url: string | null = `${apiUrl}${raiz}/files?per_page=100`
+      for (let n = 0; url !== null; n++) {
+        if (n >= LIMITE_DE_PAGINAS_DE_ARQUIVOS) {
+          throw new ErroDeIntegracao('resposta-invalida')
+        }
+        const pagina = await chamar('GET', url, token)
+        arquivos.push(...lista(pagina.corpo))
+        url = proximaPagina(pagina.link)
+      }
+      return mapearPullParaMerge(corpo, arquivos)
+    },
+
+    async lerStatusCombinado(repo, sha) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { corpo } = await chamar(
+        'GET',
+        `${apiUrl}${caminhoDoRepo(repo)}/commits/${encodeURIComponent(sha)}/status`,
+        token,
+      )
+      return mapearStatusCombinado(corpo)
+    },
+
+    async mergearPullRequest(repo, numero, head): Promise<ResultadoDoMerge> {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const { status } = await chamar(
+        'PUT',
+        `${apiUrl}${caminhoDoRepo(repo)}/pulls/${numero}/merge`,
+        token,
+        undefined,
+        { sha: head, merge_method: 'merge' },
+        [405, 409, 422],
+      )
+      if (status === 409) {
+        return { resultado: 'recusado', motivo: 'head_mudou' }
+      }
+      if (status === 405 || status === 422) {
+        return { resultado: 'recusado', motivo: 'nao_mergeavel' }
+      }
+      return { resultado: 'mergeado' }
     },
 
     async criarIssue(repo, issue) {

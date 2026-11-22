@@ -13,6 +13,8 @@
 # A cada 60 s o coordenador prepara o Warren (e desliga o warren-automerge e o warren-auto), lê os
 # planos (.fabrica/planos/<feature>.json) do branch padrão de cada repositório de ~/fabrica/fila.json,
 # admite os que não colidem e liga um fabrica-plano@<id> por plano admitido.
+# Com FABRICA_CENTRAL_URL, também cuida das demandas e do atendente do Decidir (sem unit nova): com
+# conversa ativa, entre os ciclos, consulta o Flow a cada 3 s só para o atendente.
 #   python3 ~/fabrica/kit/fabrica/scripts/coordenador.py registrar <dono>/<repo>   # entra na fila
 #   python3 ~/fabrica/kit/fabrica/scripts/coordenador.py status                    # fila, vagas e avisos
 #   python3 ~/fabrica/kit/fabrica/scripts/coordenador.py vagas 3                   # vagas (limpa o OOM)

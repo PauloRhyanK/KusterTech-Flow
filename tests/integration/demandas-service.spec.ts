@@ -12,6 +12,7 @@ import {
   aprovarDesenho,
   criarDemanda,
   criarModeloDeEtapas,
+  decidirDestino,
   definirDemandasDoProjeto,
   guardarArquivo,
   modeloDoProjeto,
@@ -172,6 +173,54 @@ afterEach(async () => {
 })
 
 describe('demandas / service (integração)', () => {
+  async function demandaParaDecidir() {
+    const { projeto, repositorio } = await cenario()
+    const { id } = await criarDemanda(admin, {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Decidir',
+      descricao: null,
+      nivel: 'aprovar_desenho',
+      temTela: true,
+      anexos: [],
+    })
+    expect((await daFabrica(id, triagem('decisao_do_paulo'))).resultado).toBe('aplicado')
+    return id
+  }
+
+  test('decidirDestino com { tipo, nivel, escopo } grava a coluna tipo e o evento com nivel e escopo', async () => {
+    const id = await demandaParaDecidir()
+    await decidirDestino(admin, id, 'fila_de_agentes', {
+      tipo: 'ajuste',
+      nivel: 'vai_sozinho',
+      escopo: '  só o botão  ',
+    })
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.tipo).toBe('AJUSTE')
+    expect(d.nivel).toBe('VAI_SOZINHO')
+    expect(d.espera).toBeNull()
+    const ev = await db.eventoDaDemanda.findFirstOrThrow({
+      where: { demandaId: id, tipo: 'destino_decidido' },
+    })
+    expect(ev.dados).toEqual({
+      destino: 'fila_de_agentes',
+      nivel: 'vai_sozinho',
+      escopo: 'só o botão',
+    })
+  })
+
+  test('decidirDestino com escopo de 501 → ErroDeDominio e nada gravado', async () => {
+    const id = await demandaParaDecidir()
+    await expect(
+      decidirDestino(admin, id, 'fila_de_agentes', { tipo: 'ajuste', escopo: 'x'.repeat(501) }),
+    ).rejects.toThrow(ErroDeDominio)
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.espera).toBe('decidir_destino')
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'destino_decidido' } }),
+    ).toBe(0)
+  })
+
   test('criarDemanda sem projetos.gerenciar → ErroDeAutorizacao; com → demanda em "recebida", origem FLOW, evento "criada" no histórico com usuarioId', async () => {
     const { projeto, repositorio } = await cenario()
     const entrada = {

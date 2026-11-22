@@ -41,6 +41,7 @@ TABELA = {
     "devops": (SONNET, "medium", 10),
     "seguranca": (SONNET, "medium", 10),
     "fixer": (HAIKU, "medium", 5),
+    "atendente": (SONNET, "medium", 2),
 }
 
 SETTINGS_ESPERADO = {
@@ -796,7 +797,7 @@ class TestesModelos(unittest.TestCase):
 
     def test_tabela_de_modelos_do_paulo(self):
         self.assertEqual(set(self.config["modelos"]), set(TABELA))
-        self.assertEqual(len(self.config["modelos"]), 11)
+        self.assertEqual(len(self.config["modelos"]), 12)
         for papel, (modelo, esforco, custo) in TABELA.items():
             with self.subTest(papel=papel):
                 self.assertEqual(

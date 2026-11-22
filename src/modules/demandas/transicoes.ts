@@ -8,6 +8,7 @@ import {
   podeConcluir,
   type Ator,
   type Destino,
+  type Nivel,
   type EstadoDaDemanda,
   type EtapaDefinida,
 } from './model'
@@ -18,7 +19,10 @@ export type EventoAplicavel =
   | {
       [K in EventoDoFio['tipo']]: Pick<Extract<EventoDoFio, { tipo: K }>, 'tipo' | 'dados'>
     }[EventoDoFio['tipo']]
-  | { tipo: 'destino_decidido'; dados: { destino: Exclude<Destino, 'decisao_do_paulo'> } }
+  | {
+      tipo: 'destino_decidido'
+      dados: { destino: Exclude<Destino, 'decisao_do_paulo'>; nivel?: Nivel; escopo?: string }
+    }
   /** `peloArtefato`: a versão 0, aprovada olhando o artefato do Claude (planejar comigo). */
   | { tipo: 'desenho_aprovado'; dados: { versao: number; peloArtefato?: true } }
   | { tipo: 'ajuste_pedido'; dados: { versao: number; texto: string } }
@@ -135,7 +139,13 @@ export function aplicarEvento(
       if (estado.espera !== 'decidir_destino') {
         return recusa('A demanda não espera uma decisão de destino.')
       }
-      const base = { ...estado, destino: evento.dados.destino, espera: null, esperaMotivo: null }
+      const base = {
+        ...estado,
+        destino: evento.dados.destino,
+        nivel: evento.dados.nivel ?? estado.nivel,
+        espera: null,
+        esperaMotivo: null,
+      }
       if (evento.dados.destino === 'orientada') return aceita({ ...base, encerrada: 'orientada' })
       return concluir(base)
     }

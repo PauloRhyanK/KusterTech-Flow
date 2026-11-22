@@ -282,6 +282,48 @@ def _com_nonce(texto: str, nonce: str) -> str:
     return texto + "\n" + MARCADOR_NONCE % nonce
 
 
+def motivo_do_run_falho(run: dict) -> str:
+    """O `motivoFalha` aparado do run terminal, ou o próprio estado (`failed`, `cancelled`) quando ele não vem."""
+    motivo = run.get("motivoFalha")
+    return motivo.strip() if isinstance(motivo, str) and motivo.strip() else str(run.get("estado"))
+
+
+def esperar_retry_do_item(item: dict, *, motor, projeto, nonces: list, desde, agora: datetime.datetime, salvar) -> tuple:
+    """R2 para um item com um run só (triagem das demandas, atendente): adota o retry do Warren ou espera.
+
+    `item["runId"]` é o run que falhou por infra perdida; a espera fica em `item["retryEsperado"]` (`buscas`,
+    `vistoEm`). Devolve ("adotado", id) com `runId`/`retryDe` já trocados, ("esperar", None), ("busca_falhou", exc)
+    (a busca falha não gasta leitura) ou ("desistir", None) depois de `CICLOS_PARA_ACHAR_RETRY` leituras e de
+    `PISO_PARA_DESISTIR`: o Warren não refez, vale o run falho. O teto de cada chamador continua com ele.
+    """
+    agora_texto = agora.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    original = item["runId"]
+    espera = item.get("retryEsperado")
+    if not isinstance(espera, dict):
+        espera = item["retryEsperado"] = {"buscas": 0, "vistoEm": agora_texto}
+        salvar()
+    try:
+        achado = motor.procurar_retry(projeto, original, list(nonces), desde)
+    except Exception as exc:  # noqa: BLE001 - busca falha não conta; quem chama decide (teto ou erro)
+        return ("busca_falhou", exc)
+    if isinstance(achado, str) and achado and achado != original:
+        item.pop("retryEsperado", None)
+        item.update(runId=achado, retryDe=original)
+        salvar()
+        return ("adotado", achado)
+    espera["buscas"] = (espera.get("buscas") if _inteiro(espera.get("buscas")) else 0) + 1
+    try:
+        visto = instante(espera.get("vistoEm"))
+    except ValueError:
+        espera["vistoEm"] = agora_texto
+        visto = agora
+    if espera["buscas"] < CICLOS_PARA_ACHAR_RETRY or agora - visto < PISO_PARA_DESISTIR:
+        salvar()
+        return ("esperar", None)
+    item.pop("retryEsperado", None)
+    return ("desistir", None)
+
+
 def liberar_raias_em_cota(estado: dict) -> list[str]:
     """P2: ao retomar, a raia parada por cota num filho volta a `planejada` para um Plan Run novo."""
     liberadas = []

@@ -1,0 +1,187 @@
+{
+  "issues": [
+    {
+      "id": 8100041,
+      "number": 41,
+      "title": "[fábrica] orquestrador: aprovar fase",
+      "body": "PR: https://github.com/kustertech-exemplo/portal/pull/412\nMotivo da acordada: fase_concluida\n\nMotivos:\n- mudanças de verificação na fase 3\n- aprovar fase (o orquestrador foi acordado por fase_concluida)\n\nPara aprovar, mergeie o PR: o merge é a aprovação.",
+      "state": "open",
+      "user": {
+        "login": "exemplo-bia",
+        "id": 200002
+      },
+      "assignees": [],
+      "labels": [],
+      "html_url": "https://github.com/kustertech-exemplo/portal/issues/41",
+      "created_at": "2026-11-20T09:00:00Z",
+      "updated_at": "2026-11-20T09:00:00Z",
+      "closed_at": null
+    },
+    {
+      "id": 8100042,
+      "number": 42,
+      "title": "[fábrica] orquestrador: pergunta para o Paulo",
+      "body": "Qual tom usar na tela de boas-vindas?",
+      "state": "open",
+      "user": {
+        "login": "exemplo-bia",
+        "id": 200002
+      },
+      "assignees": [],
+      "labels": [],
+      "html_url": "https://github.com/kustertech-exemplo/portal/issues/42",
+      "created_at": "2026-11-20T09:00:00Z",
+      "updated_at": "2026-11-20T09:00:00Z",
+      "closed_at": null
+    },
+    {
+      "id": 8104999,
+      "number": 4999,
+      "title": "[fábrica] orquestrador: fechamento com falha de rede",
+      "body": "Fixture para a falha de rede no fechamento.",
+      "state": "open",
+      "user": {
+        "login": "exemplo-bia",
+        "id": 200002
+      },
+      "assignees": [],
+      "labels": [],
+      "html_url": "https://github.com/kustertech-exemplo/portal/issues/4999",
+      "created_at": "2026-11-20T09:00:00Z",
+      "updated_at": "2026-11-20T09:00:00Z",
+      "closed_at": null
+    }
+  ],
+  "pulls": [
+    {
+      "pull": {
+        "id": 8200412,
+        "number": 412,
+        "title": "Fase do plano 412",
+        "body": null,
+        "state": "open",
+        "merged": false,
+        "merged_at": null,
+        "draft": false,
+        "user": {
+          "login": "exemplo-bia",
+          "id": 200002
+        },
+        "html_url": "https://github.com/kustertech-exemplo/portal/pull/412",
+        "head": {
+          "ref": "fabrica/fase-cadastro",
+          "sha": "a41c9e20123456789abcdef0123456789abcdef0"
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "kustertech-exemplo/portal"
+          }
+        },
+        "changed_files": 2,
+        "updated_at": "2026-11-20T10:00:00Z",
+        "merge_commit_sha": null
+      },
+      "files": [
+        {
+          "filename": ".fabrica/planos/cadastro.json",
+          "status": "modified"
+        },
+        {
+          "filename": ".seeds/issues.jsonl",
+          "status": "modified"
+        }
+      ]
+    },
+    {
+      "pull": {
+        "id": 8200413,
+        "number": 413,
+        "title": "Fase do plano 413",
+        "body": null,
+        "state": "open",
+        "merged": false,
+        "merged_at": null,
+        "draft": false,
+        "user": {
+          "login": "exemplo-bia",
+          "id": 200002
+        },
+        "html_url": "https://github.com/kustertech-exemplo/portal/pull/413",
+        "head": {
+          "ref": "fabrica/fase-extra",
+          "sha": "b41c9e20123456789abcdef0123456789abcdef0"
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "kustertech-exemplo/portal"
+          }
+        },
+        "changed_files": 2,
+        "updated_at": "2026-11-20T10:00:00Z",
+        "merge_commit_sha": null
+      },
+      "files": [
+        {
+          "filename": ".fabrica/planos/cadastro.json",
+          "status": "modified"
+        },
+        {
+          "filename": "src/app/page.tsx",
+          "status": "modified"
+        }
+      ]
+    },
+    {
+      "pull": {
+        "id": 8204998,
+        "number": 4998,
+        "title": "Fase do plano 4998",
+        "body": null,
+        "state": "open",
+        "merged": false,
+        "merged_at": null,
+        "draft": false,
+        "user": {
+          "login": "exemplo-bia",
+          "id": 200002
+        },
+        "html_url": "https://github.com/kustertech-exemplo/portal/pull/4998",
+        "head": {
+          "ref": "fabrica/sem-permissao",
+          "sha": "a41c9e20123456789abcdef0123456789abcdef0"
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "kustertech-exemplo/portal"
+          }
+        },
+        "changed_files": 1,
+        "updated_at": "2026-11-20T10:00:00Z",
+        "merge_commit_sha": null
+      },
+      "files": [
+        {
+          "filename": ".seeds/issues.jsonl",
+          "status": "modified"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "a41c9e20123456789abcdef0123456789abcdef0": [
+      {
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "b41c9e20123456789abcdef0123456789abcdef0": [
+      {
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  }
+}
