@@ -1,7 +1,7 @@
 # Relatos de usuários — desenho
 
 **Data:** 19/11/2026
-**Estado:** revisada com as respostas do Paulo em 21/11/2026; falta a pergunta 6 e a aprovação por escrito
+**Estado:** aprovada pelo Paulo em 21/11/2026 (spec e desenho de Sistemas conectados)
 **Depende de:** Demandas (produto 3) e Decidir (produto 4)
 
 ## 1. Por que
@@ -133,4 +133,4 @@ Isso é o primeiro "conector por cliente" que a base enxuta deixou previsto como
 3. **Intervalo:** busca própria de relatos a cada 1 minuto.
 4. **Urgente:** vai sozinho só com vaga na Fábrica e publicação imediata configurada no projeto; sem isso, vira "decisão do Paulo" com alerta.
 5. **Respostas automáticas:** estados (recebido, na fila, entregue) vão sozinhos; texto de recusa passa pelo Paulo.
-6. **Retenção e contrato com os clientes:** em aberto (pergunta ao Paulo).
+6. **Retenção e contrato com os clientes:** os contratos permitem; prints e áudios ficam 90 dias depois de a demanda fechar, e o Flow guarda só id, nome e papel do autor (Paulo, 21/11).
