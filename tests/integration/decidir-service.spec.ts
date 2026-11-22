@@ -191,14 +191,14 @@ async function abrirPedido() {
 }
 
 describe('decidir / service (integração)', () => {
-  test('abrirItem de um pedido triado: conversa com mensagem AGENTE "<motivo> Eu colocaria em Fila de agentes." e as cinco respostas rápidas; chamar de novo devolve a mesma conversa', async () => {
+  test('abrirItem de um pedido triado: conversa com mensagem FLOW "<motivo> Eu colocaria em Fila de agentes." e as cinco respostas rápidas; chamar de novo devolve a mesma conversa', async () => {
     const { chave } = await criarPedido()
     const { conversaId } = await abrirItem(admin, chave, AGORA, comFixtures)
 
     const ms = await mensagens(conversaId)
     expect(ms).toHaveLength(1)
     expect(ms[0]).toMatchObject({
-      autor: 'AGENTE',
+      autor: 'FLOW',
       texto: 'É um ajuste pequeno no menu. Eu colocaria em Fila de agentes.',
       respostasRapidas: [
         'Fila de agentes',
@@ -282,6 +282,58 @@ describe('decidir / service (integração)', () => {
       'Não consegui ler o PR no GitHub: Não foi possível falar com o GitHub.',
     )
     expect(await cartoes(conversaId)).toEqual([])
+  })
+
+  test('abrirItem do fim de fase com o PR já mergeado ou fechado: mensagem curta do Flow e nenhum cartão', async () => {
+    for (const [estado, texto] of [
+      ['MERGEADO', 'O PR #412 já foi mergeado.'],
+      ['FECHADO', 'O PR #412 foi fechado sem merge.'],
+    ] as const) {
+      await db.conversa.deleteMany()
+      const f = criarFonteFixtures()
+      const fonte: FonteGitHub = {
+        ...f,
+        lerPullRequestParaMerge: async (repo, numero) => {
+          const pr = await f.lerPullRequestParaMerge(repo, numero)
+          return pr && { ...pr, estado }
+        },
+      }
+      const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, {
+        fonte: () => fonte,
+      })
+      const ms = await mensagens(conversaId)
+      expect(ms[0]).toMatchObject({ autor: 'FLOW', texto })
+      expect(await cartoes(conversaId)).toEqual([])
+    }
+  })
+
+  test('abrirItem do fim de fase sem CI nenhum: "e não há CI configurado"', async () => {
+    const f = criarFonteFixtures()
+    const fonte: FonteGitHub = {
+      ...f,
+      listarChecks: async () => [],
+      lerStatusCombinado: async () => null,
+    }
+    const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, {
+      fonte: () => fonte,
+    })
+    expect((await mensagens(conversaId))[0]!.texto).toBe(
+      'As raias da fase entraram (3 de 3) e não há CI configurado. O PR mexe só no plano.',
+    )
+  })
+
+  test('abrirItem da decisão lê o repositório da URL da issue, não o do plano', async () => {
+    const retrato = await db.retratoDaFabrica.findFirstOrThrow()
+    const conteudo = retrato.conteudo as { planos: { repo: string }[] }
+    conteudo.planos[0]!.repo = 'kustertech-exemplo/outro'
+    await db.retratoDaFabrica.update({
+      where: { fonteId: retrato.fonteId },
+      data: { conteudo },
+    })
+    const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, comFixtures)
+    const conversa = await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })
+    expect(conversa.repositorio).toBe(REPO)
+    expect(conversa.contexto).toMatchObject({ pr: { numero: 412, head: HEAD_412 } })
   })
 
   test('abrirItem com o repositório não ligado ao Flow: mensagem própria e nenhum cartão', async () => {

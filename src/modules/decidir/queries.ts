@@ -1,8 +1,8 @@
 import { exigirPermissao, ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
-import { retratoV1Schema, type RetratoV1 } from '@/modules/fabrica/contrato'
-import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
+import type { RetratoV1 } from '@/modules/fabrica/contrato'
+import { lerRetratoMaisRecente, obterRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { triagemSchema } from '@/modules/demandas/contrato'
 import type { EtapaDefinida, Espera, Origem, Nivel, TipoDeDemanda } from '@/modules/demandas/model'
 import {
@@ -97,18 +97,6 @@ export function decisoesDoRetrato(retrato: RetratoV1 | null): DecisaoDoRetrato[]
   })
 }
 
-/** Para quem não tem sujeito (o atendente): o mesmo retrato que `obterRetratoMaisRecente` lê. */
-async function retratoSemSujeito(): Promise<RetratoV1 | null> {
-  const linha = await db.retratoDaFabrica.findFirst({
-    where: { fonte: { revogadaEm: null } },
-    orderBy: { recebidoEm: 'desc' },
-    select: { conteudo: true },
-  })
-  if (linha === null) return null
-  const lido = retratoV1Schema.safeParse(linha.conteudo)
-  return lido.success ? lido.data : null
-}
-
 async function nomesDosProjetos(repos: readonly string[]): Promise<Map<string, string>> {
   if (repos.length === 0) return new Map()
   const linhas = await db.repositorioGitHub.findMany({
@@ -150,7 +138,9 @@ export async function localizarItem(
   const id = CHAVE_DE_DEMANDA.exec(chave)?.[1]
   const demandas = id ? await demandasEsperando([id]) : []
   const decisoes = chave.startsWith('issue:')
-    ? decisoesDoRetrato(retrato !== undefined ? retrato : await retratoSemSujeito())
+    ? decisoesDoRetrato(
+        retrato !== undefined ? retrato : ((await lerRetratoMaisRecente())?.retrato ?? null),
+      )
     : []
   const nomes = await nomesDosProjetos([...new Set(decisoes.map((d) => d.repo))])
   // Só a marca de encerrada tira o item; ela já foi conferida acima.

@@ -145,6 +145,14 @@ function contextoSemGitHub(l: ItemLocalizado): ContextoDaConversa {
   return { pr: null, relato: relato ? relato.slice(0, LIMITE_DO_RELATO) : null }
 }
 
+const DONO_E_NOME_DA_ISSUE = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/\d+$/
+
+/** Na decisão, o repositório é o da URL da issue (não o do plano); na demanda, o da demanda. */
+function repositorioDoItem(item: ItemLocalizado['item']): string {
+  if (item.ref.tipo !== 'issue') return item.repositorio
+  return DONO_E_NOME_DA_ISSUE.exec(item.ref.url)?.[1] ?? item.repositorio
+}
+
 function escaparRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -169,15 +177,16 @@ async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promis
     aviso,
   })
 
+  const repositorioDaIssue = repositorioDoItem(l.item)
   const repo = await db.repositorioGitHub.findFirst({
     where: {
-      nomeCompleto: { equals: ref.repositorio, mode: 'insensitive' },
+      nomeCompleto: { equals: repositorioDaIssue, mode: 'insensitive' },
       projetoId: { not: null },
       removidoDaInstalacaoEm: null,
     },
     select: { githubId: true, instalacaoId: true, nomeCompleto: true },
   })
-  if (!repo) return vazio(`O repositório ${ref.repositorio} não está ligado ao Flow.`)
+  if (!repo) return vazio(`O repositório ${repositorioDaIssue} não está ligado ao Flow.`)
   if (!fonte) return vazio(`${prefixo}a GitHub App não está configurada.`)
   const refRepo: RefRepositorio = repo
 
@@ -205,6 +214,9 @@ async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promis
     if (pr.repositorio.toLowerCase() !== repo.nomeCompleto.toLowerCase()) {
       return vazio('O PR é de outro repositório.', relato)
     }
+    // PR que já não está aberto não vira cartão de merge.
+    if (pr.estado === 'MERGEADO') return vazio(`O PR #${numero} já foi mergeado.`, relato)
+    if (pr.estado === 'FECHADO') return vazio(`O PR #${numero} foi fechado sem merge.`, relato)
     const [checks, status] = await Promise.all([
       fonte.listarChecks(refRepo, pr.head),
       fonte.lerStatusCombinado(refRepo, pr.head),
@@ -248,7 +260,7 @@ function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
         const destino = DESTINOS_DO_CARTAO.includes(triagem.destino)
           ? ` Eu colocaria em ${ROTULO_DO_DESTINO[triagem.destino as keyof typeof ROTULO_DO_DESTINO]}.`
           : ''
-        return { autor: 'AGENTE', texto: `${triagem.motivo}${destino}`, respostasRapidas }
+        return flow(`${triagem.motivo}${destino}`)
       }
       const motivo = demanda?.esperaMotivo ? semPontoFinal(demanda.esperaMotivo) : ''
       return flow(
@@ -277,8 +289,9 @@ function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
         pr.fora.length > 0
           ? `O PR também mexe em: ${pr.fora.slice(0, 5).join(', ')}.`
           : 'O PR mexe só no plano.'
+      const ci = pr.ci === 'ausente' ? 'não há CI configurado' : `o CI está ${pr.ci}`
       return flow(
-        `As raias da fase entraram (${raias.concluidas} de ${raias.total}) e o CI está ${pr.ci}. ${fim}`,
+        `As raias da fase entraram (${raias.concluidas} de ${raias.total}) e ${ci}. ${fim}`,
       )
     }
     case 'decisao_da_fabrica': {
@@ -347,7 +360,7 @@ async function criarOuCompletar(
           tipo: item.tipo,
           demandaId: item.ref.tipo === 'demanda' ? item.ref.demandaId : null,
           issueUrl: item.ref.tipo === 'issue' ? item.ref.url : null,
-          repositorio: item.repositorio,
+          repositorio: repositorioDoItem(item),
           titulo: item.titulo,
           contexto: json(contexto),
         },
