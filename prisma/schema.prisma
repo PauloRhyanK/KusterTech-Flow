@@ -43,6 +43,8 @@ model Usuario {
   fontesDePublicacaoCriadas FonteDePublicacao[]
   pedidosDePublicacao       PedidoDePublicacao[]
   demandasCriadas           Demanda[]
+  mensagensEscritas         Mensagem[]
+  cartoesConfirmados        CartaoDeFecho[]
   fontesDeDemandasCriadas   FonteDeDemandas[]
 }
 
@@ -762,16 +764,17 @@ model RecursoProjeto {
 
 // O token (prefixo ff_) é mostrado uma única vez; no banco só o hash.
 model FonteDaFabrica {
-  id                 String            @id @default(uuid())
-  nome               String
-  tokenHash          String            @unique
-  criadoEm           DateTime          @default(now())
-  revogadaEm         DateTime?
-  criadaPorId        String
-  ultimoUsoEm        DateTime?
-  demandasBuscadasEm DateTime?
-  criadaPor          Usuario           @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
-  retrato            RetratoDaFabrica?
+  id                  String            @id @default(uuid())
+  nome                String
+  tokenHash           String            @unique
+  criadoEm            DateTime          @default(now())
+  revogadaEm          DateTime?
+  criadaPorId         String
+  ultimoUsoEm         DateTime?
+  demandasBuscadasEm  DateTime?
+  conversasBuscadasEm DateTime?
+  criadaPor           Usuario           @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
+  retrato             RetratoDaFabrica?
 }
 
 // Só o último retrato de cada fonte; `conteudo` é o JSON validado pelo contrato v1.
@@ -1069,6 +1072,7 @@ model Demanda {
   eventos          EventoDaDemanda[]
   arquivos         ArquivoDaDemanda[]
   pedidos          PedidoDePublicacao[]
+  conversas        Conversa[]
 
   @@unique([fonteId, chaveDaFonte])
   @@index([encerrada, espera])
@@ -1120,4 +1124,95 @@ model FonteDeDemandas {
   ultimoUsoEm DateTime?
   criadaPor   Usuario   @relation(fields: [criadaPorId], references: [id], onDelete: Restrict)
   demandas    Demanda[]
+}
+
+enum AutorDaMensagem {
+  PAULO
+  AGENTE
+  FLOW
+}
+
+enum EstadoDoCartao {
+  PROPOSTO
+  CONFIRMANDO
+  CONFIRMADO
+  SUBSTITUIDO
+}
+
+// Decidir: conversa do Paulo com o atendente sobre um item (issue/PR/demanda).
+model Conversa {
+  id                 String            @id @default(uuid())
+  chave              String            @unique
+  tipo               String
+  demandaId          String?
+  issueUrl           String?
+  repositorio        String
+  titulo             String
+  contexto           Json
+  aguardaAgenteDesde DateTime?
+  responderA         String?
+  puladaEm           DateTime?
+  adiadaAte          DateTime?
+  guardadaEm         DateTime?
+  encerradaEm        DateTime?
+  encerramento       String?
+  criadaEm           DateTime          @default(now())
+  atualizadaEm       DateTime          @updatedAt
+  demanda            Demanda?          @relation(fields: [demandaId], references: [id], onDelete: SetNull)
+  mensagens          Mensagem[]
+  anexos             AnexoDaMensagem[]
+  cartoes            CartaoDeFecho[]
+
+  @@index([encerradaEm, aguardaAgenteDesde])
+}
+
+model Mensagem {
+  seq              BigInt          @id @default(autoincrement())
+  id               String          @unique
+  conversaId       String
+  autor            AutorDaMensagem
+  texto            String
+  respostaRapida   String?
+  respostasRapidas Json            @default("[]")
+  emRespostaA      String?
+  impressao        String
+  usuarioId        String?
+  criadaEm         DateTime        @default(now())
+  conversa         Conversa        @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+  usuario          Usuario?        @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([conversaId, seq])
+}
+
+model AnexoDaMensagem {
+  id         String   @id
+  conversaId String
+  mensagemId String?
+  nome       String
+  conteudo   String
+  tamanho    Int
+  criadoEm   DateTime @default(now())
+  conversa   Conversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+
+  @@index([conversaId])
+}
+
+// No máximo um cartão PROPOSTO ou CONFIRMANDO por conversa (índice parcial na migration).
+model CartaoDeFecho {
+  id              String         @id @default(uuid())
+  conversaId      String
+  mensagemSeq     BigInt?
+  origem          String
+  conteudo        Json
+  estado          EstadoDoCartao @default(PROPOSTO)
+  progresso       Json           @default("{}")
+  erro            String?
+  confirmandoEm   DateTime?
+  confirmadoEm    DateTime?
+  confirmadoPorId String?
+  criadoEm        DateTime       @default(now())
+  conversa        Conversa       @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+  confirmadoPor   Usuario?       @relation(fields: [confirmadoPorId], references: [id], onDelete: SetNull)
+
+  @@index([conversaId, estado])
 }
