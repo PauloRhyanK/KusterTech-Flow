@@ -308,6 +308,7 @@ describe('mensagemDeFalha e ErroDeIntegracao', () => {
     'resposta-invalida',
     'desconhecida',
     'commit-desconhecido',
+    'sem-permissao',
   ]
 
   test('textos fixos', () => {
@@ -321,6 +322,12 @@ describe('mensagemDeFalha e ErroDeIntegracao', () => {
     expect(mensagemDeFalha('desconhecida')).toBe('Falha inesperada na sincronização.')
     expect(mensagemDeFalha('commit-desconhecido')).toBe(
       'O GitHub não encontrou um dos commits comparados.',
+    )
+  })
+
+  test('mensagemDeFalha("sem-permissao") cita Issues, Contents e Pull requests', () => {
+    expect(mensagemDeFalha('sem-permissao')).toBe(
+      'A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita (veja docs/github-app.md).',
     )
   })
 

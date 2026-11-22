@@ -74,6 +74,20 @@ export interface ExecucaoDaFonte {
   atualizadaEm: Date
 }
 
+export interface PullRequestParaMerge {
+  /** Repositório base do PR (nunca o do fork de origem). */
+  repositorio: string
+  estado: 'ABERTO' | 'FECHADO' | 'MERGEADO'
+  head: string
+  base: string
+  /** Caminhos novos e, nos renomeados, também os antigos. */
+  arquivos: string[]
+  urlHtml: string
+}
+
+export type ResultadoDoMerge =
+  { resultado: 'mergeado' } | { resultado: 'recusado'; motivo: 'head_mudou' | 'nao_mergeavel' }
+
 export const TAMANHO_MAXIMO_ARQUIVO = 2_000_000
 
 export interface FonteGitHub {
@@ -115,6 +129,30 @@ export interface FonteGitHub {
     repo: RefRepositorio,
     issue: { titulo: string; corpo: string },
   ): Promise<{ numero: number; githubId: bigint; urlHtml: string }>
+  /** `null` quando a issue não existe (404). */
+  lerIssue(repo: RefRepositorio, numero: number): Promise<IssueDaFonte | null>
+  /**
+   * Comenta (salvo `jaComentado`) e fecha como concluída. Falha no fechamento depois do comentário
+   * lança `ErroDeIntegracao` com `progresso.comentado`.
+   */
+  comentarEFecharIssue(
+    repo: RefRepositorio,
+    numero: number,
+    comentario: string,
+    opcoes: { jaComentado: boolean },
+  ): Promise<{ comentado: true; fechada: boolean }>
+  /** Lista de arquivos completa ou erro (`resposta-invalida`); `null` em 404. */
+  lerPullRequestParaMerge(
+    repo: RefRepositorio,
+    numero: number,
+  ): Promise<PullRequestParaMerge | null>
+  /** `null` quando o commit não tem nenhum status. */
+  lerStatusCombinado(
+    repo: RefRepositorio,
+    sha: string,
+  ): Promise<'success' | 'pending' | 'failure' | 'error' | null>
+  /** Não idempotente: só com `sha` igual ao head conferido. */
+  mergearPullRequest(repo: RefRepositorio, numero: number, head: string): Promise<ResultadoDoMerge>
 }
 
 const data = z.string().transform((s, ctx) => {
@@ -211,6 +249,61 @@ const esquemaExecucao = z.object({
   created_at: data,
   updated_at: data,
 })
+
+const esquemaPullParaMerge = z.object({
+  state: z.enum(['open', 'closed']),
+  merged: z.boolean().nullish(),
+  merged_at: z.string().nullish(),
+  html_url: z.string().min(1),
+  changed_files: z.number().int().nonnegative(),
+  head: z.object({ sha: z.string().min(1) }),
+  base: z.object({ ref: z.string().min(1), repo: z.object({ full_name: z.string().min(1) }) }),
+})
+
+export const esquemaArquivoDoPull = z.object({
+  filename: z.string().min(1),
+  previous_filename: z.string().nullish(),
+})
+
+export function mapearPullParaMerge(
+  bruto: unknown,
+  arquivosBrutos: unknown[],
+): PullRequestParaMerge {
+  const p = validar(esquemaPullParaMerge, bruto)
+  const itens = arquivosBrutos.map((a) => validar(esquemaArquivoDoPull, a))
+  // Lista incompleta nunca passa: a guarda do merge precisa ver todos os caminhos.
+  if (itens.length !== p.changed_files) {
+    throw new ErroDeIntegracao('resposta-invalida')
+  }
+  const arquivos: string[] = []
+  for (const a of itens) {
+    arquivos.push(a.filename)
+    if (a.previous_filename) {
+      arquivos.push(a.previous_filename)
+    }
+  }
+  const mergeado = p.merged === true || (p.merged_at ?? null) !== null
+  return {
+    repositorio: p.base.repo.full_name,
+    estado: mergeado ? 'MERGEADO' : p.state === 'open' ? 'ABERTO' : 'FECHADO',
+    head: p.head.sha,
+    base: p.base.ref,
+    arquivos,
+    urlHtml: p.html_url,
+  }
+}
+
+const esquemaStatusCombinado = z.object({
+  state: z.enum(['success', 'pending', 'failure', 'error']),
+  total_count: z.number().int().nonnegative(),
+})
+
+export function mapearStatusCombinado(
+  bruto: unknown,
+): 'success' | 'pending' | 'failure' | 'error' | null {
+  const s = validar(esquemaStatusCombinado, bruto)
+  return s.total_count === 0 ? null : s.state
+}
 
 const esquemaCheck = z.object({ status: z.string(), conclusion: z.string().nullish() })
 

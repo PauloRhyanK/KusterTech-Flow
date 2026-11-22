@@ -99,6 +99,11 @@ function criarFonteFalsa() {
     lerArquivo: naoUsado,
     reabrirIssue: naoUsado,
     criarIssue: naoUsado,
+    lerIssue: naoUsado,
+    comentarEFecharIssue: naoUsado,
+    lerPullRequestParaMerge: naoUsado,
+    lerStatusCombinado: naoUsado,
+    mergearPullRequest: naoUsado,
     async listarChecks(repo, s) {
       registrar('listarChecks', [repo.nomeCompleto, s])
       return checks.get(s) ?? []

@@ -50,6 +50,11 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
     criarIssue: async () => {
       throw new Error('não usado')
     },
+    lerIssue: guardar(base.lerIssue),
+    comentarEFecharIssue: guardar(base.comentarEFecharIssue),
+    lerPullRequestParaMerge: guardar(base.lerPullRequestParaMerge),
+    lerStatusCombinado: guardar(base.lerStatusCombinado),
+    mergearPullRequest: guardar(base.mergearPullRequest),
   }
 }
 
