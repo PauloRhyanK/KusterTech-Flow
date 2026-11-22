@@ -15,14 +15,6 @@ const LOTE = 200
  * conclui nada sobre as issues da Fábrica; só as demandas são conferidas.
  */
 export async function arquivarConversasResolvidas(agora: Date): Promise<number> {
-  const abertas = await db.conversa.findMany({
-    where: { encerradaEm: null },
-    orderBy: { criadaEm: 'asc' },
-    take: LOTE,
-    select: { id: true, chave: true },
-  })
-  if (abertas.length === 0) return 0
-
   const [demandas, recebido] = await Promise.all([demandasEsperando(), lerRetratoMaisRecente()])
   const { itens, guardados } = montarPilha({
     demandas,
@@ -34,26 +26,37 @@ export async function arquivarConversasResolvidas(agora: Date): Promise<number> 
   const naPilha = new Set([...itens, ...guardados].map((i) => i.chave))
 
   let encerradas = 0
-  for (const { id, chave } of abertas) {
-    if (naPilha.has(chave)) continue
-    if (recebido === null && chave.startsWith('issue:')) continue
-    const encerrou = await db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT 1 FROM "Conversa" WHERE id = ${id} FOR UPDATE`
-      const c = await tx.conversa.findUnique({ where: { id }, select: { encerradaEm: true } })
-      if (!c || c.encerradaEm) return false
-      // Um cartão sendo confirmado agora é de quem o confirma; a próxima rodada vê o resultado.
-      const confirmando = await tx.cartaoDeFecho.count({
-        where: { conversaId: id, estado: 'CONFIRMANDO' },
-      })
-      if (confirmando > 0) return false
-      await tx.cartaoDeFecho.updateMany({
-        where: { conversaId: id, estado: 'PROPOSTO' },
-        data: { estado: 'SUBSTITUIDO' },
-      })
-      await encerrarConversa(tx, id, 'resolvida_fora', RESOLVIDO_FORA, agora)
-      return true
+  // Em páginas, por id: conversas novas não ficam atrás das mais antigas.
+  for (let cursor: string | undefined; ;) {
+    const abertas = await db.conversa.findMany({
+      where: { encerradaEm: null, ...(cursor ? { id: { gt: cursor } } : {}) },
+      orderBy: { id: 'asc' },
+      take: LOTE,
+      select: { id: true, chave: true },
     })
-    if (encerrou) encerradas += 1
+    if (abertas.length === 0) break
+    cursor = abertas.at(-1)!.id
+    for (const { id, chave } of abertas) {
+      if (naPilha.has(chave)) continue
+      if (recebido === null && chave.startsWith('issue:')) continue
+      const encerrou = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "Conversa" WHERE id = ${id} FOR UPDATE`
+        const c = await tx.conversa.findUnique({ where: { id }, select: { encerradaEm: true } })
+        if (!c || c.encerradaEm) return false
+        // Um cartão sendo confirmado agora é de quem o confirma; a próxima rodada vê o resultado.
+        const confirmando = await tx.cartaoDeFecho.count({
+          where: { conversaId: id, estado: 'CONFIRMANDO' },
+        })
+        if (confirmando > 0) return false
+        await tx.cartaoDeFecho.updateMany({
+          where: { conversaId: id, estado: 'PROPOSTO' },
+          data: { estado: 'SUBSTITUIDO' },
+        })
+        await encerrarConversa(tx, id, 'resolvida_fora', RESOLVIDO_FORA, agora)
+        return true
+      })
+      if (encerrou) encerradas += 1
+    }
   }
   return encerradas
 }

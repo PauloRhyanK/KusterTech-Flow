@@ -720,16 +720,21 @@ describe('indicadoresDeProjetos', () => {
 
 describe('esperasComDecidir', () => {
   const itens = [
-    item('decisao', 'decisao:p1:0', null),
+    { ...item('decisao', 'decisao:p1:0', null), href: 'https://github.com/o/r/issues/1' },
+    { ...item('decisao', 'decisao:p1:1', null), href: 'https://github.com/o/r/issues/2' },
     item('demanda', 'demanda:d1', minutosAntes(5)),
     item('demanda', 'demanda:d2', minutosAntes(5)),
     item('plano-pausado', 'plano-pausado:p1', null),
     item('fabrica-sem-noticias', 'fabrica-sem-buscar-demandas', null),
   ]
 
-  it('tira as decisões e as demandas da pilha, mantém os avisos e as demandas de fora', () => {
-    const r = esperasComDecidir(itens, 3, new Set(['d1']))
+  it('tira só as decisões e as demandas que a pilha conta; mantém avisos e o resto', () => {
+    const r = esperasComDecidir(itens, 3, {
+      demandas: new Set(['d1']),
+      decisoes: new Set(['https://github.com/o/r/issues/1']),
+    })
     expect(r.map((i) => i.id)).toEqual([
+      'decisao:p1:1',
       'demanda:d2',
       'plano-pausado:p1',
       'fabrica-sem-buscar-demandas',

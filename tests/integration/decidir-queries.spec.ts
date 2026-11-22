@@ -405,4 +405,44 @@ describe('Início com o Decidir', () => {
     )
     expect(ids).not.toContain(`demanda:${pedido}`)
   })
+
+  test('adiado, guardado e descartado continuam no Início; só o que a pilha conta vira o item do Decidir', async () => {
+    const pedido = await novaDemanda('Botão de sair no menu')
+    expect((await daFabrica(pedido, triagem('decisao_do_paulo'))).resultado).toBe('aplicado')
+    const guardada = await novaDemanda('Tela de ajuda')
+    expect((await daFabrica(guardada, triagem('decisao_do_paulo'))).resultado).toBe('aplicado')
+    const adiada = await novaDemanda('Rodapé novo')
+    expect((await daFabrica(adiada, triagem('decisao_do_paulo'))).resultado).toBe('aplicado')
+    const descartada = {
+      titulo: '[fábrica] orquestrador: URL estranha',
+      url: 'https://github.com/kustertech-exemplo/portal/pull/9',
+    }
+    const conteudo = retrato([...DECISOES.slice(0, 3), descartada], AGORA).conteudo
+    await db.retratoDaFabrica.update({ where: { fonteId: fonteDaFabricaId }, data: { conteudo } })
+
+    const marcar = async (id: string, dados: { guardadaEm: Date } | { adiadaAte: Date }) => {
+      const { conversaId } = await abrirItem(admin, await chaveAtual(id), AGORA, noGitHub())
+      await db.conversa.update({ where: { id: conversaId }, data: dados })
+    }
+    await marcar(guardada, { guardadaEm: AGORA })
+    await marcar(adiada, { adiadaAte: new Date(AGORA.getTime() + 3_600_000) })
+    const { conversaId } = await abrirItem(admin, `issue:${ISSUE_42}`, AGORA, noGitHub())
+    await db.conversa.update({
+      where: { id: conversaId },
+      data: { adiadaAte: new Date(AGORA.getTime() + 3_600_000) },
+    })
+
+    const itens = (await obterInicio(admin, AGORA)).espera.itens
+    const pilha = await obterPilha(admin, AGORA)
+    expect(itens.find((i) => i.tipo === 'decidir')?.titulo).toBe(
+      `${pilha.itens.length} itens esperam sua resposta`,
+    )
+    const ids = itens.map((i) => i.id)
+    expect(ids).not.toContain(`demanda:${pedido}`)
+    expect(ids).toContain(`demanda:${guardada}`)
+    expect(ids).toContain(`demanda:${adiada}`)
+    const decisoes = itens.filter((i) => i.tipo === 'decisao').map((i) => i.href)
+    expect(decisoes).toEqual(expect.arrayContaining([ISSUE_42, descartada.url]))
+    expect(decisoes).not.toContain(ISSUE_41)
+  })
 })

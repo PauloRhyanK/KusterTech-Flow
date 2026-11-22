@@ -336,15 +336,17 @@ function comDecidir(
   pilha: Awaited<ReturnType<typeof obterPilha>> | undefined,
 ) {
   if (!pilha) return fontes
-  const demandasDaPilha = new Set<string>()
-  for (const i of [...pilha.itens, ...pilha.guardados]) {
-    if (i.ref.tipo === 'demanda') demandasDaPilha.add(i.ref.demandaId)
+  // Só o que a pilha conta sai do Início; adiado, guardado e descartado continuam na lista.
+  const daPilha = { demandas: new Set<string>(), decisoes: new Set<string>() }
+  for (const i of pilha.itens) {
+    if (i.ref.tipo === 'demanda') daPilha.demandas.add(i.ref.demandaId)
+    else daPilha.decisoes.add(i.ref.url)
   }
   const resultado: FonteDeEspera[] = fontes.map((f) =>
     'falha' in f
       ? f
       : f.tipo === 'decisao' || f.tipo === 'demanda'
-        ? { tipo: f.tipo, itens: esperasComDecidir(f.itens, 0, demandasDaPilha) }
+        ? { tipo: f.tipo, itens: esperasComDecidir(f.itens, 0, daPilha) }
         : f,
   )
   const [unico] = esperasComDecidir([], pilha.itens.length)

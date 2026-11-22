@@ -538,19 +538,19 @@ export function indicadoresDeProjetos(d: {
 }
 
 /**
- * Com o Decidir ativo, as decisões da Fábrica e as demandas que estão na pilha viram um só item
- * "N itens esperam sua resposta"; os avisos (plano pausado, Fábrica sem notícias, oficina,
- * publicação, integração) e as demandas que a pilha não traz (planejar comigo) ficam.
+ * Com o Decidir ativo, só o que está em `pilha.itens` sai da lista: as decisões da Fábrica (pela
+ * URL da issue) e as demandas (pelo id) viram um só item "N itens esperam sua resposta". Tudo o
+ * mais fica: avisos, "planejar comigo" e o que a pilha não conta (adiado, guardado, descartado).
  */
 export function esperasComDecidir(
   itens: readonly ItemDeEspera[],
   naPilha: number,
-  demandasDaPilha: ReadonlySet<string> = new Set(),
+  daPilha: { demandas?: ReadonlySet<string>; decisoes?: ReadonlySet<string> } = {},
 ): ItemDeEspera[] {
   const restantes = itens.filter(
     (i) =>
-      i.tipo !== 'decisao' &&
-      !(i.tipo === 'demanda' && demandasDaPilha.has(i.id.slice('demanda:'.length))),
+      !(i.tipo === 'decisao' && daPilha.decisoes?.has(i.href)) &&
+      !(i.tipo === 'demanda' && daPilha.demandas?.has(i.id.slice('demanda:'.length))),
   )
   if (naPilha <= 0) return restantes
   return [

@@ -202,7 +202,9 @@ describe('obterInicio', () => {
 
     // Com o Decidir ativo a decisão da Fábrica vira o item único da pilha.
     obterPilha.mockResolvedValue({
-      itens: [{ chave: 'issue:x', ref: { tipo: 'issue' } }],
+      itens: [
+        { chave: 'issue:x', ref: { tipo: 'issue', url: 'https://github.com/o/portal/issues/1' } },
+      ],
       guardados: [],
       conversas: {},
     })
