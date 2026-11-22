@@ -1,7 +1,7 @@
 # Decidir — desenho
 
 **Data:** 19/11/2026
-**Estado:** revisada com as respostas do Paulo em 21/11/2026; aguardando a aprovação por escrito
+**Estado:** aprovada pelo Paulo em 21/11/2026 (spec e desenho)
 **Desenho de referência:** [`desenhos/2026-11-18-base-enxuta/04-decidir-e-publicacao.html`](desenhos/2026-11-18-base-enxuta/04-decidir-e-publicacao.html), aba "Decidir"
 **Depende de:** Demandas (produto 3)
 
