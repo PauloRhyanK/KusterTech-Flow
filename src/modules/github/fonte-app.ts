@@ -35,6 +35,13 @@ const MARGEM_DO_TOKEN_MS = 60_000
 const LIMITE_DE_PAGINAS = 200
 const LIMITE_DE_PAGINAS_DE_ARQUIVOS = 30
 const TEXTO_SEM_PERMISSAO = 'Resource not accessible by integration'
+/** Teto de cada chamada ao GitHub (resposta e corpo); estourou → `rede`, que é transitória. */
+export const TEMPO_DA_CHAMADA_MS = 15_000
+
+/** O corpo lido falhou porque o tempo acabou (e não porque não era JSON). */
+function tempoEsgotado(e: unknown): boolean {
+  return e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')
+}
 
 const esquemaInstalacoes = z.array(z.object({ id: z.number().int() }))
 const esquemaToken = z.object({ token: z.string().min(1), expires_at: z.string() })
@@ -48,7 +55,9 @@ export function criarFonteApp(
   config: ConfigDaApp,
   fetchImpl: typeof fetch,
   relogio: () => Date = () => new Date(),
+  tempoDaChamadaMs: number = TEMPO_DA_CHAMADA_MS,
 ): FonteGitHub {
+  const sinal = () => AbortSignal.timeout(tempoDaChamadaMs)
   const apiUrl = config.apiUrl.replace(/\/+$/, '')
   const origem = new URL(apiUrl).origin
   const tokens = new Map<bigint, { token: string; expiraEm: number }>()
@@ -133,6 +142,7 @@ export function criarFonteApp(
     try {
       resposta = await fetchImpl(url, {
         method: metodo,
+        signal: sinal(),
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
@@ -164,8 +174,8 @@ export function criarFonteApp(
         link: resposta.headers.get('link'),
         status: resposta.status,
       }
-    } catch {
-      throw new ErroDeIntegracao('resposta-invalida')
+    } catch (e) {
+      throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
     }
   }
 
@@ -248,6 +258,7 @@ export function criarFonteApp(
       resposta = await fetchImpl(url, {
         method: 'GET',
         redirect: 'manual',
+        signal: sinal(),
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
@@ -263,6 +274,7 @@ export function criarFonteApp(
         resposta = await fetchImpl(alvo.toString(), {
           method: 'GET',
           redirect: 'error',
+          signal: sinal(),
           ...(alvo.origin === origem
             ? { headers: { Authorization: `Bearer ${autorizacao}` } }
             : {}),
@@ -276,8 +288,8 @@ export function criarFonteApp(
     }
     try {
       return await resposta.text()
-    } catch {
-      throw new ErroDeIntegracao('resposta-invalida')
+    } catch (e) {
+      throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
     }
   }
 
@@ -288,6 +300,8 @@ export function criarFonteApp(
     }
     return r.data
   }
+
+  const esquemaComentario = z.object({ id: z.number().int(), body: z.string().nullish() })
 
   const esquemaJobs = z.object({
     jobs: z.array(z.object({ id: z.number().int(), conclusion: z.string().nullish() })),
@@ -401,6 +415,7 @@ export function criarFonteApp(
       try {
         resposta = await fetchImpl(`${apiUrl}${caminhoDoRepo(repo)}/contents/${segmentos}`, {
           method: 'GET',
+          signal: sinal(),
           headers: {
             Accept: 'application/vnd.github.raw+json',
             'X-GitHub-Api-Version': '2022-11-28',
@@ -423,8 +438,8 @@ export function criarFonteApp(
       let texto: string
       try {
         texto = await resposta.text()
-      } catch {
-        throw new ErroDeIntegracao('resposta-invalida')
+      } catch (e) {
+        throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
       }
       if (texto.length > TAMANHO_MAXIMO_ARQUIVO) {
         throw new ErroDeIntegracao('resposta-invalida')
@@ -526,6 +541,19 @@ export function criarFonteApp(
         'vazio',
       )
       return corpo === null ? null : mapearIssue(corpo)
+    },
+
+    async listarComentariosDaIssue(repo, numero) {
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const brutos = await paginas(
+        `${caminhoDoRepo(repo)}/issues/${numero}/comments?per_page=100`,
+        token,
+        lista,
+      )
+      return brutos.map((b) => {
+        const c = validar(esquemaComentario, b)
+        return { id: BigInt(c.id), corpo: c.body ?? '' }
+      })
     },
 
     async comentarEFecharIssue(repo, numero, comentario, opcoes) {

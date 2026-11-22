@@ -167,6 +167,8 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
   readonly escritas: readonly EscritaDaFonte[]
   registrarExecucao(repositorio: string, execucao: ExecucaoRegistrada): void
   registrarLog(repositorio: string, execucaoId: bigint, texto: string): void
+  /** Um comentário que já está na issue (postado antes de o processo cair). */
+  registrarComentario(repositorio: string, numero: number, corpo: string): void
 } {
   const escritas: EscritaDaFonte[] = []
   const decidir = decidir_portal as unknown as {
@@ -182,6 +184,11 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
   }
   const extras = new Map<string, ExecucaoDaFonte[]>()
   const logsExtras = new Map<string, string>()
+  const comentarios = new Map<string, string[]>()
+  const comentar = (repositorio: string, numero: number, corpo: string) => {
+    const chave = `${repositorio}#${numero}`
+    comentarios.set(chave, [...(comentarios.get(chave) ?? []), corpo])
+  }
   let contador = 0
 
   const execucoesDe = (repo: RefRepositorio): ExecucaoDaFonte[] => [
@@ -215,6 +222,9 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
     },
     registrarLog(repositorio, execucaoId, texto) {
       logsExtras.set(`${repositorio}#${execucaoId}`, texto)
+    },
+    registrarComentario(repositorio, numero, corpo) {
+      comentar(repositorio, numero, corpo)
     },
     async listarRepositorios() {
       const instalacaoId = BigInt(instalacoes[0]!.id)
@@ -302,10 +312,18 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
           : undefined)
       return bruto ? mapearIssue(bruto) : null
     },
-    async comentarEFecharIssue(repo, numero, _comentario, opcoes) {
+    async listarComentariosDaIssue(repo, numero) {
+      dados(repo)
+      return (comentarios.get(`${repo.nomeCompleto}#${numero}`) ?? []).map((corpo, i) => ({
+        id: BigInt(i + 1),
+        corpo,
+      }))
+    },
+    async comentarEFecharIssue(repo, numero, comentario, opcoes) {
       dados(repo)
       if (!opcoes.jaComentado) {
         escritas.push({ tipo: 'comentar', repositorio: repo.nomeCompleto, numero })
+        comentar(repo.nomeCompleto, numero, comentario)
       }
       if (numero === 4999) {
         throw new ErroDeIntegracao('rede', undefined, { comentado: true })

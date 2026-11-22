@@ -51,6 +51,7 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
       throw new Error('não usado')
     },
     lerIssue: guardar(base.lerIssue),
+    listarComentariosDaIssue: guardar(base.listarComentariosDaIssue),
     comentarEFecharIssue: guardar(base.comentarEFecharIssue),
     lerPullRequestParaMerge: guardar(base.lerPullRequestParaMerge),
     lerStatusCombinado: guardar(base.lerStatusCombinado),

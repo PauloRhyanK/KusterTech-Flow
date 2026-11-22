@@ -100,6 +100,7 @@ function criarFonteFalsa() {
     reabrirIssue: naoUsado,
     criarIssue: naoUsado,
     lerIssue: naoUsado,
+    listarComentariosDaIssue: naoUsado,
     comentarEFecharIssue: naoUsado,
     lerPullRequestParaMerge: naoUsado,
     lerStatusCombinado: naoUsado,

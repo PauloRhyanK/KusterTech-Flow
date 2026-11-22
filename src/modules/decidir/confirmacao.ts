@@ -42,7 +42,8 @@ export type ResultadoDaConfirmacao =
 type Encerramento = 'confirmada' | 'resolvida_fora'
 type Tx = Prisma.TransactionClient
 
-const TEMPO_DA_TRAVA = 2 * 60_000
+/** Prazo da posse de um `CONFIRMANDO`; cada chamada ao GitHub tem teto de 15 s. */
+const TEMPO_DA_TRAVA = 5 * 60_000
 
 const NAO_ENCONTRADO = 'Cartão não encontrado.'
 const TROCADO = 'Este cartão foi trocado por outro.'
@@ -91,6 +92,59 @@ async function travar(tx: Tx, conversaId: string, cartaoId: string) {
   return tx.cartaoDeFecho.findUnique({ where: { id: cartaoId }, include: { conversa: true } })
 }
 
+/** Quem marcou o `CONFIRMANDO`: só ele escreve o resultado (o `confirmandoEm` é a marca). */
+interface Posse {
+  cartaoId: string
+  conversaId: string
+  desde: Date
+}
+
+/** Outro processo assumiu o cartão (o prazo venceu): quem perdeu não escreve nada. */
+class PossePerdida extends Error {}
+
+/** Trava e devolve o cartão só se ele ainda for desta posse. */
+async function travarComPosse(tx: Tx, posse: Posse) {
+  const c = await travar(tx, posse.conversaId, posse.cartaoId)
+  if (!c || c.estado !== 'CONFIRMANDO') return null
+  return c.confirmandoEm?.getTime() === posse.desde.getTime() ? c : null
+}
+
+/** Grava `progresso` sob a posse, antes de uma escrita no GitHub que não pode se repetir. */
+async function anotarProgresso(posse: Posse, novo: Record<string, boolean>): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const c = await travarComPosse(tx, posse)
+    if (!c) throw new PossePerdida()
+    await tx.cartaoDeFecho.update({
+      where: { id: posse.cartaoId },
+      data: { progresso: json({ ...((c.progresso ?? {}) as object), ...novo }) },
+    })
+  })
+}
+
+/** Marca do comentário do Flow na issue: uma nova tentativa vê que já comentou. */
+export function marcadorDoCartao(cartaoId: string): string {
+  return `<!-- flow:cartao:${cartaoId} -->`
+}
+
+/**
+ * Já comentamos esta resposta? `comentado` é certeza; `comentando` (gravado antes do POST) pede
+ * conferir os comentários da issue pela marca de qualquer cartão desta conversa.
+ */
+async function jaComentou(
+  fonte: FonteGitHub,
+  ref: RefRepositorio,
+  numero: number,
+  conversaId: string,
+  progresso: Record<string, unknown>,
+): Promise<boolean> {
+  if (progresso.comentado === true) return true
+  if (progresso.comentando !== true) return false
+  const cartoes = await db.cartaoDeFecho.findMany({ where: { conversaId }, select: { id: true } })
+  const marcas = cartoes.map((c) => marcadorDoCartao(c.id))
+  const comentarios = await fonte.listarComentariosDaIssue(ref, numero)
+  return comentarios.some((c) => marcas.some((m) => c.corpo.includes(m)))
+}
+
 async function encerrarConversa(
   tx: Tx,
   conversaId: string,
@@ -132,6 +186,7 @@ interface Alvo {
   cartao: Cartao
   progresso: Record<string, unknown>
   repositorio: string
+  posse: Posse
 }
 
 function mensagemDoErro(erro: unknown): string {
@@ -186,23 +241,29 @@ async function refazerComHeadNovo(
   }
 }
 
+/** Issue já fechada: com o nosso comentário, fomos nós; sem ele, a Fábrica recebeu outra resposta. */
+function encerramentoDaIssueFechada(comentado: boolean): Encerramento {
+  return comentado ? 'confirmada' : 'resolvida_fora'
+}
+
 async function responderIssue(
   fonte: FonteGitHub,
   ref: RefRepositorio,
   efeito: Extract<Efeito, { tipo: 'responder_issue' }>,
   progresso: Record<string, unknown>,
+  posse: Posse,
 ): Promise<Aplicado> {
-  const comentado = progresso.comentado === true
   const issue = await fonte.lerIssue(ref, efeito.numero)
   if (!issue) return { ok: false, erro: `A issue #${efeito.numero} não foi encontrada.` }
-  // Já fechada: com o nosso comentário, fomos nós; sem ele, a Fábrica recebeu outra resposta.
+  const comentado = await jaComentou(fonte, ref, efeito.numero, posse.conversaId, progresso)
   if (issue.estado === 'FECHADA') {
-    return { ok: true, encerramento: comentado ? 'confirmada' : 'resolvida_fora' }
+    return { ok: true, encerramento: encerramentoDaIssueFechada(comentado) }
   }
+  // Gravado antes do POST: se o processo cair depois do comentário, a marca evita repetir.
+  if (!comentado) await anotarProgresso(posse, { comentando: true })
+  const comentario = `${efeito.comentario}\n\n${marcadorDoCartao(posse.cartaoId)}`
   try {
-    await fonte.comentarEFecharIssue(ref, efeito.numero, efeito.comentario, {
-      jaComentado: comentado,
-    })
+    await fonte.comentarEFecharIssue(ref, efeito.numero, comentario, { jaComentado: comentado })
   } catch (erro) {
     if (erro instanceof ErroDeIntegracao && erro.progresso?.comentado) {
       return { ok: false, erro: erro.message, progresso: { comentado: true } }
@@ -276,13 +337,15 @@ async function aplicarEfeito(
         const ref = await refDoRepositorio(alvo.repositorio)
         if (typeof ref === 'string') return { ok: false, erro: ref }
         if (efeito.tipo === 'responder_issue') {
-          return await responderIssue(fonte, ref, efeito, alvo.progresso)
+          return await responderIssue(fonte, ref, efeito, alvo.progresso, alvo.posse)
         }
         if (alvo.cartao.acao !== 'aprovar_e_mergear') return { ok: false, erro: NAO_ENCONTRADO }
         return await mergearPr(fonte, ref, alvo.repositorio, alvo.cartao)
       }
     }
   } catch (erro) {
+    // Quem perdeu a posse não escreve nada; `falhar` também não (a posse não é mais dele).
+    if (erro instanceof PossePerdida) return { ok: false, erro: REGISTRANDO }
     return { ok: false, erro: mensagemDoErro(erro) }
   }
 }
@@ -309,19 +372,19 @@ const NUMERO_DA_ISSUE = /\/issues\/(\d+)$/
 
 /**
  * O processo morreu em `CONFIRMANDO` e o item já saiu da pilha: o efeito passou? Confere o estado
- * real (evento da demanda depois do início; PR mergeado com o head do cartão; issue fechada com o
- * nosso comentário) e nunca aplica de novo.
+ * real (evento da demanda depois do início; PR mergeado com o head do cartão; issue fechada, com o
+ * mesmo critério do caminho normal) e nunca aplica de novo. `null`: não passou.
  */
 async function efeitoJaAplicado(
-  conversa: { demandaId: string | null; issueUrl: string | null; repositorio: string },
+  conversa: { id: string; demandaId: string | null; issueUrl: string | null; repositorio: string },
   cartao: Cartao,
   progresso: Record<string, unknown>,
   desde: Date,
   fonteDe: () => FonteGitHub | null,
-): Promise<boolean> {
+): Promise<Encerramento | null> {
   const evento = EVENTO_DO_EFEITO[cartao.acao]
   if (evento) {
-    if (!conversa.demandaId) return false
+    if (!conversa.demandaId) return null
     const n = await db.eventoDaDemanda.count({
       where: {
         demandaId: conversa.demandaId,
@@ -330,21 +393,23 @@ async function efeitoJaAplicado(
         registradoEm: { gte: desde },
       },
     })
-    return n > 0
+    return n > 0 ? 'confirmada' : null
   }
   const doGitHub: readonly Cartao['acao'][] = ['aprovar_e_mergear', 'responder', 'pedir_mudanca']
-  if (!doGitHub.includes(cartao.acao)) return false
+  if (!doGitHub.includes(cartao.acao)) return null
   const fonte = fonteDe()
   if (!fonte) throw new ErroDeDominio(SEM_APP)
   const ref = await refDoRepositorio(conversa.repositorio)
-  if (typeof ref === 'string') return false
+  if (typeof ref === 'string') return null
   if (cartao.acao === 'aprovar_e_mergear') {
     const pr = await fonte.lerPullRequestParaMerge(ref, cartao.numero)
-    return pr?.estado === 'MERGEADO' && pr.head === cartao.head
+    return pr?.estado === 'MERGEADO' && pr.head === cartao.head ? 'confirmada' : null
   }
   const numero = Number(NUMERO_DA_ISSUE.exec(conversa.issueUrl ?? '')?.[1])
-  if (!numero || progresso.comentado !== true) return false
-  return (await fonte.lerIssue(ref, numero))?.estado === 'FECHADA'
+  if (!numero) return null
+  const issue = await fonte.lerIssue(ref, numero)
+  if (issue?.estado !== 'FECHADA') return null
+  return encerramentoDaIssueFechada(await jaComentou(fonte, ref, numero, conversa.id, progresso))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -433,6 +498,7 @@ export async function confirmarCartao(
   })
   if (inicio.tipo === 'pronto') return confirmado()
   if (inicio.tipo === 'recusa') return { resultado: 'recusado', erro: inicio.erro }
+  const posse: Posse = { cartaoId, conversaId, desde: agora }
 
   // Daqui em diante o cartão está em `CONFIRMANDO` e é nosso.
   const atual = await db.cartaoDeFecho.findUniqueOrThrow({
@@ -445,62 +511,63 @@ export async function confirmarCartao(
 
   let aplicado: Aplicado
   if (inicio.tipo === 'recuperar') {
-    let feito: boolean
+    let feito: Encerramento | null
     try {
       feito = await efeitoJaAplicado(conversa, cartao, progresso, inicio.desde, fonteDe)
     } catch (erro) {
-      return falhar(cartaoId, conversaId, { ok: false, erro: mensagemDoErro(erro) })
+      return falhar(posse, { ok: false, erro: mensagemDoErro(erro) })
     }
-    if (!feito) {
-      await db.$transaction(async (tx) => {
-        await travar(tx, conversaId, cartaoId)
+    if (feito === null) {
+      const ganhou = await db.$transaction(async (tx) => {
+        if (!(await travarComPosse(tx, posse))) return false
         await tx.cartaoDeFecho.update({
           where: { id: cartaoId },
           data: { estado: 'PROPOSTO', confirmandoEm: null, erro: RESOLVIDO },
         })
         await encerrarConversa(tx, conversaId, 'resolvida_fora', RESOLVIDO_FORA, agora)
+        return true
       })
-      return { resultado: 'recusado', erro: RESOLVIDO }
+      return { resultado: 'recusado', erro: ganhou ? RESOLVIDO : REGISTRANDO }
     }
-    aplicado = { ok: true, encerramento: 'confirmada' }
+    aplicado = { ok: true, encerramento: feito }
   } else {
     const item = localizado!.item
     // 2. O cartão contra o item de agora.
     const motivo = revalidar(item, contextoDa(conversa.contexto), cartao)
-    if (motivo !== null) return falhar(cartaoId, conversaId, { ok: false, erro: motivo })
+    if (motivo !== null) return falhar(posse, { ok: false, erro: motivo })
 
     // 3. O efeito, pelos services de demandas ou pelo GitHub (repositório da URL da issue).
     let efeito: Efeito
     try {
       efeito = efeitoDoCartao(item, cartao)
     } catch (erro) {
-      return falhar(cartaoId, conversaId, { ok: false, erro: mensagemDoErro(erro) })
+      return falhar(posse, { ok: false, erro: mensagemDoErro(erro) })
     }
     aplicado = await aplicarEfeito(
       sujeito,
       efeito,
-      { cartao, progresso, repositorio: conversa.repositorio },
+      { cartao, progresso, repositorio: conversa.repositorio, posse },
       fonteDe,
     )
   }
 
-  if (aplicado.ok === false) return falhar(cartaoId, conversaId, aplicado)
+  if (aplicado.ok === false) return falhar(posse, aplicado)
 
   // 4. Sucesso numa transação.
   const nome =
     (await db.usuario.findUnique({ where: { id: sujeito.usuarioId }, select: { nome: true } }))
       ?.nome ?? 'você'
   const efeitoFinal = aplicado
-  await db.$transaction(async (tx) => {
-    const c = await travar(tx, conversaId, cartaoId)
-    if (!c || c.estado !== 'CONFIRMANDO') return
+  const ganhou = await db.$transaction(async (tx) => {
+    // Outro processo assumiu (prazo vencido): ele decide o resultado; este não sobrescreve.
+    if (!(await travarComPosse(tx, posse))) return false
     if (efeitoFinal.ok === 'guardado') {
       await tx.cartaoDeFecho.update({
         where: { id: cartaoId },
         data: { estado: 'SUBSTITUIDO', confirmandoEm: null },
       })
       await tx.conversa.update({ where: { id: conversaId }, data: { guardadaEm: agora } })
-      return
+      return true
     }
     await tx.cartaoDeFecho.update({
       where: { id: cartaoId },
@@ -516,20 +583,22 @@ export async function confirmarCartao(
         ? `Registrado por ${nome} às ${HORA.format(agora)}.`
         : RESOLVIDO_FORA
     await encerrarConversa(tx, conversaId, efeitoFinal.encerramento, texto, agora)
+    return true
   })
+  if (!ganhou) return { resultado: 'recusado', erro: REGISTRANDO }
   // 5. O próximo da pilha recalculada.
   return confirmado()
 }
 
 /** Falha: o cartão volta a `PROPOSTO` com o erro (ou é refeito com o head novo); nada mais muda. */
 async function falhar(
-  cartaoId: string,
-  conversaId: string,
+  posse: Posse,
   f: Extract<Aplicado, { ok: false }>,
 ): Promise<ResultadoDaConfirmacao> {
-  await db.$transaction(async (tx) => {
-    const c = await travar(tx, conversaId, cartaoId)
-    if (!c || c.estado !== 'CONFIRMANDO') return
+  const { cartaoId, conversaId } = posse
+  const ganhou = await db.$transaction(async (tx) => {
+    const c = await travarComPosse(tx, posse)
+    if (!c) return false
     const progresso = f.progresso
       ? { progresso: json({ ...((c.progresso ?? {}) as object), ...f.progresso }) }
       : {}
@@ -538,7 +607,7 @@ async function falhar(
         where: { id: cartaoId },
         data: { estado: 'PROPOSTO', confirmandoEm: null, erro: f.erro, ...progresso },
       })
-      return
+      return true
     }
     await tx.cartaoDeFecho.update({
       where: { id: cartaoId },
@@ -558,6 +627,7 @@ async function falhar(
       where: { id: conversaId },
       data: { contexto: json({ ...contexto, pr: f.refazer.pr }) },
     })
+    return true
   })
-  return { resultado: 'recusado', erro: f.erro }
+  return { resultado: 'recusado', erro: ganhou ? f.erro : REGISTRANDO }
 }

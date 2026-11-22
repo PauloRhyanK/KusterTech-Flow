@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import { confirmarCartao } from '@/modules/decidir/confirmacao'
+import { confirmarCartao, marcadorDoCartao } from '@/modules/decidir/confirmacao'
 import { chaveDaDemanda, chaveDaIssue } from '@/modules/decidir/model'
 import { localizarItem } from '@/modules/decidir/queries'
 import { abrirItem, ajustarCartao } from '@/modules/decidir/service'
@@ -16,6 +16,7 @@ import {
   registrarEvento,
 } from '@/modules/demandas/service'
 import type { Espera } from '@/modules/demandas/model'
+import { ErroDeIntegracao } from '@/modules/github/erros'
 import type { FonteGitHub, PullRequestParaMerge } from '@/modules/github/fonte'
 import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
 import { mensagemDeFalha } from '@/modules/github/model'
@@ -695,12 +696,12 @@ describe('decidir / confirmação (integração)', () => {
   // -------------------------------------------------------------------------------------------
   // Trava e recuperação
 
-  test('CONFIRMANDO há menos de 2 min → "Já estou registrando esta decisão."; cartão trocado → "Este cartão foi trocado por outro."', async () => {
+  test('CONFIRMANDO há menos de 5 min → "Já estou registrando esta decisão."; cartão trocado → "Este cartão foi trocado por outro."', async () => {
     const { chave } = await pedidoParaDecidir()
     const { conversaId, cartaoId } = await abrirComCartao(chave, { acao: 'guardar' })
     await db.cartaoDeFecho.update({
       where: { id: cartaoId },
-      data: { estado: 'CONFIRMANDO', confirmandoEm: new Date(AGORA.getTime() - 60_000) },
+      data: { estado: 'CONFIRMANDO', confirmandoEm: new Date(AGORA.getTime() - 4 * 60_000) },
     })
     expect(await confirmarCartao(admin, cartaoId, AGORA, { fonte: null })).toEqual({
       resultado: 'recusado',
@@ -725,7 +726,7 @@ describe('decidir / confirmação (integração)', () => {
     const cartao = await cartaoProposto(conversaId)
     await db.cartaoDeFecho.update({
       where: { id: cartao.id },
-      data: { estado: 'CONFIRMANDO', confirmandoEm: new Date(AGORA.getTime() - 3 * 60_000) },
+      data: { estado: 'CONFIRMANDO', confirmandoEm: new Date(AGORA.getTime() - 6 * 60_000) },
     })
     const r = await confirmarCartao(admin, cartao.id, AGORA, {
       fonte: {
@@ -743,7 +744,7 @@ describe('decidir / confirmação (integração)', () => {
   test('recuperação: CONFIRMANDO velho com o evento da demanda já gravado (o processo morreu depois do service) → confirmado, sem aplicar de novo', async () => {
     const a = await demandaTravada('Cor do botão')
     const { conversaId, cartaoId } = await abrirComCartao(a.chave, { acao: 'encerrar' })
-    const confirmandoEm = new Date(Date.now() - 3 * 60_000)
+    const confirmandoEm = new Date(Date.now() - 6 * 60_000)
     await db.cartaoDeFecho.update({
       where: { id: cartaoId },
       data: { estado: 'CONFIRMANDO', confirmandoEm },
@@ -760,6 +761,155 @@ describe('decidir / confirmação (integração)', () => {
     expect((await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })).encerramento).toBe(
       'confirmada',
     )
+  })
+
+  test('decisão da Fábrica: o comentário leva a marca do cartão e progresso.comentando é gravado antes do POST', async () => {
+    const f = criarFonteFixtures()
+    const { cartaoId } = await abrirComCartao(
+      chaveDaIssue(ISSUE_42),
+      { acao: 'responder', texto: 'Tom leve.' },
+      f,
+    )
+    let progressoNoPost: unknown = null
+    await confirmarCartao(admin, cartaoId, AGORA, {
+      fonte: {
+        ...f,
+        comentarEFecharIssue: async (repo, n, texto, opcoes) => {
+          progressoNoPost = (await db.cartaoDeFecho.findUniqueOrThrow({ where: { id: cartaoId } }))
+            .progresso
+          return f.comentarEFecharIssue(repo, n, texto, opcoes)
+        },
+      },
+    })
+    expect(progressoNoPost).toEqual({ comentando: true })
+    const ref = { githubId: BigInt(9001), instalacaoId: BigInt(1), nomeCompleto: REPO }
+    const [comentario] = await f.listarComentariosDaIssue(ref, 42)
+    expect(comentario!.corpo).toContain('Tom leve.')
+    expect(comentario!.corpo.endsWith(marcadorDoCartao(cartaoId))).toBe(true)
+  })
+
+  test('caiu depois do comentário e antes de gravar: a marca na issue impede repostar; a nova tentativa só fecha', async () => {
+    const f = criarFonteFixtures()
+    const { cartaoId } = await abrirComCartao(
+      chaveDaIssue(ISSUE_42),
+      { acao: 'responder', texto: 'Tom leve.' },
+      f,
+    )
+    await db.cartaoDeFecho.update({
+      where: { id: cartaoId },
+      data: {
+        estado: 'CONFIRMANDO',
+        confirmandoEm: new Date(AGORA.getTime() - 6 * 60_000),
+        progresso: { comentando: true },
+      },
+    })
+    f.registrarComentario(REPO, 42, `Tom leve.\n\n${marcadorDoCartao(cartaoId)}`)
+    const r = await confirmarCartao(admin, cartaoId, AGORA, { fonte: f })
+    expect(r.resultado).toBe('confirmado')
+    expect(f.escritas).toEqual([{ tipo: 'fechar', repositorio: REPO, numero: 42 }])
+  })
+
+  test('posse: outro processo assume o CONFIRMANDO vencido enquanto o primeiro ainda roda → um só comentário e o primeiro não sobrescreve', async () => {
+    const f = criarFonteFixtures()
+    const { conversaId, cartaoId } = await abrirComCartao(
+      chaveDaIssue(ISSUE_42),
+      { acao: 'responder', texto: 'Tom leve.' },
+      f,
+    )
+    let entrou!: () => void
+    const dentro = new Promise<void>((r) => (entrou = r))
+    let soltar!: () => void
+    const solto = new Promise<void>((r) => (soltar = r))
+    // O primeiro comenta e fecha, e então fica preso (resposta lenta do GitHub).
+    const lento: FonteGitHub = {
+      ...f,
+      comentarEFecharIssue: async (repo, n, texto, opcoes) => {
+        const r = await f.comentarEFecharIssue(repo, n, texto, opcoes)
+        entrou()
+        await solto
+        return r
+      },
+    }
+    const primeiro = confirmarCartao(admin, cartaoId, AGORA, { fonte: lento })
+    await dentro
+
+    const depois = new Date(AGORA.getTime() + 6 * 60_000)
+    const segundo = await confirmarCartao(admin, cartaoId, depois, { fonte: f })
+    expect(segundo.resultado).toBe('confirmado')
+
+    soltar()
+    expect(await primeiro).toEqual({
+      resultado: 'recusado',
+      erro: 'Já estou registrando esta decisão.',
+    })
+    expect(f.escritas.filter((e) => e.tipo === 'comentar')).toHaveLength(1)
+    const c = await db.cartaoDeFecho.findUniqueOrThrow({ where: { id: cartaoId } })
+    expect(c).toMatchObject({ estado: 'CONFIRMADO', confirmadoEm: depois, confirmandoEm: depois })
+    const registros = await db.mensagem.count({
+      where: { conversaId, autor: 'FLOW', texto: { startsWith: 'Registrado por' } },
+    })
+    expect(registros).toBe(1)
+  })
+
+  test('posse: o primeiro falha depois que outro assumiu → não devolve o cartão a PROPOSTO', async () => {
+    const f = criarFonteFixtures()
+    const { cartaoId } = await abrirComCartao(
+      chaveDaIssue(ISSUE_42),
+      { acao: 'responder', texto: 'Tom leve.' },
+      f,
+    )
+    let entrou!: () => void
+    const dentro = new Promise<void>((r) => (entrou = r))
+    let soltar!: () => void
+    const solto = new Promise<void>((r) => (soltar = r))
+    const primeiro = confirmarCartao(admin, cartaoId, AGORA, {
+      fonte: {
+        ...f,
+        lerIssue: async () => {
+          entrou()
+          await solto
+          throw new ErroDeIntegracao('rede')
+        },
+      },
+    })
+    await dentro
+    const depois = new Date(AGORA.getTime() + 6 * 60_000)
+    expect((await confirmarCartao(admin, cartaoId, depois, { fonte: f })).resultado).toBe(
+      'confirmado',
+    )
+    soltar()
+    expect((await primeiro).resultado).toBe('recusado')
+    const c = await db.cartaoDeFecho.findUniqueOrThrow({ where: { id: cartaoId } })
+    expect(c).toMatchObject({ estado: 'CONFIRMADO', erro: null })
+  })
+
+  test('recuperação: item saiu do retrato e a issue foi fechada por outro → conta como feito, conversa resolvida_fora com a mensagem do Flow (igual ao caminho normal)', async () => {
+    const f = criarFonteFixtures()
+    const { conversaId, cartaoId } = await abrirComCartao(
+      chaveDaIssue(ISSUE_42),
+      { acao: 'responder', texto: 'Tom leve.' },
+      f,
+    )
+    await db.cartaoDeFecho.update({
+      where: { id: cartaoId },
+      data: { estado: 'CONFIRMANDO', confirmandoEm: new Date(AGORA.getTime() - 6 * 60_000) },
+    })
+    await trocarRetrato([DECISOES[0]!])
+    const r = await confirmarCartao(admin, cartaoId, AGORA, {
+      fonte: {
+        ...f,
+        lerIssue: async (repo, n) => ({ ...(await f.lerIssue(repo, n))!, estado: 'FECHADA' }),
+      },
+    })
+    expect(r.resultado).toBe('confirmado')
+    expect(f.escritas).toEqual([])
+    const conversa = await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })
+    expect(conversa.encerramento).toBe('resolvida_fora')
+    const ultima = await db.mensagem.findFirstOrThrow({
+      where: { conversaId },
+      orderBy: { seq: 'desc' },
+    })
+    expect(ultima.texto).toBe('Resolvido por outro caminho.')
   })
 
   test('Review Focus 5: issue saiu do retrato → recusa "Este item já foi resolvido." e conversa resolvida_fora', async () => {

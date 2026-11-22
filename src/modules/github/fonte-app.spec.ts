@@ -320,6 +320,48 @@ describe('categorias de falha', () => {
     ).toBe('resposta-invalida')
   })
 
+  test('fetch que não responde estoura o teto da chamada → rede (transitória), com o signal em cada chamada', async () => {
+    const sinais: (AbortSignal | null | undefined)[] = []
+    const fonte = criarFonteApp(
+      { appId: '1', chavePrivada: privateKey, apiUrl: API },
+      ((_entrada: string | URL | Request, init?: RequestInit) => {
+        sinais.push(init?.signal)
+        // Só o signal encerra a espera, como um GitHub que nunca responde.
+        return new Promise<Response>((_resolver, rejeitar) => {
+          init?.signal?.addEventListener('abort', () => rejeitar(init.signal!.reason))
+        })
+      }) as typeof fetch,
+      () => AGORA,
+      20,
+    )
+    const e = await fonte.listarIssuesAtualizadas(repo, null).catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(ErroDeIntegracao)
+    expect((e as ErroDeIntegracao).categoria).toBe('rede')
+    expect(sinais).toHaveLength(1)
+    expect(sinais[0]).toBeInstanceOf(AbortSignal)
+  })
+
+  test('corpo que estoura o teto no meio da leitura → rede, não resposta-invalida', async () => {
+    const lento = criarFonteApp(
+      { appId: '1', chavePrivada: privateKey, apiUrl: API },
+      (async (entrada: string | URL | Request, init?: RequestInit) => {
+        if (String(entrada).endsWith('/access_tokens')) {
+          return json({ status: 201, corpo: { token: TOKEN, expires_at: '2026-10-26T16:00:00Z' } })
+        }
+        const corpo = new ReadableStream<Uint8Array>({
+          start(c) {
+            init?.signal?.addEventListener('abort', () => c.error(init.signal!.reason))
+          },
+        })
+        return new Response(corpo, { status: 200 })
+      }) as typeof fetch,
+      () => AGORA,
+      20,
+    )
+    const e = await lento.lerIssue(repo, 42).catch((x: unknown) => x)
+    expect((e as ErroDeIntegracao).categoria).toBe('rede')
+  })
+
   test('nenhuma mensagem de erro contém o token, o JWT ou o corpo da resposta', async () => {
     const CORPO = 'CORPO-SECRETO-DA-RESPOSTA'
     const casos = await Promise.all([

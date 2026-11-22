@@ -85,6 +85,11 @@ export interface PullRequestParaMerge {
   urlHtml: string
 }
 
+export interface ComentarioDaFonte {
+  id: bigint
+  corpo: string
+}
+
 export type ResultadoDoMerge =
   { resultado: 'mergeado' } | { resultado: 'recusado'; motivo: 'head_mudou' | 'nao_mergeavel' }
 
@@ -131,6 +136,8 @@ export interface FonteGitHub {
   ): Promise<{ numero: number; githubId: bigint; urlHtml: string }>
   /** `null` quando a issue não existe (404). */
   lerIssue(repo: RefRepositorio, numero: number): Promise<IssueDaFonte | null>
+  /** Todos os comentários da issue (paginados), mais antigo primeiro. */
+  listarComentariosDaIssue(repo: RefRepositorio, numero: number): Promise<ComentarioDaFonte[]>
   /**
    * Comenta (salvo `jaComentado`) e fecha como concluída. Falha no fechamento depois do comentário
    * lança `ErroDeIntegracao` com `progresso.comentado`.
