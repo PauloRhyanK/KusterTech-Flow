@@ -14,6 +14,7 @@ import unittest.mock
 RAIZ_DOS_SCRIPTS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ_DOS_SCRIPTS))
 
+import atendente  # noqa: E402
 import capacidade  # noqa: E402
 import coordenador  # noqa: E402
 import despachante  # noqa: E402
@@ -21,6 +22,7 @@ import fila  # noqa: E402
 import forja  # noqa: E402
 import motor  # noqa: E402
 import retrato  # noqa: E402
+import testes_atendente  # noqa: E402
 import testes_demandas  # noqa: E402
 import testes_retrato  # noqa: E402
 
@@ -155,6 +157,20 @@ class FlowVazio:
         return "aplicado"
 
 
+class ConversasVazias:
+    """O cliente das conversas do Decidir sem nenhuma conversa esperando o agente."""
+
+    def __init__(self, url_central=None, token_file=None):
+        self.url_central, self.token_file = url_central, token_file
+        self.ultima_recusa, self.ultimo_motivo_do_cartao = None, None
+
+    def buscar_conversas(self):
+        return {"conversas": [], "ativaAte": None}
+
+    def responder(self, conversa_id, corpo):
+        raise AssertionError("nada a responder")
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -191,6 +207,7 @@ class Base(unittest.TestCase):
             ambiente={"WARREN_API": "http://127.0.0.1:8080", "WARREN_TOKEN_FILE": "/seg/warren", "GH_TOKEN_FILE": "/seg/gh"},
             segredos=(TOKEN,),
             cliente_do_flow=FlowVazio,
+            cliente_das_conversas=ConversasVazias,
         )
         argumentos.update(extra)
         return coordenador.Coordenador(**argumentos)
@@ -2388,6 +2405,228 @@ class TestesPassoDemandas(Base):
         entrada = [e for e in self.fila_estado()["fila"] if e["id"] == id_][-1]
         self.assertEqual((entrada["segurado"], entrada["seguradoPor"]), (True, "demanda"))
         self.assertIn(mensagem, self.avisos())
+
+
+class TestesAtendente(Base):
+    CONVERSA = testes_atendente.CONVERSA
+    MENSAGEM = testes_atendente.MENSAGEM
+
+    def coordenador_com(self, *, cliente=None, central=CENTRAL, **extra):
+        self.cliente = cliente or testes_atendente.ClienteFalso()
+        self.criados = []
+
+        def fabrica(url, token_file):
+            self.criados.append((url, token_file))
+            return self.cliente
+
+        self.enviar = EnviarFalso()
+        extra.setdefault("kit", coordenador.KIT_PADRAO)
+        return self.novo(central=central, enviar=self.enviar, cliente_das_conversas=fabrica, **extra)
+
+    def conversa(self, **extra):
+        return testes_atendente.conversa(repositorio=REPO, **extra)
+
+    def avisos_do_atendente(self):
+        return [a for a in self.avisos() if a.startswith("Atendente:")]
+
+    def test_ciclo_sem_central_nao_roda_o_atendente(self):
+        c = self.coordenador_com(central=None)
+        dormidas = []
+        with unittest.mock.patch.object(coordenador.atendente, "passo") as passo:
+            c.ciclo()
+            c._esperar(60, dormidas.append)
+        passo.assert_not_called()
+        self.assertEqual(self.criados, [])
+        self.assertEqual(dormidas, [60])
+        self.assertIn("atendente: desligado", c.status())
+
+    def test_passo_recebe_cliente_projetos_modelos_e_roda_depois_das_demandas(self):
+        ordem = []
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.demandas, "passo", side_effect=lambda *a, **k: ordem.append("demandas") or []), unittest.mock.patch.object(
+            coordenador.atendente, "passo", side_effect=lambda *a, **k: ordem.append("atendente") or []
+        ) as passo, unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=4096):
+            c.ciclo()
+        self.assertEqual(ordem, ["demandas", "atendente"])
+        self.assertEqual(self.criados, [(CENTRAL["url"], CENTRAL["token_file"])])
+        (estado,), argumentos = passo.call_args
+        self.assertIs(estado, c.dados)
+        self.assertIs(argumentos["cliente"], self.cliente)
+        self.assertIs(argumentos["motor"], self.motor)
+        self.assertEqual(argumentos["projetos"], {REPO: "cliente"})
+        self.assertEqual(argumentos["modelos"]["atendente"], {"agente": "claude-code", "modelo": "claude-sonnet-5-5", "esforco": "medium", "maxCustoUsd": 2})
+        self.assertEqual((argumentos["capacidade_path"], argumentos["agora"], argumentos["mem_disponivel_mb"]), (self.raiz / "capacidade.json", INICIO, 4096))
+        self.assertIs(argumentos["salvar"].__self__, c)
+
+    def test_falha_no_atendente_nao_para_o_ciclo_e_o_retrato_vai(self):
+        a = self.publicar("login", ["src/login/**"])
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.atendente, "passo", side_effect=RuntimeError("quebrou")):
+            c.ciclo()
+            self.instante += datetime.timedelta(minutes=1)
+            c.ciclo()
+        self.assertEqual(self.estados(), {a: "ativo"})
+        self.assertEqual(len(self.enviar.chamadas), 2)
+
+        def quebrado(url, token_file):
+            raise OSError("sem rede")
+
+        c = self.novo(central=CENTRAL, enviar=self.enviar, cliente_das_conversas=quebrado)
+        c.ciclo()
+        c._passo_atendente()  # entre ciclos também não levanta
+        self.assertEqual(len(self.enviar.chamadas), 3)
+        log = (self.raiz / "log.jsonl").read_text(encoding="utf-8")
+        self.assertIn("RuntimeError: quebrou", log)
+        self.assertIn("OSError: sem rede", log)
+        self.assertEqual(self.estados(), {a: "ativo"})
+
+    def test_eventos_do_atendente_vao_ao_log_e_o_estado_e_salvo(self):
+        cliente = testes_atendente.ClienteFalso([testes_atendente.busca(self.conversa())])
+        c = self.coordenador_com(cliente=cliente)
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=None):
+            c.ciclo()
+        atual = self.fila_estado()["atendente"]["atual"]
+        self.assertEqual((atual["conversaId"], atual["fase"]), (self.CONVERSA, "respondendo"))
+        self.assertIn('"evento": "atendente_run"', (self.raiz / "log.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(self.fila_estado()["fila"], [])  # a fila não muda
+
+    def test_aviso_de_memoria_volta_num_segundo_episodio(self):
+        T = testes_atendente
+        conversa = self.conversa()
+        cliente = T.ClienteFalso([T.busca(conversa), T.busca(conversa), T.busca(conversa)])
+        c = self.coordenador_com(cliente=cliente)
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=10):
+            c.ciclo()
+            c._passo_atendente()
+        self.assertEqual(self.avisos_do_atendente(), [atendente.AVISO_MEMORIA])
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=None):
+            c._passo_atendente()  # a memória voltou: despacha e o aviso sai das chaves
+        self.assertNotIn("atendente:memoria", self.fila_estado()["chaves"])
+        run_id = self.fila_estado()["atendente"]["atual"]["runId"]
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.definir_texto(run_id, T.resposta())
+        c._passo_atendente()
+        self.assertIsNone(self.fila_estado()["atendente"]["atual"])
+        cliente.buscas = [T.busca(T.conversa(responder_a=T.NOVA, repositorio=REPO))]
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=10):
+            c._passo_atendente()
+        self.assertEqual(self.avisos_do_atendente(), [atendente.AVISO_MEMORIA, atendente.AVISO_MEMORIA])
+
+    def test_avisos_de_modelo_e_drenagem_somem_quando_a_situacao_some(self):
+        T = testes_atendente
+        conversa = self.conversa()
+        cliente = T.ClienteFalso([T.busca(conversa)] * 4)
+        c = self.coordenador_com(cliente=cliente, kit=pathlib.Path("/kit"))
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=None):
+            c._config = coordenador.ler_config(self.raiz)
+            c._passo_atendente()
+            self.assertIn("atendente:modelo", self.fila_estado()["chaves"])
+            c.kit = coordenador.KIT_PADRAO
+            capacidade.definir_drenagem(self.raiz / "capacidade.json", "2026-11-03T12:00:00Z")
+            c._passo_atendente()
+            self.assertNotIn("atendente:modelo", self.fila_estado()["chaves"])
+            self.assertIn("atendente:drenagem", self.fila_estado()["chaves"])
+            capacidade.definir_drenagem(self.raiz / "capacidade.json", None)
+            c._passo_atendente()
+        self.assertNotIn("atendente:drenagem", self.fila_estado()["chaves"])
+        self.assertEqual(self.avisos_do_atendente(), [atendente.AVISO_SEM_MODELO, atendente.AVISO_DRENAGEM])
+
+    def test_aviso_de_envio_some_depois_do_envio_bom_e_volta_noutro_episodio(self):
+        T = testes_atendente
+        falha = retrato.FalhaDeEnvio("HTTP 503")
+        limite = atendente.LIMITE_FALHAS_DE_ENVIO
+        cliente = T.ClienteFalso([T.busca(self.conversa()), T.busca(self.conversa(responder_a=T.NOVA))], [falha] * limite + ["aplicado"] + [falha] * limite)
+        c = self.coordenador_com(cliente=cliente)
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=None):
+            c.ciclo()
+            for responder_a in (T.MENSAGEM, T.NOVA):
+                run_id = self.fila_estado()["atendente"]["atual"]["runId"]
+                self.motor.definir_run(run_id, estado="succeeded")
+                self.motor.definir_texto(run_id, T.resposta())
+                for _ in range(limite):
+                    c._passo_atendente()
+                self.assertIn("atendente:envio", self.fila_estado()["chaves"], responder_a)
+                c._passo_atendente()  # envio bom (1º episódio) ou busca da próxima (2º)
+                if responder_a == T.MENSAGEM:
+                    self.assertNotIn("atendente:envio", self.fila_estado()["chaves"])
+                    c._passo_atendente()  # busca a mensagem nova
+        envio = [a for a in self.avisos_do_atendente() if "não chega" in a]
+        self.assertEqual(len(envio), 2)
+
+    def test_esperar_com_conversa_ativa_roda_o_atendente_a_cada_3_s_dentro_do_intervalo(self):
+        c = self.coordenador_com()
+        c.dados["atendente"] = {"atual": None, "ativaAte": "2026-11-03T12:10:00Z"}
+        dormidas = []
+        with unittest.mock.patch.object(c, "_passo_atendente") as passo, unittest.mock.patch.object(coordenador.demandas, "passo") as demandas_:
+            c._esperar(60, dormidas.append)
+        self.assertEqual(dormidas, [3] * 20)
+        self.assertEqual(passo.call_count, 20)
+        demandas_.assert_not_called()
+        self.assertEqual(self.enviar.chamadas, [])  # entre ciclos só o atendente roda
+
+    def test_esperar_dorme_o_resto_de_uma_vez_quando_a_conversa_deixa_de_ser_ativa(self):
+        c = self.coordenador_com()
+        c.dados["atendente"] = {"atual": None, "ativaAte": "2026-11-03T12:10:00Z"}
+        dormidas = []
+
+        def passo():
+            if len(dormidas) == 2:
+                c.dados["atendente"]["ativaAte"] = None
+
+        with unittest.mock.patch.object(c, "_passo_atendente", side_effect=passo):
+            c._esperar(60, dormidas.append)
+        self.assertEqual(dormidas, [3, 3, 54])
+
+    def test_esperar_para_no_intervalo_pelo_relogio_quando_o_passo_demora(self):
+        c = self.coordenador_com()
+        c.dados["atendente"] = {"atual": None, "ativaAte": "2026-11-03T12:10:00Z"}
+        dormidas, relogio = [], [0.0]
+
+        def passo():
+            relogio[0] += 25  # um envio lento ao Flow
+
+        with unittest.mock.patch.object(c, "_passo_atendente", side_effect=passo):
+            c._esperar(60, lambda s: (dormidas.append(s), relogio.__setitem__(0, relogio[0] + s)), relogio=lambda: relogio[0])
+        self.assertEqual(sum(dormidas) + 25 * len(dormidas), 84)  # 3 + 25 + 3 + 25 + 3 + 25: passa do intervalo e o ciclo vem
+        self.assertEqual(dormidas, [3, 3, 3])
+
+    def test_esperar_sem_conversa_dorme_o_intervalo_de_uma_vez(self):
+        c = self.coordenador_com()
+        c.dados["atendente"] = {"atual": None, "ativaAte": "2026-11-03T11:00:00Z"}  # já passou
+        dormidas = []
+        with unittest.mock.patch.object(c, "_passo_atendente") as passo:
+            c._esperar(60, dormidas.append)
+        self.assertEqual(dormidas, [60])
+        passo.assert_not_called()
+
+    def test_rodar_consulta_entre_ciclos_e_os_outros_passos_rodam_todo_ciclo(self):
+        T = testes_atendente
+        cliente = T.ClienteFalso([T.busca(ate="2026-11-03T12:10:00Z")] * 100)
+        c = self.coordenador_com(cliente=cliente)
+        dormidas = []
+        with unittest.mock.patch.object(coordenador.demandas, "passo", return_value=[]) as demandas_:
+            c.rodar(intervalo=60, ciclos=3, dormir=dormidas.append)
+        self.assertEqual(dormidas, [3] * 40)
+        self.assertEqual(cliente.buscados, 3 + 40)
+        self.assertEqual(demandas_.call_count, 3)
+        self.assertEqual(len(self.enviar.chamadas), 3)
+
+    def test_status_mostra_a_linha_do_atendente(self):
+        self.assertIn("atendente: desligado", coordenador.status(self.raiz))
+        c = self.coordenador_com()
+        c.ciclo()
+        self.assertIn("atendente: ocioso", c.status())
+        dados = self.fila_estado()
+        dados["atendente"] = {"atual": None, "semRotaEm": "2026-11-03T12:00:00Z"}
+        (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+        self.assertIn("atendente: Flow sem o Decidir (tenta de novo 1 h depois de 2026-11-03T12:00:00Z)", c.status())
+        cliente = testes_atendente.ClienteFalso([testes_atendente.busca(self.conversa())])
+        c = self.coordenador_com(cliente=cliente)
+        with unittest.mock.patch.object(coordenador.capacidade, "mem_disponivel_mb", return_value=None):
+            dados["atendente"] = {}
+            (self.raiz / "fila-estado.json").write_text(json.dumps(dados), encoding="utf-8")
+            c.ciclo()
+        self.assertIn("atendente: conversa %s, respondendo (tentativa 0)" % self.CONVERSA[:8], c.status())
 
 
 class TestesConfiguracaoDaCentral(Base):

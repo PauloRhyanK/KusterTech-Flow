@@ -271,6 +271,25 @@ Papel sem modelo em `fabrica/modelos/config.json` deixa a fase esperando, com o 
 
 **Flow de antes das demandas.** Um `404` na busca desliga o passo com um aviso único (`Demandas: o Flow não tem a rota de demandas…`) e o kit tenta de novo uma hora depois. Uma recusa da busca que repetir não conserta (`401`, `403` e outros `4xx`, fora de `404`, `408` e `429`) dá um aviso único e uma tentativa a cada 15 min; rede, timeout e `5xx` tentam em todo ciclo. Retrato, fila, consertos e publicação por seed seguem como antes. Um `422` "Corpo inválido." no pedido de publicação com `demanda` e `modo` é repetido uma vez sem esses campos. Uma falha inesperada no passo (no cliente, na busca ou numa fase) vira o aviso `Demandas: o passo falhou (<classe>)` (na caixa de saída, `Demandas: o envio da caixa de saída falhou (<classe>)`), sai do aviso quando um passo dá certo e nunca para o ciclo nem muda a fila.
 
+### Decidir (atendente)
+
+No Decidir do Flow o Paulo conversa com um agente sobre cada item da pilha (demanda, desenho, trava, fim de fase, decisão). O atendente é um passo do coordenador, logo depois das demandas, e roda dentro do `fabrica-fila` (nenhuma unit nova). Ele usa as mesmas `FABRICA_CENTRAL_URL` e `FABRICA_CENTRAL_TOKEN_FILE` das demandas: busca em `GET /api/fabrica/conversas` as conversas com uma mensagem do Paulo sem resposta e devolve a resposta em `POST /api/fabrica/conversas/<id>/respostas`. O Flow nunca chama a Fábrica. Sem a URL, o atendente não roda e o `status` mostra `atendente: desligado`.
+
+- **Uma conversa por vez.** Enquanto uma conversa está em atendimento, nada novo é despachado. Com várias esperando, vai a mais antiga.
+- **Um run por réplica.** Cada mensagem do Paulo vira um run do Warren com o papel `atendente` (`modelos.atendente`, perfil em `fabrica/equipes/atendente.md`), com o repositório do projeto em leitura e a conversa no prompt. O run é gravado com o nonce antes do despacho e a resposta é gravada com o `id` antes do envio: um coordenador reiniciado acha o run pelo nonce e reenvia o mesmo `id` (o Flow responde `repetido`), sem run nem resposta em dobro. Se o Paulo escrever de novo durante o run, a resposta da mensagem anterior vai e a nova ganha um run seu na busca seguinte.
+- **Memória e drenagem.** O run não reserva vaga de `capacidade.json`, mas só sai com a memória livre acima da RAM mínima e fora da drenagem do Warren. Abaixo disso, a conversa espera com um aviso só (`Atendente: memória livre abaixo do mínimo; a conversa espera`), que volta num episódio seguinte.
+- **Consulta rápida.** Com conversa ativa (um run em curso ou até 10 min depois da última mensagem do Paulo, o `ativaAte` do Flow), o coordenador consulta o Flow a cada 3 s entre os ciclos de 60 s, só para o atendente: demandas, consertos, publicação, limpeza de órfãos e o retrato rodam uma vez por ciclo, como sempre. Sem conversa ativa, consulta uma vez por ciclo.
+- **Tetos e falhas.** Até 10 min por réplica. Run que passa do teto, run falho, run que abre um PR (o Warren não tem modo de leitura; a resposta é descartada com o aviso `Atendente: o agente abriu um PR…`) ou duas respostas seguidas fora do formato viram uma falha para o Flow, que mostra "o agente não conseguiu responder" e deixa o Paulo decidir pelas respostas rápidas. Um cartão recusado pelo Flow ganha um run novo com o motivo; na segunda recusa a mensagem vai sem o cartão. Flow fora do ar deixa a resposta gravada e o reenvio segue com o mesmo `id`; depois de 10 falhas seguidas sai o aviso `Atendente: a resposta da conversa … não chega ao Flow…`. Sem `modelos.atendente`, a conversa espera com o aviso `Atendente: configure modelos.atendente…`. Uma falha no passo vai ao log e nunca para o ciclo nem muda a fila.
+- **Flow de antes do Decidir.** Um `404` na busca desliga o atendente com um aviso único (`Atendente: o Flow ainda não tem o Decidir`) e o kit tenta de novo uma hora depois. Retrato, fila, demandas, consertos e publicação seguem como antes.
+- **Respostas às decisões e fim de fase.** O Decidir responde às issues de decisão e mergeia o PR de fim de fase pela GitHub App do Flow, que precisa de **Issues**, **Contents** e **Pull requests** com escrita (ação do Paulo na instalação da App). A Fábrica recebe essas respostas como hoje: a issue fechada com o comentário vale como resposta da decisão, e o PR mergeado fecha a decisão sozinho.
+
+O estado fica em `~/fabrica/fila-estado.json`, na chave `atendente`. O `coordenador.py status` mostra uma linha:
+
+- `atendente: conversa <id8>, <fase> (tentativa <n>)`, com a fase `despachando`, `respondendo` ou `enviando`;
+- `atendente: ocioso`;
+- `atendente: Flow sem o Decidir (tenta de novo 1 h depois de <instante>)`;
+- `atendente: desligado`, sem a URL.
+
 ### Riscos conhecidos
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
@@ -301,6 +320,7 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 | `devops`       | `claude-sonnet-5-5` | medium  | 10          |
 | `seguranca`    | `claude-sonnet-5-5` | medium  | 10          |
 | `fixer`        | `claude-haiku-5-5`  | medium  | 5           |
+| `atendente`    | `claude-sonnet-5-5` | medium  | 2           |
 
 Limitações:
 
