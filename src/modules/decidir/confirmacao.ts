@@ -145,7 +145,7 @@ async function jaComentou(
   return comentarios.some((c) => marcas.some((m) => c.corpo.includes(m)))
 }
 
-async function encerrarConversa(
+export async function encerrarConversa(
   tx: Tx,
   conversaId: string,
   encerramento: Encerramento,

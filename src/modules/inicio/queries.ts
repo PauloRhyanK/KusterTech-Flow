@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { moduloAtivo } from '@/lib/modulos'
 import { obterAtividade, podeVerAtividade, type AtividadeGeral } from '@/modules/atividade/queries'
+import { obterPilha } from '@/modules/decidir/queries'
 import { esperasDeDemandas } from '@/modules/demandas/queries'
 import { idsVisiveis, podeVerVisaoGlobal } from '@/modules/clientes/model'
 import type { RetratoV1 } from '@/modules/fabrica/contrato'
@@ -16,6 +17,7 @@ import { maquinaLocalConfigurada, obterLeituraDaMaquinaLocal } from '@/modules/o
 import {
   ACAO_DE_LEITURA,
   agruparHomologacoes,
+  esperasComDecidir,
   esperasDaFabrica,
   esperasDaOficina,
   indicadoresDeProjetos,
@@ -327,6 +329,29 @@ const TIPOS_DA_FABRICA: readonly TipoDeEspera[] = [
   'fabrica-sem-noticias',
 ]
 
+// Com a pilha lida, o Decidir toma o lugar das decisões e das demandas que ele traz; sem ela
+// (módulo inativo, sem permissão ou falha de leitura) o Início segue como antes.
+function comDecidir(
+  fontes: FonteDeEspera[],
+  pilha: Awaited<ReturnType<typeof obterPilha>> | undefined,
+) {
+  if (!pilha) return fontes
+  const demandasDaPilha = new Set<string>()
+  for (const i of [...pilha.itens, ...pilha.guardados]) {
+    if (i.ref.tipo === 'demanda') demandasDaPilha.add(i.ref.demandaId)
+  }
+  const resultado: FonteDeEspera[] = fontes.map((f) =>
+    'falha' in f
+      ? f
+      : f.tipo === 'decisao' || f.tipo === 'demanda'
+        ? { tipo: f.tipo, itens: esperasComDecidir(f.itens, 0, demandasDaPilha) }
+        : f,
+  )
+  const [unico] = esperasComDecidir([], pilha.itens.length)
+  if (unico) resultado.push({ tipo: 'decidir', itens: [unico] })
+  return resultado
+}
+
 export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio> {
   const total = podeVerVisaoGlobal(sujeito)
   const pode = (tipo: TipoDeEspera) => autorizar(sujeito, ACAO_DE_LEITURA[tipo])
@@ -353,7 +378,9 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
     consultas.push(['divergencia', () => divergenciasPendentes(sujeito)])
   }
 
-  const [retrato, leitura, simples, cadastro, hrefDaMaquina, seusProjetos, atividade] =
+  const verDecidir = total && moduloAtivo('decidir') && pode('decidir')
+
+  const [retrato, leitura, simples, cadastro, hrefDaMaquina, seusProjetos, atividade, pilha] =
     await Promise.all([
       verFabrica
         ? lerFabrica(sujeito).catch((erro: unknown) => {
@@ -377,6 +404,7 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
             return 'falha' as const
           })
         : null,
+      verDecidir ? semFalhar(obterPilha(sujeito, agora), 'decidir') : undefined,
     ])
 
   const fontes: FonteDeEspera[] = simples.map((r, i) => {
@@ -410,7 +438,7 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
 
   return {
     escopo: total ? 'total' : 'cliente',
-    espera: montarEsperaVoce(fontes),
+    espera: montarEsperaVoce(comDecidir(fontes, pilha)),
     fabrica:
       recebido && retrato !== null && retrato !== 'falha'
         ? {

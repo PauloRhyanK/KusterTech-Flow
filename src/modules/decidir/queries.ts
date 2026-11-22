@@ -1,10 +1,15 @@
-import { exigirPermissao, ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
+import { autorizar, exigirPermissao, ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { log } from '@/lib/log'
+import { moduloAtivo } from '@/lib/modulos'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import type { RetratoV1 } from '@/modules/fabrica/contrato'
 import { lerRetratoMaisRecente, obterRetratoMaisRecente } from '@/modules/fabrica/queries'
+import { resumirErroParaLog } from '@/modules/github/model'
+import { PLANO_EM_CURSO } from '@/modules/inicio/model'
 import { triagemSchema } from '@/modules/demandas/contrato'
 import type { EtapaDefinida, Espera, Origem, Nivel, TipoDeDemanda } from '@/modules/demandas/model'
+import type { Cartao } from './cartao'
 import {
   chaveValida,
   montarPilha,
@@ -76,10 +81,11 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
   })
 }
 
-/** As decisões abertas do retrato, com as raias da fase atual (ou do plano, sem fase atual). */
+/** As decisões abertas dos planos em curso, com as raias da fase atual (ou do plano, sem fase atual). */
 export function decisoesDoRetrato(retrato: RetratoV1 | null): DecisaoDoRetrato[] {
   if (retrato === null) return []
   return retrato.planos.flatMap((plano) => {
+    if (!PLANO_EM_CURSO.includes(plano.estado)) return []
     const fase = plano.fases.find((f) => f.id === plano.faseAtual)
     const raias = fase ? fase.raias : plano.fases.flatMap((f) => f.raias)
     return plano.decisoes.map((d) => ({
@@ -177,4 +183,182 @@ export async function obterItem(
     ? ((await obterRetratoMaisRecente(sujeito))?.retrato ?? null)
     : null
   return (await localizarItem(chave, agora, retrato))?.item ?? null
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pilha, contador e conversa da tela
+
+export interface PilhaDoDecidir {
+  itens: ItemDaPilha[]
+  guardados: ItemDaPilha[]
+  /** Chave do item → id da conversa aberta dele. */
+  conversas: Record<string, string>
+}
+
+/** A pilha do Paulo: o que espera resposta (demandas e decisões do último retrato), na ordem do model. */
+export async function obterPilha(sujeito: Sujeito, agora: Date): Promise<PilhaDoDecidir> {
+  exigirLeituraDoDecidir(sujeito)
+  const [demandas, recebido] = await Promise.all([
+    demandasEsperando(),
+    obterRetratoMaisRecente(sujeito),
+  ])
+  const decisoes = decisoesDoRetrato(recebido?.retrato ?? null)
+  const nomes = await nomesDosProjetos([...new Set(decisoes.map((d) => d.repo))])
+  const nomeDoProjeto = (repo: string) => nomes.get(repo.toLowerCase()) ?? null
+
+  // Só as conversas dos itens candidatos são lidas: a leitura não cresce com o histórico.
+  const candidatos = montarPilha({ demandas, decisoes, marcas: [], agora, nomeDoProjeto })
+  const chaves = [...candidatos.itens, ...candidatos.guardados].map((i) => i.chave)
+  const linhas =
+    chaves.length === 0
+      ? []
+      : await db.conversa.findMany({
+          where: { chave: { in: chaves } },
+          select: {
+            id: true,
+            chave: true,
+            encerradaEm: true,
+            guardadaEm: true,
+            adiadaAte: true,
+            puladaEm: true,
+          },
+        })
+  const { itens, guardados } = montarPilha({
+    demandas,
+    decisoes,
+    marcas: linhas.map((c) => ({
+      chave: c.chave,
+      encerrada: c.encerradaEm !== null,
+      guardadaEm: c.guardadaEm,
+      adiadaAte: c.adiadaAte,
+      puladaEm: c.puladaEm,
+    })),
+    agora,
+    nomeDoProjeto,
+  })
+  const naPilha = new Set([...itens, ...guardados].map((i) => i.chave))
+  const conversas: Record<string, string> = {}
+  for (const c of linhas) {
+    if (c.encerradaEm === null && naPilha.has(c.chave)) conversas[c.chave] = c.id
+  }
+  return { itens, guardados, conversas }
+}
+
+/** O número do menu; `null` sem permissão, sem o módulo ou com falha de leitura (nunca quebra o layout). */
+export async function contarPilha(sujeito: Sujeito, agora: Date): Promise<number | null> {
+  if (!moduloAtivo('decidir')) return null
+  if (!autorizar(sujeito, 'desenvolvimento.ler') || !podeVerVisaoGlobal(sujeito)) return null
+  try {
+    return (await obterPilha(sujeito, agora)).itens.length
+  } catch (erro) {
+    log.error({ erro: resumirErroParaLog(erro) }, 'contador do Decidir falhou')
+    return null
+  }
+}
+
+export interface MensagemDaTela {
+  seq: string
+  id: string
+  autor: 'paulo' | 'agente' | 'flow'
+  texto: string
+  respostaRapida: string | null
+  respostasRapidas: string[]
+  anexos: { id: string; nome: string }[]
+  em: Date
+}
+
+export interface CartaoDaTela {
+  id: string
+  conteudo: Cartao
+  erro: string | null
+  estado: 'PROPOSTO' | 'CONFIRMANDO'
+}
+
+export interface ConversaDaTela {
+  mensagens: MensagemDaTela[]
+  cartao: CartaoDaTela | null
+  aguardaAgenteDesde: Date | null
+  atendenteBuscouEm: Date | null
+  encerrada: boolean
+}
+
+const LIMITE_DE_MENSAGENS_NA_TELA = 200
+
+/** As mensagens depois de `depois` (seq), o cartão aberto e os sinais de vida do atendente. */
+export async function obterConversaDaTela(
+  sujeito: Sujeito,
+  conversaId: string,
+  depois: bigint,
+  agora: Date,
+): Promise<ConversaDaTela | null> {
+  exigirLeituraDoDecidir(sujeito)
+  void agora // a tela decide os avisos de espera; a consulta só devolve os instantes
+  const conversa = await db.conversa.findUnique({
+    where: { id: conversaId },
+    select: { aguardaAgenteDesde: true, encerradaEm: true },
+  })
+  if (!conversa) return null
+
+  const [mensagens, cartao, busca] = await Promise.all([
+    db.mensagem.findMany({
+      where: { conversaId, seq: { gt: depois } },
+      orderBy: { seq: 'asc' },
+      take: LIMITE_DE_MENSAGENS_NA_TELA,
+    }),
+    db.cartaoDeFecho.findFirst({
+      where: { conversaId, estado: { in: ['PROPOSTO', 'CONFIRMANDO'] } },
+      select: { id: true, conteudo: true, erro: true, estado: true },
+    }),
+    db.fonteDaFabrica.aggregate({
+      where: { revogadaEm: null },
+      _max: { conversasBuscadasEm: true },
+    }),
+  ])
+  const anexos =
+    mensagens.length === 0
+      ? []
+      : await db.anexoDaMensagem.findMany({
+          where: { conversaId, mensagemId: { in: mensagens.map((m) => m.id) } },
+          orderBy: { criadoEm: 'asc' },
+          select: { id: true, nome: true, mensagemId: true },
+        })
+
+  return {
+    mensagens: mensagens.map((m) => ({
+      seq: m.seq.toString(),
+      id: m.id,
+      autor: minusculo<'paulo' | 'agente' | 'flow'>(m.autor),
+      texto: m.texto,
+      respostaRapida: m.respostaRapida,
+      respostasRapidas: Array.isArray(m.respostasRapidas)
+        ? m.respostasRapidas.filter((r): r is string => typeof r === 'string')
+        : [],
+      anexos: anexos.filter((a) => a.mensagemId === m.id).map((a) => ({ id: a.id, nome: a.nome })),
+      em: m.criadaEm,
+    })),
+    cartao:
+      cartao && (cartao.estado === 'PROPOSTO' || cartao.estado === 'CONFIRMANDO')
+        ? {
+            id: cartao.id,
+            conteudo: cartao.conteudo as unknown as Cartao,
+            erro: cartao.erro,
+            estado: cartao.estado,
+          }
+        : null,
+    aguardaAgenteDesde: conversa.aguardaAgenteDesde,
+    atendenteBuscouEm: busca._max.conversasBuscadasEm,
+    encerrada: conversa.encerradaEm !== null,
+  }
+}
+
+/** A imagem de uma mensagem para a tela (o conteúdo é o tipo MIME; o caminho nunca sai daqui). */
+export async function obterAnexoParaExibir(
+  sujeito: Sujeito,
+  anexoId: string,
+): Promise<{ conversaId: string; nome: string; conteudo: string } | null> {
+  exigirLeituraDoDecidir(sujeito)
+  return db.anexoDaMensagem.findUnique({
+    where: { id: anexoId },
+    select: { conversaId: true, nome: true, conteudo: true },
+  })
 }

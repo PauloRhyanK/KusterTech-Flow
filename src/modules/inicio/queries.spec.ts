@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 
-const { erroLog, obterRetrato, obterLeitura } = vi.hoisted(() => ({
+const { erroLog, obterRetrato, obterLeitura, obterPilha } = vi.hoisted(() => ({
+  obterPilha: vi.fn(),
   erroLog: vi.fn(),
   obterRetrato: vi.fn(),
   obterLeitura: vi.fn(),
@@ -10,6 +11,10 @@ const { erroLog, obterRetrato, obterLeitura } = vi.hoisted(() => ({
 vi.mock('@/lib/log', () => ({ log: { error: erroLog, warn: vi.fn(), info: vi.fn() } }))
 
 vi.mock('@/modules/demandas/queries', () => ({ esperasDeDemandas: vi.fn().mockResolvedValue([]) }))
+
+vi.mock('@/modules/decidir/queries', () => ({
+  obterPilha,
+}))
 
 vi.mock('@/modules/fabrica/queries', () => ({ obterRetratoMaisRecente: obterRetrato }))
 
@@ -48,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   obterRetrato.mockResolvedValue(null)
   obterLeitura.mockResolvedValue(null)
+  obterPilha.mockResolvedValue({ itens: [], guardados: [], conversas: {} })
   vi.mocked(db.integracaoGitHub.findUnique).mockResolvedValue({ configurada: true } as never)
   vi.mocked(db.repositorioGitHub.findMany).mockResolvedValue([])
   vi.mocked(db.repositorioGitHub.count).mockResolvedValue(0)
@@ -194,13 +200,19 @@ describe('obterInicio', () => {
         args.where.nomeCompleto ? [{ nomeCompleto: 'o/portal', projeto: { nome: 'Portal' } }] : [],
       )) as never)
 
+    // Com o Decidir ativo a decisão da Fábrica vira o item único da pilha.
+    obterPilha.mockResolvedValue({
+      itens: [{ chave: 'issue:x', ref: { tipo: 'issue' } }],
+      guardados: [],
+      conversas: {},
+    })
     const comRetrato = await obterInicio(ADMIN, AGORA)
     expect(comRetrato.fabrica).toMatchObject({
       desatualizado: false,
       planos: [{ id: 'p1', nomeDoProjeto: 'Portal' }],
     })
     expect(comRetrato.espera.itens).toEqual([
-      expect.objectContaining({ tipo: 'decisao', contexto: 'Portal · telas' }),
+      expect.objectContaining({ tipo: 'decidir', titulo: '1 item espera sua resposta' }),
     ])
   })
 })

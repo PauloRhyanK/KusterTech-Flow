@@ -8,6 +8,7 @@ import { processarEventosDeWebhook } from '@/modules/github/eventos'
 import { processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
+import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/modules/decidir/worker'
 import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
@@ -16,6 +17,7 @@ import { calcularComposicoes } from '@/modules/publicacao/composicoes'
 import { detectarDivergencias } from '@/modules/publicacao/divergencias'
 
 const INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS = 60 * 60_000
+const INTERVALO_DO_ARQUIVAMENTO_MS = 5 * 60_000
 
 export interface TarefaDoWorker {
   nome: string
@@ -31,6 +33,8 @@ export function criarTarefasDoCiclo(d: {
   const ativos = d.ativos ?? modulosAtivos()
   // Em memória do processo: depois de reiniciar, a limpeza roda no primeiro ciclo.
   let ultimaLimpezaDeArquivos: number | null = null
+  let ultimoArquivamento: number | null = null
+  let ultimaLimpezaDeConversas: number | null = null
   const tarefas: readonly TarefaDoWorker[] = [
     {
       nome: 'processar-eventos-de-webhook',
@@ -160,6 +164,34 @@ export function criarTarefasDoCiclo(d: {
           log.info(
             { tarefa: 'limpar-arquivos-de-demandas', ...resumo },
             'arquivos de demandas limpos',
+          )
+        }
+      },
+    },
+    {
+      nome: 'decidir:arquivar',
+      modulo: 'decidir',
+      async executar(agora) {
+        if (
+          ultimoArquivamento !== null &&
+          agora.getTime() - ultimoArquivamento < INTERVALO_DO_ARQUIVAMENTO_MS
+        ) {
+          return
+        }
+        const encerradas = await arquivarConversasResolvidas(agora)
+        ultimoArquivamento = agora.getTime()
+        let parciais = 0
+        if (
+          ultimaLimpezaDeConversas === null ||
+          agora.getTime() - ultimaLimpezaDeConversas >= INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS
+        ) {
+          parciais = await limparParciaisDeConversas(agora)
+          ultimaLimpezaDeConversas = agora.getTime()
+        }
+        if (encerradas + parciais > 0) {
+          log.info(
+            { tarefa: 'decidir:arquivar', encerradas, parciais },
+            'conversas do Decidir arquivadas',
           )
         }
       },

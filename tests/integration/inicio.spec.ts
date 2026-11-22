@@ -64,7 +64,7 @@ async function repositorioIndisponivel(): Promise<{ projetoId: string }> {
   return { projetoId: projeto.id }
 }
 
-test('com um retrato com uma decisão e um repositório indisponível, obterInicio devolve decisão → integração', async () => {
+test('com um retrato com uma decisão e um repositório indisponível, obterInicio devolve o item do Decidir → integração', async () => {
   await gravarRetrato()
   const { projetoId } = await repositorioIndisponivel()
 
@@ -73,11 +73,7 @@ test('com um retrato com uma decisão e um repositório indisponível, obterInic
   expect(inicio.escopo).toBe('total')
   expect(inicio.espera.fontesComFalha).toEqual([])
   expect(inicio.espera.itens.map((i) => [i.tipo, i.titulo, i.href])).toEqual([
-    [
-      'decisao',
-      'Homologar o painel da Fábrica',
-      'https://github.com/PauloRhyanK/kustertech-flow/issues/147',
-    ],
+    ['decidir', '1 item espera sua resposta', '/decidir'],
     ['integracao', 'GitHub — Projeto Portal', `/projetos/${projetoId}/configuracao#repositorios`],
   ])
   expect(inicio.fabrica).toMatchObject({
@@ -199,13 +195,13 @@ test('conserto COM_PR há mais de 1 h com o PR mergeado sem SHA do merge → "PR
   ])
 })
 
-test('demanda esperando aprovação aparece em "Espera você" com o tipo Demanda; sem desenvolvimento.ler não aparece', async () => {
+test('demanda esperando aprovação aparece em "Espera você" como item do Decidir; sem desenvolvimento.ler não aparece', async () => {
   await sincronizarCatalogo(criarFonteFixtures(), AGORA)
   const projeto = await criarProjeto(admin, { nome: 'Projeto Portal' })
   const repositorio = await db.repositorioGitHub.findFirstOrThrow({
     where: { nomeCompleto: 'kustertech-exemplo/portal' },
   })
-  const demanda = await db.demanda.create({
+  await db.demanda.create({
     data: {
       projetoId: projeto.id,
       repositorioId: repositorio.id,
@@ -243,12 +239,13 @@ test('demanda esperando aprovação aparece em "Espera você" com o tipo Demanda
 
   const inicio = await obterInicio(admin, AGORA)
   expect(inicio.espera.fontesComFalha).toEqual([])
-  expect(inicio.espera.itens.filter((i) => i.tipo === 'demanda')).toEqual([
+  // A demanda que espera aprovação está na pilha do Decidir: vira o item único dele.
+  expect(inicio.espera.itens.filter((i) => i.tipo === 'demanda')).toEqual([])
+  expect(inicio.espera.itens.filter((i) => i.tipo === 'decidir')).toEqual([
     expect.objectContaining({
-      titulo: 'Aprovar o desenho de Tela de funil de vendas',
-      contexto: 'Projeto Portal · há 30 min',
-      href: `/demandas/${demanda.id}`,
-      rotuloDoLink: 'Ver a demanda',
+      titulo: '1 item espera sua resposta',
+      href: '/decidir',
+      rotuloDoLink: 'Abrir Decidir',
     }),
   ])
   expect(inicio.espera.itens.filter((i) => i.id === 'fabrica-sem-buscar-demandas')).toEqual([

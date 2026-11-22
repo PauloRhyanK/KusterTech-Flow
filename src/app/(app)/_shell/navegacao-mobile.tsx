@@ -11,6 +11,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import type { ModuloId } from '@/lib/modulos'
 import { Marca } from '@/lib/ui/marca'
 import { ListaDeNavegacao } from './lista-de-navegacao'
 import { MenuDoUsuario } from './menu-do-usuario'
@@ -20,9 +21,11 @@ export interface NavegacaoMobileProps {
     nome: string
     email: string
   }
+  modulosAtivos?: readonly ModuloId[]
+  contadores?: Partial<Record<string, number>>
 }
 
-export function NavegacaoMobile({ usuario }: NavegacaoMobileProps) {
+export function NavegacaoMobile({ usuario, modulosAtivos, contadores }: NavegacaoMobileProps) {
   const [aberto, setAberto] = useState(false)
   const pathname = usePathname()
   const [pathnameAnterior, setPathnameAnterior] = useState(pathname)
@@ -61,7 +64,11 @@ export function NavegacaoMobile({ usuario }: NavegacaoMobileProps) {
           </SheetClose>
         </div>
 
-        <ListaDeNavegacao aoNavegar={() => setAberto(false)} />
+        <ListaDeNavegacao
+          aoNavegar={() => setAberto(false)}
+          modulosAtivos={modulosAtivos}
+          contadores={contadores}
+        />
 
         <div className="shrink-0 p-3 pt-2">
           <MenuDoUsuario usuario={usuario} />
