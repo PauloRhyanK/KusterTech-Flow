@@ -306,6 +306,7 @@ INSTRUCOES_DO_PLANO_DA_DEMANDA = (
 LIMITE_PERGUNTA = 4000
 LIMITE_RESPOSTA_DO_PAULO = 2000
 LIMITE_CONVERSA = 3  # só as mais recentes
+LIMITE_ESCOPO = 500  # o escopo decidido no Decidir (opcional: um Flow antigo não o manda)
 
 
 def prompt_plano_da_demanda(*, demanda: dict, triagem: dict, conversa: list | None = None) -> str:
@@ -328,6 +329,9 @@ def prompt_plano_da_demanda(*, demanda: dict, triagem: dict, conversa: list | No
         "triagem": _neutralizado(triagem if isinstance(triagem, dict) else {}),
         "plano": caminho,
     }
+    escopo = _dado_da_demanda(demanda.get("escopo"), LIMITE_ESCOPO)
+    if escopo:
+        contexto["demanda"]["escopo"] = escopo
     trocas = [
         {
             "pergunta": _dado_da_demanda(c.get("pergunta"), LIMITE_PERGUNTA),
@@ -369,6 +373,7 @@ def prompt_desenho(*, demanda: dict, triagem: dict, ajustes: list[dict], motivo_
     titulo = _dado_da_demanda(demanda.get("titulo"), LIMITE_TITULO) or "(sem título)"
     descricao = _dado_da_demanda(demanda.get("descricao"), LIMITE_DESCRICAO) or "(sem descrição)"
     contexto = json.dumps(_neutralizado(triagem if isinstance(triagem, dict) else {}), ensure_ascii=False, sort_keys=True)
+    escopo = re.sub(r"\s+", " ", _dado_da_demanda(demanda.get("escopo"), LIMITE_ESCOPO))
     linhas = []
     for ajuste in [a for a in ajustes or [] if isinstance(a, dict)][-LIMITE_AJUSTES:]:
         versao = ajuste.get("versao")
@@ -383,6 +388,7 @@ def prompt_desenho(*, demanda: dict, triagem: dict, ajustes: list[dict], motivo_
         "Descrição:",
         descricao,
         f"Triagem: {contexto}",
+        *([f"Escopo decidido pelo Paulo: {escopo}"] if escopo else []),
         FIM_DEMANDA,
         "",
     ]
