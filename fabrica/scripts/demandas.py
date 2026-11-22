@@ -1452,45 +1452,25 @@ class _Passo:
             else:
                 self.concluir(id_, it, "triagem", triagem)
         elif situacao in despachante.TERMINAIS_DE_RUN:
-            motivo = run.get("motivoFalha")
-            motivo = motivo.strip() if isinstance(motivo, str) and motivo.strip() else situacao
-            self.falhou(id_, it, MOTIVO_AGENTE % motivo[:LIMITE_MOTIVO_DO_AGENTE])
+            self.falhou(id_, it, MOTIVO_AGENTE % despachante.motivo_do_run_falho(run)[:LIMITE_MOTIVO_DO_AGENTE])
         elif self.estourou(it):
             self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
 
     def esperar_retry(self, id_: str, it: dict, run: dict) -> bool:
         """R2 (como nos consertos): adota o retry do Warren ou espera; `False` = o Warren não refez, vale o run falho."""
         original = it["runId"]
-        espera = it.get("retryEsperado")
-        if not isinstance(espera, dict):
-            espera = it["retryEsperado"] = {"buscas": 0, "vistoEm": self.agora_texto}
-            self.salvar()
-        try:
-            achado = self.motor.procurar_retry(it["projeto"], original, [it["nonce"]], self.desde(it))
-        except Exception as exc:  # noqa: BLE001 - busca falha não conta; o teto ainda vale
-            if self.estourou(it):
-                self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
-            else:
-                self.erro(id_, exc)
-            return True
-        if isinstance(achado, str) and achado and achado != original:
-            it.pop("retryEsperado", None)
-            it.update(runId=achado, retryDe=original)
-            self.salvar()
-            self.eventos.append({"evento": "demanda_retry_adotado", "id": id_, "original": original, "runId": achado})
-            return True
-        espera["buscas"] = (espera.get("buscas") if isinstance(espera.get("buscas"), int) else 0) + 1
-        visto = _instante(espera.get("vistoEm"))
-        if visto is None:
-            espera["vistoEm"] = self.agora_texto
-            visto = self.agora
-        if espera["buscas"] < despachante.CICLOS_PARA_ACHAR_RETRY or self.agora - visto < despachante.PISO_PARA_DESISTIR:
-            self.salvar()
-            if self.estourou(it):
-                self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
-            return True
-        it.pop("retryEsperado", None)
-        return False
+        resultado, valor = despachante.esperar_retry_do_item(
+            it, motor=self.motor, projeto=it["projeto"], nonces=[it["nonce"]], desde=self.desde(it), agora=self.agora, salvar=self.salvar
+        )
+        if resultado == "desistir":
+            return False
+        if resultado == "adotado":
+            self.eventos.append({"evento": "demanda_retry_adotado", "id": id_, "original": original, "runId": valor})
+        elif self.estourou(it):
+            self.falhou(id_, it, MOTIVO_TETO_TRIAGEM)
+        elif resultado == "busca_falhou":
+            self.erro(id_, valor)
+        return True
 
     def concluir(self, id_: str, it: dict, tipo: str, dados: dict) -> None:
         """O evento vai para a caixa de saída e a triagem fecha no mesmo `salvar` (`triando` sem `runId`)."""

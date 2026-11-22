@@ -12,7 +12,7 @@ Com `atual` preenchido nada novo é despachado nem buscado. O run passa por `des
 `inicio` antes do `POST` pago) e `respondendo` (com o `runId`); um coordenador reiniciado em `despachando` acha o run
 pelo nonce e, sem ele, repete o `POST` com a mesma `Idempotency-Key`. O run não reserva vaga, mas só sai com a
 memória livre acima de `ramMinimaMb` e fora da drenagem. Run perdido por infraestrutura: adota o retry do Warren.
-Teto de `TETO_ATENDENTE_S` por run, run falho, PR aberto (o Warren não tem modo de leitura) e a segunda resposta fora
+Teto de `TETO_ATENDENTE_S` por réplica (contado do primeiro run, somando as novas tentativas), run falho, PR aberto (o Warren não tem modo de leitura) e a segunda resposta fora
 do formato viram `{id, emRespostaA, falha}` para o Flow. Cartão recusado (422): um run novo com o motivo do Flow e,
 na segunda, a mesma mensagem sem o cartão, com `id` novo. O motor não cancela run: o que passou do teto pode seguir
 no Warren até terminar sozinho.
@@ -54,6 +54,9 @@ AVISO_DRENAGEM = "Atendente: o Warren está em drenagem; a conversa espera"
 AVISO_SEM_MODELO = "Atendente: configure modelos.atendente (agente, modelo, maxCustoUsd) em fabrica/modelos/config.json do kit"
 AVISO_PR = "Atendente: o agente abriu um PR (%s); resposta descartada"
 AVISO_RECUSA = "Atendente: o Flow recusou a resposta da conversa %s (%s)"
+AVISO_ENVIO = "Atendente: a resposta da conversa %s não chega ao Flow há %d tentativas (%s); sigo tentando"
+# falhas de envio seguidas (rede, 5xx, 401, 403) até o aviso; a saída fica e o reenvio segue com o mesmo id
+LIMITE_FALHAS_DE_ENVIO = 10
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _INSTANTE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -90,10 +93,11 @@ def _atual_valido(atual):
     for campo in ("conversaId", "responderA"):
         if not isinstance(atual.get(campo), str) or _UUID.fullmatch(atual[campo]) is None:
             return None
-    tentativa = atual.get("tentativa")
-    if isinstance(tentativa, bool) or not isinstance(tentativa, int) or tentativa < 0:
-        atual["tentativa"] = 0
     return atual
+
+
+def _contagem(valor) -> int:
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) and valor >= 0 else 0
 
 
 def secao(estado: dict) -> dict:
@@ -102,6 +106,8 @@ def secao(estado: dict) -> dict:
     if not isinstance(sec, dict):
         sec = estado["atendente"] = {}
     sec["atual"] = _atual_valido(sec.get("atual"))
+    if sec["atual"] is not None:
+        sec["atual"]["tentativa"] = _contagem(sec["atual"].get("tentativa"))
     sec["ativaAte"] = _instante_valido(sec.get("ativaAte"))
     sec["semRotaEm"] = _instante_valido(sec.get("semRotaEm"))
     return sec
@@ -187,6 +193,7 @@ class _Passo:
         return _texto_do_instante(inicio - despachante.MARGEM_DESDE) if inicio is not None else None
 
     def estourou(self) -> bool:
+        """A réplica passou de `TETO_ATENDENTE_S` desde o primeiro run (ou o `inicio` é ilegível)?"""
         inicio = _instante(self.atual.get("inicio"))
         return inicio is None or (self.agora - inicio).total_seconds() > TETO_ATENDENTE_S
 
@@ -248,14 +255,18 @@ class _Passo:
         self.preparar(0, None)
 
     def preparar(self, tentativa: int, motivo) -> None:
-        """`despachando` com o nonce e o início no disco antes do `POST` pago; depois, o `POST`."""
+        """`despachando` com o nonce e o início no disco antes do `POST` pago; depois, o `POST`.
+
+        O teto é da réplica: a nova tentativa (formato, cartão) guarda o `inicio` do primeiro run.
+        """
         a = self.atual
+        inicio = a.get("inicio") if tentativa > 0 and _instante(a.get("inicio")) is not None else self.agora_texto
         a.update(
             fase="despachando",
             tentativa=tentativa,
             motivo=motivo,
             nonce=nonce_do_motor(a["conversaId"], a["responderA"], tentativa),
-            inicio=self.agora_texto,
+            inicio=inicio,
             runId=None,
             saida=None,
         )
@@ -327,7 +338,14 @@ class _Passo:
                 self.falhou(MOTIVO_PR)
                 return
             acoes = (a["conversa"].get("item") or {}).get("acoes") or []
-            lida = prompts.extrair_resposta_do_atendente(self.motor.ultimo_texto(a["runId"]), acoes)
+            try:
+                texto = self.motor.ultimo_texto(a["runId"])
+            except Exception:
+                if self.estourou():
+                    self.falhou(MOTIVO_TETO)
+                    return
+                raise
+            lida = prompts.extrair_resposta_do_atendente(texto, acoes)
             if lida is not None:
                 self.pronta(dict(id=str(uuid.uuid4()), emRespostaA=a["responderA"], **lida))
             elif a["tentativa"] == 0:
@@ -335,46 +353,26 @@ class _Passo:
             else:
                 self.falhou(MOTIVO_FORMATO)
         elif situacao in despachante.TERMINAIS_DE_RUN:
-            motivo = run.get("motivoFalha")
-            motivo = motivo.strip() if isinstance(motivo, str) and motivo.strip() else situacao
-            self.falhou(MOTIVO_AGENTE % motivo[:LIMITE_MOTIVO_DO_AGENTE])
+            self.falhou(MOTIVO_AGENTE % despachante.motivo_do_run_falho(run)[:LIMITE_MOTIVO_DO_AGENTE])
         elif self.estourou():
             self.falhou(MOTIVO_TETO)
 
     def esperar_retry(self) -> bool:
-        """Como nas demandas: adota o retry do Warren ou espera; `False` = o Warren não refez, vale o run falho."""
+        """Adota o retry do Warren ou espera (`despachante.esperar_retry_do_item`); `False` = vale o run falho."""
         a = self.atual
         original = a["runId"]
-        espera = a.get("retryEsperado")
-        if not isinstance(espera, dict):
-            espera = a["retryEsperado"] = {"buscas": 0, "vistoEm": self.agora_texto}
-            self.salvar()
-        try:
-            achado = self.motor.procurar_retry(a["projeto"], original, [a["nonce"]], self.desde())
-        except Exception as exc:  # noqa: BLE001 - busca falha não conta; o teto ainda vale
-            if self.estourou():
-                self.falhou(MOTIVO_TETO)
-            else:
-                self.erro(exc)
-            return True
-        if isinstance(achado, str) and achado and achado != original:
-            a.pop("retryEsperado", None)
-            a.update(runId=achado, retryDe=original)
-            self.salvar()
-            self.eventos.append({"evento": "atendente_retry_adotado", "conversaId": a["conversaId"], "original": original, "runId": achado})
-            return True
-        espera["buscas"] = (espera.get("buscas") if isinstance(espera.get("buscas"), int) else 0) + 1
-        visto = _instante(espera.get("vistoEm"))
-        if visto is None:
-            espera["vistoEm"] = self.agora_texto
-            visto = self.agora
-        if espera["buscas"] < despachante.CICLOS_PARA_ACHAR_RETRY or self.agora - visto < despachante.PISO_PARA_DESISTIR:
-            self.salvar()
-            if self.estourou():
-                self.falhou(MOTIVO_TETO)
-            return True
-        a.pop("retryEsperado", None)
-        return False
+        resultado, valor = despachante.esperar_retry_do_item(
+            a, motor=self.motor, projeto=a["projeto"], nonces=[a["nonce"]], desde=self.desde(), agora=self.agora, salvar=self.salvar
+        )
+        if resultado == "desistir":
+            return False
+        if resultado == "adotado":
+            self.eventos.append({"evento": "atendente_retry_adotado", "conversaId": a["conversaId"], "original": original, "runId": valor})
+        elif self.estourou():
+            self.falhou(MOTIVO_TETO)
+        elif resultado == "busca_falhou":
+            self.erro(valor)
+        return True
 
     # ------------------------------------------------------------ caixa de saída
 
@@ -395,8 +393,14 @@ class _Passo:
         try:
             resultado = self.cliente.responder(a["conversaId"], saida)
         except FalhaDeEnvio as exc:
-            self.erro(exc)  # a saída fica: sai no ciclo seguinte com o mesmo id
+            # a saída fica: sai no ciclo seguinte com o mesmo id; passado o limite, um aviso só
+            falhas = a["falhasDeEnvio"] = _contagem(a.get("falhasDeEnvio")) + 1
+            self.salvar()
+            self.erro(exc)
+            if falhas == LIMITE_FALHAS_DE_ENVIO:
+                self.aviso("atendente:envio", AVISO_ENVIO % (a["conversaId"], falhas, exc))
             return
+        a.pop("falhasDeEnvio", None)
         if resultado == "recusado":
             motivo_do_cartao = getattr(self.cliente, "ultimo_motivo_do_cartao", None)
             if motivo_do_cartao and saida.get("cartao") is not None:
@@ -423,19 +427,22 @@ def passo(estado: dict, *, cliente, motor, capacidade_path, projetos: dict, mode
     `modelos` é o `modelos` de `<kit>/fabrica/modelos/config.json` (papel `atendente`). Nunca levanta: falha de envio,
     de busca ou do motor vira evento `erro` e o ciclo seguinte refaz a partir do estado gravado.
     """
-    p = _Passo(
-        estado,
-        cliente=cliente,
-        motor=motor,
-        capacidade_path=capacidade_path,
-        projetos=projetos,
-        modelos=modelos,
-        agora=agora,
-        mem_disponivel_mb=mem_disponivel_mb,
-        salvar=salvar,
-    )
+    p = None
     try:
+        p = _Passo(
+            estado,
+            cliente=cliente,
+            motor=motor,
+            capacidade_path=capacidade_path,
+            projetos=projetos,
+            modelos=modelos,
+            agora=agora,
+            mem_disponivel_mb=mem_disponivel_mb,
+            salvar=salvar,
+        )
         p.rodar()
     except Exception as exc:  # noqa: BLE001 - o atendente não derruba o ciclo do coordenador
+        if p is None:
+            return [{"evento": "erro", "etapa": "atendente", "alvo": None, "erro": "%s: %s" % (type(exc).__name__, exc)}]
         p.erro(exc)
     return p.eventos

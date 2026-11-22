@@ -316,6 +316,86 @@ class TestesPasso(Base):
         self.assertEqual(len(self.despachos()), 2)
         self.assertIsNone(self.atual())
 
+    def test_teto_e_da_replica_somando_a_nova_tentativa(self):
+        run_id = self.despachar()
+        self.avancar(9 * 60)
+        self.responder(run_id, "sem bloco nenhum")
+        cliente = ClienteFalso()
+        self.passo(cliente)  # minuto 9: refaz com o motivo do formato
+        self.assertEqual((len(self.despachos()), self.atual()["inicio"]), (2, "2026-11-22T10:00:00Z"))
+        self.avancar(2 * 60)
+        self.passo(cliente)  # minuto 11: o segundo run ainda roda
+        ((_, corpo),) = cliente.enviados
+        self.assertEqual(corpo["falha"], "o agente passou de 10 min")
+        self.assertIsNone(self.atual())
+
+    def test_cartao_recusado_depois_do_formato_refaz_na_tentativa_2(self):
+        run_id = self.despachar()
+        self.responder(run_id, "sem bloco nenhum")
+        cliente = ClienteFalso(respostas=[("recusado", "o destino não vale aqui")])
+        self.passo(cliente)
+        self.responder(self.atual()["runId"], resposta(cartao=CARTAO))
+        self.passo(cliente)
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertEqual(self.despachos()[2]["chave_idempotencia"], atendente.nonce_do_motor(CONVERSA, MENSAGEM, 2))
+        self.assertEqual(self.atual()["tentativa"], 2)
+        self.responder(self.atual()["runId"], "fora de novo")
+        self.passo(cliente)
+        _, corpo = cliente.enviados[-1]
+        self.assertEqual(corpo["falha"], "a resposta não veio no formato")
+        self.assertEqual(len(self.despachos()), 3)
+
+    def test_falhas_de_envio_seguidas_dao_um_aviso_so_e_seguem_com_o_mesmo_id(self):
+        run_id = self.despachar()
+        self.responder(run_id)
+        limite = atendente.LIMITE_FALHAS_DE_ENVIO
+        cliente = ClienteFalso(respostas=[FalhaDeEnvio("HTTP 401")] * (limite + 3))
+        avisos = []
+        for _ in range(limite + 3):
+            avisos += self.avisos(self.passo(cliente))
+        (aviso,) = avisos
+        self.assertEqual(aviso["chave"], "atendente:envio")
+        self.assertIn("HTTP 401", aviso["mensagem"])
+        self.assertEqual(len({c["id"] for _, c in cliente.enviados}), 1)
+        self.assertEqual(self.atual()["falhasDeEnvio"], limite + 3)
+        self.assertEqual((cliente.buscados, len(self.despachos())), (0, 1))
+        self.passo(cliente)  # o Flow volta
+        self.assertIsNone(self.atual())
+
+    def test_falha_de_envio_conta_do_zero_depois_de_um_envio_que_chega(self):
+        run_id = self.despachar()
+        self.responder(run_id, resposta(cartao=CARTAO))
+        cliente = ClienteFalso(respostas=[FalhaDeEnvio("HTTP 503")] * 3 + [("recusado", "não vale")])
+        for _ in range(4):
+            self.passo(cliente)
+        self.assertNotIn("falhasDeEnvio", self.atual())
+        self.assertEqual(self.atual()["fase"], "respondendo")
+
+    def test_entrada_torta_nao_levanta(self):
+        eventos = atendente.passo(
+            [], cliente=ClienteFalso(), motor=self.motor, capacidade_path=self.capacidade, projetos=None,
+            modelos=MODELOS, agora="nao e instante", mem_disponivel_mb=None, salvar=None,
+        )
+        (erro,) = eventos
+        self.assertEqual((erro["evento"], erro["etapa"]), ("erro", "atendente"))
+
+    def test_ultimo_texto_que_falha_respeita_o_teto(self):
+        run_id = self.despachar()
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.ultimo_texto = lambda _run_id: (_ for _ in ()).throw(RuntimeError("HTTP 500"))
+        cliente = ClienteFalso()
+        self.assertEqual([e["evento"] for e in self.passo(cliente)], ["erro"])
+        self.avancar(atendente.TETO_ATENDENTE_S + 1)
+        self.passo(cliente)
+        ((_, corpo),) = cliente.enviados
+        self.assertEqual(corpo["falha"], "o agente passou de 10 min")
+
+    def test_ativo_nao_muda_o_estado(self):
+        atual = {"conversaId": CONVERSA, "responderA": MENSAGEM, "fase": "respondendo", "runId": "r", "tentativa": "x", "conversa": conversa()}
+        estado = {"atendente": {"atual": atual}}
+        self.assertTrue(atendente.ativo(estado, INSTANTE))
+        self.assertEqual(atual["tentativa"], "x")
+
     def test_outra_recusa_avisa_e_tira_o_atual(self):
         run_id = self.despachar()
         self.responder(run_id)
