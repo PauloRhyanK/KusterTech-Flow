@@ -29,7 +29,7 @@ import {
   type ContextoDoItem,
 } from './cartao'
 import { LIMITE_DA_MENSAGEM, type RespostaDoAtendente } from './contrato'
-import { RESPOSTAS_DO_FLOW, amanhaAsSeis } from './model'
+import { RESPOSTAS_DO_FLOW, amanhaAsSeis, motivosDaIssue } from './model'
 import { localizarItem, type ItemLocalizado } from './queries'
 
 /** O que fica em `Conversa.contexto`: o lido ao abrir (PR do fim de fase e o relato até 4000). */
@@ -227,7 +227,7 @@ async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promis
           url: linha[1]!,
           numero,
           head: pr.head,
-          fora: arquivosForaDoPermitido(pr.arquivos),
+          fora: arquivosForaDoPermitido(pr.arquivos, ref.feature),
           ci: estadoDoCi(resumirChecks(checks), status),
         },
         relato,
@@ -290,8 +290,16 @@ function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
           ? `O PR também mexe em: ${pr.fora.slice(0, 5).join(', ')}.`
           : 'O PR mexe só no plano.'
       const ci = pr.ci === 'ausente' ? 'não há CI configurado' : `o CI está ${pr.ci}`
+      const { motivos, restantes } = motivosDaIssue(leitura.corpo)
+      const porque =
+        motivos.length > 0
+          ? '\n\nA Fábrica pediu você por:\n' +
+            [...motivos, ...(restantes > 0 ? [`e mais ${restantes}.`] : [])]
+              .map((m) => `- ${m}`)
+              .join('\n')
+          : ''
       return flow(
-        `As raias da fase entraram (${raias.concluidas} de ${raias.total}) e ${ci}. ${fim}`,
+        `As raias da fase entraram (${raias.concluidas} de ${raias.total}) e ${ci}. ${fim}${porque}`,
       )
     }
     case 'decisao_da_fabrica': {

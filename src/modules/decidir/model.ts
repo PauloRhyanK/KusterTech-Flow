@@ -168,6 +168,31 @@ export function tipoDaDecisao(titulo: string): 'fim_de_fase' | 'decisao_da_fabri
   return FIM_DE_FASE.test(titulo) ? 'fim_de_fase' : 'decisao_da_fabrica'
 }
 
+const MAXIMO_DE_MOTIVOS = 5
+const LIMITE_DO_MOTIVO = 200
+
+/**
+ * Por que a Fábrica pediu o Paulo: as linhas `- ` logo abaixo de `Motivos:` no corpo que o
+ * despachante escreve (`_decidir_humano_orquestrador`). Só texto, até 5 de até 200 caracteres;
+ * `restantes` conta o que ficou de fora.
+ */
+export function motivosDaIssue(corpo: string | null): { motivos: string[]; restantes: number } {
+  const linhas = (corpo ?? '').split(/\r?\n/)
+  const inicio = linhas.findIndex((l) => l.trim() === 'Motivos:')
+  const todos: string[] = []
+  if (inicio >= 0) {
+    for (const linha of linhas.slice(inicio + 1)) {
+      if (!linha.startsWith('-')) break
+      const m = linha.slice(1).trim()
+      if (m) todos.push(m)
+    }
+  }
+  const motivos = todos
+    .slice(0, MAXIMO_DE_MOTIVOS)
+    .map((m) => (m.length > LIMITE_DO_MOTIVO ? m.slice(0, LIMITE_DO_MOTIVO - 1) + '…' : m))
+  return { motivos, restantes: todos.length - motivos.length }
+}
+
 export const ROTULO_DO_TIPO: Record<TipoDeDemanda, string> = {
   defeito: 'Defeito',
   ideia: 'Ideia',

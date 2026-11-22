@@ -414,6 +414,7 @@ describe('efeitoDoCartao', () => {
     ).toEqual({
       tipo: 'mergear_pr',
       repositorio: 'kustertech-exemplo/alfa',
+      feature: 'cadastro',
       numero: 412,
       head: HEAD,
       protegidos: ['src/a.ts'],
@@ -447,27 +448,69 @@ describe('comentarioSeguro', () => {
 describe('arquivosForaDoPermitido', () => {
   it('deixa de fora só o que o orquestrador pode tocar, sem repetição e na ordem', () => {
     expect(
-      arquivosForaDoPermitido([
-        '.fabrica/planos/cadastro.json',
-        '.fabrica/pergunta.md',
-        '.fabrica/planejamento/x/pacote.json',
-        '.seeds/issues.jsonl',
-        '.fabrica/config.json',
-        'src/a.ts',
-        '.fabrica/planos/Plano.json',
-        'src/a.ts',
-      ]),
+      arquivosForaDoPermitido(
+        [
+          '.fabrica/planos/cadastro.json',
+          '.fabrica/pergunta.md',
+          '.fabrica/planejamento/x/pacote.json',
+          '.seeds/issues.jsonl',
+          '.fabrica/config.json',
+          'src/a.ts',
+          '.fabrica/planos/Plano.json',
+          'src/a.ts',
+        ],
+        'cadastro',
+      ),
     ).toEqual(['.fabrica/config.json', 'src/a.ts', '.fabrica/planos/Plano.json'])
+  })
+
+  it('só o plano do próprio item: outro plano, o legado e plano de feature inválida ficam de fora', () => {
+    expect(
+      arquivosForaDoPermitido(
+        [
+          '.fabrica/planos/cadastro.json',
+          '.fabrica/planos/outra-feature.json',
+          '.fabrica/plano.json',
+          '.fabrica/planos/plano.json',
+        ],
+        'cadastro',
+      ),
+    ).toEqual([
+      '.fabrica/planos/outra-feature.json',
+      '.fabrica/plano.json',
+      '.fabrica/planos/plano.json',
+    ])
+    // O plano legado tem a feature `plano`; `.fabrica/planos/plano.json` nunca vale.
+    expect(
+      arquivosForaDoPermitido(['.fabrica/plano.json', '.fabrica/planos/plano.json'], 'plano'),
+    ).toEqual(['.fabrica/planos/plano.json'])
+    // Feature fora do formato (ou longa demais) não autoriza plano nenhum.
+    expect(
+      arquivosForaDoPermitido(
+        ['.fabrica/planos/Cadastro.json', '.fabrica/planos/a.json'],
+        'Cadastro',
+      ),
+    ).toEqual(['.fabrica/planos/Cadastro.json', '.fabrica/planos/a.json'])
+    const longa = 'a'.repeat(42)
+    expect(arquivosForaDoPermitido([`.fabrica/planos/${longa}.json`], longa)).toEqual([
+      `.fabrica/planos/${longa}.json`,
+    ])
+    expect(
+      arquivosForaDoPermitido([`.fabrica/planos/${'a'.repeat(41)}.json`], 'a'.repeat(41)),
+    ).toEqual([])
   })
 
   it('caminho com ".." ou "." nunca é permitido', () => {
     expect(
-      arquivosForaDoPermitido([
-        '.fabrica/planejamento/../../src/a.ts',
-        '.seeds/../package.json',
-        '.seeds/./x',
-        '.fabrica/planos/a-b-2.json',
-      ]),
+      arquivosForaDoPermitido(
+        [
+          '.fabrica/planejamento/../../src/a.ts',
+          '.seeds/../package.json',
+          '.seeds/./x',
+          '.fabrica/planos/a-b-2.json',
+        ],
+        'a-b-2',
+      ),
     ).toEqual(['.fabrica/planejamento/../../src/a.ts', '.seeds/../package.json', '.seeds/./x'])
   })
 })
@@ -497,6 +540,7 @@ describe('avaliarMerge', () => {
     },
     ci: 'verde' as const,
     cartao: { head: HEAD, protegidos: [] as string[] },
+    feature: 'cadastro',
   }
 
   it('Review Focus 1: head diferente → motivo com os 7 primeiros do novo e headNovo', () => {
@@ -546,5 +590,20 @@ describe('avaliarMerge', () => {
     expect(
       avaliarMerge({ ...base, pr: muitos, cartao: { head: HEAD, protegidos: ['a'] } }),
     ).toEqual({ ok: false, motivo: 'O PR mexe em b, c, d, e, f e o cartão não disse.' })
+  })
+
+  it('outro plano é caminho protegido: só passa com o cartão dizendo', () => {
+    const pr = { ...base.pr, arquivos: [...base.pr.arquivos, '.fabrica/planos/outra-feature.json'] }
+    expect(avaliarMerge({ ...base, pr })).toEqual({
+      ok: false,
+      motivo: 'O PR mexe em .fabrica/planos/outra-feature.json e o cartão não disse.',
+    })
+    expect(
+      avaliarMerge({
+        ...base,
+        pr,
+        cartao: { head: HEAD, protegidos: ['.fabrica/planos/outra-feature.json'] },
+      }),
+    ).toEqual({ ok: true, jaMergeado: false })
   })
 })

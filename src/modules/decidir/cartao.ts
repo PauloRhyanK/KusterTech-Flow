@@ -267,7 +267,14 @@ export type Efeito =
   | { tipo: 'retomar'; demandaId: string; resposta?: string }
   | { tipo: 'concluir_etapa'; demandaId: string; chave: string }
   | { tipo: 'responder_issue'; repositorio: string; numero: number; comentario: string }
-  | { tipo: 'mergear_pr'; repositorio: string; numero: number; head: string; protegidos: string[] }
+  | {
+      tipo: 'mergear_pr'
+      repositorio: string
+      feature: string
+      numero: number
+      head: string
+      protegidos: string[]
+    }
 
 export function efeitoDoCartao(item: ItemDaPilha, cartao: Cartao): Efeito {
   const ref = item.ref
@@ -321,6 +328,7 @@ export function efeitoDoCartao(item: ItemDaPilha, cartao: Cartao): Efeito {
         return {
           tipo: 'mergear_pr',
           repositorio: ref.repositorio,
+          feature: ref.feature,
           numero: cartao.numero,
           head: cartao.head,
           protegidos: [...cartao.protegidos],
@@ -339,27 +347,43 @@ export function comentarioSeguro(texto: string): string {
   return texto.trim().replaceAll('<!--', '&lt;!--') + '\n\n— Resposta do Paulo pelo Flow.'
 }
 
-const PLANO = /^\.fabrica\/planos\/[a-z0-9]+(-[a-z0-9]+)*\.json$/
+const FEATURE = /^[a-z0-9]+(-[a-z0-9]+)*$/
+// O limite da skill e de `fila.FEATURE_MAX` no kit.
+const FEATURE_MAX = 41
 const PREFIXOS_PERMITIDOS = ['.fabrica/planejamento/', '.seeds/'] as const
 
-/** O que o orquestrador pode tocar no PR de fim de fase. */
+/**
+ * O arquivo do plano do item, como `fila.feature_do_caminho` no kit: `plano` é o legado
+ * `.fabrica/plano.json`; feature fora do formato não tem plano (nenhum plano fica permitido).
+ */
+export function caminhoDoPlano(feature: string): string | null {
+  if (feature === 'plano') return '.fabrica/plano.json'
+  if (feature.length > FEATURE_MAX || !FEATURE.test(feature)) return null
+  return `.fabrica/planos/${feature}.json`
+}
+
+/**
+ * O que o orquestrador pode tocar no PR de fim de fase (`despachante.permitidos_ao_orquestrador`):
+ * só o plano do próprio item; qualquer outro plano é caminho protegido.
+ */
 export const PERMITIDOS_NO_FIM_DE_FASE = {
-  planos: PLANO,
   exatos: ['.fabrica/pergunta.md'],
   prefixos: PREFIXOS_PERMITIDOS,
 } as const
 
-function permitido(caminho: string): boolean {
+function permitido(caminho: string, plano: string | null): boolean {
   // Segmento vazio, "." ou ".." nunca vale: o prefixo não pode escapar da pasta.
   if (caminho.split('/').some((s) => s === '' || s === '.' || s === '..')) return false
-  if (PLANO.test(caminho)) return true
+  if (plano !== null && caminho === plano) return true
   if ((PERMITIDOS_NO_FIM_DE_FASE.exatos as readonly string[]).includes(caminho)) return true
   return PREFIXOS_PERMITIDOS.some((p) => caminho.startsWith(p))
 }
 
-export function arquivosForaDoPermitido(arquivos: readonly string[]): string[] {
+/** Os arquivos fora do permitido ao orquestrador do plano da `feature`, sem repetição e na ordem. */
+export function arquivosForaDoPermitido(arquivos: readonly string[], feature: string): string[] {
+  const plano = caminhoDoPlano(feature)
   const fora: string[] = []
-  for (const a of arquivos) if (!permitido(a) && !fora.includes(a)) fora.push(a)
+  for (const a of arquivos) if (!permitido(a, plano) && !fora.includes(a)) fora.push(a)
   return fora
 }
 
@@ -383,6 +407,8 @@ export function avaliarMerge(e: {
   }
   ci: EstadoDoCi
   cartao: { head: string; protegidos: readonly string[] }
+  /** A feature do plano do item: só o arquivo dele é permitido. */
+  feature: string
 }): { ok: true; jaMergeado: boolean } | { ok: false; motivo: string; headNovo?: string } {
   const { pr, cartao } = e
   if (pr.repositorio.toLowerCase() !== e.repositorio.toLowerCase()) {
@@ -400,7 +426,7 @@ export function avaliarMerge(e: {
   }
   if (e.ci === 'pendente') return { ok: false, motivo: `O CI ainda está rodando no head ${curto}.` }
   if (e.ci === 'vermelho') return { ok: false, motivo: `O CI falhou no head ${curto}.` }
-  const naoDitos = arquivosForaDoPermitido(pr.arquivos).filter(
+  const naoDitos = arquivosForaDoPermitido(pr.arquivos, e.feature).filter(
     (a) => !cartao.protegidos.includes(a),
   )
   if (naoDitos.length > 0) {

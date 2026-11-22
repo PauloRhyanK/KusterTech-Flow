@@ -5,6 +5,7 @@ import {
   chaveDaIssue,
   chaveValida,
   montarPilha,
+  motivosDaIssue,
   tipoDaDecisao,
   tipoDaDemanda,
   type DecisaoDoRetrato,
@@ -236,5 +237,52 @@ describe('amanhaAsSeis', () => {
     expect(amanhaAsSeis(new Date('2026-11-22T01:00:00-03:00')).toISOString()).toBe(
       new Date('2026-11-23T06:00:00-03:00').toISOString(),
     )
+  })
+})
+
+describe('motivosDaIssue', () => {
+  const corpo = (motivos: string) =>
+    `PR: https://github.com/kustertech-exemplo/alfa/pull/7\nMotivo da acordada: fase_concluida\n\nMotivos:\n${motivos}\n\nPara aprovar, mergeie o PR.`
+
+  it('as linhas "- " do bloco "Motivos:" do corpo escrito pelo despachante, em ordem', () => {
+    expect(
+      motivosDaIssue(
+        corpo(
+          '- mudanças de verificação na fase 3\n- aprovar fase (o orquestrador foi acordado por fase_concluida)',
+        ),
+      ),
+    ).toEqual({
+      motivos: [
+        'mudanças de verificação na fase 3',
+        'aprovar fase (o orquestrador foi acordado por fase_concluida)',
+      ],
+      restantes: 0,
+    })
+  })
+
+  it('sem bloco, corpo nulo ou bloco vazio: nada', () => {
+    expect(motivosDaIssue(null)).toEqual({ motivos: [], restantes: 0 })
+    expect(motivosDaIssue('PR: x\n\n- solto fora do bloco')).toEqual({ motivos: [], restantes: 0 })
+    expect(motivosDaIssue('Motivos:\n\n- depois da linha em branco')).toEqual({
+      motivos: [],
+      restantes: 0,
+    })
+  })
+
+  it('para na primeira linha que não é item, aceita CRLF e ignora item vazio', () => {
+    expect(motivosDaIssue('Motivos:\r\n- um\r\n-   \r\n- dois\r\nTexto\r\n- fora')).toEqual({
+      motivos: ['um', 'dois'],
+      restantes: 0,
+    })
+  })
+
+  it('no máximo 5 motivos de até 200 caracteres; o resto vira a contagem', () => {
+    const linhas = Array.from({ length: 7 }, (_, i) => `- m${i}`).join('\n')
+    expect(motivosDaIssue(corpo(linhas))).toEqual({
+      motivos: ['m0', 'm1', 'm2', 'm3', 'm4'],
+      restantes: 2,
+    })
+    const [longo] = motivosDaIssue(corpo('- ' + 'x'.repeat(300))).motivos
+    expect(longo).toBe('x'.repeat(199) + '…')
   })
 })

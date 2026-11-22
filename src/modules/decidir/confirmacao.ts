@@ -228,8 +228,9 @@ async function refazerComHeadNovo(
   ref: RefRepositorio,
   cartao: Extract<Cartao, { acao: 'aprovar_e_mergear' }>,
   pr: PullRequestParaMerge,
+  feature: string,
 ): Promise<Aplicado> {
-  const fora = arquivosForaDoPermitido(pr.arquivos)
+  const fora = arquivosForaDoPermitido(pr.arquivos, feature)
   const ci = await ciDoHead(fonte, ref, pr.head)
   return {
     ok: false,
@@ -278,15 +279,18 @@ async function mergearPr(
   ref: RefRepositorio,
   repositorio: string,
   cartao: Extract<Cartao, { acao: 'aprovar_e_mergear' }>,
+  feature: string,
 ): Promise<Aplicado> {
   const padrao = (await fonte.lerCabecaDoBranchPadrao(ref)).branch
   // Lido de novo agora, logo antes do merge: o que vale é o PR atual, não o da abertura.
   const pr = await fonte.lerPullRequestParaMerge(ref, cartao.numero)
   if (!pr) return { ok: false, erro: `O PR #${cartao.numero} não foi encontrado.` }
   const ci = pr.estado === 'ABERTO' ? await ciDoHead(fonte, ref, pr.head) : 'ausente'
-  const av = avaliarMerge({ repositorio, pr, ci, cartao })
+  const av = avaliarMerge({ repositorio, pr, ci, cartao, feature })
   if (!av.ok) {
-    return av.headNovo ? refazerComHeadNovo(fonte, ref, cartao, pr) : { ok: false, erro: av.motivo }
+    return av.headNovo
+      ? refazerComHeadNovo(fonte, ref, cartao, pr, feature)
+      : { ok: false, erro: av.motivo }
   }
   if (pr.base !== padrao) {
     return { ok: false, erro: `O PR vai para ${pr.base}, e não para o ramo padrão (${padrao}).` }
@@ -299,7 +303,7 @@ async function mergearPr(
   // 409: o head andou entre a leitura e o PUT.
   const novo = await fonte.lerPullRequestParaMerge(ref, cartao.numero)
   if (!novo || novo.head === cartao.head) return { ok: false, erro: headMudou(cartao.head) }
-  return refazerComHeadNovo(fonte, ref, cartao, novo)
+  return refazerComHeadNovo(fonte, ref, cartao, novo, feature)
 }
 
 async function aplicarEfeito(
@@ -340,7 +344,7 @@ async function aplicarEfeito(
           return await responderIssue(fonte, ref, efeito, alvo.progresso, alvo.posse)
         }
         if (alvo.cartao.acao !== 'aprovar_e_mergear') return { ok: false, erro: NAO_ENCONTRADO }
-        return await mergearPr(fonte, ref, alvo.repositorio, alvo.cartao)
+        return await mergearPr(fonte, ref, alvo.repositorio, alvo.cartao, efeito.feature)
       }
     }
   } catch (erro) {

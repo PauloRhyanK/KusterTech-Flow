@@ -2480,6 +2480,24 @@ class TestesAtendente(Base):
         self.assertIn("OSError: sem rede", log)
         self.assertEqual(self.estados(), {a: "ativo"})
 
+    def test_falha_inesperada_do_passo_do_atendente_avisa_uma_vez_e_o_passo_bom_esquece(self):
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.atendente, "passo", side_effect=RuntimeError("quebrou")):
+            c.ciclo()
+            c._passo_atendente()  # entre ciclos: o mesmo aviso, sem repetir
+        self.assertEqual(self.avisos_do_atendente(), ["Atendente: o passo falhou (RuntimeError); tento de novo no próximo passo"])
+        self.assertIn("atendente:passo", self.fila_estado()["chaves"])
+        with unittest.mock.patch.object(coordenador.atendente, "passo", return_value=[]):
+            c._passo_atendente()  # um passo bom esquece o aviso
+        self.assertNotIn("atendente:passo", self.fila_estado()["chaves"])
+
+        def quebrado(url, token_file):
+            raise OSError("sem rede")
+
+        c = self.novo(central=CENTRAL, enviar=self.enviar, cliente_das_conversas=quebrado)
+        c.ciclo()  # o cliente que não sobe também é falha do passo
+        self.assertIn("atendente:passo", self.fila_estado()["chaves"])
+
     def test_eventos_do_atendente_vao_ao_log_e_o_estado_e_salvo(self):
         cliente = testes_atendente.ClienteFalso([testes_atendente.busca(self.conversa())])
         c = self.coordenador_com(cliente=cliente)

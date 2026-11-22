@@ -1030,15 +1030,16 @@ class Coordenador:
         """O atendente do Decidir (`atendente.passo`), no ciclo e entre os ciclos. Nunca levanta nem muda a fila.
 
         Só com `FABRICA_CENTRAL_URL` e um `fila.json` já lido (entre ciclos, o do último ciclo). Os avisos vão pelo
-        `_aviso`; os de situação (memória, drenagem, modelo, Flow sem a rota, envio que não chega) saem das chaves
-        quando a situação some, e os de episódio (PR aberto, recusa) quando não se repetem: um episódio seguinte
-        avisa de novo. Os erros vão ao log pelo `_log_repetivel`.
+        `_aviso`; os de situação (memória, drenagem, modelo, Flow sem a rota, envio que não chega, passo que
+        falhou) saem das chaves quando a situação some, e os de episódio (PR aberto, recusa) quando não se repetem:
+        um episódio seguinte avisa de novo. Os erros vão ao log pelo `_log_repetivel`; uma exceção inesperada do
+        passo (do cliente, da busca, do motor) vira também o aviso `atendente:passo`, que o passo bom esquece.
         """
         central = self.central or {}
         if self._config is None or not central.get("url"):
             return
         with contextlib.suppress(Exception):
-            modelos, mem = {}, None
+            modelos, mem, falhou = {}, None, False
             try:
                 modelos = self._modelos_do_kit()
                 mem = capacidade.mem_disponivel_mb()
@@ -1054,9 +1055,10 @@ class Coordenador:
                     mem_disponivel_mb=mem,
                     salvar=self._salvar,
                 )
-            except Exception as exc:  # noqa: BLE001 - o texto vai ao log, sem segredo
+            except Exception as exc:  # noqa: BLE001 - só a classe no aviso; o texto vai ao log, sem segredo
                 self._erro_de_etapa("atendente", "passo", exc)
-                eventos = []
+                self._aviso("atendente:passo", "Atendente: o passo falhou (%s); tento de novo no próximo passo" % type(exc).__name__)
+                eventos, falhou = [], True
             for evento in eventos:
                 if evento.get("evento") == "aviso":
                     self._aviso(evento["chave"], evento["mensagem"])
@@ -1064,10 +1066,10 @@ class Coordenador:
                     self._log_repetivel("atendente:%s" % evento.get("alvo"), evento)
                 else:
                     self._log(evento)
-            self._esquecer_avisos_do_atendente({e.get("chave") for e in eventos if e.get("evento") == "aviso"}, modelos, mem)
+            self._esquecer_avisos_do_atendente({e.get("chave") for e in eventos if e.get("evento") == "aviso"}, modelos, mem, falhou)
             self._salvar()
 
-    def _esquecer_avisos_do_atendente(self, emitidos: set, modelos: dict, mem) -> None:
+    def _esquecer_avisos_do_atendente(self, emitidos: set, modelos: dict, mem, falhou: bool = False) -> None:
         sec = atendente.secao(self.dados)
         try:
             cap = capacidade.ler(self.capacidade)
@@ -1080,6 +1082,7 @@ class Coordenador:
             "atendente:memoria": cap is not None and (mem is None or mem >= (cap.get("ramMinimaMb") or 0)),
             "atendente:sem-rota": sec["semRotaEm"] is None,
             "atendente:envio": atual is None or not atual.get("falhasDeEnvio"),
+            "atendente:passo": not falhou,
         }
         for chave in [c for c in self.dados["chaves"] if c.startswith("atendente:") and c not in emitidos]:
             if resolvidos.get(chave, True):  # PR aberto e recusa: avisos de um episódio só

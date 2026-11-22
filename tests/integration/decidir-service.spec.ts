@@ -37,6 +37,10 @@ const ISSUE_41 = `https://github.com/${REPO}/issues/41`
 const ISSUE_42 = `https://github.com/${REPO}/issues/42`
 const HEAD_412 = 'a41c9e20123456789abcdef0123456789abcdef0'
 
+// O bloco "Motivos:" do corpo da issue 41 (fixture), como o despachante escreve.
+const MOTIVOS_DA_41 =
+  '\n\nA Fábrica pediu você por:\n- mudanças de verificação na fase 3\n- aprovar fase (o orquestrador foi acordado por fase_concluida)'
+
 const comFixtures = { fonte: () => criarFonteFixtures() as FonteGitHub }
 
 function fonteFora(): FonteGitHub {
@@ -245,7 +249,9 @@ describe('decidir / service (integração)', () => {
     expect(ms).toHaveLength(1)
     expect(ms[0]).toMatchObject({
       autor: 'FLOW',
-      texto: 'As raias da fase entraram (3 de 3) e o CI está verde. O PR mexe só no plano.',
+      texto:
+        'As raias da fase entraram (3 de 3) e o CI está verde. O PR mexe só no plano.' +
+        MOTIVOS_DA_41,
       respostasRapidas: ['Aprovar a fase', 'Pedir mudança'],
     })
     const cs = await cartoes(conversaId)
@@ -307,6 +313,55 @@ describe('decidir / service (integração)', () => {
     }
   })
 
+  test('abrirItem do fim de fase: motivos cortados (5 e a contagem do resto), como texto', async () => {
+    const f = criarFonteFixtures()
+    const linhas = Array.from({ length: 7 }, (_, i) => `- motivo <b>${i}</b>`).join('\n')
+    const fonte: FonteGitHub = {
+      ...f,
+      lerIssue: async (repo, numero) => {
+        const issue = await f.lerIssue(repo, numero)
+        return (
+          issue && {
+            ...issue,
+            corpo: `PR: https://github.com/${REPO}/pull/412\nMotivo da acordada: nova_spec\n\nMotivos:\n${linhas}\n\nPara aprovar, mergeie o PR.`,
+          }
+        )
+      },
+    }
+    const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, {
+      fonte: () => fonte,
+    })
+    expect((await mensagens(conversaId))[0]!.texto).toBe(
+      'As raias da fase entraram (3 de 3) e o CI está verde. O PR mexe só no plano.\n\n' +
+        'A Fábrica pediu você por:\n- motivo <b>0</b>\n- motivo <b>1</b>\n- motivo <b>2</b>\n' +
+        '- motivo <b>3</b>\n- motivo <b>4</b>\n- e mais 2.',
+    )
+  })
+
+  test('abrirItem do fim de fase: outro plano no PR é caminho protegido (só o plano do item é permitido)', async () => {
+    const f = criarFonteFixtures()
+    const fonte: FonteGitHub = {
+      ...f,
+      lerPullRequestParaMerge: async (repo, numero) => {
+        const pr = await f.lerPullRequestParaMerge(repo, numero)
+        return pr && { ...pr, arquivos: [...pr.arquivos, '.fabrica/planos/outra-feature.json'] }
+      },
+    }
+    const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, {
+      fonte: () => fonte,
+    })
+    const conversa = await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })
+    expect(conversa.contexto).toMatchObject({
+      pr: { fora: ['.fabrica/planos/outra-feature.json'] },
+    })
+    expect((await mensagens(conversaId))[0]!.texto).toContain(
+      'O PR também mexe em: .fabrica/planos/outra-feature.json.',
+    )
+    expect((await cartoes(conversaId))[0]!.conteudo).toMatchObject({
+      protegidos: ['.fabrica/planos/outra-feature.json'],
+    })
+  })
+
   test('abrirItem do fim de fase sem CI nenhum: "e não há CI configurado"', async () => {
     const f = criarFonteFixtures()
     const fonte: FonteGitHub = {
@@ -318,7 +373,8 @@ describe('decidir / service (integração)', () => {
       fonte: () => fonte,
     })
     expect((await mensagens(conversaId))[0]!.texto).toBe(
-      'As raias da fase entraram (3 de 3) e não há CI configurado. O PR mexe só no plano.',
+      'As raias da fase entraram (3 de 3) e não há CI configurado. O PR mexe só no plano.' +
+        MOTIVOS_DA_41,
     )
   })
 

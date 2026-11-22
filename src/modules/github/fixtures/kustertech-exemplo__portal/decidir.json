@@ -4,7 +4,7 @@
       "id": 8100041,
       "number": 41,
       "title": "[fábrica] orquestrador: aprovar fase",
-      "body": "PR: https://github.com/kustertech-exemplo/portal/pull/412\n\nA fase do cadastro terminou. Aprove para mergear.",
+      "body": "PR: https://github.com/kustertech-exemplo/portal/pull/412\nMotivo da acordada: fase_concluida\n\nMotivos:\n- mudanças de verificação na fase 3\n- aprovar fase (o orquestrador foi acordado por fase_concluida)\n\nPara aprovar, mergeie o PR: o merge é a aprovação.",
       "state": "open",
       "user": {
         "login": "exemplo-bia",
