@@ -373,7 +373,7 @@ def prompt_desenho(*, demanda: dict, triagem: dict, ajustes: list[dict], motivo_
     titulo = _dado_da_demanda(demanda.get("titulo"), LIMITE_TITULO) or "(sem título)"
     descricao = _dado_da_demanda(demanda.get("descricao"), LIMITE_DESCRICAO) or "(sem descrição)"
     contexto = json.dumps(_neutralizado(triagem if isinstance(triagem, dict) else {}), ensure_ascii=False, sort_keys=True)
-    escopo = re.sub(r"\s+", " ", _dado_da_demanda(demanda.get("escopo"), LIMITE_ESCOPO))
+    escopo = _linha_de_dado(demanda.get("escopo"), LIMITE_ESCOPO)
     linhas = []
     for ajuste in [a for a in ajustes or [] if isinstance(a, dict)][-LIMITE_AJUSTES:]:
         versao = ajuste.get("versao")
