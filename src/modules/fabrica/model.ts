@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
-import type { ESTADOS_DA_FILA, RetratoV1 } from './contrato'
+import type { ESTADOS_DA_FILA, RetratoV1, RetratoV2 } from './contrato'
+
+/** O v1 e o v2 têm os mesmos campos de plano que o painel e o Início leem. */
+type QualquerRetrato = RetratoV1 | RetratoV2
+type QualquerPlano = QualquerRetrato['planos'][number]
 
 export const LIMITE_DO_CORPO_DO_RETRATO = 262_144
 export const PREFIXO_DO_TOKEN_DA_FABRICA = 'ff_'
@@ -71,7 +75,7 @@ export interface ResumoDoPlano {
   pausado: string | null
 }
 
-export function resumirPlano(plano: RetratoV1['planos'][number]): ResumoDoPlano {
+export function resumirPlano(plano: QualquerPlano): ResumoDoPlano {
   const raias = { concluidas: 0, executando: 0, falharam: 0, planejadas: 0, total: 0 }
   for (const fase of plano.fases) {
     for (const raia of fase.raias) {
@@ -105,7 +109,7 @@ const ORDEM_EM_CURSO: readonly ResumoDoPlano['estado'][] = [
 ]
 
 // Só os planos que ainda estão andando, por estado e, dentro dele, por entrada na fila.
-export function planosEmCurso(retrato: RetratoV1): ResumoDoPlano[] {
+export function planosEmCurso(retrato: QualquerRetrato): ResumoDoPlano[] {
   return retrato.planos
     .filter((plano) => ORDEM_EM_CURSO.includes(plano.estado))
     .sort(

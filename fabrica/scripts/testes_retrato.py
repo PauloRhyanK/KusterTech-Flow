@@ -569,3 +569,97 @@ class TestesEnviar(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+EXEMPLO_V2 = RAIZ_DOS_SCRIPTS.parents[1] / "src" / "modules" / "fabrica" / "retrato-exemplo-v2.json"
+ID_D = "paulorhyank--caisv2--demanda-9c44dfa8--abc123"
+DEMANDA = "9c44dfa8-3d83-4b05-9c2d-b1351c63af45"
+
+
+def plano_v2():
+    return {
+        "faseAtual": "pecas",
+        "demanda": DEMANDA,
+        "fases": [{"id": "fundacao", "raias": ["relatos-fundacao"]}, {"id": "pecas", "raias": ["kit-base"]}],
+        "raias": [
+            {"id": "relatos-fundacao", "papel": "frontend", "dependeDe": [], "criteriosAceite": ["Contrato", "Cenários"]},
+            {"id": "kit-base", "papel": "frontend", "dependeDe": ["relatos-fundacao"], "criteriosAceite": ["Suporte", "Tour"]},
+        ],
+    }
+
+
+def estado_v2():
+    return {
+        "pausado": None,
+        "raias": {"relatos-fundacao": {"estado": "concluida"}, "kit-base": {"estado": "executando"}},
+        "orquestrador": {"runId": None},
+        "seeds": {
+            "CAISv2-old": {"raia": "kit-base", "estado": "obsoleta", "runId": "r0", "pr": None, "inicio": "2026-11-21T01:00:00Z", "fim": "2026-11-21T01:10:00Z"},
+            "CAISv2-212c": {
+                "raia": "relatos-fundacao", "estado": "mergeada", "runId": "r1", "pr": "https://github.com/PauloRhyanK/CAISv2/pull/436",
+                "inicio": "2026-11-21T00:50:00Z", "fim": "2026-11-21T01:52:00Z",
+                "veredito": {"sha": "a" * 40, "resultado": "aprovado", "achados": [], "criterios": [{"indice": 0, "cumprido": True}, {"indice": 1, "cumprido": True}]},
+            },
+            "CAISv2-d87a": {"raia": "kit-base", "estado": "executando", "runId": "r2", "pr": None, "inicio": "2026-11-21T01:30:00Z", "fim": None},
+        },
+    }
+
+
+def execucao(**extra):
+    base = {
+        "runId": "run_kitbase01", "papel": "frontend", "planoId": ID_D, "raia": "kit-base", "demanda": DEMANDA, "estado": "running",
+        "inicio": "2026-11-21T01:30:00Z", "custoUsd": 1.84, "modelo": "claude-sonnet-5-5",
+        "ultimaAcao": {"texto": "Edit a.tsx", "em": "2026-11-21T02:03:00Z"},
+        "linhas": [{"em": "2026-11-21T02:03:00Z", "tipo": "ferramenta", "texto": "Edit a.tsx"}],
+    }
+    base.update(extra)
+    return base
+
+
+def montar_v2(execucoes=None, planos=None, fila=None):
+    fila_estado = {"fila": fila or [entrada(ID_D, repo="PauloRhyanK/CAISv2", feature="Suporte por IA no CRM", demanda=DEMANDA)], "avisos": [], "warren": {}}
+    return retrato.montar(
+        agora=AGORA, fila_estado=fila_estado, capacidade=capacidade_com(), mem_disponivel_mb=5120,
+        planos=planos if planos is not None else {ID_D: {"estado": estado_v2(), "plano": plano_v2()}},
+        versao=2, execucoes=execucoes if execucoes is not None else [execucao()],
+    )
+
+
+class RetratoV2Test(unittest.TestCase):
+    def test_montar_v2_tem_os_campos_e_tipos_do_exemplo(self):
+        exemplo = json.loads(EXEMPLO_V2.read_text(encoding="utf-8"))
+        confere(self, montar_v2(), exemplo)
+
+    def test_raia_v2_vem_do_plano_e_da_seed_vigente(self):
+        r = montar_v2()
+        plano = r["planos"][0]
+        self.assertEqual(plano["demanda"], DEMANDA)
+        fundacao, kit = plano["fases"][0]["raias"][0], plano["fases"][1]["raias"][0]
+        self.assertEqual((fundacao["seedId"], fundacao["situacao"], fundacao["fim"]), ("CAISv2-212c", "mergeada", "2026-11-21T01:52:00Z"))
+        self.assertEqual(fundacao["criteriosVeredito"], [{"indice": 0, "cumprido": True}, {"indice": 1, "cumprido": True}])
+        self.assertEqual(fundacao["prUrl"], "https://github.com/PauloRhyanK/CAISv2/pull/436")
+        self.assertEqual((kit["seedId"], kit["papel"], kit["dependeDe"], kit["criterios"]), ("CAISv2-d87a", "frontend", ["relatos-fundacao"], ["Suporte", "Tour"]))
+        self.assertIsNone(kit["criteriosVeredito"])
+
+    def test_montar_v1_continua_igual_ao_exemplo(self):
+        r = montar()
+        self.assertEqual(r["versao"], 1)
+        self.assertNotIn("execucoes", r)
+
+    def test_execucao_e_limpa_e_linhas_cortadas_em_30(self):
+        linhas = [{"em": None, "tipo": "texto", "texto": "/home/agentops/x %d" % i} for i in range(40)] + [{"em": None, "tipo": "outro", "texto": "x"}]
+        r = montar_v2(execucoes=[execucao(linhas=linhas, custoUsd=-1, papel=None)])
+        e = r["execucoes"][0]
+        self.assertEqual(len(e["linhas"]), 30)
+        self.assertTrue(all("[caminho]" in l["texto"] for l in e["linhas"]))
+        self.assertIsNone(e["custoUsd"])
+
+    def test_ajustar_corta_linhas_antes_de_planos(self):
+        execs = [execucao(runId="r%d" % i, linhas=[{"em": None, "tipo": "texto", "texto": "x" * 200}] * 30) for i in range(40)]
+        r = montar_v2(execucoes=execs)
+        cortado = retrato.ajustar(r)
+        self.assertIsNotNone(cortado)
+        self.assertLessEqual(len(retrato.serializar(cortado)), retrato.LIMITE_BYTES)
+        self.assertEqual(len(cortado["execucoes"]), 40)
+        self.assertEqual(len(cortado["planos"]), 1)
+        self.assertLess(sum(len(e["linhas"]) for e in cortado["execucoes"]), 40 * 30)

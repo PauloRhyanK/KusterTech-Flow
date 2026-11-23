@@ -1,0 +1,101 @@
+{
+  "versao": 2,
+  "geradoEm": "2026-11-21T02:05:00Z",
+  "vagas": {
+    "efetivas": 3,
+    "configuradas": 3,
+    "ocupadas": 2,
+    "ramMinimaMb": 2048,
+    "memDisponivelMb": 5120,
+    "oomEm": null
+  },
+  "drenagem": null,
+  "warren": { "preparo": "pronto", "em": "2026-11-21T00:10:00Z" },
+  "planos": [
+    {
+      "id": "paulorhyank--caisv2--demanda-9c44dfa8--abc123",
+      "repo": "PauloRhyanK/CAISv2",
+      "feature": "Suporte por IA no CRM",
+      "estado": "ativo",
+      "entrouEm": "2026-11-21T00:50:00Z",
+      "faseAtual": "pecas",
+      "fases": [
+        {
+          "id": "fundacao",
+          "raias": [
+            {
+              "id": "relatos-fundacao",
+              "estado": "concluida",
+              "papel": "frontend",
+              "dependeDe": [],
+              "criterios": [
+                "Contrato de relatos no openapi",
+                "Cenários suporte_ na porta de mentira"
+              ],
+              "seedId": "CAISv2-212c",
+              "inicio": "2026-11-21T00:50:00Z",
+              "fim": "2026-11-21T01:52:00Z",
+              "prUrl": "https://github.com/PauloRhyanK/CAISv2/pull/436",
+              "situacao": "mergeada",
+              "criteriosVeredito": [
+                { "indice": 0, "cumprido": true },
+                { "indice": 1, "cumprido": true }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "pecas",
+          "raias": [
+            {
+              "id": "kit-base",
+              "estado": "executando",
+              "papel": "frontend",
+              "dependeDe": ["relatos-fundacao"],
+              "criterios": [
+                "Composição Suporte com abas Conversa e Meus envios",
+                "Componente Tour"
+              ],
+              "seedId": "CAISv2-d87a",
+              "inicio": "2026-11-21T01:30:00Z",
+              "fim": null,
+              "prUrl": null,
+              "situacao": "executando",
+              "criteriosVeredito": null
+            }
+          ]
+        }
+      ],
+      "pausado": null,
+      "decisoes": [],
+      "orquestradorAtivo": false,
+      "demanda": "9c44dfa8-3d83-4b05-9c2d-b1351c63af45"
+    }
+  ],
+  "avisos": [{ "em": "2026-11-21T01:00:00Z", "mensagem": "Vagas reduzidas por falta de memória" }],
+  "execucoes": [
+    {
+      "runId": "run_kitbase01",
+      "papel": "frontend",
+      "planoId": "paulorhyank--caisv2--demanda-9c44dfa8--abc123",
+      "raia": "kit-base",
+      "demanda": "9c44dfa8-3d83-4b05-9c2d-b1351c63af45",
+      "estado": "running",
+      "inicio": "2026-11-21T01:30:00Z",
+      "custoUsd": 1.84,
+      "modelo": "claude-sonnet-5-5",
+      "ultimaAcao": {
+        "texto": "Edit front/src/pecas/composicoes/suporte/Suporte.tsx",
+        "em": "2026-11-21T02:03:00Z"
+      },
+      "linhas": [
+        { "em": "2026-11-21T01:33:00Z", "tipo": "texto", "texto": "lendo o catálogo do kit" },
+        {
+          "em": "2026-11-21T02:03:00Z",
+          "tipo": "ferramenta",
+          "texto": "Edit front/src/pecas/composicoes/suporte/Suporte.tsx"
+        }
+      ]
+    }
+  ]
+}

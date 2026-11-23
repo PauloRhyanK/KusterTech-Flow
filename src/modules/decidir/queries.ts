@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { moduloAtivo } from '@/lib/modulos'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
-import type { RetratoV1 } from '@/modules/fabrica/contrato'
+import type { Retrato } from '@/modules/fabrica/contrato'
 import { lerRetratoMaisRecente, obterRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { PLANO_EM_CURSO } from '@/modules/inicio/model'
@@ -82,7 +82,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
 }
 
 /** As decisões abertas dos planos em curso, com as raias da fase atual (ou do plano, sem fase atual). */
-export function decisoesDoRetrato(retrato: RetratoV1 | null): DecisaoDoRetrato[] {
+export function decisoesDoRetrato(retrato: Retrato | null): DecisaoDoRetrato[] {
   if (retrato === null) return []
   return retrato.planos.flatMap((plano) => {
     if (!PLANO_EM_CURSO.includes(plano.estado)) return []
@@ -132,7 +132,7 @@ export interface ItemLocalizado {
 export async function localizarItem(
   chave: string,
   agora: Date,
-  retrato?: RetratoV1 | null,
+  retrato?: Retrato | null,
 ): Promise<ItemLocalizado | null> {
   if (!chaveValida(chave)) return null
   const conversa = await db.conversa.findUnique({

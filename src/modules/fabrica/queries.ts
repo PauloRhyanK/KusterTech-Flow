@@ -1,9 +1,11 @@
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import { type RetratoV1, retratoV1Schema } from './contrato'
+import { normalizarRetrato, type RetratoV2, retratoSchema } from './contrato'
 
 export interface RetratoRecebido {
-  retrato: RetratoV1
+  /** Sempre no formato v2; um v1 guardado vem normalizado (sem execuções). */
+  retrato: RetratoV2
+  versaoOriginal: 1 | 2
   geradoEm: Date
   recebidoEm: Date
 }
@@ -23,9 +25,14 @@ export async function lerRetratoMaisRecente(): Promise<RetratoRecebido | null> {
   })
   if (linha === null) return null
 
-  const lido = retratoV1Schema.safeParse(linha.conteudo)
+  const lido = retratoSchema.safeParse(linha.conteudo)
   if (!lido.success) return null
-  return { retrato: lido.data, geradoEm: linha.geradoEm, recebidoEm: linha.recebidoEm }
+  return {
+    retrato: normalizarRetrato(lido.data),
+    versaoOriginal: lido.data.versao,
+    geradoEm: linha.geradoEm,
+    recebidoEm: linha.recebidoEm,
+  }
 }
 
 export async function listarFontesDaFabrica(sujeito: Sujeito) {

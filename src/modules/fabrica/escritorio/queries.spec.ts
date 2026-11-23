@@ -1,0 +1,46 @@
+import { describe, expect, test, vi } from 'vitest'
+import type { RetratoV2 } from '../contrato'
+import exemploV2 from '../retrato-exemplo-v2.json'
+
+const { mockDb } = vi.hoisted(() => ({
+  mockDb: {
+    demanda: { findMany: vi.fn() },
+    seedDoRepositorio: { findMany: vi.fn() },
+    eventoDaDemanda: { findMany: vi.fn() },
+  },
+}))
+vi.mock('@/lib/db', () => ({ db: mockDb }))
+vi.mock('../queries', () => ({
+  obterRetratoMaisRecente: vi.fn(async () => ({
+    retrato: structuredClone(exemploV2) as unknown as RetratoV2,
+    versaoOriginal: 2,
+    geradoEm: new Date('2026-11-21T02:05:00Z'),
+    recebidoEm: new Date('2026-11-21T02:05:00Z'),
+  })),
+}))
+vi.mock('./intervalos', () => ({
+  lerHistorico: vi.fn(async () => ({ partes: [], etapas: [], custosPorParte: [] })),
+  gastoPorPlano: vi.fn(async () => ({ 'paulorhyank--caisv2--demanda-9c44dfa8--abc123': 9.5 })),
+}))
+
+import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
+import { obterEscritorio } from './queries'
+
+const admin: Sujeito = { usuarioId: 'u-admin', papeis: [{ papel: 'ADMIN', clienteId: null }] }
+const semPermissao: Sujeito = { usuarioId: 'u-x', papeis: [] }
+
+describe('escritório / queries', () => {
+  test('sem desenvolvimento.ler, nega sem tocar no banco', async () => {
+    await expect(obterEscritorio(semPermissao, new Date())).rejects.toBeInstanceOf(
+      ErroDeAutorizacao,
+    )
+  })
+
+  test('o custo gasto da sala de gestão vem do custo registrado do plano', async () => {
+    mockDb.demanda.findMany.mockResolvedValue([])
+    mockDb.seedDoRepositorio.findMany.mockResolvedValue([])
+    mockDb.eventoDaDemanda.findMany.mockResolvedValue([])
+    const r = await obterEscritorio(admin, new Date('2026-11-21T02:05:00Z'))
+    expect(r.gestao['paulorhyank--caisv2--demanda-9c44dfa8--abc123']?.custo.gasto).toBe(9.5)
+  })
+})

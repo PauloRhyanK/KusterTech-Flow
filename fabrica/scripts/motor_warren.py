@@ -311,6 +311,9 @@ class MotorWarren:
                 ultimo = texto
         return ultimo
 
+    def eventos_brutos(self, run_id: str) -> bytes:
+        return self._requisitar("GET", "/runs/%s/events?follow=0" % _id(run_id))
+
     def modelo_efetivo(self, run_id: str) -> str | None:
         bruto = self._requisitar("GET", "/runs/%s/events?follow=0" % _id(run_id))
         # Mesmo cuidado de ultimo_texto: o separador do NDJSON é só "\n".

@@ -38,7 +38,9 @@ describe('fabrica / queries (db simulado)', () => {
     const r = await obterRetratoMaisRecente(admin)
     expect(r?.recebidoEm).toBe(recebidoEm)
     expect(r?.geradoEm).toBe(geradoEm)
-    expect(r?.retrato.versao).toBe(1)
+    expect(r?.versaoOriginal).toBe(1)
+    expect(r?.retrato.versao).toBe(2)
+    expect(r?.retrato.execucoes).toEqual([])
   })
 
   test('conteúdo guardado fora do contrato vira null, sem quebrar', async () => {
