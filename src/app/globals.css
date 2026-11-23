@@ -286,6 +286,35 @@ body,
   --pixel-lixo: #7d8597;
   --pixel-livro-amarelo: #e8b23a;
   --pixel-fita: #f6e3b4;
+  /* cantos de hobby */
+  --pixel-tabuleiro-escuro: #5a4636;
+  --pixel-banco: #4f5d78;
+  --pixel-peca: #1d1d22;
+  --pixel-tinta-1: #d9483b;
+  --pixel-tinta-2: #2f6fe4;
+  --pixel-tinta-3: #e8b730;
+  --pixel-tinta-4: #1f9d6b;
+  --pixel-paleta: #e8d5b0;
+  --pixel-cavalete: #a8784b;
+  --pixel-vitrola: #5a3f28;
+  --pixel-caixa-som: #2b2f3a;
+  --pixel-caixa-som-cone: #59606e;
+  --pixel-disco: #1d1d22;
+  --pixel-disco-rotulo: #e86aa0;
+  --pixel-nota-1: #2fa3e6;
+  --pixel-nota-2: #e86aa0;
+  --pixel-nota-3: #e8b730;
+  --pixel-balcao: #8a5a34;
+  --pixel-cafeteira: #59606e;
+  --pixel-cafeteira-jarra: #e04f3a;
+  --pixel-vapor: #ffffffbb;
+  --pixel-fliperama: #4a3a8a;
+  --pixel-fliperama-topo: #e86aa0;
+  --pixel-fliperama-tela: #1b3a2a;
+  --pixel-poltrona: #6b40d0;
+  --pixel-poltrona-sombra: #8b5cf6;
+  --pixel-livro: #d9483b;
+  --pixel-regador: #5ab0e6;
   /* papéis (camisa) e sombra */
   --pixel-papel-frontend: #3b82f6;
   --pixel-papel-frontend-sombra: #2c62b8;
@@ -911,5 +940,303 @@ body,
 @keyframes esc-correrV {
   to {
     background-position: 0 18px;
+  }
+}
+
+/* cantos de hobby (hobbies.tsx): objetos e animações do personagem (translate/rotate não sobrescrevem o transform do agente) */
+.esc-canto {
+  position: relative;
+}
+.esc-canto-peca {
+  position: absolute;
+}
+.esc-canto-peca[data-camada='fundo'] {
+  z-index: 2;
+}
+.esc-canto-peca[data-camada='frente'] {
+  z-index: 9;
+}
+.esc-peca {
+  width: 6px;
+  height: 9px;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--pixel-peca);
+  animation: esc-peca 9s infinite;
+}
+.esc-quadro-tela {
+  width: 30px;
+  height: 18px;
+  overflow: hidden;
+  background: var(--pixel-tela-pintura);
+}
+.esc-tinta {
+  position: absolute;
+  left: 0;
+  height: 3px;
+  width: 0;
+  animation: esc-tinta 6s steps(6) infinite;
+}
+.esc-disco {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--pixel-contorno);
+  background: radial-gradient(circle, var(--pixel-disco-rotulo) 0 3px, var(--pixel-disco) 3px 100%);
+  animation: esc-gira-disco 1.2s linear infinite;
+}
+.esc-notas b {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pixel-nota-1);
+  box-shadow: 4px -8px 0 -2px var(--pixel-nota-1);
+  opacity: 0;
+  animation: esc-nota 2s infinite;
+}
+.esc-notas b:nth-child(2) {
+  left: -20px;
+  background: var(--pixel-nota-2);
+  box-shadow: 4px -8px 0 -2px var(--pixel-nota-2);
+  animation-delay: 0.7s;
+}
+.esc-notas b:nth-child(3) {
+  left: 22px;
+  background: var(--pixel-nota-3);
+  box-shadow: 4px -8px 0 -2px var(--pixel-nota-3);
+  animation-delay: 1.3s;
+}
+.esc-canto-vapor b {
+  position: absolute;
+  width: 3px;
+  height: 8px;
+  background: var(--pixel-vapor);
+  animation: esc-canto-vapor 1.4s infinite;
+}
+.esc-canto-vapor b:nth-child(2) {
+  left: 9px;
+  animation-delay: 0.6s;
+}
+.esc-fliper-tela {
+  animation: esc-pisca 0.45s steps(2) infinite;
+}
+.esc-livro {
+  width: 22px;
+  height: 14px;
+  border: 2px solid var(--pixel-contorno);
+  border-radius: 2px;
+  background: var(--pixel-livro);
+}
+.esc-pagina {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: 9px;
+  height: 12px;
+  border: 1px solid var(--pixel-contorno);
+  background: var(--pixel-tela-pintura);
+  transform-origin: 0 50%;
+  animation: esc-pagina 3.4s steps(6) infinite;
+}
+.esc-hobby-xadrez {
+  animation: esc-hobby-xadrez 9s ease-in-out infinite;
+}
+.esc-hobby-pintar {
+  animation: esc-hobby-pintar 6s ease-in-out infinite;
+}
+.esc-hobby-musica {
+  animation: esc-hobby-musica 1.6s ease-in-out infinite;
+}
+.esc-hobby-cafe {
+  animation: esc-hobby-cafe 10s ease-in-out infinite;
+}
+.esc-hobby-leitura {
+  animation: esc-hobby-respira 3.2s ease-in-out infinite;
+}
+.esc-hobby-fliperama {
+  animation: esc-hobby-fliperama 0.22s steps(2) infinite;
+}
+.esc-hobby-palavrasCruzadas {
+  animation: esc-hobby-respira 2.8s ease-in-out infinite;
+}
+.esc-hobby-blocos {
+  animation: esc-hobby-blocos 4s ease-in-out infinite;
+}
+.esc-hobby-plantas {
+  animation: esc-hobby-plantas 8s ease-in-out infinite;
+}
+.esc-hobby-cubo {
+  animation: esc-hobby-cubo 1.2s steps(2) infinite;
+}
+@keyframes esc-hobby-xadrez {
+  0%,
+  38% {
+    translate: 0 0;
+    scale: 1 1;
+  }
+  48%,
+  88% {
+    translate: 88px 0;
+    scale: -1 1;
+  }
+  98%,
+  100% {
+    translate: 0 0;
+    scale: 1 1;
+  }
+}
+@keyframes esc-hobby-pintar {
+  0%,
+  45% {
+    translate: 0 0;
+  }
+  55%,
+  75% {
+    translate: -20px 0;
+  }
+  85%,
+  100% {
+    translate: 0 0;
+  }
+}
+@keyframes esc-hobby-musica {
+  0%,
+  100% {
+    translate: -6px 0;
+    rotate: -7deg;
+  }
+  50% {
+    translate: 6px -5px;
+    rotate: 7deg;
+  }
+}
+@keyframes esc-hobby-cafe {
+  0%,
+  12% {
+    translate: 0 0;
+  }
+  30%,
+  60% {
+    translate: 30px -14px;
+  }
+  78%,
+  100% {
+    translate: 0 0;
+  }
+}
+@keyframes esc-hobby-respira {
+  50% {
+    translate: 0 -2px;
+  }
+}
+@keyframes esc-hobby-fliperama {
+  50% {
+    translate: 2px 0;
+  }
+}
+@keyframes esc-hobby-blocos {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 4px -2px;
+  }
+}
+@keyframes esc-hobby-plantas {
+  0%,
+  20% {
+    translate: 0 0;
+  }
+  40%,
+  60% {
+    translate: 14px -4px;
+  }
+  80%,
+  100% {
+    translate: 0 0;
+  }
+}
+@keyframes esc-hobby-cubo {
+  50% {
+    translate: 0 -2px;
+    rotate: -3deg;
+  }
+}
+@keyframes esc-peca {
+  0%,
+  30% {
+    translate: 0 0;
+  }
+  34% {
+    translate: 4px -8px;
+  }
+  38%,
+  80% {
+    translate: 9px 3px;
+  }
+  84% {
+    translate: 4px -8px;
+  }
+  88%,
+  100% {
+    translate: 0 0;
+  }
+}
+@keyframes esc-tinta {
+  0% {
+    width: 0;
+  }
+  60%,
+  100% {
+    width: var(--w);
+  }
+}
+@keyframes esc-gira-disco {
+  to {
+    rotate: 360deg;
+  }
+}
+@keyframes esc-nota {
+  0% {
+    translate: 0 8px;
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    translate: 6px -26px;
+    opacity: 0;
+  }
+}
+@keyframes esc-canto-vapor {
+  0% {
+    translate: 0 3px;
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    translate: 0 -6px;
+    opacity: 0;
+  }
+}
+@keyframes esc-pisca {
+  50% {
+    filter: brightness(1.6) hue-rotate(60deg);
+  }
+}
+@keyframes esc-pagina {
+  0%,
+  70% {
+    scale: 1 1;
+  }
+  85% {
+    scale: 0 1;
+  }
+  100% {
+    scale: -1 1;
   }
 }

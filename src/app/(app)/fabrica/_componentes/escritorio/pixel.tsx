@@ -6,7 +6,7 @@ import { s } from './classes'
 
 type Paleta = Record<string, string>
 
-const v = (nome: string) => `var(--pixel-${nome})`
+export const v = (nome: string) => `var(--pixel-${nome})`
 
 /** Desenha uma matriz de letras como pixels (um <rect> por pixel colorido), nítida em qualquer escala. */
 export function Sprite({
