@@ -178,7 +178,7 @@ function montarCena(agentes: Agente[], comemorando: Set<string>): Cena[] {
     if (agente.estado === 'chamando')
       return { ...base, destino: PORTA_DA_GESTAO, lugar: 'porta', sentado: false }
     const hobby = hobbyDoPapel(agente.papel)
-    if (agente.estado === 'livre' && canto && hobby)
+    if (agente.estado === 'livre' && !comemorando.has(agente.id) && canto && hobby)
       return { ...base, destino: soma(canto, POSE_DO_HOBBY[hobby]), lugar: 'canto', sentado: false }
     const naMesa = mesa ?? { x: AREAS[agente.area].x + 60, y: AREAS[agente.area].y + 62 }
     const sentado = SENTA.has(agente.estado) || comemorando.has(agente.id)

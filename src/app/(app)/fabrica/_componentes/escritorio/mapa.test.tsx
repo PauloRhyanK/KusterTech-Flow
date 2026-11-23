@@ -195,6 +195,8 @@ describe('mapa do escritório', () => {
     rerender(<Mapa {...props} andar={escritorioDeTeste(r).andares[0]!} />)
     const b = screen.getByRole('button', { name: /^frontend · kit-base/ })
     expect(b.getAttribute('data-comemorando')).toBe('true')
+    expect(b.getAttribute('data-lugar')).toBe('mesa')
+    expect(b.getAttribute('data-sentado')).toBe('true')
     expect(screen.getByText('✓', { selector: '.esc-balao' })).toBeInTheDocument()
     expect(document.querySelector('.esc-confete')).not.toBeNull()
   })
