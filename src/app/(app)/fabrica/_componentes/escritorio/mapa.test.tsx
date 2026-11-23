@@ -215,3 +215,16 @@ describe('mapa do escritório', () => {
     )
   })
 })
+
+describe('computador de quem não tem execução', () => {
+  test('botão da mesa fica desabilitado sem runId e habilitado com ele', () => {
+    const andar = escritorioDeTeste().andares[0]!
+    const agente = andar.agentes.find((a) => a.id === 'raia:kit-base')!
+    const { unmount } = renderizar(andar)
+    expect(screen.getByRole('button', { name: /computador de frontend · kit-base/ })).toBeEnabled()
+    unmount()
+    agente.runId = null
+    renderizar(andar)
+    expect(screen.getByRole('button', { name: /computador de frontend · kit-base/ })).toBeDisabled()
+  })
+})

@@ -778,6 +778,19 @@ body,
 .esc-agente[data-sentado='true'] > svg {
   clip-path: inset(0 0 24px 0);
 }
+/* comemorando: pulinhos dentro dos 2,5 s (a propriedade `translate` não mexe no transform que centraliza) */
+.esc-agente[data-comemorando='true'] {
+  animation: esc-pula 0.5s ease-out 5;
+}
+@keyframes esc-pula {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  40% {
+    translate: 0 -8px;
+  }
+}
 .esc-agente[data-estado='trabalhando'] > svg {
   animation: esc-digitar 0.35s steps(1) infinite;
 }
@@ -939,6 +952,14 @@ body,
   border: 0;
   background: transparent;
   cursor: zoom-in;
+  /* a caixa do botão é maior que a mesa e cobre quem está sentado: só o desenho recebe o clique */
+  pointer-events: none;
+}
+.esc-computador svg * {
+  pointer-events: visiblePainted;
+}
+.esc-computador:disabled {
+  cursor: default;
 }
 .esc-computador:hover,
 .esc-computador:focus-visible {

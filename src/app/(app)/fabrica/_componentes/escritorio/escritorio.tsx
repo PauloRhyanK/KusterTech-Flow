@@ -25,12 +25,15 @@ export interface EscritorioProps {
   tecnico: ReactNode
 }
 
+/** Guarda só as chaves: o conteúdo é lido do retrato atual a cada render, para a ficha não envelhecer. */
+type Escolha = { tipo: 'agente'; id: string } | { tipo: 'parte'; raia: string; fase: string } | null
+
 export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioProps) {
   const { andares, recepcao, formatoAntigo } = escritorio
   const primeiro =
     andares.find((a) => a.esperaPaulo)?.planoId ?? andares[andares.length - 1]?.planoId ?? null
   const [planoId, setPlanoId] = useState<string | null>(primeiro)
-  const [selecao, setSelecao] = useState<Selecao>(null)
+  const [selecao, setSelecao] = useState<Escolha>(null)
   const [tela, setTela] = useState<string | null>(null)
   const [gestaoAberta, setGestaoAberta] = useState(false)
   const [filtro, setFiltro] = useState<Grupo | null>(null)
@@ -41,15 +44,23 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
     null
 
   const agoraData = new Date(agora)
-  const agenteDaTela = andar?.agentes.find((a) => a.runId === tela) ?? null
+  const agenteDaTela = tela === null ? null : (andar?.agentes.find((a) => a.runId === tela) ?? null)
   const parteDaTela =
     andar?.fases.flatMap((f) => f.partes).find((p) => p.raia === agenteDaTela?.raia) ?? null
 
   const abrirParte = (raia: string) => {
     if (!andar) return
     const fase = andar.fases.find((f) => f.partes.some((p) => p.raia === raia))
-    const parte = fase?.partes.find((p) => p.raia === raia)
-    if (fase && parte) setSelecao({ tipo: 'parte', parte, fase: fase.id })
+    if (fase) setSelecao({ tipo: 'parte', raia, fase: fase.id })
+  }
+  let selecionado: Selecao = null
+  if (andar && selecao?.tipo === 'agente') {
+    const agente = andar.agentes.find((a) => a.id === selecao.id)
+    if (agente) selecionado = { tipo: 'agente', agente }
+  } else if (andar && selecao?.tipo === 'parte') {
+    const fase = andar.fases.find((f) => f.id === selecao.fase)
+    const parte = fase?.partes.find((p) => p.raia === selecao.raia)
+    if (parte) selecionado = { tipo: 'parte', parte, fase: selecao.fase }
   }
   // realce é o id do agente; o plano fala em raia. Quem não tem raia (papéis) não acende cartão.
   const raiaRealcada = andar?.agentes.find((a) => a.id === realce)?.raia ?? null
@@ -60,8 +71,7 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
         : (andar?.agentes.find((a) => a.raia === raia && a.papel !== 'fixer')?.id ?? null),
     )
   const abrirAgente = (id: string) => {
-    const agente = andar?.agentes.find((a) => a.id === id)
-    if (agente) setSelecao({ tipo: 'agente', agente })
+    if (andar?.agentes.some((a) => a.id === id)) setSelecao({ tipo: 'agente', id })
   }
 
   return (
@@ -118,6 +128,7 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
                 <span className="text-xs text-text-secondary">{textoDosTotais(andar.fases)}</span>
               </div>
               <Mapa
+                key={andar.planoId}
                 andar={andar}
                 onAbrirAgente={abrirAgente}
                 onAbrirTela={setTela}
@@ -129,7 +140,7 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
               />
               <PlanoDaEntrega
                 fases={andar.fases}
-                selecionada={selecao?.tipo === 'parte' ? selecao.parte.raia : null}
+                selecionada={selecionado?.tipo === 'parte' ? selecionado.parte.raia : null}
                 onSelecionar={abrirParte}
                 realcada={raiaRealcada}
                 onRealcar={realcarRaia}
@@ -143,7 +154,7 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
           )}
         </div>
         <aside className="rounded-padrao border border-border bg-surface p-4">
-          <Detalhe selecao={selecao} onAbrirTela={setTela} agora={agoraData} />
+          <Detalhe selecao={selecionado} onAbrirTela={setTela} agora={agoraData} />
         </aside>
       </div>
 

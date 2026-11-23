@@ -337,6 +337,7 @@ export function Mapa({
                 className={s.computador}
                 style={{ left: -32, top: -24 }}
                 aria-label={`computador de ${agente.nome}: ver a tela`}
+                disabled={agente.runId === null}
                 onClick={() => agente.runId !== null && onAbrirTela(agente.runId)}
               >
                 <Mesa estado={estadoDaMesa(agente)} />
