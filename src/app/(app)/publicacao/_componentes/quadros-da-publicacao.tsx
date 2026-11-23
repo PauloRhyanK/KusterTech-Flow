@@ -53,7 +53,7 @@ export function QuadrosDaPublicacao({ resumo }: { resumo: ResumoDaPublicacao }) 
           {subindo.n}
         </p>
       </Quadro>
-      <Quadro rotulo="Na fila" nota={naFila.m}>
+      <Quadro rotulo="Pronto para subir" nota={naFila.m}>
         <p className={NUMERO}>{naFila.n}</p>
       </Quadro>
       <Quadro rotulo="Lote desta noite" nota={lote.m}>
