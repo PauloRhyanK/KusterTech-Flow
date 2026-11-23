@@ -255,9 +255,33 @@ export function Mesa({ estado }: { estado: 'apagada' | 'acesa' | 'falha' }) {
       data-estado={estado}
     >
       {pixels}
-      <rect className={s.telaLinha} x={3} y={1} width={4} height={1} fill={v('tela-codigo-1')} />
-      <rect className={s.telaLinha} x={4} y={2} width={3} height={1} fill={v('tela-codigo-2')} />
-      <rect className={s.telaLinha} x={3} y={3} width={5} height={1} fill={v('tela-codigo-3')} />
+      <rect
+        className={s.telaLinha}
+        data-linha="1"
+        x={3}
+        y={1}
+        width={4}
+        height={1}
+        fill={v('tela-codigo-1')}
+      />
+      <rect
+        className={s.telaLinha}
+        data-linha="2"
+        x={4}
+        y={2}
+        width={3}
+        height={1}
+        fill={v('tela-codigo-2')}
+      />
+      <rect
+        className={s.telaLinha}
+        data-linha="3"
+        x={3}
+        y={3}
+        width={5}
+        height={1}
+        fill={v('tela-codigo-3')}
+      />
       {estado === 'falha' && (
         <>
           <rect x={5} y={1} width={2} height={2} fill={v('branco')} />

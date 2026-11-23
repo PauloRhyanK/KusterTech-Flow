@@ -826,10 +826,10 @@ body,
   opacity: 1;
   animation: esc-linha 1.6s steps(4) infinite;
 }
-.esc-mesa[data-estado='acesa'] .esc-tela-linha:nth-of-type(2) {
+.esc-mesa[data-estado='acesa'] .esc-tela-linha[data-linha='2'] {
   animation-delay: 0.4s;
 }
-.esc-mesa[data-estado='acesa'] .esc-tela-linha:nth-of-type(3) {
+.esc-mesa[data-estado='acesa'] .esc-tela-linha[data-linha='3'] {
   animation-delay: 0.8s;
 }
 .esc-mesa[data-estado='acesa'] .esc-vapor {
