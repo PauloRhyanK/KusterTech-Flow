@@ -9,6 +9,7 @@ export const s = {
   antena: 'esc-antena',
   area: 'esc-area',
   balao: 'esc-balao',
+  confete: 'esc-confete',
   barrinha: 'esc-barrinha',
   cadeira: 'esc-cadeira',
   caixa: 'esc-caixa',

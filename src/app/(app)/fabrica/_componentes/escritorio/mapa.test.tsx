@@ -186,4 +186,16 @@ describe('mapa do escritório', () => {
     expect(container.querySelectorAll('.esc-balao')).toHaveLength(1)
     expect(container.querySelector('.esc-balao')?.getAttribute('data-tom')).toBe('trabalhando')
   })
+
+  test('quem entrega comemora: ✓ e confete; o confete não aparece com movimento reduzido', () => {
+    const r = retratoDeTeste()
+    const { rerender, props } = renderizar()
+    r.planos[0]!.fases[1]!.raias[0]!.situacao = 'mergeada'
+    r.execucoes = []
+    rerender(<Mapa {...props} andar={escritorioDeTeste(r).andares[0]!} />)
+    const b = screen.getByRole('button', { name: /^frontend · kit-base/ })
+    expect(b.getAttribute('data-comemorando')).toBe('true')
+    expect(screen.getByText('✓', { selector: '.esc-balao' })).toBeInTheDocument()
+    expect(document.querySelector('.esc-confete')).not.toBeNull()
+  })
 })

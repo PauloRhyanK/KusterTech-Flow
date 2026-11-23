@@ -57,6 +57,7 @@ export function Personagem({
   sentado,
   hobby,
   esmaecido,
+  comemorando,
   entrada,
   onAbrir,
 }: {
@@ -67,6 +68,8 @@ export function Personagem({
   /** hobby do canto onde ele está; null fora do canto */
   hobby: Hobby | null
   esmaecido: boolean
+  /** acabou de entregar uma parte: ✓ no balão e confete */
+  comemorando: boolean
   /** de onde ele entra correndo (o conserto); null para quem já está no andar */
   entrada: Ponto | null
   onAbrir: () => void
@@ -80,8 +83,9 @@ export function Personagem({
     hobby && agente.estado === 'livre' ? CLASSE_DO_HOBBY[hobby] : null,
     andando ? s.andando : null,
   ]
-  const balao =
-    agente.balao === null
+  const balao = comemorando
+    ? '✓'
+    : agente.balao === null
       ? null
       : agente.estado === 'chamando'
         ? `✋ ${agente.balao}`
@@ -97,6 +101,7 @@ export function Personagem({
         data-lugar={lugar}
         data-sentado={sentado}
         data-esmaecido={esmaecido}
+        data-comemorando={comemorando ? 'true' : undefined}
         aria-label={texto ? `${agente.nome}: ${texto}` : agente.nome}
         onClick={onAbrir}
       >
@@ -106,11 +111,22 @@ export function Personagem({
         <span
           className={s.balao}
           style={{ left: ponto.x, top: ponto.y - ALTURA_DO_BALAO }}
-          data-tom={agente.estado === 'livre' ? undefined : agente.estado}
+          data-tom={comemorando ? 'ok' : agente.estado === 'livre' ? undefined : agente.estado}
           data-esmaecido={esmaecido}
           title={balao}
         >
           {balao}
+        </span>
+      )}
+      {comemorando && (
+        <span
+          className={s.confete}
+          style={{ left: ponto.x, top: ponto.y - ALTURA_DO_BALAO }}
+          aria-hidden
+        >
+          {Array.from({ length: 18 }, (_, i) => (
+            <i key={i} style={{ '--i': i } as React.CSSProperties} />
+          ))}
         </span>
       )}
     </>

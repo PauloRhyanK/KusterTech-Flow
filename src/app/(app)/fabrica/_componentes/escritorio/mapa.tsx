@@ -12,6 +12,7 @@ import {
   grupoDoEstado,
 } from '@/modules/fabrica/escritorio/model'
 import { s } from './classes'
+import { useComemoracao } from './comemoracao'
 import { CantoDoHobby, hobbyDoPapel, TAMANHO_DO_CANTO } from './hobbies'
 import {
   ALTURA,
@@ -161,7 +162,7 @@ interface Cena {
 }
 
 /** Onde cada agente fica agora, pelo estado: sentado, de pé na frente da mesa, no canto, na porta ou no conserto. */
-function montarCena(agentes: Agente[]): Cena[] {
+function montarCena(agentes: Agente[], comemorando: Set<string>): Cena[] {
   const lugares = lugaresDoAndar(agentes)
   return agentes.map((agente) => {
     const { mesa, canto } = lugares.get(agente.id) ?? { mesa: null, canto: null }
@@ -180,7 +181,7 @@ function montarCena(agentes: Agente[]): Cena[] {
     if (agente.estado === 'livre' && canto && hobby)
       return { ...base, destino: soma(canto, POSE_DO_HOBBY[hobby]), lugar: 'canto', sentado: false }
     const naMesa = mesa ?? { x: AREAS[agente.area].x + 60, y: AREAS[agente.area].y + 62 }
-    const sentado = SENTA.has(agente.estado)
+    const sentado = SENTA.has(agente.estado) || comemorando.has(agente.id)
     return {
       ...base,
       destino: soma(naMesa, sentado ? SENTADO : DE_PE),
@@ -230,7 +231,8 @@ export function Mapa({
   const escala = useEscala(palco)
   const andando = useEsteiraAndando(andar.caixas)
 
-  const cena = montarCena(andar.agentes)
+  const comemorando = useComemoracao(andar.agentes)
+  const cena = montarCena(andar.agentes, comemorando)
   // mesas com alguém na cadeira: quem trabalha nela ou o conserto da raia dela
   const ocupadas = new Set(
     cena.flatMap((c) =>
@@ -352,6 +354,7 @@ export function Mapa({
               sentado={sentado}
               hobby={hobby}
               esmaecido={esmaecido(agente)}
+              comemorando={comemorando.has(agente.id)}
               entrada={lugar === 'conserto' ? ENTRADA_DO_CONSERTO : null}
               onAbrir={() => onAbrirAgente(agente.id)}
             />
