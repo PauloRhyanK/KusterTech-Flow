@@ -320,3 +320,56 @@ describe('fonte de fixtures', () => {
     })
   })
 })
+
+describe('fonte de fixtures: Decidir', () => {
+  const portal = {
+    githubId: BigInt(5001),
+    instalacaoId: BigInt(900001),
+    nomeCompleto: 'kustertech-exemplo/portal',
+  }
+  const HEAD = 'a41c9e2' + '0123456789abcdef0123456789abcdef0'
+
+  test('lerIssue 41 traz o corpo com a linha PR; lerPullRequestParaMerge 412 aberto com dois arquivos', async () => {
+    const f = criarFonteFixtures()
+    const issue = await f.lerIssue(portal, 41)
+    expect(issue?.titulo).toBe('[fábrica] orquestrador: aprovar fase')
+    expect(issue?.corpo).toMatch(
+      /^PR: https:\/\/github\.com\/kustertech-exemplo\/portal\/pull\/412/,
+    )
+    expect((await f.lerIssue(portal, 42))?.titulo).toBe(
+      '[fábrica] orquestrador: pergunta para o Paulo',
+    )
+    expect(await f.lerIssue(portal, 7777)).toBeNull()
+    const pr = await f.lerPullRequestParaMerge(portal, 412)
+    expect(pr).toMatchObject({ estado: 'ABERTO', head: HEAD, repositorio: portal.nomeCompleto })
+    expect(pr?.arquivos).toEqual(['.fabrica/planos/cadastro.json', '.seeds/issues.jsonl'])
+    expect((await f.lerPullRequestParaMerge(portal, 413))?.arquivos).toContain('src/app/page.tsx')
+    expect((await f.listarChecks(portal, HEAD)).length).toBeGreaterThan(0)
+    expect(await f.lerStatusCombinado(portal, HEAD)).toBeNull()
+  })
+
+  test('mergear 412 com o head certo → mergeado e escrita registrada; outro head → head_mudou; 4998 → sem-permissao; issue 4999 → rede no fechamento', async () => {
+    const f = criarFonteFixtures()
+    expect(await f.mergearPullRequest(portal, 412, HEAD)).toEqual({ resultado: 'mergeado' })
+    expect(f.escritas).toContainEqual({
+      tipo: 'mergear',
+      repositorio: portal.nomeCompleto,
+      numero: 412,
+    })
+    expect(await f.mergearPullRequest(portal, 412, 'f'.repeat(40))).toEqual({
+      resultado: 'recusado',
+      motivo: 'head_mudou',
+    })
+    await expect(f.mergearPullRequest(portal, 4998, HEAD)).rejects.toMatchObject({
+      categoria: 'sem-permissao',
+    })
+    expect(await f.comentarEFecharIssue(portal, 41, 'ok', { jaComentado: false })).toEqual({
+      comentado: true,
+      fechada: true,
+    })
+    expect(f.escritas.map((e) => e.tipo)).toEqual(['mergear', 'comentar', 'fechar'])
+    await expect(
+      f.comentarEFecharIssue(portal, 4999, 'ok', { jaComentado: false }),
+    ).rejects.toMatchObject({ categoria: 'rede', progresso: { comentado: true } })
+  })
+})

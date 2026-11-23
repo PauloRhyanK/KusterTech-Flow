@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { obterSessao } from '@/lib/auth/sessao'
+import { modulosAtivos } from '@/lib/modulos'
+import { contarPilha } from '@/modules/decidir/queries'
 import { NavegacaoLateral } from './_shell/navegacao-lateral'
 import { BarraSuperior } from './_shell/barra-superior'
 
@@ -19,6 +21,11 @@ export default async function AppLayout({
     email: sessao.usuario.email,
   }
 
+  const ativos = [...modulosAtivos()]
+  // Sem permissão, sem o módulo ou com falha de leitura o menu fica sem número.
+  const naPilha = await contarPilha(sessao.sujeito, new Date())
+  const contadores = naPilha === null ? {} : { '/decidir': naPilha }
+
   return (
     <div className="min-h-screen bg-background text-text-primary md:grid md:grid-cols-[256px_1fr]">
       <a
@@ -28,10 +35,10 @@ export default async function AppLayout({
         Pular para o conteúdo
       </a>
 
-      <NavegacaoLateral usuario={usuario} />
+      <NavegacaoLateral usuario={usuario} modulosAtivos={ativos} contadores={contadores} />
 
       <div className="flex min-h-screen flex-col">
-        <BarraSuperior usuario={usuario} />
+        <BarraSuperior usuario={usuario} modulosAtivos={ativos} contadores={contadores} />
         <main id="conteudo" tabIndex={-1} className="flex-1 p-6 outline-none">
           {children}
         </main>

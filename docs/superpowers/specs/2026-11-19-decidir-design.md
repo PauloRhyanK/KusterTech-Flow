@@ -1,7 +1,7 @@
 # Decidir — desenho
 
 **Data:** 19/11/2026
-**Estado:** rascunho aguardando a revisão do Paulo
+**Estado:** aprovada pelo Paulo em 21/11/2026 (spec e desenho)
 **Desenho de referência:** [`desenhos/2026-11-18-base-enxuta/04-decidir-e-publicacao.html`](desenhos/2026-11-18-base-enxuta/04-decidir-e-publicacao.html), aba "Decidir"
 **Depende de:** Demandas (produto 3)
 
@@ -63,8 +63,8 @@ Um caso simples continua rápido: um toque na resposta sugerida leva direto ao c
 ## 5. Como a conversa funciona
 
 - O Flow guarda cada mensagem (autor, texto, anexos, hora) ligada ao item.
-- Um serviço leve na oficina, o **atendente**, busca no Flow as conversas com mensagem nova do Paulo, chama o agente e devolve a resposta. Enquanto houver conversa aberta, ele consulta a cada poucos segundos; sem conversa aberta, dorme.
-- A resposta chega à tela por atualização periódica da página enquanto ela está aberta.
+- Um serviço leve na oficina, o **atendente** (passo novo do coordenador da Fábrica, no padrão do kit), busca no Flow as conversas com mensagem nova do Paulo e, para cada réplica, despacha **um run no Warren** com o repositório do projeto em leitura e a conversa no prompt; devolve a resposta ao Flow. **Uma conversa com agente por vez** na oficina. Enquanto houver conversa aberta, consulta a cada poucos segundos; sem conversa aberta, dorme.
+- A resposta chega à tela por consulta a cada 2 segundos enquanto ela está aberta.
 - O agente tem acesso de leitura ao repositório do projeto e à demanda. Ele não muda código nem abre PR a partir da conversa: o resultado é o cartão, que o Paulo confirma.
 - O cartão é dado estruturado (destino, nível, escopo, resposta), validado pelo Flow. Texto livre do agente nunca vira ação.
 
@@ -75,7 +75,7 @@ Um caso simples continua rápido: um toque na resposta sugerida leva direto ao c
 | Demanda | grava tipo, destino, nível e escopo; a Fábrica busca no ciclo seguinte |
 | Desenho | aprova ou registra o pedido de ajuste |
 | Decisão da Fábrica | comenta e fecha a issue no GitHub, que é como a Fábrica recebe a resposta hoje |
-| Fim de fase | aprova o PR do orquestrador (ver "Em aberto") |
+| Fim de fase | aprova e **mergeia** o PR do orquestrador pela GitHub App, com as mesmas guardas da Fábrica (mesmo head conferido, CI verde quando houver, nunca caminho protegido sem o cartão dizer isso) |
 | Pedido de usuário | registra a resposta para quem pediu (entregue pelo produto 5) |
 
 Cada confirmação entra no histórico do item com autor e hora.
@@ -87,12 +87,12 @@ Módulo `decidir`.
 - `Conversa` (por item) e `Mensagem` (autor, texto, anexos, hora, id da mensagem para não duplicar).
 - `CartaoDeFecho` (conteúdo estruturado, confirmado em, por quem).
 - Anexos no mesmo volume e com os mesmos limites do produto Demandas.
-- Áudio: o arquivo é guardado e a transcrição entra como texto da mensagem, marcada como transcrição.
+- Áudio: fica para uma segunda entrega (decisão do Paulo em 21/11); nesta, a conversa aceita texto e imagem.
 
 ## 8. O que precisa mudar fora do Flow
 
 - **Oficina:** o serviço atendente (unit de usuário, no padrão do kit) e a forma de rodar o agente com o repositório do projeto.
-- **GitHub App:** permissão **Issues: escrita** para responder decisões, e o que for decidido para o fim de fase.
+- **GitHub App:** permissões **Issues: escrita** (responder decisões) e **Contents + Pull requests: escrita** (mergear o fim de fase pelo Flow, decisão do Paulo em 21/11). Ação do Paulo no GitHub, como foi com Actions.
 - **Memória da oficina:** uma conversa aberta ocupa o que uma raia ocuparia em pico menor. O atendente respeita o mesmo mínimo de memória livre da Fábrica.
 
 ## 9. Falhas e estados
@@ -115,10 +115,10 @@ A regra geral: sem o agente, o Paulo ainda decide. A conversa ajuda; não é o �
 - **Ponta a ponta:** com o atendente simulado: item simples resolvido com um toque; item com duas réplicas até o cartão; atendente parado e decisão sem o agente.
 - **Tela:** desenho aprovado antes, conferido no navegador depois (D74). Atenção ao pedido de pouco texto e hierarquia clara.
 
-## 11. Em aberto
+## 11. Respostas (antes "Em aberto")
 
-1. **Transcrição de áudio: quem faz?** Um modelo local pesa na oficina (8 GB). A alternativa é um serviço externo, o que exige decisão nova por causa de D70. A premissa é começar com texto e imagem, e áudio numa segunda entrega.
-2. **Fim de fase pelo Flow.** Aprovar significa mergear o PR do orquestrador pela GitHub App (Contents e Pull requests: escrita). É um poder grande para o Flow. A alternativa é o botão levar ao PR no GitHub.
-3. **Como o agente roda.** Uma execução por conversa no Warren, ou um processo do Claude Code mantido pelo atendente. Afeta custo, latência e memória.
-4. **Atualização da tela.** Consulta periódica (simples) ou canal aberto com o servidor (mais rápido, mais peso). A premissa é consulta a cada 2 segundos com a tela aberta.
-5. **Limite de conversas abertas ao mesmo tempo** na oficina. A premissa é uma.
+1. **Áudio:** texto e imagem nesta entrega; áudio depois.
+2. **Fim de fase:** o Flow aprova e mergeia o PR do orquestrador pela GitHub App (Paulo, 21/11), com as guardas da seção 6.
+3. **Agente:** um run no Warren por réplica.
+4. **Atualização da tela:** consulta a cada 2 segundos com a tela aberta.
+5. **Conversas abertas ao mesmo tempo:** uma.

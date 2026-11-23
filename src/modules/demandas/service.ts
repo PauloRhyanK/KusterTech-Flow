@@ -19,7 +19,7 @@ import {
   promoverParcial,
 } from './arquivos'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
-import { DESTINOS, NIVEIS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
+import { DESTINOS, NIVEIS, TIPOS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
   estadoInicial,
   validarModelo,
@@ -537,6 +537,8 @@ export async function registrarEvento(e: {
   em: Date
   usuarioId?: string
   fonteId?: string
+  /** Grava `Demanda.tipo` na mesma transação (a decisão do Paulo na triagem que falhou). */
+  tipo?: TipoDeDemanda
 }): Promise<ResultadoDoRegistro> {
   try {
     return await db.$transaction(async (tx): Promise<ResultadoDoRegistro> => {
@@ -598,6 +600,7 @@ export async function registrarEvento(e: {
         data: {
           ...colunasDoEstado(r.estado, estado, demanda.esperaDesde, agora),
           ...colunasDoEvento(e.evento, demanda),
+          ...(e.tipo ? { tipo: doFio.tipo(e.tipo) } : {}),
           ...(r.estado.encerrada === 'entregue' && !estado.encerrada ? { entregueEm: agora } : {}),
         },
       })
@@ -633,9 +636,11 @@ async function decisaoDoPaulo(
   sujeito: Sujeito,
   demandaId: string,
   evento: EventoAplicavel,
+  tipo?: TipoDeDemanda,
 ): Promise<void> {
   exigirPermissao(sujeito, 'projetos.gerenciar')
   const r = await registrarEvento({
+    tipo,
     demandaId,
     idExterno: randomUUID(),
     evento: { ...evento, ator: 'paulo' },
@@ -684,12 +689,35 @@ export async function decidirDestino(
   sujeito: Sujeito,
   demandaId: string,
   destino: Exclude<Destino, 'decisao_do_paulo'>,
+  extras: { nivel?: Nivel; tipo?: TipoDeDemanda; escopo?: string } = {},
 ): Promise<void> {
   exigirPermissao(sujeito, 'projetos.gerenciar')
   if (!DESTINOS.includes(destino) || (destino as Destino) === 'decisao_do_paulo') {
     throw new ErroDeDominio('Destino inválido.')
   }
-  await decisaoDoPaulo(sujeito, demandaId, { tipo: 'destino_decidido', dados: { destino } })
+  if (extras.nivel !== undefined && !NIVEIS.includes(extras.nivel)) {
+    throw new ErroDeDominio('Nível inválido.')
+  }
+  if (extras.tipo !== undefined && !TIPOS.includes(extras.tipo)) {
+    throw new ErroDeDominio('Tipo inválido.')
+  }
+  const escopo = extras.escopo?.trim()
+  if (extras.escopo !== undefined && (escopo!.length < 1 || escopo!.length > 500)) {
+    throw new ErroDeDominio('O escopo pode ter até 500 caracteres.')
+  }
+  await decisaoDoPaulo(
+    sujeito,
+    demandaId,
+    {
+      tipo: 'destino_decidido',
+      dados: {
+        destino,
+        ...(extras.nivel ? { nivel: extras.nivel } : {}),
+        ...(escopo ? { escopo } : {}),
+      },
+    },
+    extras.tipo,
+  )
 }
 
 export async function retomarDemanda(

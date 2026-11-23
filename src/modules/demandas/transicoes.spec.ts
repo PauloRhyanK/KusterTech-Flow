@@ -95,6 +95,26 @@ describe('destino_decidido', () => {
       'A demanda não espera uma decisão de destino.',
     )
   })
+  test('com nivel "vai_sozinho" numa demanda aprovar_desenho com tela: nivel trocado e recebida concluída sem espera', () => {
+    const base = est({ espera: 'decidir_destino', destino: 'decisao_do_paulo' }, 'aprovar_desenho')
+    const e = ok(
+      ap(
+        base,
+        {
+          tipo: 'destino_decidido',
+          dados: { destino: 'urgente', nivel: 'vai_sozinho', escopo: 'x' },
+        } as EventoAplicavel,
+        'paulo',
+      ),
+    )
+    expect(e.nivel).toBe('vai_sozinho')
+    expect(e.etapaAtual).toBe('planejada')
+    expect(e.espera).toBeNull()
+  })
+  test('sem nivel mantém o nível de antes (regressão)', () => {
+    const base = est({ espera: 'decidir_destino', destino: 'decisao_do_paulo' }, 'aprovar_desenho')
+    expect(ok(ap(base, decisao('urgente'), 'paulo')).nivel).toBe('aprovar_desenho')
+  })
   test('decide e conclui a recebida; orientada encerra', () => {
     const base = est({ espera: 'decidir_destino', destino: 'decisao_do_paulo' })
     const e = ok(ap(base, decisao('urgente'), 'paulo'))

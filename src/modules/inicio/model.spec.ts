@@ -9,6 +9,7 @@ import {
   ORDEM_DOS_TIPOS,
   ROTULO_DO_TIPO,
   agruparHomologacoes,
+  esperasComDecidir,
   esperasDaFabrica,
   esperasDasDemandas,
   esperasDaOficina,
@@ -116,6 +117,7 @@ function linha(extra: Partial<LinhaDeHomologacao> = {}): LinhaDeHomologacao {
 describe('tipos de espera', () => {
   it('ordem, rótulos e ação de leitura de cada tipo', () => {
     expect(ORDEM_DOS_TIPOS).toEqual([
+      'decidir',
       'decisao',
       'demanda',
       'plano-pausado',
@@ -128,6 +130,7 @@ describe('tipos de espera', () => {
       'divergencia',
     ])
     expect(ORDEM_DOS_TIPOS.map((t) => ROTULO_DO_TIPO[t])).toEqual([
+      'Decidir',
       'Decisão',
       'Demanda',
       'Plano pausado',
@@ -140,6 +143,7 @@ describe('tipos de espera', () => {
       'Divergência',
     ])
     expect(ACAO_DE_LEITURA).toEqual({
+      decidir: 'desenvolvimento.ler',
       decisao: 'desenvolvimento.ler',
       demanda: 'desenvolvimento.ler',
       'plano-pausado': 'desenvolvimento.ler',
@@ -682,8 +686,11 @@ describe('invariante 9', () => {
         pendenciaDeIntegracao(projeto, [{ estado, sincronizadoEm: null }]),
       ),
     ]
-    const presentes = todos.filter((p): p is ItemDeEspera => p !== null)
-    expect(presentes).toHaveLength(todos.length)
+    const presentes = [
+      ...todos.filter((p): p is ItemDeEspera => p !== null),
+      ...esperasComDecidir([], 2),
+    ]
+    expect(presentes).toHaveLength(todos.length + 1)
     expect(new Set(presentes.map((p) => p.tipo)).size).toBe(ORDEM_DOS_TIPOS.length)
     for (const p of presentes) {
       expect(p.tom).not.toBe('sucesso')
@@ -709,5 +716,51 @@ describe('indicadoresDeProjetos', () => {
       ['Projetos dos seus clientes', '2'],
       ['Homologações em andamento', '1'],
     ])
+  })
+})
+
+describe('esperasComDecidir', () => {
+  const itens = [
+    { ...item('decisao', 'decisao:p1:0', null), href: 'https://github.com/o/r/issues/1' },
+    { ...item('decisao', 'decisao:p1:1', null), href: 'https://github.com/o/r/issues/2' },
+    item('demanda', 'demanda:d1', minutosAntes(5)),
+    item('demanda', 'demanda:d2', minutosAntes(5)),
+    item('plano-pausado', 'plano-pausado:p1', null),
+    item('fabrica-sem-noticias', 'fabrica-sem-buscar-demandas', null),
+  ]
+
+  it('tira só as decisões e as demandas que a pilha conta; mantém avisos e o resto', () => {
+    const r = esperasComDecidir(itens, 3, {
+      demandas: new Set(['d1']),
+      decisoes: new Set(['https://github.com/o/r/issues/1']),
+    })
+    expect(r.map((i) => i.id)).toEqual([
+      'decisao:p1:1',
+      'demanda:d2',
+      'plano-pausado:p1',
+      'fabrica-sem-buscar-demandas',
+      'decidir',
+    ])
+    expect(r.at(-1)).toMatchObject({
+      tipo: 'decidir',
+      titulo: '3 itens esperam sua resposta',
+      href: '/decidir',
+      rotuloDoLink: 'Abrir Decidir',
+      tom: 'atencao',
+      externo: false,
+    })
+  })
+
+  it('um item usa o singular e pilha vazia não acrescenta nada', () => {
+    expect(esperasComDecidir([], 1)[0]?.titulo).toBe('1 item espera sua resposta')
+    expect(esperasComDecidir([], 0)).toEqual([])
+  })
+
+  it('o item do Decidir vem antes de tudo na ordem do Início', () => {
+    const r = montarEsperaVoce([
+      { tipo: 'plano-pausado', itens: [item('plano-pausado', 'p', null)] },
+      { tipo: 'decidir', itens: esperasComDecidir([], 2) },
+    ])
+    expect(r.itens.map((i) => i.id)).toEqual(['decidir', 'p'])
   })
 })

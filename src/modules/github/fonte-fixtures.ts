@@ -4,7 +4,9 @@ import {
   mapearDeployment,
   mapearExecucao,
   mapearIssue,
+  mapearPullParaMerge,
   mapearPullRequest,
+  mapearStatusCombinado,
   mapearRepositorio,
 } from './fonte'
 import type { ExecucaoDaFonte, FonteGitHub, RefRepositorio } from './fonte'
@@ -22,6 +24,7 @@ import pulls_portal from './fixtures/kustertech-exemplo__portal/pulls.json'
 import deployments_portal from './fixtures/kustertech-exemplo__portal/deployments.json'
 import statuses_portal from './fixtures/kustertech-exemplo__portal/deployment-statuses.json'
 import comparacoes_portal from './fixtures/kustertech-exemplo__portal/comparacoes.json'
+import decidir_portal from './fixtures/kustertech-exemplo__portal/decidir.json'
 import cabeca_portal from './fixtures/kustertech-exemplo__portal/cabeca.json'
 import execucoes_portal from './fixtures/kustertech-exemplo__portal/execucoes.json'
 import logs_portal from './fixtures/kustertech-exemplo__portal/logs.json'
@@ -143,7 +146,11 @@ function desdeFiltro<T extends { updated_at: string }>(itens: T[], desde: Date |
 }
 
 export type EscritaDaFonte =
-  | { tipo: 'reabrir' | 'criar'; repositorio: string; numero: number }
+  | {
+      tipo: 'reabrir' | 'criar' | 'comentar' | 'fechar' | 'mergear'
+      repositorio: string
+      numero: number
+    }
   | { tipo: 'disparar'; repositorio: string; workflow: string; commit: string }
 
 export interface ExecucaoRegistrada {
@@ -160,10 +167,28 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
   readonly escritas: readonly EscritaDaFonte[]
   registrarExecucao(repositorio: string, execucao: ExecucaoRegistrada): void
   registrarLog(repositorio: string, execucaoId: bigint, texto: string): void
+  /** Um comentário que já está na issue (postado antes de o processo cair). */
+  registrarComentario(repositorio: string, numero: number, corpo: string): void
 } {
   const escritas: EscritaDaFonte[] = []
+  const decidir = decidir_portal as unknown as {
+    issues: { number: number }[]
+    pulls: { pull: { number: number; head: { sha: string } }; files: unknown[] }[]
+    checks: Record<string, unknown[]>
+  }
+  const pullDaFixture = (repo: RefRepositorio, numero: number) => {
+    dados(repo)
+    return repo.nomeCompleto === 'kustertech-exemplo/portal'
+      ? decidir.pulls.find((p) => p.pull.number === numero)
+      : undefined
+  }
   const extras = new Map<string, ExecucaoDaFonte[]>()
   const logsExtras = new Map<string, string>()
+  const comentarios = new Map<string, string[]>()
+  const comentar = (repositorio: string, numero: number, corpo: string) => {
+    const chave = `${repositorio}#${numero}`
+    comentarios.set(chave, [...(comentarios.get(chave) ?? []), corpo])
+  }
   let contador = 0
 
   const execucoesDe = (repo: RefRepositorio): ExecucaoDaFonte[] => [
@@ -198,6 +223,9 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
     registrarLog(repositorio, execucaoId, texto) {
       logsExtras.set(`${repositorio}#${execucaoId}`, texto)
     },
+    registrarComentario(repositorio, numero, corpo) {
+      comentar(repositorio, numero, corpo)
+    },
     async listarRepositorios() {
       const instalacaoId = BigInt(instalacoes[0]!.id)
       return repositorios.repositories.map((r) => mapearRepositorio(r, instalacaoId))
@@ -212,7 +240,8 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
     },
     async listarChecks(repo, sha) {
       dados(repo)
-      return (CHECKS_POR_SHA[sha]?.check_runs ?? []).map(mapearCheck)
+      const brutos = CHECKS_POR_SHA[sha]?.check_runs ?? decidir.checks[sha] ?? []
+      return brutos.map(mapearCheck)
     },
     async listarDeployments(repo, desde) {
       const d = dados(repo)
@@ -273,6 +302,56 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
       }
       escritas.push({ tipo: 'reabrir', repositorio: repo.nomeCompleto, numero })
       return { ...issue, estado: 'ABERTA', fechadaEm: null, atualizadaEm: relogio() }
+    },
+    async lerIssue(repo, numero) {
+      const d = dados(repo)
+      const bruto =
+        (d.issues as { number: number }[]).find((i) => i.number === numero) ??
+        (repo.nomeCompleto === 'kustertech-exemplo/portal'
+          ? decidir.issues.find((i) => i.number === numero)
+          : undefined)
+      return bruto ? mapearIssue(bruto) : null
+    },
+    async listarComentariosDaIssue(repo, numero) {
+      dados(repo)
+      return (comentarios.get(`${repo.nomeCompleto}#${numero}`) ?? []).map((corpo, i) => ({
+        id: BigInt(i + 1),
+        corpo,
+      }))
+    },
+    async comentarEFecharIssue(repo, numero, comentario, opcoes) {
+      dados(repo)
+      if (!opcoes.jaComentado) {
+        escritas.push({ tipo: 'comentar', repositorio: repo.nomeCompleto, numero })
+        comentar(repo.nomeCompleto, numero, comentario)
+      }
+      if (numero === 4999) {
+        throw new ErroDeIntegracao('rede', undefined, { comentado: true })
+      }
+      escritas.push({ tipo: 'fechar', repositorio: repo.nomeCompleto, numero })
+      return { comentado: true, fechada: true }
+    },
+    async lerPullRequestParaMerge(repo, numero) {
+      const p = pullDaFixture(repo, numero)
+      return p ? mapearPullParaMerge(p.pull, p.files) : null
+    },
+    async lerStatusCombinado(repo) {
+      dados(repo)
+      return mapearStatusCombinado({ state: 'success', total_count: 0 })
+    },
+    async mergearPullRequest(repo, numero, head) {
+      const p = pullDaFixture(repo, numero)
+      if (!p) {
+        throw new ErroDeIntegracao('sem-acesso')
+      }
+      if (numero === 4998) {
+        throw new ErroDeIntegracao('sem-permissao')
+      }
+      if (p.pull.head.sha !== head) {
+        return { resultado: 'recusado', motivo: 'head_mudou' }
+      }
+      escritas.push({ tipo: 'mergear', repositorio: repo.nomeCompleto, numero })
+      return { resultado: 'mergeado' }
     },
     async criarIssue(repo) {
       dados(repo)

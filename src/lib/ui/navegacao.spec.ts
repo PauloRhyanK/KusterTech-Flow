@@ -6,13 +6,14 @@ import {
   FolderKanban,
   Inbox,
   LayoutDashboard,
+  MessageSquareMore,
   Rocket,
   Server,
   Settings,
 } from 'lucide-react'
 
 describe('navegacao', () => {
-  it('grupo Trabalho: Início, Demandas, Publicação, Fábrica; Cadastro com os itens e hrefs na ordem', () => {
+  it('grupo Trabalho: Início, Decidir, Demandas, Publicação, Fábrica; Cadastro com os itens e hrefs na ordem', () => {
     expect(
       GRUPOS_DE_NAVEGACAO.map((g) => [g.rotulo, g.itens.map((i) => [i.rotulo, i.href])]),
     ).toEqual([
@@ -20,6 +21,7 @@ describe('navegacao', () => {
         'Trabalho',
         [
           ['Início', '/'],
+          ['Decidir', '/decidir'],
           ['Demandas', '/demandas'],
           ['Publicação', '/publicacao'],
           ['Fábrica', '/fabrica'],
@@ -37,6 +39,7 @@ describe('navegacao', () => {
     const itens = GRUPOS_DE_NAVEGACAO.flatMap((g) => g.itens)
     expect(itens.map((i) => i.icone)).toEqual([
       LayoutDashboard,
+      MessageSquareMore,
       Inbox,
       Rocket,
       Bot,

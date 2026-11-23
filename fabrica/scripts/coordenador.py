@@ -23,7 +23,9 @@ Roda como `fabrica-fila.service`, um laço a cada 60 s. Cada ciclo faz, nesta or
 6. com `FABRICA_CENTRAL_URL`, cuida das demandas do Flow (`demandas.passo` e depois `demandas.esvaziar_saida`):
    busca, triagem, plano, desenho, acompanhamento do plano na fila, teste no navegador e entrega (com o pedido de
    publicação, se houver `FABRICA_PUBLICACAO_TOKEN_FILE`). Uma falha aqui vira um aviso e nunca muda a fila nem
-   para o ciclo; os planos de demanda saem do pedido de publicação por seed;
+   para o ciclo; os planos de demanda saem do pedido de publicação por seed. Logo depois, o atendente do Decidir
+   (`atendente.passo`): uma conversa por vez, um run por réplica, a resposta devolvida ao Flow. Entre os ciclos,
+   enquanto há conversa ativa (`atendente.ativo`), só o atendente roda de novo, a cada `INTERVALO_DO_ATENDENTE_S`;
 7. refaz, a partir do `estado.json`, as vagas e a trava de cada plano ocupando (`ativo`, `pausado`) sem unit
    rodando, e limpa as reservas, travas e esperas de quem não está mais ocupando (nem de um conserto nem de uma
    demanda em curso: `demanda:<id>` segura a trava do plano e a vaga do desenho, do teste e da correção);
@@ -55,8 +57,10 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import atendente  # noqa: E402
 import capacidade  # noqa: E402
 import consertos  # noqa: E402
+import conversas_flow  # noqa: E402
 import demandas  # noqa: E402
 import demandas_flow  # noqa: E402
 import despachante  # noqa: E402
@@ -347,6 +351,7 @@ class Coordenador:
         enviar=None,
         pedir_publicacao=None,
         cliente_do_flow=None,
+        cliente_das_conversas=None,
     ):
         self.raiz = pathlib.Path(raiz)
         self.forja = forja
@@ -372,6 +377,7 @@ class Coordenador:
         self._enviar = enviar or retrato.enviar
         self._pedir_publicacao = pedir_publicacao or publicar.pedir
         self._cliente_do_flow = cliente_do_flow or demandas_flow.ClienteDoFlow  # (url da Central, token_file) → cliente
+        self._cliente_das_conversas = cliente_das_conversas or conversas_flow.ClienteDasConversas  # idem, rotas do Decidir
         self._ciclos = 0
         self._ultimo_preparo = None
         self._sha_revertido = None
@@ -776,12 +782,38 @@ class Coordenador:
                 feitos += 1
                 if ciclos is not None and feitos >= ciclos:
                     break
-                dormir(intervalo)
+                self._esperar(intervalo, dormir)
         finally:
             # parado de vez, ninguém soltaria a drenagem; o próximo coordenador a refaz a partir do disco
             with contextlib.suppress(Exception):
                 if capacidade.ler(self.capacidade).get("drenagem"):
                     capacidade.definir_drenagem(self.capacidade, None)
+
+    def _esperar(self, intervalo: int, dormir, relogio=time.monotonic) -> None:
+        """O intervalo entre ciclos: com conversa ativa, o atendente roda a cada `INTERVALO_DO_ATENDENTE_S`.
+
+        Conta o tempo dormido mais o gasto nos passos (em segundos inteiros): um passo lento ao Flow não estica o
+        ciclo. Sem conversa ativa, dorme o resto do intervalo de uma vez. Só o atendente roda aqui: demandas,
+        consertos, publicação, órfãos e o retrato esperam o ciclo seguinte, no horário de sempre.
+        """
+        passado = 0
+        while passado < intervalo:
+            restante = intervalo - passado
+            if not self._atendente_ativo():
+                dormir(restante)
+                return
+            pausa = min(atendente.INTERVALO_DO_ATENDENTE_S, restante)
+            dormir(pausa)
+            antes = relogio()
+            self._passo_atendente()
+            passado += pausa + int(max(0, relogio() - antes))
+
+    def _atendente_ativo(self) -> bool:
+        """Conversa ativa com o atendente ligado? Nunca levanta (um estado torto vale "não")."""
+        try:
+            return bool((self.central or {}).get("url")) and atendente.ativo(self.dados, self._agora())
+        except Exception:  # noqa: BLE001
+            return False
 
     def ciclo(self) -> list[dict]:
         """Os passos, nesta ordem. Devolve os eventos do ciclo.
@@ -807,6 +839,7 @@ class Coordenador:
             self._passo_fila(config, descobertos, falhos, eventos)
             rodando, confiavel = self._passo_observar(eventos)
             self._passo_demandas()
+            self._passo_atendente()
             self._passo_publicar()
             self._passo_orfaos(rodando, confiavel, eventos)
         finally:
@@ -1061,6 +1094,68 @@ class Coordenador:
                 else:
                     self._log(evento)
             self._salvar()
+
+    def _passo_atendente(self) -> None:
+        """O atendente do Decidir (`atendente.passo`), no ciclo e entre os ciclos. Nunca levanta nem muda a fila.
+
+        Só com `FABRICA_CENTRAL_URL` e um `fila.json` já lido (entre ciclos, o do último ciclo). Os avisos vão pelo
+        `_aviso`; os de situação (memória, drenagem, modelo, Flow sem a rota, envio que não chega, passo que
+        falhou) saem das chaves quando a situação some, e os de episódio (PR aberto, recusa) quando não se repetem:
+        um episódio seguinte avisa de novo. Os erros vão ao log pelo `_log_repetivel`; uma exceção inesperada do
+        passo (do cliente, da busca, do motor) vira também o aviso `atendente:passo`, que o passo bom esquece.
+        """
+        central = self.central or {}
+        if self._config is None or not central.get("url"):
+            return
+        with contextlib.suppress(Exception):
+            modelos, mem, falhou = {}, None, False
+            try:
+                modelos = self._modelos_do_kit()
+                mem = capacidade.mem_disponivel_mb()
+                cliente = self._cliente_das_conversas(central["url"], central.get("token_file"))
+                eventos = atendente.passo(
+                    self.dados,
+                    cliente=cliente,
+                    motor=self.motor,
+                    capacidade_path=self.capacidade,
+                    projetos={r["repo"].lower(): r["projeto"] for r in self._config["repos"]},
+                    modelos=modelos,
+                    agora=self._agora(),
+                    mem_disponivel_mb=mem,
+                    salvar=self._salvar,
+                )
+            except Exception as exc:  # noqa: BLE001 - só a classe no aviso; o texto vai ao log, sem segredo
+                self._erro_de_etapa("atendente", "passo", exc)
+                self._aviso("atendente:passo", "Atendente: o passo falhou (%s); tento de novo no próximo passo" % type(exc).__name__)
+                eventos, falhou = [], True
+            for evento in eventos:
+                if evento.get("evento") == "aviso":
+                    self._aviso(evento["chave"], evento["mensagem"])
+                elif evento.get("evento") == "erro":
+                    self._log_repetivel("atendente:%s" % evento.get("alvo"), evento)
+                else:
+                    self._log(evento)
+            self._esquecer_avisos_do_atendente({e.get("chave") for e in eventos if e.get("evento") == "aviso"}, modelos, mem, falhou)
+            self._salvar()
+
+    def _esquecer_avisos_do_atendente(self, emitidos: set, modelos: dict, mem, falhou: bool = False) -> None:
+        sec = atendente.secao(self.dados)
+        try:
+            cap = capacidade.ler(self.capacidade)
+        except Exception:  # noqa: BLE001 - sem a capacidade, os avisos dela ficam
+            cap = None
+        atual = sec["atual"]
+        resolvidos = {
+            "atendente:modelo": atendente._modelo(modelos) is not None,
+            "atendente:drenagem": cap is not None and not cap.get("drenagem"),
+            "atendente:memoria": cap is not None and (mem is None or mem >= (cap.get("ramMinimaMb") or 0)),
+            "atendente:sem-rota": sec["semRotaEm"] is None,
+            "atendente:envio": atual is None or not atual.get("falhasDeEnvio"),
+            "atendente:passo": not falhou,
+        }
+        for chave in [c for c in self.dados["chaves"] if c.startswith("atendente:") and c not in emitidos]:
+            if resolvidos.get(chave, True):  # PR aberto e recusa: avisos de um episódio só
+                self._esquecer(chave)
 
     def _falha_das_demandas(self, etapa: str, exc: BaseException) -> None:
         """`etapa`: `passo` (busca e fases) ou `saida` (a caixa de saída); cada uma com o seu aviso."""
@@ -1611,6 +1706,18 @@ def _linha_das_demandas(dados: dict, central) -> str:
     return "demandas: %d em curso (%d esperando o Paulo), cursor %s" % (len(itens), sum(1 for it in itens if esperando(it)), sec.get("cursor"))
 
 
+def _linha_do_atendente(dados: dict, central) -> str:
+    if not central:
+        return "atendente: desligado"
+    sec = dados.get("atendente") if isinstance(dados.get("atendente"), dict) else {}
+    if isinstance(sec.get("semRotaEm"), str) and sec["semRotaEm"]:
+        return "atendente: Flow sem o Decidir (tenta de novo 1 h depois de %s)" % sec["semRotaEm"]
+    atual = atendente._atual_valido(sec.get("atual"))
+    if atual is None:
+        return "atendente: ocioso"
+    return "atendente: conversa %s, %s (tentativa %s)" % (atual["conversaId"][:8], atual["fase"], atendente._contagem(atual.get("tentativa")))
+
+
 def status(raiz, central=None) -> str:
     raiz = pathlib.Path(raiz)
     linhas = []
@@ -1650,6 +1757,7 @@ def status(raiz, central=None) -> str:
     else:
         linhas.append("envio à Central: desligado (defina %s e %s em coordenador.env)" % (VARIAVEL_CENTRAL_URL, VARIAVEL_CENTRAL_TOKEN))
     linhas.append(_linha_das_demandas(dados, central))
+    linhas.append(_linha_do_atendente(dados, central))
     avisos = [a for a in dados["avisos"] if isinstance(a, dict)][-AVISOS_NO_STATUS:]
     linhas.append("avisos:" if avisos else "avisos: nenhum")
     linhas.extend("  - [%s] %s" % (a.get("em"), a.get("mensagem")) for a in avisos)

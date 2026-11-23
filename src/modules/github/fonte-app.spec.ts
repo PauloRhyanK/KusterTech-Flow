@@ -320,6 +320,48 @@ describe('categorias de falha', () => {
     ).toBe('resposta-invalida')
   })
 
+  test('fetch que não responde estoura o teto da chamada → rede (transitória), com o signal em cada chamada', async () => {
+    const sinais: (AbortSignal | null | undefined)[] = []
+    const fonte = criarFonteApp(
+      { appId: '1', chavePrivada: privateKey, apiUrl: API },
+      ((_entrada: string | URL | Request, init?: RequestInit) => {
+        sinais.push(init?.signal)
+        // Só o signal encerra a espera, como um GitHub que nunca responde.
+        return new Promise<Response>((_resolver, rejeitar) => {
+          init?.signal?.addEventListener('abort', () => rejeitar(init.signal!.reason))
+        })
+      }) as typeof fetch,
+      () => AGORA,
+      20,
+    )
+    const e = await fonte.listarIssuesAtualizadas(repo, null).catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(ErroDeIntegracao)
+    expect((e as ErroDeIntegracao).categoria).toBe('rede')
+    expect(sinais).toHaveLength(1)
+    expect(sinais[0]).toBeInstanceOf(AbortSignal)
+  })
+
+  test('corpo que estoura o teto no meio da leitura → rede, não resposta-invalida', async () => {
+    const lento = criarFonteApp(
+      { appId: '1', chavePrivada: privateKey, apiUrl: API },
+      (async (entrada: string | URL | Request, init?: RequestInit) => {
+        if (String(entrada).endsWith('/access_tokens')) {
+          return json({ status: 201, corpo: { token: TOKEN, expires_at: '2026-10-26T16:00:00Z' } })
+        }
+        const corpo = new ReadableStream<Uint8Array>({
+          start(c) {
+            init?.signal?.addEventListener('abort', () => c.error(init.signal!.reason))
+          },
+        })
+        return new Response(corpo, { status: 200 })
+      }) as typeof fetch,
+      () => AGORA,
+      20,
+    )
+    const e = await lento.lerIssue(repo, 42).catch((x: unknown) => x)
+    expect((e as ErroDeIntegracao).categoria).toBe('rede')
+  })
+
   test('nenhuma mensagem de erro contém o token, o JWT ou o corpo da resposta', async () => {
     const CORPO = 'CORPO-SECRETO-DA-RESPOSTA'
     const casos = await Promise.all([
@@ -774,5 +816,159 @@ describe('publicação: cabeça, disparo, execuções e log', () => {
       [`GET ${R}/actions/runs/77/jobs`]: { corpo: { jobs: [{ id: 1, conclusion: 'success' }] } },
     })
     expect(await fonte.lerFimDoLog(repo, BigInt(77), 4000)).toBe('')
+  })
+})
+
+describe('Decidir: issue, PR, status e merge', () => {
+  const R = '/repos/kustertech-exemplo/portal'
+  const HEAD = 'a41c9e2'.padEnd(40, '0')
+  const pull = (extra: Record<string, unknown> = {}) => ({
+    state: 'open',
+    merged: false,
+    html_url: 'https://github.com/kustertech-exemplo/portal/pull/412',
+    changed_files: 3,
+    head: { sha: HEAD, repo: { full_name: 'fork-exemplo/portal' } },
+    base: { ref: 'main', repo: { full_name: 'kustertech-exemplo/portal' } },
+    ...extra,
+  })
+
+  test('comentarEFecharIssue: POST comments com o corpo e PATCH state closed; com jaComentado só o PATCH', async () => {
+    const rotas = {
+      [TOKEN_PATH]: tokenRota(),
+      [`POST ${R}/issues/41/comments`]: { status: 201, corpo: { id: 1 } },
+      [`PATCH ${R}/issues/41`]: { corpo: {} },
+    }
+    const a = criar(rotas)
+    expect(await a.fonte.comentarEFecharIssue(repo, 41, 'Feito.', { jaComentado: false })).toEqual({
+      comentado: true,
+      fechada: true,
+    })
+    const post = a.chamadas.find((c) => c.metodo === 'POST' && c.url.pathname.endsWith('comments'))!
+    expect(JSON.parse(post.corpo!)).toEqual({ body: 'Feito.' })
+    const patch = a.chamadas.find((c) => c.metodo === 'PATCH')!
+    expect(JSON.parse(patch.corpo!)).toEqual({ state: 'closed', state_reason: 'completed' })
+    const b = criar(rotas)
+    await b.fonte.comentarEFecharIssue(repo, 41, 'Feito.', { jaComentado: true })
+    expect(b.chamadas.some((c) => c.url.pathname.endsWith('comments'))).toBe(false)
+    expect(b.chamadas.some((c) => c.metodo === 'PATCH')).toBe(true)
+  })
+
+  test('comentarEFecharIssue: PATCH 500 depois do comentário → ErroDeIntegracao rede com progresso.comentado true', async () => {
+    const { fonte } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`POST ${R}/issues/41/comments`]: { status: 201, corpo: { id: 1 } },
+      [`PATCH ${R}/issues/41`]: { status: 500 },
+    })
+    const erro = await fonte
+      .comentarEFecharIssue(repo, 41, 'Feito.', { jaComentado: false })
+      .catch((e: unknown) => e)
+    expect(erro).toBeInstanceOf(ErroDeIntegracao)
+    expect(erro).toMatchObject({ categoria: 'rede', progresso: { comentado: true } })
+  })
+
+  test('mergearPullRequest manda PUT com sha e merge_method merge; 200 mergeado; 409 head_mudou; 405 e 422 nao_mergeavel', async () => {
+    const chave = `PUT ${R}/pulls/412/merge`
+    const casos: [number, unknown][] = [
+      [200, { resultado: 'mergeado' }],
+      [409, { resultado: 'recusado', motivo: 'head_mudou' }],
+      [405, { resultado: 'recusado', motivo: 'nao_mergeavel' }],
+      [422, { resultado: 'recusado', motivo: 'nao_mergeavel' }],
+    ]
+    for (const [status, esperado] of casos) {
+      const { fonte, chamadas } = criar({ [TOKEN_PATH]: tokenRota(), [chave]: { status } })
+      expect(await fonte.mergearPullRequest(repo, 412, HEAD)).toEqual(esperado)
+      const put = chamadas.find((c) => c.metodo === 'PUT')!
+      expect(JSON.parse(put.corpo!)).toEqual({ sha: HEAD, merge_method: 'merge' })
+    }
+  })
+
+  test('403 "Resource not accessible by integration" no PUT ou no POST → categoria sem-permissao com a mensagem da GitHub App', async () => {
+    const negado = { status: 403, corpo: { message: 'Resource not accessible by integration' } }
+    const { fonte } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`PUT ${R}/pulls/412/merge`]: negado,
+      [`POST ${R}/issues/41/comments`]: negado,
+    })
+    const a = await fonte.mergearPullRequest(repo, 412, HEAD).catch((e: unknown) => e)
+    const b = await fonte
+      .comentarEFecharIssue(repo, 41, 'x', { jaComentado: false })
+      .catch((e: unknown) => e)
+    for (const e of [a, b]) {
+      expect(e).toMatchObject({ categoria: 'sem-permissao' })
+      expect((e as Error).message).toContain('Issues, Contents e Pull requests')
+    }
+  })
+
+  test('403 sem o texto da App continua sem-acesso', async () => {
+    const { fonte } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`PUT ${R}/pulls/412/merge`]: { status: 403, corpo: { message: 'Forbidden' } },
+    })
+    await expect(fonte.mergearPullRequest(repo, 412, HEAD)).rejects.toMatchObject({
+      categoria: 'sem-acesso',
+    })
+  })
+
+  test('lerPullRequestParaMerge junta filename e previous_filename de duas páginas e confere changed_files', async () => {
+    const pagina1 = Array.from({ length: 100 }, (_, i) => ({ filename: `src/a${i}.ts` }))
+    const { fonte, chamadas } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`GET ${R}/pulls/412`]: { corpo: pull({ changed_files: 102 }) },
+      [`GET ${R}/pulls/412/files`]: (c) =>
+        c.url.searchParams.get('page') === '2'
+          ? {
+              corpo: [
+                { filename: 'src/novo.ts', previous_filename: 'src/antigo.ts' },
+                { filename: 'src/b.ts' },
+              ],
+            }
+          : {
+              corpo: pagina1,
+              cabecalhos: { link: `<${API}${R}/pulls/412/files?per_page=100&page=2>; rel="next"` },
+            },
+    })
+    const r = await fonte.lerPullRequestParaMerge(repo, 412)
+    expect(r).toMatchObject({
+      repositorio: 'kustertech-exemplo/portal',
+      estado: 'ABERTO',
+      head: HEAD,
+      base: 'main',
+    })
+    expect(r!.arquivos).toHaveLength(103)
+    expect(r!.arquivos).toContain('src/antigo.ts')
+    expect(r!.arquivos).toContain('src/novo.ts')
+    expect(chamadas.filter((c) => c.url.pathname.endsWith('/files'))).toHaveLength(2)
+  })
+
+  test('lerPullRequestParaMerge: lista menor que changed_files (truncada) → resposta-invalida; 404 → null', async () => {
+    const { fonte } = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [`GET ${R}/pulls/412`]: { corpo: pull({ changed_files: 3 }) },
+      [`GET ${R}/pulls/412/files`]: { corpo: [{ filename: 'a' }, { filename: 'b' }] },
+    })
+    await expect(fonte.lerPullRequestParaMerge(repo, 412)).rejects.toMatchObject({
+      categoria: 'resposta-invalida',
+    })
+    const { fonte: f2 } = criar({ [TOKEN_PATH]: tokenRota() })
+    expect(await f2.lerPullRequestParaMerge(repo, 412)).toBeNull()
+  })
+
+  test('lerStatusCombinado: total_count 0 → null; state failure → "failure"', async () => {
+    const caminho = `GET ${R}/commits/${HEAD}/status`
+    const a = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [caminho]: { corpo: { state: 'pending', total_count: 0 } },
+    })
+    expect(await a.fonte.lerStatusCombinado(repo, HEAD)).toBeNull()
+    const b = criar({
+      [TOKEN_PATH]: tokenRota(),
+      [caminho]: { corpo: { state: 'failure', total_count: 2 } },
+    })
+    expect(await b.fonte.lerStatusCombinado(repo, HEAD)).toBe('failure')
+  })
+
+  test('lerIssue: 404 → null', async () => {
+    const { fonte } = criar({ [TOKEN_PATH]: tokenRota() })
+    expect(await fonte.lerIssue(repo, 41)).toBeNull()
   })
 })

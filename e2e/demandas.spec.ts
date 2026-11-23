@@ -505,19 +505,29 @@ test('Fábrica simulada: etapa_concluida desenvolvida, duas capturas (desktop e 
   await capturar(page, testInfo.project.name, 'entregue')
 })
 
-test('Início mostra "Aprovar o desenho de …" enquanto espera e some depois de aprovar', async ({
+// Com o Decidir ativo, o desenho a aprovar entra na pilha: o Início conta o item no resumo do
+// Decidir (sem a linha própria) e a conta cai depois de aprovar.
+async function itensNoDecidir(page: Page): Promise<number> {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1, name: 'Início' })).toBeVisible()
+  await expect(page.getByText(`Aprovar o desenho de ${TITULO}`)).toHaveCount(0)
+  const resumo = page.getByText(/^\d+ (itens esperam|item espera) sua resposta$/)
+  if ((await resumo.count()) === 0) return 0
+  return Number((await resumo.textContent())!.split(' ')[0])
+}
+
+test('Início conta o desenho a aprovar no resumo do Decidir e a conta cai depois de aprovar', async ({
   page,
   request,
 }) => {
   const id = await ateEsperarODesenho(request, c)
   await buscarPelaFabrica(request, c)
   await entrar(page)
-  await expect(page.getByText(`Aprovar o desenho de ${TITULO}`)).toBeVisible()
+  const antes = await itensNoDecidir(page)
+  expect(antes).toBeGreaterThan(0)
 
   await aprovarPelaTela(page, id)
-  await page.goto('/')
-  await expect(page.getByRole('heading', { level: 1, name: 'Início' })).toBeVisible()
-  await expect(page.getByText(`Aprovar o desenho de ${TITULO}`)).toHaveCount(0)
+  expect(await itensNoDecidir(page)).toBe(antes - 1)
 })
 
 test('configuração do projeto: seção Demandas com o modelo de etapas e o nível padrão; captura configuracao', async ({

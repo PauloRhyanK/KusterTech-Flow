@@ -6,6 +6,11 @@ vi.mock('@/modules/demandas/worker', () => ({
   limparArquivosDeDemandas: vi.fn(async () => ({ capturas: 0, parciais: 0 })),
 }))
 
+vi.mock('@/modules/decidir/worker', () => ({
+  arquivarConversasResolvidas: vi.fn(async () => 0),
+  limparParciaisDeConversas: vi.fn(async () => 0),
+}))
+
 import { log } from '@/lib/log'
 import { resolverModulosAtivos } from '@/lib/modulos'
 import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
@@ -14,7 +19,7 @@ import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem cinco tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem seis tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -24,6 +29,7 @@ describe('tarefas do worker', () => {
       'sincronizar-execucoes-warren',
       'processar-fila-de-publicacao',
       'limpar-arquivos-de-demandas',
+      'decidir:arquivar',
     ])
   })
 
@@ -73,7 +79,7 @@ describe('tarefas do worker', () => {
     )
   })
 
-  test('com todos os módulos ligados o ciclo tem as doze tarefas na ordem original', () => {
+  test('com todos os módulos ligados o ciclo tem as treze tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
@@ -88,6 +94,7 @@ describe('tarefas do worker', () => {
       'calcular-composicoes',
       'detectar-divergencias',
       'limpar-arquivos-de-demandas',
+      'decidir:arquivar',
     ])
   })
 
@@ -118,5 +125,35 @@ describe('tarefas do worker', () => {
       'tarefa do worker falhou',
     )
     expect(JSON.stringify(vi.mocked(log.error).mock.calls)).not.toContain('ghs_x')
+  })
+
+  test('decidir:arquivar existe e só roda com o módulo decidir', async () => {
+    const todas = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) })
+    expect(todas.find((t) => t.nome === 'decidir:arquivar')?.modulo).toBe('decidir')
+    const semDecidir = new Set(resolverModulosAtivos(undefined))
+    semDecidir.delete('decidir')
+    expect(criarTarefasDoCiclo({ ...fonte, ativos: semDecidir }).map((t) => t.nome)).not.toContain(
+      'decidir:arquivar',
+    )
+  })
+
+  test('decidir:arquivar roda a cada 5 min e limpa os parciais das conversas uma vez por hora', async () => {
+    const { arquivarConversasResolvidas, limparParciaisDeConversas } =
+      await import('@/modules/decidir/worker')
+    vi.mocked(arquivarConversasResolvidas).mockClear()
+    vi.mocked(limparParciaisDeConversas).mockClear()
+    const tarefa = criarTarefasDoCiclo({
+      ...fonte,
+      ativos: resolverModulosAtivos(undefined),
+    }).find((t) => t.nome === 'decidir:arquivar')!
+    const t0 = new Date('2026-11-20T12:00:00.000Z')
+    const em = (min: number) => new Date(t0.getTime() + min * 60_000)
+    await tarefa.executar(t0)
+    await tarefa.executar(em(2))
+    await tarefa.executar(em(5))
+    expect(arquivarConversasResolvidas).toHaveBeenCalledTimes(2)
+    expect(limparParciaisDeConversas).toHaveBeenCalledTimes(1)
+    await tarefa.executar(em(61))
+    expect(limparParciaisDeConversas).toHaveBeenCalledTimes(2)
   })
 })

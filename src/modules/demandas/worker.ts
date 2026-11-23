@@ -1,7 +1,7 @@
 import { lstat, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { db } from '@/lib/db'
-import { apagarArquivo, diretorioDosArquivos, ehParcial } from './arquivos'
+import { apagarArquivo, diretorioDosArquivos, ehParcial, type Pasta } from './arquivos'
 import { capturaVencida, RETENCAO_DAS_CAPTURAS_MS } from './transicoes'
 
 const IDADE_MAXIMA_DO_PARCIAL_MS = 24 * 60 * 60_000
@@ -38,8 +38,9 @@ async function limparCapturas(agora: Date): Promise<number> {
   return apagadas
 }
 
-async function limparParciais(agora: Date): Promise<number> {
-  const raiz = join(diretorioDosArquivos(), 'demandas')
+/** `.parcial` com mais de 1 dia em `<dir>/<pasta>/<dono>/` (demandas e conversas do Decidir). */
+export async function limparParciais(agora: Date, pasta: Pasta = 'demandas'): Promise<number> {
+  const raiz = join(diretorioDosArquivos(), pasta)
   let demandas: string[]
   try {
     demandas = await readdir(raiz)

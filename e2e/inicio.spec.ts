@@ -76,7 +76,7 @@ test('admin sem retrato vê "A Fábrica ainda não enviou dados." e "Nada espera
   await expect(page.locator('[data-tom="sucesso"]')).toHaveCount(0)
 })
 
-test('com um retrato com plano ativo e decisão, o admin vê a decisão com link para o GitHub e a linha do plano', async ({
+test('com um retrato com plano ativo e decisão, o admin vê a decisão resumida no Decidir e a linha do plano', async ({
   page,
   request,
 }, testInfo) => {
@@ -89,15 +89,16 @@ test('com um retrato com plano ativo e decisão, o admin vê a decisão com link
 
   await page.goto('/')
   const espera = page.getByRole('list', { name: 'Espera você' })
-  const decisao = espera.getByRole('listitem').filter({ hasText: 'Homologar o painel da Fábrica' })
-  await expect(decisao).toContainText('Decisão')
-  await expect(decisao).toContainText(`kustertech-exemplo/automacao · ${feature}`)
-  const link = decisao.getByRole('link', { name: /Responder no GitHub/ })
-  await expect(link).toHaveAttribute(
+  // Com o Decidir ativo, a decisão da Fábrica entra na pilha: o Início mostra o resumo dela.
+  await expect(
+    espera.getByRole('listitem').filter({ hasText: 'Homologar o painel da Fábrica' }),
+  ).toHaveCount(0)
+  const decidir = espera.getByRole('listitem').filter({ hasText: /esperam? sua resposta/ })
+  await expect(decidir).toContainText('Decisões da Fábrica e pedidos das demandas')
+  await expect(decidir.getByRole('link', { name: /Abrir Decidir/ })).toHaveAttribute(
     'href',
-    'https://github.com/kustertech-exemplo/automacao/issues/7',
+    '/decidir',
   )
-  await expect(link).toHaveAttribute('target', '_blank')
 
   const plano = page
     .getByRole('list', { name: 'Planos em curso' })

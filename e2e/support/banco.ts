@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
@@ -10,6 +10,7 @@ import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
 import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
+import { criarDemanda, registrarEvento } from '@/modules/demandas/service'
 import { MAQUINA_LOCAL_E2E } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { gravarHomologacaoDePublicacao } from '../../tests/support/homologacao-de-publicacao'
@@ -1288,4 +1289,84 @@ export async function limparAtividadeNoBanco(): Promise<void> {
   const repositorio = { githubId: { gte: BASE_GITHUB_ID_ATIVIDADE } }
   await db.pullRequestGitHub.deleteMany({ where: { repositorio } })
   await db.repositorioGitHub.deleteMany({ where: repositorio })
+}
+
+// Decidir
+
+// Conversas do Decidir dos repositórios de exemplo (mensagens, anexos e cartões saem em cascata).
+export async function limparConversasNoBanco(): Promise<void> {
+  await db.conversa.deleteMany({ where: { repositorio: { startsWith: 'kustertech-exemplo/' } } })
+}
+
+export interface TriagemDeTeste {
+  tipo: 'defeito' | 'ideia' | 'ajuste' | 'funcao_nova'
+  tamanho: 'pequeno' | 'medio' | 'grande'
+  mexeEm: string
+  motivo: string
+}
+
+// Uma demanda criada como a tela cria e triada pela Fábrica até esperar o Paulo no destino:
+// com `triagem`, a triagem pede a decisão dele (pedido); com `null`, a triagem falhou (sem tipo).
+export async function criarDemandaEsperandoNoBanco(
+  projetoId: string,
+  repo: string,
+  e: {
+    titulo: string
+    descricao?: string | null
+    espera: 'decidir_destino'
+    triagem: TriagemDeTeste | null
+  },
+): Promise<{ id: string }> {
+  const usuarioId = process.env.E2E_ADMIN_ID
+  if (!usuarioId) throw new Error('E2E_ADMIN_ID não configurada pelo setup.')
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto: repo },
+    select: { id: true },
+  })
+  const { id } = await criarDemanda(
+    { usuarioId, papeis: [{ papel: 'ADMIN', clienteId: null }] },
+    {
+      projetoId,
+      repositorioId: repositorio.id,
+      titulo: e.titulo,
+      descricao: e.descricao ?? null,
+      nivel: 'aprovar_desenho',
+      temTela: true,
+      anexos: [],
+    },
+  )
+  const r = await registrarEvento({
+    demandaId: id,
+    idExterno: randomUUID(),
+    origem: 'fabrica',
+    em: new Date(),
+    evento:
+      e.triagem === null
+        ? { tipo: 'triagem_falhou', ator: 'fabrica', dados: { motivo: 'Relato curto demais.' } }
+        : {
+            tipo: 'triagem',
+            ator: 'fabrica',
+            dados: {
+              ...e.triagem,
+              destino: 'decisao_do_paulo',
+              risco: 'baixo',
+              dados: 'nenhum',
+              impacto: { toca: [], podeQuebrar: [], autorizacao: false, caminhoProtegido: false },
+              resposta: null,
+            },
+          },
+  })
+  if (r.resultado !== 'aplicado') throw new Error(`Triagem não aplicada: ${r.resultado}`)
+  const d = await db.demanda.findUniqueOrThrow({ where: { id }, select: { espera: true } })
+  if (d.espera !== e.espera) throw new Error(`A demanda espera ${d.espera}, não ${e.espera}.`)
+  return { id }
+}
+
+export async function esperaDaDemandaNoBanco(
+  id: string,
+): Promise<{ espera: string | null; encerrada: string | null; destino: string | null }> {
+  return db.demanda.findUniqueOrThrow({
+    where: { id },
+    select: { espera: true, encerrada: true, destino: true },
+  })
 }

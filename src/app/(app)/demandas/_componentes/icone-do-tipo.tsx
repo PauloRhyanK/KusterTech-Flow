@@ -17,10 +17,17 @@ const NOME: Record<ReturnType<typeof iconeDoTipo>['letra'], string> = {
   '?': 'Sem tipo ainda',
 }
 
-export function IconeDoTipo({ icone }: { icone: ReturnType<typeof iconeDoTipo> }) {
+/** `nome` troca a dica padrão da letra (o "F" da Fábrica no Decidir não é "Função nova"). */
+export function IconeDoTipo({
+  icone,
+  nome,
+}: {
+  icone: ReturnType<typeof iconeDoTipo>
+  nome?: string
+}) {
   return (
     <span
-      title={NOME[icone.letra]}
+      title={nome ?? NOME[icone.letra]}
       data-tom={icone.tom}
       className={cn(
         'grid size-[30px] shrink-0 place-items-center rounded-compacto text-xs font-bold',
