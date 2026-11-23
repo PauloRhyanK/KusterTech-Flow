@@ -14,7 +14,7 @@ import { Boneco, Cadeira, Caixa, Mesa, Objeto } from './pixel'
 
 export interface MapaProps {
   andar: Andar
-  onAbrirAgente: (runId: string) => void
+  onAbrirAgente: (id: string) => void
   onAbrirTela: (runId: string) => void
   onAbrirParte: (raia: string) => void
   onAbrirGestao: () => void
@@ -163,14 +163,14 @@ function Boneca({
       className={s.agente}
       style={{ left: x, top: y }}
       data-area={agente.area}
-      data-trabalhando={agente.trabalhando}
-      aria-label={`${agente.nome}: ${agente.balao}`}
+      data-trabalhando={agente.runId !== null}
+      aria-label={agente.balao ? `${agente.nome}: ${agente.balao}` : agente.nome}
       onClick={onAbrir}
     >
-      <span className={s.balao} title={agente.balao}>
+      <span className={s.balao} title={agente.balao ?? undefined}>
         {agente.balao}
       </span>
-      <Boneco papel={agente.papel} semente={agente.runId} />
+      <Boneco papel={agente.papel} semente={agente.id} />
     </button>
   )
 }
@@ -195,7 +195,7 @@ export function Mapa({
   })
   const posicaoDoAgente = new Map<string, { x: number; y: number }>()
   andar.agentes.forEach((a, i) => {
-    if (a.raia && a.trabalhando && a.area !== 'teste') posicaoDoAgente.set(a.raia, posicoes[i]!)
+    if (a.raia && a.runId !== null && a.area !== 'teste') posicaoDoAgente.set(a.raia, posicoes[i]!)
   })
   const porLugar = new Map<string, number>()
 
@@ -230,7 +230,7 @@ export function Mapa({
                   .filter(({ a }) => a.area === area)
                   .map(({ a, p }) => (
                     <div
-                      key={a.runId}
+                      key={a.id}
                       style={{ position: 'absolute', left: p.x - r.x, top: p.y - r.y }}
                     >
                       <span className={s.objeto} style={{ left: -16, top: -32 }}>
@@ -241,9 +241,9 @@ export function Mapa({
                         className={s.computador}
                         style={{ left: -32, top: 24 }}
                         aria-label={`computador de ${a.nome}: ver a tela`}
-                        onClick={() => onAbrirTela(a.runId)}
+                        onClick={() => a.runId !== null && onAbrirTela(a.runId)}
                       >
-                        <Mesa acesa={a.trabalhando} cor={null} />
+                        <Mesa acesa={a.runId !== null} cor={null} />
                       </button>
                     </div>
                   ))}
@@ -281,11 +281,11 @@ export function Mapa({
             decoração e das placas, para o balão nunca ficar escondido. */}
         {andar.agentes.map((a, i) => (
           <Boneca
-            key={a.runId}
+            key={a.id}
             agente={a}
             x={posicoes[i]!.x}
             y={posicoes[i]!.y}
-            onAbrir={() => onAbrirAgente(a.runId)}
+            onAbrir={() => onAbrirAgente(a.id)}
           />
         ))}
 

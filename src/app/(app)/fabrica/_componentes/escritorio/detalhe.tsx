@@ -29,17 +29,17 @@ export function Detalhe({ selecao }: { selecao: Selecao }) {
       <div>
         <div className="mb-3 flex items-center gap-3">
           <span className="grid size-16 shrink-0 place-items-center rounded-padrao bg-surface-subtle">
-            <Boneco papel={a.papel} semente={a.runId} />
+            <Boneco papel={a.papel} semente={a.id} />
           </span>
           <div>
             <h3 className="text-base font-semibold text-text-primary">{a.nome}</h3>
             <p className="text-xs text-text-secondary">
-              {a.trabalhando ? 'trabalhando agora' : 'parado'}
+              {a.runId !== null ? 'trabalhando agora' : 'parado'}
             </p>
           </div>
         </div>
         <div className="mb-3 rounded-compacto bg-tonal-informacao p-2.5 text-xs">
-          <b className="block text-[11px]">{a.trabalhando ? 'Fazendo agora' : 'Última coisa'}</b>
+          <b className="block text-[11px]">{a.runId !== null ? 'Fazendo agora' : 'Última coisa'}</b>
           {a.balao}
         </div>
         <h4 className="mb-2 text-[11px] font-semibold tracking-wide text-text-secondary uppercase">

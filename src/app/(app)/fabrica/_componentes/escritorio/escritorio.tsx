@@ -44,8 +44,8 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
     const parte = fase?.partes.find((p) => p.raia === raia)
     if (fase && parte) setSelecao({ tipo: 'parte', parte, fase: fase.id })
   }
-  const abrirAgente = (runId: string) => {
-    const agente = andar?.agentes.find((a) => a.runId === runId)
+  const abrirAgente = (id: string) => {
+    const agente = andar?.agentes.find((a) => a.id === id)
     if (agente) setSelecao({ tipo: 'agente', agente })
   }
 

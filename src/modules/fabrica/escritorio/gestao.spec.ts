@@ -22,6 +22,7 @@ function cenario(historico: Historico[], gastoRegistrado?: number) {
         },
       ],
       titulos: {},
+      historico: [],
     },
     AGORA,
   ).andares[0]!

@@ -54,7 +54,7 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
         })
   const titulos = Object.fromEntries(seeds.map((s) => [s.seedId, s.titulo]))
 
-  const escritorio = montarEscritorio({ recebido, demandas, titulos }, agora)
+  const escritorio = montarEscritorio({ recebido, demandas, titulos, historico: [] }, agora)
   const gestao: Record<string, DadosDaGestao> = {}
   if (retrato && escritorio.andares.length > 0) {
     const historico = await lerHistorico()

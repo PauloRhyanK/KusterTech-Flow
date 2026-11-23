@@ -27,6 +27,7 @@ export function escritorioDeTeste(
         },
       ],
       titulos: { 'CAISv2-d87a': 'Suporte e Tour no kit CAIS' },
+      historico: [],
     },
     AGORA,
   )

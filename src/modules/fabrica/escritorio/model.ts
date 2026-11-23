@@ -1,5 +1,6 @@
 // Modelo de tela do escritório da Fábrica: regras puras que transformam o retrato e as demandas no que a tela
 // desenha (andares, agentes, caixas e o plano da entrega). Spec: docs/superpowers/specs/2026-11-21-escritorio-da-fabrica-design.md
+import { TEXTO_DA_ESPERA } from '@/modules/demandas/apresentacao'
 import type { Marco } from '@/modules/demandas/model'
 import type { ExecucaoV2, RaiaV2, RetratoV2 } from '../contrato'
 import type { RetratoRecebido } from '../queries'
@@ -24,15 +25,37 @@ export interface EntradaDoEscritorio {
   demandas: DemandaDaTela[]
   /** título da seed (SeedDoRepositorio.titulo) por id de seed */
   titulos: Record<string, string>
+  /** linhas do histórico da Fábrica; só as de custo do plano criam personagem de papel já encerrado */
+  historico: LinhaDoHistorico[]
+}
+
+export type EstadoDoAgente = 'trabalhando' | 'semNoticias' | 'falha' | 'chamando' | 'livre'
+export type Grupo = 'trabalhando' | 'livre' | 'chamando'
+
+export interface LinhaDoHistorico {
+  /** `${planoId}:${raia}` (parte) ou `${planoId}:${raia|'-'}:run:${runId}` (custo) */
+  chave: string
+  tipo: 'parte' | 'custo'
+  papel: string | null
+  inicio: string
+  fim: string | null
+  custoUsd: number | null
 }
 
 export interface Agente {
-  runId: string
+  /** estável: `raia:<raiaId>` ou `papel:<papel>` */
+  id: string
+  /** execução ativa; null quando não há */
+  runId: string | null
   papel: string | null
   nome: string
+  /** nunca 'copa' */
   area: Area
-  trabalhando: boolean
-  balao: string
+  estado: EstadoDoAgente
+  /** 0 para o 1º do papel no andar, 1 para o 2º... */
+  variacao: number
+  /** null quando o estado é 'livre' */
+  balao: string | null
   raia: string | null
   linhas: ExecucaoV2['linhas']
   inicio: string | null
@@ -123,6 +146,16 @@ const AREA_DO_MARCO: Record<Marco, Area> = {
 }
 
 const PAPEIS_QUE_REVISAM = new Set(['revisor', 'qa'])
+const ORDEM_DOS_PAPEIS = [
+  'produto',
+  'orquestrador',
+  'ux-ui',
+  'ux-engineer',
+  'revisor',
+  'qa',
+  'fixer',
+]
+const PAPEIS_DO_ANDAR = new Set(ORDEM_DOS_PAPEIS.filter((p) => p !== 'fixer'))
 
 export function areaDoPapel(papel: string | null): Area {
   return (papel && AREA_DO_PAPEL[papel]) || 'desenvolvimento'
@@ -192,20 +225,76 @@ function execucoesDoPlano(plano: PlanoV2, execucoes: ExecucaoV2[]): ExecucaoV2[]
   )
 }
 
-function agenteDaExecucao(e: ExecucaoV2, agora: Date): Agente {
-  return {
-    runId: e.runId,
-    papel: e.papel,
-    nome: nomeDoAgente(e.papel, e.raia),
-    area: areaDoPapel(e.papel),
-    trabalhando: true,
-    balao: balaoDaExecucao(e, agora),
-    raia: e.raia,
-    linhas: e.linhas,
-    inicio: e.inicio,
-    custoUsd: e.custoUsd,
-    modelo: e.modelo,
+function idDaExecucao(e: ExecucaoV2, raias: RaiaV2[]): string {
+  const papel = e.papel ?? 'agente'
+  if (papel === 'fixer' || PAPEIS_DO_ANDAR.has(papel)) return `papel:${papel}`
+  const propria = e.raia ? raias.find((r) => r.id === e.raia && r.papel === e.papel) : undefined
+  if (propria) return `raia:${propria.id}`
+  const doPapel = raias.find((r) => r.papel === e.papel)
+  return doPapel ? `raia:${doPapel.id}` : `papel:${papel}`
+}
+
+/** Quem fica no andar: cada raia, e cada papel que atuou no plano (execução ativa ou custo no histórico). */
+export function participantesDoPlano(
+  plano: PlanoV2,
+  execucoes: ExecucaoV2[],
+  historico: LinhaDoHistorico[],
+): { id: string; papel: string | null; raia: string | null }[] {
+  const raias = plano.fases.flatMap((f) => f.raias)
+  const lista = raias.map((r) => ({
+    id: `raia:${r.id}`,
+    papel: r.papel,
+    raia: r.id as string | null,
+  }))
+  const vistos = new Set(lista.map((p) => p.id))
+  const porPapel: { id: string; papel: string | null; raia: string | null }[] = []
+  const incluir = (id: string, papel: string | null) => {
+    if (vistos.has(id)) return
+    vistos.add(id)
+    porPapel.push({ id, papel, raia: null })
   }
+  for (const e of execucoes) incluir(idDaExecucao(e, raias), e.papel)
+  for (const l of historico) {
+    if (l.tipo !== 'custo' || !l.chave.startsWith(`${plano.id}:`)) continue
+    if (l.papel && PAPEIS_DO_ANDAR.has(l.papel)) incluir(`papel:${l.papel}`, l.papel)
+  }
+  const posicao = (p: { papel: string | null }) => {
+    const i = ORDEM_DOS_PAPEIS.indexOf(p.papel ?? '')
+    return i === -1 ? ORDEM_DOS_PAPEIS.length : i
+  }
+  return [...lista, ...porPapel.sort((a, b) => posicao(a) - posicao(b))]
+}
+
+export function estadoDoParticipante(
+  ativa: ExecucaoV2 | undefined,
+  raia: RaiaV2 | undefined,
+  agora: Date,
+): Exclude<EstadoDoAgente, 'chamando'> {
+  if (ativa) {
+    if (!ativa.ultimaAcao) return 'semNoticias'
+    const idade = minutosDesde(ativa.ultimaAcao.em, agora)
+    return idade === null || idade < MINUTOS_SEM_NOTICIAS ? 'trabalhando' : 'semNoticias'
+  }
+  if (raia && (raia.estado === 'falhou' || raia.situacao === 'corrigindo')) return 'falha'
+  return 'livre'
+}
+
+/** Quem chama o Paulo: o planejador, se estiver livre; senão o primeiro livre. */
+export function quemChama(agentes: Agente[]): string | null {
+  const livres = agentes.filter((a) => a.estado === 'livre')
+  return (livres.find((a) => a.id === 'papel:orquestrador') ?? livres[0])?.id ?? null
+}
+
+export function textoDoChamado(demanda: DemandaDaTela | undefined, plano: PlanoV2): string {
+  const espera = demanda?.espera
+  if (espera === 'concluir_etapa') return 'Concluir a etapa'
+  const deEspera = espera ? (TEXTO_DA_ESPERA as Record<string, string>)[espera] : undefined
+  return deEspera ?? plano.decisoes[0]?.titulo ?? 'Sua vez nesta etapa'
+}
+
+export function grupoDoEstado(e: EstadoDoAgente): Grupo {
+  if (e === 'chamando') return 'chamando'
+  return e === 'livre' ? 'livre' : 'trabalhando'
 }
 
 function montarAndar(
@@ -213,33 +302,38 @@ function montarAndar(
   demanda: DemandaDaTela | undefined,
   execucoes: ExecucaoV2[],
   titulos: Record<string, string>,
+  historico: LinhaDoHistorico[],
   agora: Date,
 ): Andar {
   const doPlano = execucoesDoPlano(plano, execucoes)
-  const agentes = doPlano.map((e) => agenteDaExecucao(e, agora))
   const raias = plano.fases.flatMap((f) => f.raias)
-
-  // quem espera a revisão sem execução própria vai para a copa
-  for (const raia of raias) {
-    if (raia.situacao !== 'em_revisao' && raia.situacao !== 'aguardando_gates') continue
-    const temCodigo = doPlano.some(
-      (e) => e.raia === raia.id && !PAPEIS_QUE_REVISAM.has(e.papel ?? ''),
-    )
-    if (temCodigo) continue
-    agentes.push({
-      runId: `copa:${raia.id}`,
-      papel: raia.papel,
-      nome: nomeDoAgente(raia.papel, raia.id),
-      area: 'copa',
-      trabalhando: false,
-      balao: 'esperando a revisão',
-      raia: raia.id,
-      linhas: [],
-      inicio: raia.inicio,
-      custoUsd: null,
-      modelo: null,
-    })
-  }
+  const participantes = participantesDoPlano(plano, doPlano, historico)
+  const vistosPorPapel = new Map<string, number>()
+  const agentes: Agente[] = participantes.map((p) => {
+    const ativa = doPlano
+      .filter((e) => idDaExecucao(e, raias) === p.id)
+      .sort((a, b) => (b.inicio ?? '').localeCompare(a.inicio ?? ''))[0]
+    const raia = p.raia ? raias.find((r) => r.id === p.raia) : undefined
+    const estado = estadoDoParticipante(ativa, raia, agora)
+    const chave = p.papel ?? ''
+    const variacao = vistosPorPapel.get(chave) ?? 0
+    vistosPorPapel.set(chave, variacao + 1)
+    return {
+      id: p.id,
+      runId: ativa?.runId ?? null,
+      papel: p.papel,
+      nome: nomeDoAgente(p.papel, p.raia),
+      area: areaDoPapel(p.papel),
+      estado,
+      variacao,
+      balao: ativa ? balaoDaExecucao(ativa, agora) : estado === 'falha' ? 'falhou' : null,
+      raia: ativa?.raia ?? p.raia,
+      linhas: ativa?.linhas ?? [],
+      inicio: ativa?.inicio ?? raia?.inicio ?? null,
+      custoUsd: ativa?.custoUsd ?? null,
+      modelo: ativa?.modelo ?? null,
+    }
+  })
 
   const cores = new Map(raias.map((r, i) => [r.id, i]))
   const caixas: Caixa[] = raias.map((r) => ({
@@ -275,13 +369,21 @@ function montarAndar(
     (demanda !== undefined && (demanda.espera !== null || demanda.marco === null)) ||
     plano.decisoes.length > 0
 
+  if (esperaPaulo) {
+    const chama = agentes.find((a) => a.id === quemChama(agentes))
+    if (chama) {
+      chama.estado = 'chamando'
+      chama.balao = textoDoChamado(demanda, plano)
+    }
+  }
+
   return {
     planoId: plano.id,
     demandaId: plano.demanda,
     titulo: demanda?.titulo ?? plano.feature,
     repositorio: demanda?.repositorio ?? plano.repo,
     esperaPaulo,
-    semAgentes: agentes.every((a) => !a.trabalhando),
+    semAgentes: agentes.every((a) => a.runId === null),
     progresso: {
       partes: [todas.filter((p) => p.situacao === 'entregue').length, todas.length],
       criterios: [criterios.filter((c) => c.marca === 'verde').length, criterios.length],
@@ -307,6 +409,7 @@ export function montarEscritorio(entrada: EntradaDoEscritorio, agora: Date): Esc
       p.demanda ? porId.get(p.demanda) : undefined,
       retrato?.execucoes ?? [],
       entrada.titulos,
+      entrada.historico,
       agora,
     ),
   )
