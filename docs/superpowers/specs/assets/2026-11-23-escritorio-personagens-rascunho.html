@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>Fábrica · escritório detalhado (rascunho v6)</title>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Fábrica · escritório detalhado (rascunho v7)</title>
 <style>
 :root{--fundo:#f4f1ea;--linha:#e4ded2;--txt:#1d2433;--txt2:#6a6f7c;--azul:#2f6fe4;--verde:#1f9d6b;--amar:#e8a317;--verm:#d9483b}
 *{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--fundo);color:var(--txt)}
@@ -55,7 +55,7 @@ h1{font-size:18px;margin:0 0 12px}
 @keyframes vapor{0%{transform:translateY(3px);opacity:0}50%{opacity:1}100%{transform:translateY(-4px);opacity:0}}
 .cadeira{position:absolute;width:40px;height:40px;transform:translate(-50%,0);background:#4f5d78;border:4px solid #2b2f3a;border-radius:10px 10px 4px 4px;transition:transform .5s}
 .cadeira::after{content:"";position:absolute;left:6px;right:6px;top:6px;height:12px;border-radius:5px;background:#6a7a98}
-.cadeira.vazia{transform:translate(-50%,0) translate(16px,6px) rotate(14deg)}
+.cadeira.vazia{transform:translate(-50%,0) translate(0,-6px)}
 /* agentes */
 .ag{position:absolute;transform:translate(-50%,-50%);cursor:pointer;transition:left 1.8s ease-in-out,top 1.8s ease-in-out,opacity .3s}
 .rota{position:relative}
@@ -95,7 +95,8 @@ h1{font-size:18px;margin:0 0 12px}
 @keyframes nota{0%{transform:translateY(8px);opacity:0}30%{opacity:1}100%{transform:translate(6px,-26px);opacity:0}}
 .peca{position:absolute;width:6px;height:9px;background:#1d1d22;border-radius:3px 3px 1px 1px;animation:peca 9s infinite}
 @keyframes peca{0%,30%{transform:translate(0,0)}34%{transform:translate(4px,-8px)}38%,80%{transform:translate(9px,3px)}84%{transform:translate(4px,-8px)}88%,100%{transform:translate(0,0)}}
-.tinta{position:absolute;height:5px;animation:tinta 6s steps(6) infinite}
+.quadro-tela{position:absolute;overflow:hidden;background:#fbf7ef}
+.tinta{position:absolute;height:3px;animation:tinta 6s steps(6) infinite}
 @keyframes tinta{0%{width:0}60%,100%{width:var(--w)}}
 .fliper-tela{position:absolute;animation:pisca .45s steps(2) infinite}@keyframes pisca{50%{filter:brightness(1.6) hue-rotate(60deg)}}
 .disco{position:absolute;border-radius:50%;background:radial-gradient(circle,#e86aa0 0 3px,#1d1d22 3px 100%);border:2px solid #000;animation:gira2 1.2s linear infinite}@keyframes gira2{to{transform:rotate(360deg)}}
@@ -133,7 +134,7 @@ h1{font-size:18px;margin:0 0 12px}
 .parte .s{margin-left:auto;width:10px;height:10px;border-radius:50%}
 .parte.realce{border-color:var(--azul);background:#f2f7ff;box-shadow:0 0 0 3px #2f6fe41c}
 </style></head><body><div class="pag">
-<h1>Escritório da Fábrica · rascunho v6</h1>
+<h1>Escritório da Fábrica · rascunho v7</h1>
 <div class="barra">
   <span class="cont" data-f="trabalhando"><i style="background:var(--azul)"></i><b id="n-trab">0</b> trabalhando</span>
   <span class="cont" data-f="livre"><i style="background:#8cc5a8"></i><b id="n-liv">0</b> livres</span>
@@ -233,7 +234,8 @@ const r1=obj(S.rack,880,420),r2=obj(S.rack,925,420);obj(S.foguete,990,410);obj(S
 obj(S.banco,150,290);obj(S.banco,236,290);obj(S.xadrez,193,286);
 [[176,255,'#f4efe4'],[205,255,'#1d1d22']].forEach(([x,y,c])=>el('peca',`left:${x}px;top:${y}px;background:${c};border:1px solid #232733;z-index:300`));
 obj(S.cavalete,472,272);obj(S.paleta,430,290,300);
-[[458,232,'#d9483b','14px',0],[458,237,'#2f6fe4','22px',.6],[458,242,'#e8b730','10px',1.2],[458,247,'#1f9d6b','18px',1.8]].forEach(([x,y,c,w,d])=>el('tinta',`left:${x}px;top:${y}px;background:${c};--w:${w};z-index:300;animation-delay:${d}s`));
+{const t=el('quadro-tela','left:457px;top:230px;width:30px;height:18px;z-index:300');
+ [[2,2,'#8fc9f2','26px',0],[2,5,'#8fc9f2','26px',.3],[20,3,'#e8b730','6px',.8],[3,9,'#d9483b','10px',1.4],[14,10,'#2f6fe4','8px',1.9],[2,14,'#1f9d6b','26px',2.4]].forEach(([x,y,c,w,d])=>{const b=document.createElement('div');b.className='tinta';b.style.cssText=`left:${x}px;top:${y}px;background:${c};--w:${w};animation-delay:${d}s`;t.appendChild(b)})}
 obj(S.vitrola,90,565);el('disco',`left:66px;top:532px;width:22px;height:22px;z-index:600`);obj(S.caixaSom,40,565);
 obj(S.fliperama,570,555);el('fliper-tela',`left:552px;top:510px;width:30px;height:15px;z-index:600;background:linear-gradient(90deg,#2b6f4a,#8ff0b0,#2b6f4a)`);
 obj(S.poltronaFundo,770,524,505);obj(S.poltronaFrente,770,560,560);

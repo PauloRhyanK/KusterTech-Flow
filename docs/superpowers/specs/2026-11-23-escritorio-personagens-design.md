@@ -1,7 +1,7 @@
 # Escritório da Fábrica: personagens, hobbies e quem está livre — design
 
 **Data:** 2026-11-23
-**Estado:** proposta aprovada na conversa (rascunho v6 e abordagem A); aguardando a revisão deste documento.
+**Estado:** proposta aprovada na conversa (rascunho v7 e abordagem A); aguardando a revisão deste documento.
 **Rascunho aprovado:** [`assets/2026-11-23-escritorio-personagens-rascunho.html`](assets/2026-11-23-escritorio-personagens-rascunho.html). Abra no navegador e use "Próxima leitura" para ver as transições. Ele mostra o comportamento e o nível de detalhe. As cores e as medidas dele são de rascunho.
 **Evolui:** [`2026-11-21-escritorio-da-fabrica-design.md`](2026-11-21-escritorio-da-fabrica-design.md), seção 4.2 (escritório do andar). O que não é tratado aqui continua como está nessa spec.
 
@@ -17,7 +17,7 @@ O objetivo é que o andar mostre **todos os participantes do plano o tempo todo*
 - Cada participante do plano aparece sempre no andar.
 - Trabalhando e livre se distinguem só pela cena: na mesa, com monitor aceso, ou fora dela, no hobby, com cadeira afastada e monitor apagado.
 - Cada papel é um personagem fixo: sempre a mesma aparência e o mesmo hobby, ligado ao jeito do papel.
-- O cenário e os personagens ficam mais detalhados, no nível do rascunho v6.
+- O cenário e os personagens ficam mais detalhados, no nível do rascunho v7.
 - Recursos de visibilidade da seção 5.
 
 **Não-objetivos**
@@ -114,7 +114,7 @@ A aparência é fixa por papel: o cabelo e a pele deixam de vir do `runId`. Fica
 
 ### 5.4 Cenário
 
-- Mais detalhe em todas as áreas, como no rascunho v6:
+- Mais detalhe em todas as áreas, como no rascunho v7:
   - parede com janelas, nuvens passando e relógio;
   - tapete por área;
   - Planejamento: quadro de post-its;
