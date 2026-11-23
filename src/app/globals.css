@@ -682,7 +682,7 @@ body,
 }
 .esc-agente {
   position: absolute;
-  z-index: 5;
+  z-index: 8;
   padding: 0;
   border: 0;
   background: transparent;
@@ -697,9 +697,15 @@ body,
   bottom: 42px;
   left: 50%;
   z-index: 6;
+  display: -webkit-box;
   width: max-content;
-  max-width: 140px;
+  max-width: 150px;
   padding: 3px 7px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
   transform: translateX(-50%);
   border: 2px solid var(--pixel-contorno);
   border-radius: 9px;

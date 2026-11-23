@@ -115,6 +115,9 @@ export function retratoV2DeTeste(
         id: 'fase-1',
         raias: [
           raia('base', 'mergeada', ha(50), ha(20)),
+          raia('funcoes-do-orientador-por-projeto', 'mergeada', ha(48), ha(30)),
+          raia('contexto-orientador-com-versao', 'mergeada', ha(46), ha(25)),
+          raia('gate-do-repositorio', 'mergeada', ha(44), ha(22)),
           raia('tela', 'executando', ha(15), null),
           raia('ajuste', null, null, null),
         ],
@@ -148,7 +151,12 @@ export function retratoV2DeTeste(
         inicio: ha(15),
         custoUsd: 0.42,
         modelo: 'claude-sonnet-5-5',
-        ultimaAcao: { texto: 'Edit src/tela.tsx', em: agora },
+        ultimaAcao: {
+          // longo como os reais, para o balão ser cortado em duas linhas sem sair do mapa
+          texto:
+            'Acordada concluída: plano atualizado para a fase gate-do-repositorio, commitado no branch sobre packed refs compartilhado de refs e não perdeu nada',
+          em: agora,
+        },
         linhas: [
           { em: ha(10), tipo: 'texto', texto: 'lendo o catálogo do kit' },
           { em: agora, tipo: 'ferramenta', texto: 'Edit src/tela.tsx' },

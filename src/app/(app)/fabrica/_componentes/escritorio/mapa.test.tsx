@@ -25,6 +25,29 @@ describe('mapa do escritório', () => {
     expect(boneco.closest('[data-area]')?.getAttribute('data-area')).toBe('desenvolvimento')
   })
 
+  test('boneco fica fora do fundo da área, para o balão passar por cima da decoração', () => {
+    renderizar()
+    const boneco = screen.getByRole('button', { name: /^frontend · kit-base:/ })
+    expect(boneco.closest('.esc-area')).toBeNull()
+  })
+
+  test('balão longo leva o texto inteiro no title', () => {
+    const r = retratoDeTeste()
+    const longo =
+      'Acordada concluída: plano atualizado, commitado no branch e com refs compartilhados'
+    r.execucoes[0]!.ultimaAcao = { texto: longo, em: '2026-11-21T02:04:00Z' }
+    renderizar(escritorioDeTeste(r).andares[0]!)
+    expect(screen.getByText(longo).getAttribute('title')).toBe(longo)
+  })
+
+  test('caixa entregue tem etiqueta curta, com o nome inteiro no title', () => {
+    renderizar()
+    const caixa = screen.getByRole('button', { name: /caixa relatos-fundacao/ })
+    const etiqueta = caixa.querySelector('.esc-etiqueta')!
+    expect(etiqueta.textContent).toBe('✓')
+    expect(caixa.getAttribute('title')).toBe('relatos-fundacao')
+  })
+
   test('caixa na fila, na mesa e na entrega', () => {
     const r = retratoDeTeste()
     const kit = r.planos[0]!.fases[1]!.raias[0]!
