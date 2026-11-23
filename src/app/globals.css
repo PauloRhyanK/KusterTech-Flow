@@ -303,6 +303,24 @@ body,
   --pixel-papel-teste-sombra: #0f8a7c;
   --pixel-papel-conserto: #ef4444;
   --pixel-papel-conserto-sombra: #b33333;
+  --pixel-papel-arquiteto: #6366f1;
+  --pixel-papel-arquiteto-sombra: #4a4cb8;
+  --pixel-papel-devops: #f97316;
+  --pixel-papel-devops-sombra: #bd5a10;
+  --pixel-papel-seguranca: #334e68;
+  --pixel-papel-seguranca-sombra: #243b53;
+  /* rosto, gola, calça e sapato */
+  --pixel-olho: #232733;
+  --pixel-bochecha: #f08f8f;
+  --pixel-boca: #8a3b2f;
+  --pixel-gola: #f4efe4;
+  --pixel-calca: #3a4256;
+  --pixel-sapato: #2b2f3a;
+  /* tela da mesa */
+  --pixel-tela-falha: #5a1010;
+  --pixel-tela-codigo-1: #7cc4ff;
+  --pixel-tela-codigo-2: #9be38f;
+  --pixel-tela-codigo-3: #ffd27c;
   /* cabelo e pele */
   --pixel-cabelo-0: #3f2a1d;
   --pixel-cabelo-1: #1b1b1b;
@@ -794,6 +812,58 @@ body,
   position: absolute;
   border-radius: 12px;
   opacity: 0.45;
+}
+
+/* Mesa: linhas de código e vapor só animam com a tela acesa; sem isso ficam invisíveis. */
+.esc-mesa .esc-tela-linha,
+.esc-mesa .esc-vapor {
+  opacity: 0;
+}
+.esc-mesa[data-estado='acesa'] {
+  filter: drop-shadow(0 0 6px var(--pixel-tela-acesa));
+}
+.esc-mesa[data-estado='acesa'] .esc-tela-linha {
+  opacity: 1;
+  animation: esc-linha 1.6s steps(4) infinite;
+}
+.esc-mesa[data-estado='acesa'] .esc-tela-linha:nth-of-type(2) {
+  animation-delay: 0.4s;
+}
+.esc-mesa[data-estado='acesa'] .esc-tela-linha:nth-of-type(3) {
+  animation-delay: 0.8s;
+}
+.esc-mesa[data-estado='acesa'] .esc-vapor {
+  animation: esc-vapor 1.6s infinite;
+}
+.esc-mesa[data-estado='falha'] {
+  filter: drop-shadow(0 0 6px var(--pixel-led-vermelho));
+}
+.esc-cadeira {
+  transition: transform 0.5s;
+}
+.esc-cadeira[data-vazia='true'] {
+  transform: translateY(-6px);
+}
+@keyframes esc-linha {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes esc-vapor {
+  0% {
+    transform: translateY(0.75px);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-1px);
+    opacity: 0;
+  }
 }
 
 @keyframes esc-piscar {

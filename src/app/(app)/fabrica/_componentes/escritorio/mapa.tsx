@@ -170,7 +170,7 @@ function Boneca({
       <span className={s.balao} title={agente.balao ?? undefined}>
         {agente.balao}
       </span>
-      <Boneco papel={agente.papel} semente={agente.id} />
+      <Boneco papel={agente.papel} variacao={agente.variacao} />
     </button>
   )
 }
@@ -234,7 +234,7 @@ export function Mapa({
                       style={{ position: 'absolute', left: p.x - r.x, top: p.y - r.y }}
                     >
                       <span className={s.objeto} style={{ left: -16, top: -32 }}>
-                        <Cadeira />
+                        <Cadeira vazia={a.runId === null} />
                       </span>
                       <button
                         type="button"
@@ -243,7 +243,11 @@ export function Mapa({
                         aria-label={`computador de ${a.nome}: ver a tela`}
                         onClick={() => a.runId !== null && onAbrirTela(a.runId)}
                       >
-                        <Mesa acesa={a.runId !== null} cor={null} />
+                        <Mesa
+                          estado={
+                            a.estado === 'falha' ? 'falha' : a.runId !== null ? 'acesa' : 'apagada'
+                          }
+                        />
                       </button>
                     </div>
                   ))}

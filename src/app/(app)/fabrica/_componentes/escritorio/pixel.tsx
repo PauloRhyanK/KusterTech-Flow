@@ -2,6 +2,7 @@
 // (docs/superpowers/specs/assets/2026-11-21-escritorio-da-fabrica-rascunho.html). Cada letra da matriz aponta
 // para uma variável --pixel-* de globals.css; nenhuma cor fixa aqui.
 import type { ReactElement } from 'react'
+import { s } from './classes'
 
 type Paleta = Record<string, string>
 
@@ -13,7 +14,10 @@ export function Sprite({
   paleta,
   escala,
   ...resto
-}: { mapa: string[]; paleta: Paleta; escala: number } & Record<`data-${string}`, string>) {
+}: { mapa: string[]; paleta: Paleta; escala: number; className?: string } & Record<
+  `data-${string}`,
+  string
+>) {
   const largura = Math.max(...mapa.map((l) => l.length))
   const pixels: ReactElement[] = []
   mapa.forEach((linha, y) => {
@@ -40,7 +44,16 @@ export function Sprite({
 // ---------------------------------------------------------------- bonecos
 
 export type Acessorio =
-  'fone' | 'gorro' | 'oculos' | 'prancheta' | 'boina' | 'lupa' | 'capacete' | 'nenhum'
+  | 'fone'
+  | 'gorro'
+  | 'gorroEscuro'
+  | 'oculos'
+  | 'prancheta'
+  | 'boina'
+  | 'lupa'
+  | 'capacete'
+  | 'bone'
+  | 'nenhum'
 
 const ROUPA: Record<string, { cor: string; acessorio: Acessorio }> = {
   frontend: { cor: 'frontend', acessorio: 'fone' },
@@ -50,75 +63,143 @@ const ROUPA: Record<string, { cor: string; acessorio: Acessorio }> = {
   'ux-ui': { cor: 'desenho', acessorio: 'boina' },
   'ux-engineer': { cor: 'desenho', acessorio: 'boina' },
   produto: { cor: 'triagem', acessorio: 'lupa' },
-  qa: { cor: 'teste', acessorio: 'fone' },
+  qa: { cor: 'teste', acessorio: 'bone' },
   fixer: { cor: 'conserto', acessorio: 'capacete' },
+  arquiteto: { cor: 'arquiteto', acessorio: 'oculos' },
+  devops: { cor: 'devops', acessorio: 'capacete' },
+  seguranca: { cor: 'seguranca', acessorio: 'gorroEscuro' },
+}
+
+/** Cabelo (índice base) e pele fixos por papel; a variação só gira o cabelo. */
+const APARENCIA: Record<string, { cabelo: number; pele: number }> = {
+  orquestrador: { cabelo: 3, pele: 1 },
+  'ux-ui': { cabelo: 4, pele: 0 },
+  'ux-engineer': { cabelo: 4, pele: 0 },
+  frontend: { cabelo: 1, pele: 1 },
+  backend: { cabelo: 3, pele: 3 },
+  revisor: { cabelo: 0, pele: 0 },
+  qa: { cabelo: 4, pele: 3 },
+  fixer: { cabelo: 1, pele: 2 },
+  produto: { cabelo: 2, pele: 0 },
+  arquiteto: { cabelo: 0, pele: 2 },
+  devops: { cabelo: 2, pele: 1 },
+  seguranca: { cabelo: 1, pele: 0 },
 }
 
 export function roupaDoPapel(papel: string | null) {
   return (papel && ROUPA[papel]) || { cor: 'triagem', acessorio: 'nenhum' as Acessorio }
 }
 
-function numeroDaSemente(semente: string): number {
-  let h = 0
-  for (const c of semente) h = (h * 31 + c.charCodeAt(0)) >>> 0
-  return h
+const CORPO = [
+  '.....oooooo.....',
+  '...oohhhhhHoo...',
+  '..ohhhhhhhhhHo..',
+  '..ohhhhhhhhhho..',
+  '..ohhsssssshho..',
+  '..ossEssssEsso..',
+  '..osrssssssrso..',
+  '..ossssmmsssso..',
+  '...osssssssso...',
+  '....ooossooo....',
+  '..oooccwwccooo..',
+  '.occcccwwccccco.',
+  'occcccccccccccco',
+  'oscCccccccccCcso',
+  'oscCccccccccCcso',
+  'ossccccccccccsso',
+  '.ooccccccccccoo.',
+  '...oBBBBBBBBo...',
+  '...oppppppppo...',
+  '...opppoopppo...',
+  '...oSSo..oSSo...',
+  '...oooo..oooo...',
+]
+/** Sobrescreve linhas da matriz conforme o acessório. */
+function comAcessorio(acessorio: Acessorio): string[] {
+  const m = [...CORPO]
+  const set = (i: number, l: string) => {
+    m[i] = l
+  }
+  if (acessorio === 'gorro' || acessorio === 'gorroEscuro') {
+    const g = ['.....oooooo.....', '...oocccccccoo..', '..occcccccccccco', '..oCCCCCCCCCCo..']
+    const escuro = acessorio === 'gorroEscuro'
+    g.forEach((l, i) => set(i, escuro ? l.replace(/c/g, 'C') : l))
+  }
+  if (acessorio === 'boina') {
+    set(0, '....ooooooo.....')
+    set(1, '..oocccccccco...')
+    set(2, '.occcccccccccco.')
+    set(3, '..oCCCCCCCCCo...')
+  }
+  if (acessorio === 'capacete') {
+    set(0, '....oooooooo....')
+    set(1, '...oyyyyyyyyo...')
+    set(2, '..oyyYyyyyyyyo..')
+    set(3, '.ooooooooooooooo')
+  }
+  if (acessorio === 'bone') {
+    set(0, '....oooooooo....')
+    set(1, '...occcccccco...')
+    set(2, '..occcccccccco..')
+    set(3, '..oooooooooooooo')
+  }
+  if (acessorio === 'fone') {
+    set(1, '...oFhhhhhHFo...')
+    set(2, '..oFhhhhhhhhFo..')
+    set(4, '.FFhhsssssshhFF.')
+    set(5, '.FFssEssssEssFF.')
+    set(6, '..osrssssssrso..')
+  }
+  if (acessorio === 'oculos') set(5, '..oggggssggggo..')
+  if (acessorio === 'prancheta') {
+    set(13, 'oscCccccccccCkko')
+    set(14, 'oscCccccccccCkWk')
+    set(15, 'ossccccccccccskk')
+  }
+  if (acessorio === 'lupa') {
+    set(13, 'oscCccccccccCsLl')
+    set(14, 'oscCccccccccCsoL')
+  }
+  return m
 }
 
-/** Boneco visto de cima (14x14). A semente (o runId) fixa cabelo e pele; o papel dá a camisa e o acessório. */
+/** Boneco de frente (16x22). O papel fixa camisa, acessório, pele e cabelo base; a variação gira o cabelo. */
 export function Boneco({
   papel,
-  semente,
+  variacao = 0,
   escala = 4,
 }: {
   papel: string | null
-  semente: string
+  variacao?: number
   escala?: number
 }) {
   const { cor, acessorio } = roupaDoPapel(papel)
-  const n = numeroDaSemente(semente)
-  const m = [
-    '.....oooo.....',
-    '....ohhhho....',
-    '...ohhHhhho...',
-    '...ohhhhhHo...',
-    '...ohhhhhho...',
-    '....osssso....',
-    '..oooccccooo..',
-    '.occcccccccco.',
-    '.oCccccccccCo.',
-    'osccccccccccso',
-    'osCccccccccCso',
-    '.oo.cccccc.oo.',
-    '....oooooo....',
-  ]
-  if (acessorio === 'gorro')
-    Object.assign(m, { 1: '....occcco....', 2: '...occcccco...', 3: '...oCCCCCCo...' })
-  if (acessorio === 'boina')
-    Object.assign(m, { 0: '....ooooo.....', 1: '...occcccco...', 2: '..occcccccco..' })
-  if (acessorio === 'capacete')
-    Object.assign(m, { 1: '....oyyyyo....', 2: '...oyyyyyyo...', 3: '...oyYyyyyo...' })
-  if (acessorio === 'fone') Object.assign(m, { 3: '..FohhhhhHoF..', 4: '..FohhhhhhoF..' })
-  if (acessorio === 'oculos') Object.assign(m, { 5: '...ogsssgo....' })
-  if (acessorio === 'prancheta')
-    Object.assign(m, { 9: 'osccccccccccsk', 10: 'osCccccccccCsk', 11: '.oo.cccccc.okk' })
-  if (acessorio === 'lupa') Object.assign(m, { 10: 'osCcccccccccLl', 11: '.oo.cccccc.oLL' })
+  const ap = (papel && APARENCIA[papel]) || { cabelo: 0, pele: 0 }
   return (
     <Sprite
-      mapa={m}
+      mapa={comAcessorio(acessorio)}
       escala={escala}
       data-acessorio={acessorio}
       paleta={{
         o: v('contorno'),
-        h: v(`cabelo-${n % 5}`),
+        h: v(`cabelo-${(ap.cabelo + variacao) % 5}`),
         H: v('cabelo-brilho'),
-        s: v(`pele-${(n >> 3) % 4}`),
+        s: v(`pele-${ap.pele}`),
+        E: v('olho'),
+        r: v('bochecha'),
+        m: v('boca'),
         c: v(`papel-${cor}`),
         C: v(`papel-${cor}-sombra`),
+        w: v('gola'),
+        B: v('madeira-escura'),
+        p: v('calca'),
+        S: v('sapato'),
         F: v('metal'),
         y: v('ouro'),
         Y: v('ouro-claro'),
         g: v('contorno'),
         k: v('cortica'),
+        W: v('papel'),
         l: v('vidro'),
         L: v('moldura'),
       }}
@@ -128,41 +209,75 @@ export function Boneco({
 
 // ---------------------------------------------------------------- móveis
 
-export function Mesa({ acesa, cor }: { acesa: boolean; cor: number | null }) {
+const MESA = [
+  '..oooooooo......',
+  '..oTTTTTTo......',
+  '..oTTTTTTo......',
+  '..oTTTTTTo......',
+  '..oTTTTTTo......',
+  '..oooooooo......',
+  '.....oo....owwo.',
+  '.oKKKKKKo..owwo.',
+  'oooooooooooooooo',
+  'obbbbbbbbbbbbbbo',
+  'obbbbbbboBBBBBbo',
+  'oooooooooooooooo',
+]
+
+/** Mesa com monitor, teclado, caneca e gaveta. O CSS anima as linhas de código e o vapor só quando acesa. */
+export function Mesa({ estado }: { estado: 'apagada' | 'acesa' | 'falha' }) {
+  const tela =
+    estado === 'acesa' ? 'tela-acesa' : estado === 'falha' ? 'tela-falha' : 'tela-apagada'
+  const paleta: Paleta = {
+    o: v('madeira-escura'),
+    b: v('madeira'),
+    B: v('madeira-sombra'),
+    K: v('metal'),
+    w: v('creme'),
+    T: v(tela),
+  }
+  const pixels: ReactElement[] = []
+  MESA.forEach((linha, y) => {
+    ;[...linha].forEach((letra, x) => {
+      const cor = paleta[letra]
+      if (cor)
+        pixels.push(<rect key={`${x}-${y}`} x={x} y={y} width={1.02} height={1.02} fill={cor} />)
+    })
+  })
   return (
-    <Sprite
-      escala={4}
-      mapa={[
-        'oooooooooooooooo',
-        'obbbbbbbbbbbbbbo',
-        'obboooooooobbbbo',
-        'obboFFFFFFobxxbo',
-        'obboFllllFobxxbo',
-        'obboFllllFobbbbo',
-        'obboooooooobmbbo',
-        'obbbbbbbbbbbbbbo',
-        'oBBBBBBBBBBBBBBo',
-        'oooooooooooooooo',
-      ]}
-      paleta={{
-        o: v('madeira-escura'),
-        b: v('madeira'),
-        B: v('madeira-sombra'),
-        F: v('metal'),
-        l: v(acesa ? 'tela-acesa' : 'tela-apagada'),
-        x: cor === null ? v('madeira') : v(`raia-${cor % 8}`),
-        m: v('papel'),
-      }}
-    />
+    <svg
+      width={16 * 4}
+      height={MESA.length * 4}
+      viewBox={`0 0 16 ${MESA.length}`}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      className={s.mesa}
+      data-estado={estado}
+    >
+      {pixels}
+      <rect className={s.telaLinha} x={3} y={1} width={4} height={1} fill={v('tela-codigo-1')} />
+      <rect className={s.telaLinha} x={4} y={2} width={3} height={1} fill={v('tela-codigo-2')} />
+      <rect className={s.telaLinha} x={3} y={3} width={5} height={1} fill={v('tela-codigo-3')} />
+      {estado === 'falha' && (
+        <>
+          <rect x={5} y={1} width={2} height={2} fill={v('branco')} />
+          <rect x={5} y={4} width={2} height={1} fill={v('branco')} />
+        </>
+      )}
+      <rect className={s.vapor} x={12} y={4} width={1} height={2} fill={v('branco')} />
+    </svg>
   )
 }
 
-export function Cadeira() {
+/** Cadeira reta (de frente para a mesa). Vazia, só recua para trás (CSS), sem girar. */
+export function Cadeira({ vazia }: { vazia: boolean }) {
   return (
     <Sprite
       escala={4}
-      mapa={['.oooooo.', 'occcccco', 'occcccco', '.oooooo.', '...oo...']}
-      paleta={{ o: v('contorno'), c: v('servidor') }}
+      className={s.cadeira}
+      data-vazia={String(vazia)}
+      mapa={['.oooooooo.', 'osssssssso', 'osSSSSSSso', 'osSSSSSSso', '.oooooooo.', '...o..o...']}
+      paleta={{ o: v('contorno'), s: v('servidor'), S: v('cinza') }}
     />
   )
 }

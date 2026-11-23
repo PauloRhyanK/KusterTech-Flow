@@ -29,7 +29,7 @@ export function Detalhe({ selecao }: { selecao: Selecao }) {
       <div>
         <div className="mb-3 flex items-center gap-3">
           <span className="grid size-16 shrink-0 place-items-center rounded-padrao bg-surface-subtle">
-            <Boneco papel={a.papel} semente={a.id} />
+            <Boneco papel={a.papel} variacao={a.variacao} />
           </span>
           <div>
             <h3 className="text-base font-semibold text-text-primary">{a.nome}</h3>

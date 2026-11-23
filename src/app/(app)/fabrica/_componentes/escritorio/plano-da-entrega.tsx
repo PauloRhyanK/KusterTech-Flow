@@ -63,7 +63,7 @@ function Cartao({
       style={{ borderLeft: `5px solid var(--pixel-raia-${parte.cor % 8})` }}
     >
       <span className="flex items-center gap-2">
-        {parte.agenteRunId && <Boneco papel={parte.papel} semente={parte.agenteRunId} escala={2} />}
+        {parte.agenteRunId && <Boneco papel={parte.papel} variacao={0} escala={2} />}
         <b className="min-w-0 flex-1 truncate text-xs text-text-primary">{parte.raia}</b>
         <span
           className={cn(

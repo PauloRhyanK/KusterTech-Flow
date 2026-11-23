@@ -64,7 +64,7 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
                     <span className={s.chao} />
                     <span className={s.gente}>
                       {equipe.map((a) => (
-                        <Boneco key={a.id} papel={a.papel} semente={a.id} escala={2} />
+                        <Boneco key={a.id} papel={a.papel} variacao={a.variacao} escala={2} />
                       ))}
                     </span>
                   </span>
