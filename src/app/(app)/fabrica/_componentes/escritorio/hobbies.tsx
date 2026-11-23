@@ -2,6 +2,7 @@
 // Sprites portados do rascunho aprovado (docs/superpowers/specs/assets/2026-11-23-escritorio-personagens-rascunho.html);
 // os que não existem lá (palavras cruzadas, blocos, plantas, cubo) seguem o mesmo estilo. Cores são tokens --pixel-*.
 import type { CSSProperties, ReactNode } from 'react'
+import { s } from './classes'
 import { Sprite, v } from './pixel'
 
 export type Hobby =
@@ -31,22 +32,11 @@ export const HOBBY_DO_PAPEL: Record<string, Hobby> = {
 }
 
 export function hobbyDoPapel(papel: string | null): Hobby | null {
-  return (papel && HOBBY_DO_PAPEL[papel]) || null
+  return papel !== null && Object.hasOwn(HOBBY_DO_PAPEL, papel) ? HOBBY_DO_PAPEL[papel]! : null
 }
 
 /** Classe aplicada ao personagem (Task 5); a animação dele fica em globals.css. */
-export const CLASSE_DO_HOBBY: Record<Hobby, string> = {
-  palavrasCruzadas: 'esc-hobby-palavrasCruzadas',
-  xadrez: 'esc-hobby-xadrez',
-  blocos: 'esc-hobby-blocos',
-  pintar: 'esc-hobby-pintar',
-  musica: 'esc-hobby-musica',
-  cafe: 'esc-hobby-cafe',
-  plantas: 'esc-hobby-plantas',
-  cubo: 'esc-hobby-cubo',
-  fliperama: 'esc-hobby-fliperama',
-  leitura: 'esc-hobby-leitura',
-}
+export const CLASSE_DO_HOBBY: Record<Hobby, string> = s.hobby
 
 const ESCALA = 3
 const O = 'contorno'
@@ -306,7 +296,7 @@ function Em({
 }) {
   return (
     <div
-      className={['esc-canto-peca', className].filter(Boolean).join(' ')}
+      className={[s.cantoPeca, className].filter(Boolean).join(' ')}
       style={{ left: x, top: y, ...estilo }}
       {...(camada ? { 'data-camada': camada } : {})}
     >
@@ -351,7 +341,7 @@ function Objetos({ hobby }: { hobby: Hobby }) {
           <Em x={90} y={30}>
             {desenho('banco')}
           </Em>
-          <Em x={39} y={12} className="esc-peca" />
+          <Em x={39} y={12} className={s.peca} />
         </>
       )
     case 'pintar':
@@ -361,11 +351,11 @@ function Objetos({ hobby }: { hobby: Hobby }) {
             {desenho('cavalete')}
           </Em>
           {/* a tela do cavalete: 10x6 pixels da arte, recortada para a tinta nunca vazar */}
-          <Em x={36} y={3} className="esc-quadro-tela">
+          <Em x={36} y={3} className={s.quadroTela}>
             {PINCELADAS.map((p) => (
               <i
                 key={p.cor}
-                className="esc-tinta"
+                className={s.tinta}
                 style={
                   {
                     top: p.y,
@@ -388,11 +378,11 @@ function Objetos({ hobby }: { hobby: Hobby }) {
           <Em x={0} y={6}>
             {desenho('vitrola')}
           </Em>
-          <Em x={9} y={9} className="esc-disco" />
+          <Em x={9} y={9} className={s.disco} />
           <Em x={54} y={12}>
             {desenho('caixaSom')}
           </Em>
-          <Em x={27} y={0} className="esc-notas">
+          <Em x={27} y={0} className={s.notas}>
             <b />
             <b />
             <b />
@@ -405,7 +395,7 @@ function Objetos({ hobby }: { hobby: Hobby }) {
           <Em x={0} y={12}>
             {desenho('balcao')}
           </Em>
-          <Em x={15} y={3} className="esc-canto-vapor">
+          <Em x={15} y={3} className={s.cantoVapor}>
             <b />
             <b />
           </Em>
@@ -417,7 +407,7 @@ function Objetos({ hobby }: { hobby: Hobby }) {
           <Em x={0} y={0}>
             {desenho('fliperama')}
           </Em>
-          <Em x={6} y={12} className="esc-fliper-tela">
+          <Em x={6} y={12} className={s.fliperTela}>
             {desenho('tela')}
           </Em>
         </>
@@ -431,8 +421,8 @@ function Objetos({ hobby }: { hobby: Hobby }) {
           <Em x={0} y={36} camada="frente">
             {desenho('poltronaFrente')}
           </Em>
-          <Em x={15} y={33} camada="frente" className="esc-livro">
-            <i className="esc-pagina" />
+          <Em x={15} y={33} camada="frente" className={s.livro}>
+            <i className={s.pagina} />
           </Em>
         </>
       )
@@ -487,7 +477,7 @@ function Objetos({ hobby }: { hobby: Hobby }) {
 export function CantoDoHobby({ hobby }: { hobby: Hobby }) {
   const [largura, altura] = TAMANHO[hobby]
   return (
-    <div data-hobby={hobby} className="esc-canto" style={{ width: largura, height: altura }}>
+    <div data-hobby={hobby} className={s.canto} style={{ width: largura, height: altura }}>
       <Objetos hobby={hobby} />
     </div>
   )

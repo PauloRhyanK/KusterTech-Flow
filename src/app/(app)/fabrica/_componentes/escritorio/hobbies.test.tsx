@@ -15,6 +15,8 @@ test('conserto e papel desconhecido não têm hobby', () => {
   expect(hobbyDoPapel('fixer')).toBeNull()
   expect(hobbyDoPapel(null)).toBeNull()
   expect(hobbyDoPapel('inexistente')).toBeNull()
+  expect(hobbyDoPapel('constructor')).toBeNull()
+  expect(hobbyDoPapel('toString')).toBeNull()
 })
 
 test('canto não tem texto', () => {
