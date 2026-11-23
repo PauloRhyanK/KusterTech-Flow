@@ -5,6 +5,7 @@ import {
   itensDoUltimoLote,
   montarResumoDaPublicacao,
   noArDaLinha,
+  oQueEstaNoAr,
   pilulasDaLinha,
   rodapeDoLote,
   rotuloDaLinha,
@@ -336,6 +337,26 @@ describe('noArDaLinha', () => {
     expect(noArDaLinha(noAr(minutos(-12)), AGORA)).toBe('aaaaaaa · 12 min')
     expect(noArDaLinha(noAr(minutos(-180)), AGORA)).toBe('aaaaaaa · 3 h')
     expect(noArDaLinha(linha(), AGORA)).toBe('—')
+  })
+})
+
+describe('oQueEstaNoAr', () => {
+  // O commit sozinho não diz nada a quem olha: a tela mostra o que subiu, com o commit embaixo.
+  test('o título da demanda; sem demanda, a descrição do pedido; sem nenhum, nada', () => {
+    const noAr = (titulo: string | null) =>
+      linha({ noAr: { commit: sha('a'), desde: AGORA, titulo } })
+    expect(oQueEstaNoAr(noAr('Orientador por IA e fila de relatos'))).toBe(
+      'Orientador por IA e fila de relatos',
+    )
+    expect(oQueEstaNoAr(noAr('   '))).toBeNull()
+    // uma publicação que atendeu pedidos mais antigos levou tudo junto
+    expect(
+      oQueEstaNoAr(
+        linha({ noAr: { commit: sha('a'), desde: AGORA, titulo: 'Relatos', junto: 2 } }),
+      ),
+    ).toBe('Relatos e mais 2')
+    expect(oQueEstaNoAr(noAr(null))).toBeNull()
+    expect(oQueEstaNoAr(linha())).toBeNull()
   })
 })
 

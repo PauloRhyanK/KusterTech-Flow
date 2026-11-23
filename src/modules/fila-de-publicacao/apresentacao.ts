@@ -44,8 +44,8 @@ export interface LinhaDaFila {
     situacaoDesde: Date | null
     situacaoMotivo: string | null
   } | null
-  /** O commit no ar respeita `baseRedefinidaEm`. */
-  noAr: { commit: string; desde: Date } | null
+  /** O commit no ar respeita `baseRedefinidaEm`; `titulo` é o da demanda, ou a descrição do pedido. */
+  noAr: { commit: string; desde: Date; titulo?: string | null; junto?: number } | null
   publicando: PedidoDaLinha | null
   /** NA_FILA e VERIFICANDO sem atendente, do mais antigo para o mais novo. */
   aguardando: PedidoDaLinha[]
@@ -179,6 +179,14 @@ export function noArDaLinha(linha: LinhaDaFila, agora: Date): string {
   // Compacta para caber na coluna "No ar": "há 3 h" → "3 h"; "há menos de 1 min" → "agora".
   const idade = formatarIdade(linha.noAr.desde, agora).replace(/^há /, '')
   return `${sha7(linha.noAr.commit)} · ${idade === 'menos de 1 min' ? 'agora' : idade}`
+}
+
+/** O que está no ar, em palavras: o título da demanda ou a descrição do pedido que subiu. */
+export function oQueEstaNoAr(linha: LinhaDaFila): string | null {
+  const titulo = linha.noAr?.titulo?.trim()
+  if (!titulo) return null
+  const junto = linha.noAr?.junto ?? 0
+  return junto > 0 ? `${titulo} e mais ${junto}` : titulo
 }
 
 function emSeguida(linha: LinhaDaFila): PedidoDaLinha[] {
