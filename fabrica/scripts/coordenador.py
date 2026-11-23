@@ -904,6 +904,9 @@ class Coordenador:
                     saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **comum))
                 elif situacao == "corrigindo" and seed.get("fixerRunId"):
                     saida.append(self._execucao(seed["fixerRunId"], "fixer", raia=raia, **comum))
+                elif situacao == "corrigindo" and seed.get("revisaoRunId"):
+                    # depois do fixer o despachante chama o revisor de novo sem sair de `corrigindo`
+                    saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **comum))
             orquestrador = (estado.get("orquestrador") or {}).get("runId")
             if orquestrador:
                 saida.append(self._execucao(orquestrador, "orquestrador", raia=None, **comum))

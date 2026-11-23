@@ -2038,6 +2038,17 @@ class TestesConsertos(Base):
         self.assertEqual((por_run["r9"]["papel"], por_run["r9"]["demanda"]), ("produto", "d-1"))
         self.assertNotIn("r2", por_run)
 
+    def test_execucoes_mostram_o_revisor_chamado_depois_do_fixer(self):
+        # Depois do fixer, o despachante chama o revisor de novo sem sair de `corrigindo`:
+        # fica `revisaoRunId` e o `fixerRunId` volta a None (estado real da oficina em 23/11).
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
+        lidos = {"p": {"estado": {"seeds": {
+            "s1": {"raia": "a", "estado": "corrigindo", "runId": "r1", "revisaoRunId": "r2", "fixerRunId": None},
+            "s2": {"raia": "b", "estado": "corrigindo", "runId": "r3", "revisaoRunId": "r4", "fixerRunId": "r5"},
+        }, "orquestrador": {}}, "plano": {"raias": [{"id": "a", "papel": "frontend"}, {"id": "b", "papel": "backend"}]}}}
+        por_run = {e["runId"]: (e["papel"], e["raia"]) for e in c._execucoes(lidos)}
+        self.assertEqual(por_run, {"r2": ("revisor", "a"), "r5": ("fixer", "b")})
+
     def test_400_sem_consertos_no_retrato_nao_reenvia(self):
         self.enviar.resposta = {"resultado": "gravado"}
         self.enviar.falhas = [retrato.FalhaDeEnvio("HTTP 400")]
