@@ -3,7 +3,14 @@ import { normalizarRetrato, type RetratoV1, type RetratoV2 } from '../contrato'
 import type { RetratoRecebido } from '../queries'
 import exemploV1 from '../retrato-exemplo.json'
 import exemploV2 from '../retrato-exemplo-v2.json'
-import { type DemandaDaTela, montarEscritorio } from './model'
+import {
+  contarEstados,
+  type DemandaDaTela,
+  type Escritorio,
+  grupoDoEstado,
+  type LinhaDoHistorico,
+  montarEscritorio,
+} from './model'
 
 const AGORA = new Date('2026-11-21T02:05:00Z')
 const DEMANDA = '9c44dfa8-3d83-4b05-9c2d-b1351c63af45'
@@ -28,8 +35,13 @@ function demanda(sobrepor: Partial<DemandaDaTela> = {}): DemandaDaTela {
   }
 }
 
-function escritorio(retrato = v2(), demandas = [demanda()], titulos: Record<string, string> = {}) {
-  return montarEscritorio({ recebido: recebido(retrato), demandas, titulos }, AGORA)
+function escritorio(
+  retrato = v2(),
+  demandas = [demanda()],
+  titulos: Record<string, string> = {},
+  historico: LinhaDoHistorico[] = [],
+) {
+  return montarEscritorio({ recebido: recebido(retrato), demandas, titulos, historico }, AGORA)
 }
 
 describe('escritório: andares', () => {
@@ -117,16 +129,19 @@ describe('escritório: recepção e formato antigo', () => {
     ])
   })
 
-  test('retrato v1 vira andares sem agentes e formatoAntigo true', () => {
+  test('retrato v1 vira andares sem execução ativa e formatoAntigo true', () => {
     const r = normalizarRetrato(structuredClone(exemploV1) as unknown as RetratoV1)
-    const e = montarEscritorio({ recebido: recebido(r, 1), demandas: [], titulos: {} }, AGORA)
+    const e = montarEscritorio(
+      { recebido: recebido(r, 1), demandas: [], titulos: {}, historico: [] },
+      AGORA,
+    )
     expect(e.formatoAntigo).toBe(true)
-    expect(e.andares.every((a) => a.agentes.length === 0)).toBe(true)
+    expect(e.andares.every((a) => a.semAgentes)).toBe(true)
   })
 
   test('sem retrato não há andares', () => {
     const e = montarEscritorio(
-      { recebido: null, demandas: [demanda({ marco: 'recebida' })], titulos: {} },
+      { recebido: null, demandas: [demanda({ marco: 'recebida' })], titulos: {}, historico: [] },
       AGORA,
     )
     expect(e.andares).toEqual([])
@@ -134,17 +149,124 @@ describe('escritório: recepção e formato antigo', () => {
   })
 })
 
-describe('escritório: agentes', () => {
+const custo = (raia: string, run: string, papel: string, usd = 0.3): LinhaDoHistorico => ({
+  chave: `${PLANO}:${raia}:run:${run}`,
+  tipo: 'custo',
+  papel,
+  inicio: '2026-11-21T00:40:00Z',
+  fim: null,
+  custoUsd: usd,
+})
+const porId = (e: Escritorio, id: string) => e.andares[0]!.agentes.find((a) => a.id === id)
+
+describe('escritório: participantes', () => {
+  test('cada raia é um participante, com ou sem execução', () => {
+    expect(escritorio().andares[0]!.agentes.map((a) => [a.id, a.estado, a.variacao])).toEqual([
+      ['raia:relatos-fundacao', 'livre', 0],
+      ['raia:kit-base', 'trabalhando', 1],
+    ])
+  })
+
   test('agente da raia fica na área do papel, com nome papel · raia e balão da última ação', () => {
-    const a = escritorio().andares[0]!.agentes[0]!
-    expect(a).toMatchObject({
+    expect(porId(escritorio(), 'raia:kit-base')).toMatchObject({
       runId: 'run_kitbase01',
       area: 'desenvolvimento',
       nome: 'frontend · kit-base',
-      trabalhando: true,
       raia: 'kit-base',
       balao: 'Edit front/src/pecas/composicoes/suporte/Suporte.tsx',
     })
+  })
+
+  test('quem já entregou fica no andar, livre, sem balão e sem execução', () => {
+    expect(porId(escritorio(), 'raia:relatos-fundacao')).toMatchObject({
+      nome: 'frontend · relatos-fundacao',
+      area: 'desenvolvimento',
+      balao: null,
+      runId: null,
+    })
+  })
+
+  test('revisor com raia preenchida é um personagem só, com a execução mais recente', () => {
+    const r = v2()
+    const base = r.execucoes[0]!
+    r.execucoes = [
+      {
+        ...base,
+        runId: 'rev1',
+        papel: 'revisor',
+        raia: 'relatos-fundacao',
+        inicio: '2026-11-21T02:00:00Z',
+      },
+      {
+        ...base,
+        runId: 'rev2',
+        papel: 'revisor',
+        raia: 'kit-base',
+        inicio: '2026-11-21T02:02:00Z',
+      },
+    ]
+    const revisores = escritorio(r).andares[0]!.agentes.filter((a) => a.papel === 'revisor')
+    expect(revisores).toHaveLength(1)
+    expect(revisores[0]).toMatchObject({ id: 'papel:revisor', runId: 'rev2', area: 'teste' })
+  })
+
+  test('revisor que já rodou no plano fica no andar, livre', () => {
+    const e = escritorio(v2(), [demanda()], {}, [custo('kit-base', 'rev0', 'revisor')])
+    expect(porId(e, 'papel:revisor')).toMatchObject({ estado: 'livre', balao: null })
+  })
+
+  test('histórico de outro plano não cria personagem', () => {
+    const outro = { ...custo('x', 'r9', 'qa'), chave: 'outro-plano:x:run:r9' }
+    expect(porId(escritorio(v2(), [demanda()], {}, [outro]), 'papel:qa')).toBeUndefined()
+  })
+
+  test('execução sem raia de papel que já tem personagem reaproveita o primeiro', () => {
+    const r = v2()
+    r.execucoes[0]!.raia = null
+    const e = escritorio(r)
+    expect(porId(e, 'raia:relatos-fundacao')).toMatchObject({
+      estado: 'trabalhando',
+      runId: 'run_kitbase01',
+    })
+    expect(e.andares[0]!.agentes).toHaveLength(2)
+  })
+
+  test('execução com raia de outro papel segue a regra de sem raia', () => {
+    const r = v2()
+    r.execucoes[0]!.papel = 'backend'
+    const e = escritorio(r)
+    expect(porId(e, 'papel:backend')).toMatchObject({ runId: 'run_kitbase01' })
+    expect(porId(e, 'raia:kit-base')?.runId).toBeNull()
+  })
+
+  test('conserto só aparece com execução ativa', () => {
+    const r = v2()
+    r.execucoes.push({ ...r.execucoes[0]!, runId: 'fix1', papel: 'fixer' })
+    expect(porId(escritorio(r), 'papel:fixer')).toMatchObject({ estado: 'trabalhando' })
+    expect(
+      porId(escritorio(r), 'papel:fixer')?.nome,
+      'o conserto leva o nome da parte que conserta',
+    ).toBe('conserto · kit-base')
+    expect(
+      porId(escritorio(v2(), [demanda()], {}, [custo('kit-base', 'f0', 'fixer')]), 'papel:fixer'),
+    ).toBeUndefined()
+  })
+
+  test('ninguém vai para a copa: quem espera a revisão fica livre na própria área', () => {
+    const r = v2()
+    r.planos[0]!.fases[1]!.raias[0]!.situacao = 'em_revisao'
+    r.execucoes = []
+    expect(porId(escritorio(r), 'raia:kit-base')).toMatchObject({
+      area: 'desenvolvimento',
+      estado: 'livre',
+    })
+  })
+
+  test('andar sem execução ativa fica sem agentes trabalhando', () => {
+    const r = v2()
+    r.execucoes = []
+    expect(escritorio(r).andares[0]!.semAgentes).toBe(true)
+    expect(escritorio(r).andares[0]!.agentes).toHaveLength(2)
   })
 
   test.each([
@@ -159,41 +281,109 @@ describe('escritório: agentes', () => {
     const r = v2()
     r.execucoes[0]!.papel = papel
     r.execucoes[0]!.raia = null
-    const a = escritorio(r).andares[0]!.agentes[0]!
+    const a = escritorio(r).andares[0]!.agentes.find((x) => x.papel === papel)!
     expect(a.area).toBe(area)
     expect(a.nome).toBe(nome)
-  })
-
-  test('última ação com mais de 3 min vira "sem notícias há N min"', () => {
-    const r = v2()
-    r.execucoes[0]!.ultimaAcao = { texto: 'Edit x', em: '2026-11-21T01:55:00Z' }
-    expect(escritorio(r).andares[0]!.agentes[0]!.balao).toBe('sem notícias há 10 min')
   })
 
   test('sem última ação, conta desde o início', () => {
     const r = v2()
     r.execucoes[0]!.ultimaAcao = null
-    expect(escritorio(r).andares[0]!.agentes[0]!.balao).toBe('sem notícias há 35 min')
+    expect(porId(escritorio(r), 'raia:kit-base')?.balao).toBe('sem notícias há 35 min')
   })
 
   test('execução de demanda sem plano entra no andar da demanda', () => {
     const r = v2()
     r.execucoes[0]!.planoId = null
     r.execucoes[0]!.papel = 'qa'
-    expect(escritorio(r).andares[0]!.agentes[0]!.area).toBe('teste')
+    expect(porId(escritorio(r), 'papel:qa')?.area).toBe('teste')
   })
+})
 
-  test('raia esperando o revisor sem execução do agente de código: o agente fica na copa', () => {
+describe('escritório: estados', () => {
+  test('última ação com 3 min ou mais: semNoticias, com o balão de hoje', () => {
     const r = v2()
-    r.planos[0]!.fases[1]!.raias[0]!.situacao = 'em_revisao'
-    r.execucoes = [{ ...r.execucoes[0]!, runId: 'rev1', papel: 'revisor' }]
-    const agentes = escritorio(r).andares[0]!.agentes
-    expect(agentes.find((a) => a.runId === 'rev1')?.area).toBe('teste')
-    expect(agentes.find((a) => a.area === 'copa')).toMatchObject({
-      nome: 'frontend · kit-base',
-      trabalhando: false,
+    r.execucoes[0]!.ultimaAcao = { texto: 'Edit x', em: '2026-11-21T01:55:00Z' }
+    expect(porId(escritorio(r), 'raia:kit-base')).toMatchObject({
+      estado: 'semNoticias',
+      balao: 'sem notícias há 10 min',
     })
   })
+
+  test('raia que falhou, sem execução: falha, com balão "falhou"', () => {
+    const r = v2()
+    r.planos[0]!.fases[1]!.raias[0]!.estado = 'falhou'
+    r.execucoes = []
+    expect(porId(escritorio(r), 'raia:kit-base')).toMatchObject({
+      estado: 'falha',
+      balao: 'falhou',
+    })
+  })
+
+  test('raia em conserto, sem execução própria: falha', () => {
+    const r = v2()
+    r.planos[0]!.fases[1]!.raias[0]!.situacao = 'corrigindo'
+    r.execucoes = []
+    expect(porId(escritorio(r), 'raia:kit-base')?.estado).toBe('falha')
+  })
+
+  test('raia que falhou com execução nova: trabalhando', () => {
+    const r = v2()
+    r.planos[0]!.fases[1]!.raias[0]!.estado = 'falhou'
+    expect(porId(escritorio(r), 'raia:kit-base')?.estado).toBe('trabalhando')
+  })
+
+  test('planejador livre chama, com o texto da espera', () => {
+    const e = escritorio(v2(), [demanda({ espera: 'aprovar_desenho' })], {}, [
+      custo('-', 'o1', 'orquestrador'),
+    ])
+    expect(porId(e, 'papel:orquestrador')).toMatchObject({
+      estado: 'chamando',
+      balao: 'Aprovar desenho',
+      area: 'planejamento',
+    })
+    expect(e.andares[0]!.agentes.filter((a) => a.estado === 'chamando')).toHaveLength(1)
+  })
+
+  test('sem planejador, chama o primeiro livre', () => {
+    const e = escritorio(v2(), [demanda({ espera: 'travada' })])
+    expect(porId(e, 'raia:relatos-fundacao')).toMatchObject({
+      estado: 'chamando',
+      balao: 'Travada',
+    })
+  })
+
+  test('todos trabalhando: ninguém chama, mas o andar continua esperando', () => {
+    const r = v2()
+    r.planos[0]!.fases[0]!.raias = []
+    const e = escritorio(r, [demanda({ espera: 'travada' })])
+    expect(e.andares[0]!.agentes.some((a) => a.estado === 'chamando')).toBe(false)
+    expect(e.andares[0]!.esperaPaulo).toBe(true)
+  })
+
+  test('decisão do plano sem espera: plaquinha com o título da decisão', () => {
+    const r = v2()
+    r.planos[0]!.decisoes = [{ titulo: 'O filtro entra?', url: 'https://github.com/a/b/issues/1' }]
+    expect(porId(escritorio(r), 'raia:relatos-fundacao')?.balao).toBe('O filtro entra?')
+  })
+
+  test('etapa do Paulo sem espera nem decisão: "Sua vez nesta etapa"; concluir_etapa: "Concluir a etapa"', () => {
+    expect(
+      porId(escritorio(v2(), [demanda({ marco: null })]), 'raia:relatos-fundacao')?.balao,
+    ).toBe('Sua vez nesta etapa')
+    expect(
+      porId(escritorio(v2(), [demanda({ espera: 'concluir_etapa' })]), 'raia:relatos-fundacao')
+        ?.balao,
+    ).toBe('Concluir a etapa')
+  })
+
+  test.each([
+    ['trabalhando', 'trabalhando'],
+    ['semNoticias', 'trabalhando'],
+    ['falha', 'trabalhando'],
+    ['chamando', 'chamando'],
+    ['livre', 'livre'],
+  ] as const)('grupoDoEstado(%s) = %s', (e, g) => expect(grupoDoEstado(e)).toBe(g))
 })
 
 describe('escritório: caixas e plano', () => {
@@ -232,3 +422,75 @@ describe('escritório: caixas e plano', () => {
     expect(kit!.agenteRunId).toBe('run_kitbase01')
   })
 })
+
+const parte = (raia: string, inicio: string, fim: string | null): LinhaDoHistorico => ({
+  chave: `${PLANO}:${raia}`,
+  tipo: 'parte',
+  papel: 'frontend',
+  inicio,
+  fim,
+  custoUsd: null,
+})
+
+describe('escritório: números da ficha', () => {
+  test('raia entregue: 1 entregue, minutos do intervalo e custo das execuções dela', () => {
+    const h = [
+      parte('relatos-fundacao', '2026-11-21T00:50:00Z', '2026-11-21T01:52:00Z'),
+      custo('relatos-fundacao', 'a1', 'frontend', 0.5),
+      custo('relatos-fundacao', 'a2', 'frontend', 0.25),
+      custo('relatos-fundacao', 'rv', 'revisor', 9),
+    ]
+    expect(porId(escritorio(v2(), [demanda()], {}, h), 'raia:relatos-fundacao')?.numeros).toEqual({
+      entregues: 1,
+      minutos: 62,
+      custoUsd: 0.75,
+    })
+  })
+
+  test('parte aberta conta até agora', () => {
+    const h = [parte('kit-base', '2026-11-21T01:30:00Z', null)]
+    expect(porId(escritorio(v2(), [demanda()], {}, h), 'raia:kit-base')?.numeros).toEqual({
+      entregues: 0,
+      minutos: 35,
+      custoUsd: 0,
+    })
+  })
+
+  test('personagem por papel: sem entregues e minutos, custo das execuções do papel neste plano', () => {
+    const h = [
+      custo('kit-base', 'r1', 'revisor', 0.2),
+      custo('relatos-fundacao', 'r2', 'revisor', 0.3),
+      { ...custo('x', 'r3', 'revisor', 5), chave: 'outro:x:run:r3' },
+    ]
+    expect(porId(escritorio(v2(), [demanda()], {}, h), 'papel:revisor')?.numeros).toEqual({
+      entregues: null,
+      minutos: null,
+      custoUsd: 0.5,
+    })
+  })
+
+  test('próxima parte: a próxima raia na fila com o mesmo papel, pelo título da seed', () => {
+    const r = v2()
+    const kit = r.planos[0]!.fases[1]!.raias[0]!
+    r.planos[0]!.fases[1]!.raias.push({
+      ...kit,
+      id: 'tutoriais',
+      situacao: null,
+      estado: 'planejada',
+      seedId: 'S1',
+    })
+    const e = escritorio(r, [demanda()], { S1: 'Tutoriais do kit' })
+    expect(porId(e, 'raia:kit-base')?.proximaParte).toBe('Tutoriais do kit')
+    expect(porId(escritorio(), 'raia:kit-base')?.proximaParte).toBeNull()
+  })
+})
+
+test('contarEstados agrupa falha e sem notícias como trabalhando', () =>
+  expect(
+    contarEstados([
+      { estado: 'falha' },
+      { estado: 'semNoticias' },
+      { estado: 'livre' },
+      { estado: 'chamando' },
+    ]),
+  ).toEqual({ trabalhando: 2, livre: 1, chamando: 1 }))

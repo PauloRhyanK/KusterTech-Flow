@@ -103,7 +103,7 @@ export function grupoDaDemanda(d: DemandaNaLista): ChaveDoGrupo | null {
   return 'em_andamento'
 }
 
-const TEXTO_DA_ESPERA: Record<Exclude<Espera, 'concluir_etapa'>, string> = {
+export const TEXTO_DA_ESPERA: Record<Exclude<Espera, 'concluir_etapa'>, string> = {
   aprovar_desenho: 'Aprovar desenho',
   planejar_comigo: 'Planejar comigo',
   decidir_destino: 'Decidir destino',

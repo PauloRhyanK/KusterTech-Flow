@@ -56,4 +56,23 @@ describe('plano da entrega', () => {
     fireEvent.click(kit)
     expect(onSelecionar).toHaveBeenCalledWith('kit-base')
   })
+
+  test('plano: cartão realçado e mouse no cartão pede realce da raia', () => {
+    const onRealcar = vi.fn()
+    render(
+      <PlanoDaEntrega
+        fases={escritorioDeTeste().andares[0]!.fases}
+        selecionada={null}
+        onSelecionar={() => {}}
+        realcada="kit-base"
+        onRealcar={onRealcar}
+      />,
+    )
+    const kit = screen.getByRole('button', { name: /kit-base/ })
+    expect(kit.getAttribute('data-realce')).toBe('true')
+    fireEvent.mouseEnter(kit)
+    expect(onRealcar).toHaveBeenCalledWith('kit-base')
+    fireEvent.mouseLeave(kit)
+    expect(onRealcar).toHaveBeenLastCalledWith(null)
+  })
 })

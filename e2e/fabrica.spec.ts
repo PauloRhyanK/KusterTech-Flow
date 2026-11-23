@@ -139,6 +139,16 @@ test('escritório: prédio com o andar que espera, mapa, tela do agente e sala d
     ).toBeVisible()
     await page.getByRole('button', { name: new RegExp(`andar: ${feature},`) }).click()
     await expect(page.getByRole('button', { name: /^frontend · tela:/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^\d+ trabalhando$/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /: livre, / }).first()).toBeVisible()
+    // sentado, o clique na cabeça abre a ficha (o computador deixa passar o clique fora do desenho)
+    await page
+      .getByRole('button', { name: /^frontend · tela:/ })
+      .click({ position: { x: 11, y: 4 } })
+    // o menu lateral também é `complementary`; a ficha é o do conteúdo principal
+    await expect(page.getByRole('main').getByRole('complementary')).toContainText('Nesta demanda')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(page.locator('.esc-confete')).toHaveCount(0)
     await page.getByRole('button', { name: /computador de frontend · tela/ }).click()
     await expect(page.getByRole('dialog')).toContainText('lendo o catálogo do kit')
     await page.keyboard.press('Escape')

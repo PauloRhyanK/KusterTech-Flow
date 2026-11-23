@@ -1,106 +1,111 @@
 'use client'
 
-// O escritório de um andar: mapa visto de cima com uma área por etapa, a copa, a sala de gestão, a esteira
-// (fila → mesa → entrega) e os bonecos. Posições no palco fixo de 1100×680 do rascunho aprovado.
+// O escritório de um andar: mapa visto de cima com uma área por etapa, a copa (só cenário), a sala de gestão,
+// a esteira (fila → mesa → entrega), as mesas, os cantos de hobby e os personagens. Posições em layout.ts.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type {
-  Agente,
-  Andar,
-  Area,
-  Caixa as CaixaDoModelo,
+import {
+  type Agente,
+  type Andar,
+  type Area,
+  type Caixa as CaixaDoModelo,
+  type Grupo,
+  grupoDoEstado,
 } from '@/modules/fabrica/escritorio/model'
 import { s } from './classes'
-import { Boneco, Cadeira, Caixa, Mesa, Objeto } from './pixel'
+import { useComemoracao } from './comemoracao'
+import { CantoDoHobby, hobbyDoPapel, TAMANHO_DO_CANTO } from './hobbies'
+import {
+  ALTURA,
+  AREAS,
+  CADEIRA,
+  CAIXA_NA_MESA,
+  DE_PE,
+  ENTRADA,
+  ENTRADA_DO_CONSERTO,
+  ENTREGA,
+  FILA,
+  GESTAO,
+  LARGURA,
+  lugaresDoAndar,
+  type Ponto,
+  POSE_DO_HOBBY,
+  PORTA_DA_GESTAO,
+  pontoDoConserto,
+  SENTADO,
+  soma,
+} from './layout'
+import { type Lugar, Personagem } from './personagem'
+import { Cadeira, Caixa, Mesa, Objeto, v } from './pixel'
 
 export interface MapaProps {
   andar: Andar
-  onAbrirAgente: (runId: string) => void
+  onAbrirAgente: (id: string) => void
   onAbrirTela: (runId: string) => void
   onAbrirParte: (raia: string) => void
   onAbrirGestao: () => void
+  /** grupo aceso pelos contadores; quem é de outro grupo fica esmaecido */
+  filtro: Grupo | null
+  /** id do agente realçado pelo mouse (no mapa ou no cartão do plano) */
+  realce: string | null
+  onRealcar: (id: string | null) => void
 }
 
-const LARGURA = 1100
-const ALTURA = 680
-
-interface Retangulo {
+interface Decoracao {
+  nome: string
   x: number
   y: number
-  w: number
-  h: number
+  /** token da cor do tapete (só para o tapete) */
+  tapete?: string
 }
 
-export const AREAS: Record<Area, Retangulo & { rotulo: string; cor: string }> = {
-  triagem: { x: 110, y: 76, w: 160, h: 190, rotulo: 'Triagem', cor: 'area-triagem' },
-  planejamento: { x: 285, y: 76, w: 170, h: 190, rotulo: 'Planejamento', cor: 'area-planejamento' },
-  desenho: { x: 470, y: 76, w: 160, h: 190, rotulo: 'Desenho', cor: 'area-desenho' },
-  copa: { x: 645, y: 76, w: 140, h: 190, rotulo: 'Copa', cor: 'area-copa' },
-  desenvolvimento: {
-    x: 110,
-    y: 372,
-    w: 390,
-    h: 280,
-    rotulo: 'Desenvolvimento',
-    cor: 'area-desenvolvimento',
-  },
-  teste: { x: 520, y: 372, w: 210, h: 280, rotulo: 'Teste e revisão', cor: 'area-teste' },
-  publicacao: { x: 750, y: 372, w: 180, h: 280, rotulo: 'Publicação', cor: 'area-publicacao' },
-}
-const GESTAO: Retangulo = { x: 800, y: 76, w: 200, h: 190 }
-const FILA: Retangulo = { x: 10, y: 372, w: 92, h: 250 }
-const ENTRADA: Retangulo = { x: 10, y: 282, w: 90, h: 80 }
-const ENTREGA: Retangulo = { x: 950, y: 560, w: 130, h: 100 }
-
-const DECORACAO: { nome: string; x: number; y: number }[] = [
-  { nome: 'janela', x: 40, y: 4 },
-  { nome: 'janela', x: 300, y: 4 },
-  { nome: 'relogio', x: 720, y: 12 },
-  { nome: 'janela', x: 540, y: 4 },
-  { nome: 'janela', x: 800, y: 4 },
-  { nome: 'cortica', x: 122, y: 92 },
-  { nome: 'planta', x: 225, y: 214 },
-  { nome: 'lixo', x: 122, y: 236 },
-  { nome: 'quadro', x: 300, y: 92 },
-  { nome: 'mesaRedonda', x: 380, y: 200 },
-  { nome: 'cavalete', x: 580, y: 96 },
-  { nome: 'paleta', x: 485, y: 226 },
-  { nome: 'planta', x: 590, y: 214 },
-  { nome: 'sofa', x: 655, y: 96 },
-  { nome: 'gato', x: 690, y: 92 },
-  { nome: 'cafe', x: 745, y: 140 },
-  { nome: 'bebedouro', x: 750, y: 196 },
-  { nome: 'plantona', x: 650, y: 206 },
-  { nome: 'painel', x: 818, y: 90 },
-  { nome: 'mesaRedonda', x: 860, y: 186 },
-  { nome: 'planta', x: 960, y: 216 },
-  { nome: 'estante', x: 130, y: 388 },
-  { nome: 'plantona', x: 450, y: 600 },
-  { nome: 'lixo', x: 470, y: 390 },
-  { nome: 'telao', x: 560, y: 388 },
-  { nome: 'planta', x: 690, y: 600 },
-  { nome: 'rack', x: 770, y: 392 },
-  { nome: 'rack', x: 815, y: 392 },
-  { nome: 'foguete', x: 880, y: 396 },
-  { nome: 'impressora', x: 870, y: 600 },
-  { nome: 'palete', x: 955, y: 618 },
+// Cenário do rascunho v7, em coordenadas do mapa (canto superior esquerdo de cada objeto).
+const DECORACAO: Decoracao[] = [
+  { nome: 'janelaComNuvem', x: 40, y: 9 },
+  { nome: 'janelaComNuvem', x: 330, y: 9 },
+  { nome: 'janelaComNuvem', x: 620, y: 9 },
+  { nome: 'relogio', x: 851, y: 10 },
+  { nome: 'janelaComNuvem', x: 960, y: 9 },
+  // triagem
+  { nome: 'tapete', x: 125, y: 236, tapete: 'tapete-triagem' },
+  { nome: 'lixo', x: 238, y: 176 },
+  // planejamento
+  { nome: 'tapete', x: 332, y: 234, tapete: 'tapete-planejamento' },
+  { nome: 'quadroPostIts', x: 452, y: 90 },
+  // desenho
+  { nome: 'tapete', x: 614, y: 236, tapete: 'tapete-desenho' },
+  { nome: 'painelDeCores', x: 735, y: 151 },
+  // copa: só cenário
+  { nome: 'bebedouro', x: 832, y: 100 },
+  { nome: 'geladeira', x: 870, y: 94 },
+  { nome: 'planta', x: 848, y: 156 },
+  { nome: 'sofaComGato', x: 830, y: 206 },
+  // sala de gestão
+  { nome: 'tapete', x: 938, y: 204, tapete: 'tapete-gestao' },
+  { nome: 'telaoGrafico', x: 928, y: 96 },
+  { nome: 'plantona', x: 1030, y: 90 },
+  { nome: 'mesaDeReuniao', x: 958, y: 156 },
+  { nome: 'portaDaGestao', x: PORTA_DA_GESTAO.x - 24, y: GESTAO.y + GESTAO.h - 24 },
+  // desenvolvimento
+  { nome: 'tapete', x: 124, y: 614, tapete: 'tapete-desenvolvimento' },
+  { nome: 'tapete', x: 294, y: 614, tapete: 'tapete-desenvolvimento' },
+  { nome: 'estante', x: 446, y: 604 },
+  // teste e revisão
+  { nome: 'tapete', x: 605, y: 622, tapete: 'tapete-teste' },
+  { nome: 'telaoTestes', x: 781, y: 552 },
+  { nome: 'planta', x: 811, y: 604 },
+  // publicação
+  { nome: 'racks', x: 887, y: 396 },
+  { nome: 'impressora', x: 888, y: 468 },
+  { nome: 'foguete', x: 942, y: 462 },
+  { nome: 'palete', x: 888, y: 508 },
 ]
 
-/** Onde fica o n-ésimo boneco de uma área: uma grade de mesas, com espaço para o balão em cima. */
-export function posicaoNaArea(area: Area, indice: number): { x: number; y: number } {
-  const r = AREAS[area]
-  if (area === 'copa') return { x: r.x + 70, y: r.y + 120 + (indice % 2) * 40 }
-  const colunas = Math.max(1, Math.floor((r.w - 20) / 120))
-  return {
-    x: r.x + 60 + (indice % colunas) * 120,
-    y: r.y + 95 + Math.floor(indice / colunas) * 125,
-  }
-}
+// LEDs piscando nos racks: as casas 'gg' de cada gaveta do sprite (escala 3), duas torres a 45 px.
+const LEDS: Ponto[] = [0, 45].flatMap((dx) =>
+  [0, 1, 2, 3].map((u) => ({ x: 6 + dx, y: 6 + 12 * u })),
+)
 
-function posicaoDaCaixa(
-  caixa: CaixaDoModelo,
-  indiceNoLugar: number,
-  posicaoDoAgente: Map<string, { x: number; y: number }>,
-) {
+function posicaoDaCaixa(caixa: CaixaDoModelo, indiceNoLugar: number, mesaDaRaia: Ponto | null) {
   if (caixa.lugar === 'fila') return { x: FILA.x + 45, y: FILA.y + 48 + (indiceNoLugar % 4) * 58 }
   if (caixa.lugar === 'entrega') {
     return {
@@ -108,8 +113,7 @@ function posicaoDaCaixa(
       y: ENTREGA.y + 44 - Math.floor(indiceNoLugar / 3) * 20,
     }
   }
-  const agente = posicaoDoAgente.get(caixa.raia)
-  if (agente) return { x: agente.x + 38, y: agente.y + 38 }
+  if (mesaDaRaia) return soma(mesaDaRaia, CAIXA_NA_MESA)
   return { x: AREAS.desenvolvimento.x + 300, y: AREAS.desenvolvimento.y + 240 - indiceNoLugar * 30 }
 }
 
@@ -146,32 +150,72 @@ function useEsteiraAndando(caixas: CaixaDoModelo[]): boolean {
   return andando
 }
 
-function Boneca({
-  agente,
-  x,
-  y,
-  onAbrir,
-}: {
+const SENTA = new Set<Agente['estado']>(['trabalhando', 'semNoticias'])
+
+interface Cena {
   agente: Agente
-  x: number
-  y: number
-  onAbrir: () => void
-}) {
+  mesa: Ponto | null
+  canto: Ponto | null
+  destino: Ponto
+  lugar: Lugar
+  sentado: boolean
+}
+
+/** Onde cada agente fica agora, pelo estado: sentado, de pé na frente da mesa, no canto, na porta ou no conserto. */
+function montarCena(agentes: Agente[], comemorando: Set<string>): Cena[] {
+  const lugares = lugaresDoAndar(agentes)
+  return agentes.map((agente) => {
+    const { mesa, canto } = lugares.get(agente.id) ?? { mesa: null, canto: null }
+    const base = { agente, mesa, canto }
+    if (agente.papel === 'fixer') {
+      // o conserto senta na mesa da raia; quem falhou fica de pé na frente dela
+      const mesaDaRaia = agente.raia ? (lugares.get(`raia:${agente.raia}`)?.mesa ?? null) : null
+      const destino = mesaDaRaia
+        ? pontoDoConserto(mesaDaRaia)
+        : soma({ x: AREAS[agente.area].x + 34, y: AREAS[agente.area].y + 40 }, DE_PE)
+      return { ...base, destino, lugar: 'conserto', sentado: mesaDaRaia !== null }
+    }
+    if (agente.estado === 'chamando')
+      return { ...base, destino: PORTA_DA_GESTAO, lugar: 'porta', sentado: false }
+    const hobby = hobbyDoPapel(agente.papel)
+    if (agente.estado === 'livre' && !comemorando.has(agente.id) && canto && hobby)
+      return { ...base, destino: soma(canto, POSE_DO_HOBBY[hobby]), lugar: 'canto', sentado: false }
+    const naMesa = mesa ?? { x: AREAS[agente.area].x + 60, y: AREAS[agente.area].y + 62 }
+    const sentado = SENTA.has(agente.estado) || comemorando.has(agente.id)
+    return {
+      ...base,
+      destino: soma(naMesa, sentado ? SENTADO : DE_PE),
+      lugar: 'mesa',
+      sentado,
+    }
+  })
+}
+
+function estadoDaMesa(agente: Agente): 'apagada' | 'acesa' | 'falha' {
+  if (SENTA.has(agente.estado)) return 'acesa'
+  return agente.estado === 'falha' ? 'falha' : 'apagada'
+}
+
+function ObjetoDoCenario({ o }: { o: Decoracao }) {
+  const estilo: React.CSSProperties & Record<'--pixel-tapete', string | undefined> = {
+    left: o.x,
+    top: o.y,
+    '--pixel-tapete': o.tapete ? v(o.tapete) : undefined,
+  }
   return (
-    <button
-      type="button"
-      className={s.agente}
-      style={{ left: x, top: y }}
-      data-area={agente.area}
-      data-trabalhando={agente.trabalhando}
-      aria-label={`${agente.nome}: ${agente.balao}`}
-      onClick={onAbrir}
-    >
-      <span className={s.balao} title={agente.balao}>
-        {agente.balao}
-      </span>
-      <Boneco papel={agente.papel} semente={agente.runId} />
-    </button>
+    <span className={o.tapete ? `${s.objeto} ${s.tapete}` : s.objeto} style={estilo}>
+      <Objeto nome={o.nome} />
+      {o.nome === 'janelaComNuvem' && (
+        <span className={s.ceuDaJanela}>
+          <i className={s.nuvem} />
+          <i className={s.nuvem} />
+        </span>
+      )}
+      {o.nome === 'racks' &&
+        LEDS.map((p, i) => (
+          <i key={i} className={s.led} style={{ left: p.x, top: p.y }} data-cor={i % 2} />
+        ))}
+    </span>
   )
 }
 
@@ -181,22 +225,28 @@ export function Mapa({
   onAbrirTela,
   onAbrirParte,
   onAbrirGestao,
+  filtro,
+  realce,
+  onRealcar,
 }: MapaProps) {
   const palco = useRef<HTMLDivElement>(null)
   const escala = useEscala(palco)
   const andando = useEsteiraAndando(andar.caixas)
 
-  // posições dos agentes por área, na ordem do modelo
-  const contagem = new Map<Area, number>()
-  const posicoes = andar.agentes.map((a) => {
-    const i = contagem.get(a.area) ?? 0
-    contagem.set(a.area, i + 1)
-    return posicaoNaArea(a.area, i)
-  })
-  const posicaoDoAgente = new Map<string, { x: number; y: number }>()
-  andar.agentes.forEach((a, i) => {
-    if (a.raia && a.trabalhando && a.area !== 'teste') posicaoDoAgente.set(a.raia, posicoes[i]!)
-  })
+  const comemorando = useComemoracao(andar.agentes)
+  const cena = montarCena(andar.agentes, comemorando)
+  // mesas com alguém na cadeira: quem trabalha nela ou o conserto da raia dela
+  const ocupadas = new Set(
+    cena.flatMap((c) =>
+      c.lugar === 'conserto' && c.agente.raia
+        ? [`raia:${c.agente.raia}`]
+        : c.sentado
+          ? [c.agente.id]
+          : [],
+    ),
+  )
+  const mesaPorId = new Map(cena.map((c) => [c.agente.id, c.mesa]))
+  const esmaecido = (a: Agente) => filtro !== null && grupoDoEstado(a.estado) !== filtro
   const porLugar = new Map<string, number>()
 
   return (
@@ -224,29 +274,6 @@ export function Mapa({
               }}
             >
               <span className={s.rotulo}>{r.rotulo}</span>
-              {area !== 'copa' &&
-                andar.agentes
-                  .map((a, i) => ({ a, p: posicoes[i]! }))
-                  .filter(({ a }) => a.area === area)
-                  .map(({ a, p }) => (
-                    <div
-                      key={a.runId}
-                      style={{ position: 'absolute', left: p.x - r.x, top: p.y - r.y }}
-                    >
-                      <span className={s.objeto} style={{ left: -16, top: -32 }}>
-                        <Cadeira />
-                      </span>
-                      <button
-                        type="button"
-                        className={s.computador}
-                        style={{ left: -32, top: 24 }}
-                        aria-label={`computador de ${a.nome}: ver a tela`}
-                        onClick={() => onAbrirTela(a.runId)}
-                      >
-                        <Mesa acesa={a.trabalhando} cor={null} />
-                      </button>
-                    </div>
-                  ))}
             </div>
           )
         })}
@@ -272,22 +299,72 @@ export function Mapa({
         </button>
 
         {DECORACAO.map((o, i) => (
-          <span key={`${o.nome}-${i}`} className={s.objeto} style={{ left: o.x, top: o.y }}>
-            <Objeto nome={o.nome} />
-          </span>
+          <ObjetoDoCenario key={`${o.nome}-${i}`} o={o} />
         ))}
 
-        {/* Bonecos fora do fundo da área (que tem opacidade e prende o empilhamento), acima da
-            decoração e das placas, para o balão nunca ficar escondido. */}
-        {andar.agentes.map((a, i) => (
-          <Boneca
-            key={a.runId}
-            agente={a}
-            x={posicoes[i]!.x}
-            y={posicoes[i]!.y}
-            onAbrir={() => onAbrirAgente(a.runId)}
-          />
-        ))}
+        {/* Cantos de hobby: um por agente que tem hobby, ocupado ou não. Sem z-index no contêiner, para a
+            camada da frente da poltrona passar na frente de quem lê. */}
+        {cena.map(({ agente, canto }) => {
+          const hobby = hobbyDoPapel(agente.papel)
+          if (!canto || !hobby) return null
+          const [w, h] = TAMANHO_DO_CANTO[hobby]
+          return (
+            <div
+              key={`canto-${agente.id}`}
+              className={s.lugarDoCanto}
+              style={{ left: canto.x - w / 2, top: canto.y - h / 2 }}
+            >
+              <CantoDoHobby hobby={hobby} />
+            </div>
+          )
+        })}
+
+        {/* Mesas: uma por agente, com a cadeira atrás (vazia quando ele não está sentado). */}
+        {cena.map(({ agente, mesa }) =>
+          mesa ? (
+            <div
+              key={`mesa-${agente.id}`}
+              className={s.posto}
+              style={{ left: mesa.x, top: mesa.y }}
+              data-mesa={agente.id}
+              data-esmaecido={esmaecido(agente)}
+            >
+              <span className={s.objeto} style={{ left: CADEIRA.x, top: CADEIRA.y }}>
+                <Cadeira vazia={!ocupadas.has(agente.id)} />
+              </span>
+              <button
+                type="button"
+                className={s.computador}
+                style={{ left: -32, top: -24 }}
+                aria-label={`computador de ${agente.nome}: ver a tela`}
+                disabled={agente.runId === null}
+                onClick={() => agente.runId !== null && onAbrirTela(agente.runId)}
+              >
+                <Mesa estado={estadoDaMesa(agente)} />
+              </button>
+            </div>
+          ) : null,
+        )}
+
+        {cena.map(({ agente, destino, lugar, sentado }) => {
+          const hobby = lugar === 'canto' ? hobbyDoPapel(agente.papel) : null
+          return (
+            <Personagem
+              key={agente.id}
+              agente={agente}
+              destino={destino}
+              lugar={lugar}
+              sentado={sentado}
+              hobby={hobby}
+              esmaecido={esmaecido(agente)}
+              comemorando={comemorando.has(agente.id)}
+              entrada={lugar === 'conserto' ? ENTRADA_DO_CONSERTO : null}
+              realcado={realce === agente.id}
+              onRealcar={(r) => onRealcar(r ? agente.id : null)}
+              onAbrir={() => onAbrirAgente(agente.id)}
+            />
+          )
+        })}
 
         <div
           className={s.doca}
@@ -334,7 +411,7 @@ export function Mapa({
         {andar.caixas.map((c) => {
           const i = porLugar.get(c.lugar) ?? 0
           porLugar.set(c.lugar, i + 1)
-          const p = posicaoDaCaixa(c, i, posicaoDoAgente)
+          const p = posicaoDaCaixa(c, i, mesaPorId.get(`raia:${c.raia}`) ?? null)
           // Na entrega as caixas ficam a 26 px uma da outra: o nome não cabe e vai para o title.
           const entregue = c.lugar === 'entrega'
           return (
@@ -344,6 +421,7 @@ export function Mapa({
               className={s.caixa}
               style={{ left: p.x, top: p.y }}
               data-lugar={c.lugar}
+              data-realce={realce === `raia:${c.raia}` ? 'true' : undefined}
               title={c.raia}
               aria-label={`caixa ${c.raia}, ${c.lugar === 'fila' ? 'na fila' : c.lugar === 'mesa' ? 'na mesa' : 'entregue'}`}
               onClick={() => onAbrirParte(c.raia)}

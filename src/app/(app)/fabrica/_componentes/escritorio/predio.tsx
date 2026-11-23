@@ -48,7 +48,7 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
                 andar.progresso.partes[1] === 0
                   ? 0
                   : (andar.progresso.partes[0] / andar.progresso.partes[1]) * 100
-              const equipe = andar.agentes.filter((a) => a.area !== 'copa').slice(0, 4)
+              const equipe = andar.agentes.filter((a) => a.runId !== null).slice(0, 4)
               return (
                 <button
                   key={andar.planoId}
@@ -64,7 +64,7 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
                     <span className={s.chao} />
                     <span className={s.gente}>
                       {equipe.map((a) => (
-                        <Boneco key={a.runId} papel={a.papel} semente={a.runId} escala={2} />
+                        <Boneco key={a.id} papel={a.papel} variacao={a.variacao} escala={2} />
                       ))}
                     </span>
                   </span>

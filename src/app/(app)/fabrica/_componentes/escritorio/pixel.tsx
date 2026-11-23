@@ -2,10 +2,11 @@
 // (docs/superpowers/specs/assets/2026-11-21-escritorio-da-fabrica-rascunho.html). Cada letra da matriz aponta
 // para uma variável --pixel-* de globals.css; nenhuma cor fixa aqui.
 import type { ReactElement } from 'react'
+import { s } from './classes'
 
 type Paleta = Record<string, string>
 
-const v = (nome: string) => `var(--pixel-${nome})`
+export const v = (nome: string) => `var(--pixel-${nome})`
 
 /** Desenha uma matriz de letras como pixels (um <rect> por pixel colorido), nítida em qualquer escala. */
 export function Sprite({
@@ -13,7 +14,10 @@ export function Sprite({
   paleta,
   escala,
   ...resto
-}: { mapa: string[]; paleta: Paleta; escala: number } & Record<`data-${string}`, string>) {
+}: { mapa: string[]; paleta: Paleta; escala: number; className?: string } & Record<
+  `data-${string}`,
+  string
+>) {
   const largura = Math.max(...mapa.map((l) => l.length))
   const pixels: ReactElement[] = []
   mapa.forEach((linha, y) => {
@@ -40,7 +44,16 @@ export function Sprite({
 // ---------------------------------------------------------------- bonecos
 
 export type Acessorio =
-  'fone' | 'gorro' | 'oculos' | 'prancheta' | 'boina' | 'lupa' | 'capacete' | 'nenhum'
+  | 'fone'
+  | 'gorro'
+  | 'gorroEscuro'
+  | 'oculos'
+  | 'prancheta'
+  | 'boina'
+  | 'lupa'
+  | 'capacete'
+  | 'bone'
+  | 'nenhum'
 
 const ROUPA: Record<string, { cor: string; acessorio: Acessorio }> = {
   frontend: { cor: 'frontend', acessorio: 'fone' },
@@ -50,75 +63,143 @@ const ROUPA: Record<string, { cor: string; acessorio: Acessorio }> = {
   'ux-ui': { cor: 'desenho', acessorio: 'boina' },
   'ux-engineer': { cor: 'desenho', acessorio: 'boina' },
   produto: { cor: 'triagem', acessorio: 'lupa' },
-  qa: { cor: 'teste', acessorio: 'fone' },
+  qa: { cor: 'teste', acessorio: 'bone' },
   fixer: { cor: 'conserto', acessorio: 'capacete' },
+  arquiteto: { cor: 'arquiteto', acessorio: 'oculos' },
+  devops: { cor: 'devops', acessorio: 'capacete' },
+  seguranca: { cor: 'seguranca', acessorio: 'gorroEscuro' },
+}
+
+/** Cabelo (índice base) e pele fixos por papel; a variação só gira o cabelo. */
+const APARENCIA: Record<string, { cabelo: number; pele: number }> = {
+  orquestrador: { cabelo: 3, pele: 1 },
+  'ux-ui': { cabelo: 4, pele: 0 },
+  'ux-engineer': { cabelo: 4, pele: 0 },
+  frontend: { cabelo: 1, pele: 1 },
+  backend: { cabelo: 3, pele: 3 },
+  revisor: { cabelo: 0, pele: 0 },
+  qa: { cabelo: 4, pele: 3 },
+  fixer: { cabelo: 1, pele: 2 },
+  produto: { cabelo: 2, pele: 0 },
+  arquiteto: { cabelo: 0, pele: 2 },
+  devops: { cabelo: 2, pele: 1 },
+  seguranca: { cabelo: 1, pele: 0 },
 }
 
 export function roupaDoPapel(papel: string | null) {
   return (papel && ROUPA[papel]) || { cor: 'triagem', acessorio: 'nenhum' as Acessorio }
 }
 
-function numeroDaSemente(semente: string): number {
-  let h = 0
-  for (const c of semente) h = (h * 31 + c.charCodeAt(0)) >>> 0
-  return h
+const CORPO = [
+  '.....oooooo.....',
+  '...oohhhhhHoo...',
+  '..ohhhhhhhhhHo..',
+  '..ohhhhhhhhhho..',
+  '..ohhsssssshho..',
+  '..ossEssssEsso..',
+  '..osrssssssrso..',
+  '..ossssmmsssso..',
+  '...osssssssso...',
+  '....ooossooo....',
+  '..oooccwwccooo..',
+  '.occcccwwccccco.',
+  'occcccccccccccco',
+  'oscCccccccccCcso',
+  'oscCccccccccCcso',
+  'ossccccccccccsso',
+  '.ooccccccccccoo.',
+  '...oBBBBBBBBo...',
+  '...oppppppppo...',
+  '...opppoopppo...',
+  '...oSSo..oSSo...',
+  '...oooo..oooo...',
+]
+/** Sobrescreve linhas da matriz conforme o acessório. */
+function comAcessorio(acessorio: Acessorio): string[] {
+  const m = [...CORPO]
+  const set = (i: number, l: string) => {
+    m[i] = l
+  }
+  if (acessorio === 'gorro' || acessorio === 'gorroEscuro') {
+    const g = ['.....oooooo.....', '...oocccccccoo..', '..occcccccccccco', '..oCCCCCCCCCCo..']
+    const escuro = acessorio === 'gorroEscuro'
+    g.forEach((l, i) => set(i, escuro ? l.replace(/c/g, 'C') : l))
+  }
+  if (acessorio === 'boina') {
+    set(0, '....ooooooo.....')
+    set(1, '..oocccccccco...')
+    set(2, '.occcccccccccco.')
+    set(3, '..oCCCCCCCCCo...')
+  }
+  if (acessorio === 'capacete') {
+    set(0, '....oooooooo....')
+    set(1, '...oyyyyyyyyo...')
+    set(2, '..oyyYyyyyyyyo..')
+    set(3, '.ooooooooooooooo')
+  }
+  if (acessorio === 'bone') {
+    set(0, '....oooooooo....')
+    set(1, '...occcccccco...')
+    set(2, '..occcccccccco..')
+    set(3, '..oooooooooooooo')
+  }
+  if (acessorio === 'fone') {
+    set(1, '...oFhhhhhHFo...')
+    set(2, '..oFhhhhhhhhFo..')
+    set(4, '.FFhhsssssshhFF.')
+    set(5, '.FFssEssssEssFF.')
+    set(6, '..osrssssssrso..')
+  }
+  if (acessorio === 'oculos') set(5, '..oggggssggggo..')
+  if (acessorio === 'prancheta') {
+    set(13, 'oscCccccccccCkko')
+    set(14, 'oscCccccccccCkWk')
+    set(15, 'ossccccccccccskk')
+  }
+  if (acessorio === 'lupa') {
+    set(13, 'oscCccccccccCsLl')
+    set(14, 'oscCccccccccCsoL')
+  }
+  return m
 }
 
-/** Boneco visto de cima (14x14). A semente (o runId) fixa cabelo e pele; o papel dá a camisa e o acessório. */
+/** Boneco de frente (16x22). O papel fixa camisa, acessório, pele e cabelo base; a variação gira o cabelo. */
 export function Boneco({
   papel,
-  semente,
+  variacao = 0,
   escala = 4,
 }: {
   papel: string | null
-  semente: string
+  variacao?: number
   escala?: number
 }) {
   const { cor, acessorio } = roupaDoPapel(papel)
-  const n = numeroDaSemente(semente)
-  const m = [
-    '.....oooo.....',
-    '....ohhhho....',
-    '...ohhHhhho...',
-    '...ohhhhhHo...',
-    '...ohhhhhho...',
-    '....osssso....',
-    '..oooccccooo..',
-    '.occcccccccco.',
-    '.oCccccccccCo.',
-    'osccccccccccso',
-    'osCccccccccCso',
-    '.oo.cccccc.oo.',
-    '....oooooo....',
-  ]
-  if (acessorio === 'gorro')
-    Object.assign(m, { 1: '....occcco....', 2: '...occcccco...', 3: '...oCCCCCCo...' })
-  if (acessorio === 'boina')
-    Object.assign(m, { 0: '....ooooo.....', 1: '...occcccco...', 2: '..occcccccco..' })
-  if (acessorio === 'capacete')
-    Object.assign(m, { 1: '....oyyyyo....', 2: '...oyyyyyyo...', 3: '...oyYyyyyo...' })
-  if (acessorio === 'fone') Object.assign(m, { 3: '..FohhhhhHoF..', 4: '..FohhhhhhoF..' })
-  if (acessorio === 'oculos') Object.assign(m, { 5: '...ogsssgo....' })
-  if (acessorio === 'prancheta')
-    Object.assign(m, { 9: 'osccccccccccsk', 10: 'osCccccccccCsk', 11: '.oo.cccccc.okk' })
-  if (acessorio === 'lupa') Object.assign(m, { 10: 'osCcccccccccLl', 11: '.oo.cccccc.oLL' })
+  const ap = (papel && APARENCIA[papel]) || { cabelo: 0, pele: 0 }
   return (
     <Sprite
-      mapa={m}
+      mapa={comAcessorio(acessorio)}
       escala={escala}
       data-acessorio={acessorio}
       paleta={{
         o: v('contorno'),
-        h: v(`cabelo-${n % 5}`),
+        h: v(`cabelo-${(ap.cabelo + variacao) % 5}`),
         H: v('cabelo-brilho'),
-        s: v(`pele-${(n >> 3) % 4}`),
+        s: v(`pele-${ap.pele}`),
+        E: v('olho'),
+        r: v('bochecha'),
+        m: v('boca'),
         c: v(`papel-${cor}`),
         C: v(`papel-${cor}-sombra`),
+        w: v('gola'),
+        B: v('madeira-escura'),
+        p: v('calca'),
+        S: v('sapato'),
         F: v('metal'),
         y: v('ouro'),
         Y: v('ouro-claro'),
         g: v('contorno'),
         k: v('cortica'),
+        W: v('papel'),
         l: v('vidro'),
         L: v('moldura'),
       }}
@@ -128,41 +209,99 @@ export function Boneco({
 
 // ---------------------------------------------------------------- móveis
 
-export function Mesa({ acesa, cor }: { acesa: boolean; cor: number | null }) {
+const MESA = [
+  '..oooooooo......',
+  '..oTTTTTTo......',
+  '..oTTTTTTo......',
+  '..oTTTTTTo......',
+  '..oTTTTTTo......',
+  '..oooooooo......',
+  '.....oo....owwo.',
+  '.oKKKKKKo..owwo.',
+  'oooooooooooooooo',
+  'obbbbbbbbbbbbbbo',
+  'obbbbbbboBBBBBbo',
+  'oooooooooooooooo',
+]
+
+/** Mesa com monitor, teclado, caneca e gaveta. O CSS anima as linhas de código e o vapor só quando acesa. */
+export function Mesa({ estado }: { estado: 'apagada' | 'acesa' | 'falha' }) {
+  const tela =
+    estado === 'acesa' ? 'tela-acesa' : estado === 'falha' ? 'tela-falha' : 'tela-apagada'
+  const paleta: Paleta = {
+    o: v('madeira-escura'),
+    b: v('madeira'),
+    B: v('madeira-sombra'),
+    K: v('metal'),
+    w: v('creme'),
+    T: v(tela),
+  }
+  const pixels: ReactElement[] = []
+  MESA.forEach((linha, y) => {
+    ;[...linha].forEach((letra, x) => {
+      const cor = paleta[letra]
+      if (cor)
+        pixels.push(<rect key={`${x}-${y}`} x={x} y={y} width={1.02} height={1.02} fill={cor} />)
+    })
+  })
   return (
-    <Sprite
-      escala={4}
-      mapa={[
-        'oooooooooooooooo',
-        'obbbbbbbbbbbbbbo',
-        'obboooooooobbbbo',
-        'obboFFFFFFobxxbo',
-        'obboFllllFobxxbo',
-        'obboFllllFobbbbo',
-        'obboooooooobmbbo',
-        'obbbbbbbbbbbbbbo',
-        'oBBBBBBBBBBBBBBo',
-        'oooooooooooooooo',
-      ]}
-      paleta={{
-        o: v('madeira-escura'),
-        b: v('madeira'),
-        B: v('madeira-sombra'),
-        F: v('metal'),
-        l: v(acesa ? 'tela-acesa' : 'tela-apagada'),
-        x: cor === null ? v('madeira') : v(`raia-${cor % 8}`),
-        m: v('papel'),
-      }}
-    />
+    <svg
+      width={16 * 4}
+      height={MESA.length * 4}
+      viewBox={`0 0 16 ${MESA.length}`}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      className={s.mesa}
+      data-estado={estado}
+    >
+      {pixels}
+      <rect
+        className={s.telaLinha}
+        data-linha="1"
+        x={3}
+        y={1}
+        width={4}
+        height={1}
+        fill={v('tela-codigo-1')}
+      />
+      <rect
+        className={s.telaLinha}
+        data-linha="2"
+        x={4}
+        y={2}
+        width={3}
+        height={1}
+        fill={v('tela-codigo-2')}
+      />
+      <rect
+        className={s.telaLinha}
+        data-linha="3"
+        x={3}
+        y={3}
+        width={5}
+        height={1}
+        fill={v('tela-codigo-3')}
+      />
+      {estado === 'falha' && (
+        <>
+          <rect x={5} y={1} width={2} height={2} fill={v('branco')} />
+          <rect x={5} y={4} width={2} height={1} fill={v('branco')} />
+        </>
+      )}
+      <rect className={s.vapor} x={12} y={4} width={1} height={2} fill={v('branco')} />
+    </svg>
   )
 }
 
-export function Cadeira() {
+/** Cadeira reta (de frente para a mesa). Vazia, só recua para trás (CSS), sem girar. */
+export function Cadeira({ vazia }: { vazia: boolean }) {
   return (
     <Sprite
       escala={4}
-      mapa={['.oooooo.', 'occcccco', 'occcccco', '.oooooo.', '...oo...']}
-      paleta={{ o: v('contorno'), c: v('servidor') }}
+      className={s.cadeira}
+      data-vazia={String(vazia)}
+      mapa={['.oooooooo.', 'osssssssso', 'osSSSSSSso', 'osSSSSSSso', '.oooooooo.', '...o..o...']}
+      paleta={{ o: v('contorno'), s: v('servidor'), S: v('cinza') }}
     />
   )
 }
@@ -192,17 +331,44 @@ export function Caixa({ cor, entregue }: { cor: number; entregue: boolean }) {
 
 // ---------------------------------------------------------------- objetos do cenário
 
+const RACK = [
+  'oooooooooooo',
+  'oKKKKKKKKKKo',
+  'oKggKKKKKKKo',
+  'oKKKKKKKKKKo',
+  'oooooooooooo',
+  'oKKKKKKKKKKo',
+  'oKggKKKKKKKo',
+  'oKKKKKKKKKKo',
+  'oooooooooooo',
+  'oKKKKKKKKKKo',
+  'oKggKKKKKKKo',
+  'oKKKKKKKKKKo',
+  'oooooooooooo',
+  'oKKKKKKKKKKo',
+  'oKggKKKKKKKo',
+  'oKKKKKKKKKKo',
+  'oooooooooooo',
+  '.o........o.',
+]
+
+const BANCO = ['oooooo', 'oSSSSo', 'oooooo', '.o..o.', '.o..o.']
+
+// Objetos do rascunho v7 (docs/superpowers/specs/assets/2026-11-23-escritorio-personagens-rascunho.html).
 const OBJ: Record<string, { mapa: string[]; paleta: Paleta; escala: number }> = {
-  janela: {
-    escala: 5,
+  janelaComNuvem: {
+    escala: 4,
     mapa: [
-      'oooooooooooooooo',
-      'oLLLLLLooLLLLLLo',
-      'oLwLLLLooLLLLwLo',
-      'oLLLLLLooLLLLLLo',
-      'oooooooooooooooo',
+      'oooooooooooooooooooooooo',
+      'oLLLLLLLLLLooLLLLLLLLLLo',
+      'oLLLLLLLLLLooLLLLLLLLLLo',
+      'oLLLLLLLLLLooLLLLLLLLLLo',
+      'occccccccccoocccccccccco',
+      'occccccccccoocccccccccco',
+      'occccccccccoocccccccccco',
+      'oooooooooooooooooooooooo',
     ],
-    paleta: { o: v('moldura'), L: v('vidro'), w: v('branco') },
+    paleta: { o: v('moldura'), L: v('vidro'), c: v('ceu-baixo') },
   },
   relogio: {
     escala: 5,
@@ -239,131 +405,275 @@ const OBJ: Record<string, { mapa: string[]; paleta: Paleta; escala: number }> = 
     ],
     paleta: { g: v('folha'), G: v('folha-escura'), o: v('terra'), T: v('vaso') },
   },
-  sofa: {
+  tapete: {
     escala: 5,
     mapa: [
-      'oooooooooooooo',
-      'osssssssssssso',
-      'osSSSSSSSSSSso',
-      'osSSSSSSSSSSso',
-      'osssssssssssso',
-      'oooooooooooooo',
+      '....oooooooooooooooo....',
+      '..oooooooooooooooooooo..',
+      'oooooooooooooooooooooooo',
+      'oooooooooooooooooooooooo',
+      '..oooooooooooooooooooo..',
+      '....oooooooooooooooo....',
     ],
-    paleta: { o: v('contorno'), s: v('sofa'), S: v('sofa-claro') },
+    // a cor vem da área: quem desenha define --pixel-tapete no contêiner
+    paleta: { o: v('tapete') },
   },
-  gato: {
+  quadroPostIts: {
     escala: 3,
-    mapa: ['.o...o...', 'oco.oco..', 'occcccco.', 'ocwccwco.', 'occcccccoo', '.oooooo.o'],
-    paleta: { o: v('contorno'), c: v('gato'), w: v('contorno') },
-  },
-  cafe: {
-    escala: 5,
-    mapa: ['oooooo', 'oRRRRo', 'oRwwRo', 'oRRRRo', 'oKKKKo', 'oooooo'],
-    paleta: { o: v('contorno'), R: v('vermelho'), w: v('creme'), K: v('moldura') },
-  },
-  bebedouro: {
-    escala: 5,
-    mapa: ['.ooo.', 'olllo', 'olwlo', 'ooooo', 'ossso', 'ossso', 'ooooo'],
-    paleta: { o: v('contorno'), l: v('vidro'), w: v('branco'), s: v('metal') },
-  },
-  quadro: {
-    escala: 5,
     mapa: [
-      'oooooooooooooooooo',
-      'owwwwwwwwwwwwwwwwo',
-      'owbbwwwrrwwwwgwwwo',
-      'owwbbbbbbbwwgggwwo',
-      'owwwwwwwwwwwwwwwwo',
-      'oooooooooooooooooo',
+      'oooooooooooooooooooo',
+      'oWWWWWWWWWWWWWWWWWWo',
+      'oWyyWbbWppWWkkkkkWWo',
+      'oWyyWbbWppWWWWWWWWWo',
+      'oWWWWWWWWWWWkkkkWWWo',
+      'oWggWyyWWWWWWWWWWWWo',
+      'oWggWyyWbbWWkkkkkkWo',
+      'oWWWWWWWbbWWWWWWWWWo',
+      'oooooooooooooooooooo',
+      '.o................o.',
+      '.o................o.',
     ],
-    paleta: { o: v('cinza'), w: v('branco'), b: v('azul'), r: v('vermelho'), g: v('folha') },
-  },
-  cortica: {
-    escala: 5,
-    mapa: ['oooooooooooo', 'okyykppkkggo', 'okyykppkkggo', 'okkbbkkyykko', 'oooooooooooo'],
     paleta: {
-      o: v('moldura'),
-      k: v('cortica'),
+      o: v('cinza'),
+      W: v('tela-pintura'),
       y: v('amarelo'),
+      b: v('ceu'),
       p: v('rosa'),
       g: v('verde-claro'),
-      b: v('vidro'),
+      k: v('cinza'),
     },
   },
-  cavalete: {
-    escala: 5,
-    mapa: ['oooooooo', 'owwppwyo', 'owbbppyo', 'owbbwwwo', 'oooooooo', '.o....o.'],
+  painelDeCores: {
+    escala: 3,
+    mapa: [
+      'oooooooooooooooooooooooo',
+      'oKKKKKKKKKKKKKKKKKKKKKKo',
+      'oKrrrKbbbKyyyKKgggKpppKo',
+      'oKrrrKbbbKyyyKKgggKpppKo',
+      'oKKKKKKKKKKKKKKKKKKKKKKo',
+      'oKWWWWWWKKWWWWWWWKKWWWKo',
+      'oKWppWWWKKWbbbWWWKKWyWKo',
+      'oKWWWWWWKKWWWWWWWKKWWWKo',
+      'oKKKKKKKKKKKKKKKKKKKKKKo',
+      'oooooooooooooooooooooooo',
+    ],
     paleta: {
-      o: v('moldura'),
-      w: v('tela-pintura'),
+      o: v('contorno'),
+      K: v('cortica'),
+      r: v('tinta-1'),
+      b: v('tinta-2'),
+      y: v('tinta-3'),
+      g: v('tinta-4'),
       p: v('rosa-forte'),
-      b: v('azul-claro'),
-      y: v('ouro'),
+      W: v('tela-pintura'),
     },
   },
-  paleta: {
-    escala: 4,
-    mapa: ['.oooo.', 'orybwo', 'owwwwo', '.oooo.'],
+  sofaComGato: {
+    escala: 3,
+    mapa: [
+      '..o...o.....',
+      '..oOoOo.....',
+      '..oOOOoooooo',
+      '..oOeOeOOOOo',
+      '..oOOOOOOOOOo',
+      '...ooooooooo',
+      '..oooooooooooooooooooo..',
+      '.oSSSSSSSSSSSSSSSSSSSSo.',
+      '.oSssssssssssssssssssSo.',
+      'oSSsssssssssssssssssssSo',
+      'oSSssssssssosssssssssSSo',
+      'oSSSSSSSSSSSSSSSSSSSSSSo',
+      'oSSSSSSSSSSSSSSSSSSSSSSo',
+      'oooooooooooooooooooooooo',
+      '.o....................o.',
+    ],
     paleta: {
-      o: v('moldura'),
-      r: v('led-vermelho'),
-      y: v('ouro'),
-      b: v('azul-claro'),
-      w: v('fita'),
+      o: v('contorno'),
+      S: v('sofa-copa'),
+      s: v('sofa-copa-claro'),
+      O: v('gato'),
+      e: v('contorno'),
     },
   },
-  rack: {
-    escala: 6,
-    mapa: ['oooooo', 'osgsro', 'oooooo', 'osgsgo', 'oooooo', 'osgsso', 'oooooo'],
-    paleta: { o: v('contorno'), s: v('servidor'), g: v('led-verde'), r: v('led-vermelho') },
-  },
-  foguete: {
-    escala: 5,
-    mapa: ['...o...', '..owo..', '.owbwo.', '.owwwo.', 'oowwwoo', '..yry..'],
-    paleta: { o: v('contorno'), w: v('papel'), b: v('azul-claro'), y: v('ouro'), r: v('chama') },
-  },
-  telao: {
-    escala: 5,
+  geladeira: {
+    escala: 3,
     mapa: [
-      'oooooooooooooo',
-      'oGGGGGGGGGGGGo',
-      'oGwGGGGGGGwGGo',
-      'oGGwGGGGGwGGGo',
-      'oGGGwwwwwGGGGo',
-      'oooooooooooooo',
+      'oooooooooo',
+      'oWWWWWWWWo',
+      'oWWWWWWWgo',
+      'oWWWWWWWgo',
+      'oooooooooo',
+      'oWWWWWWWWo',
+      'oWWWWWWWgo',
+      'oWWWWWWWgo',
+      'oWWWWWWWgo',
+      'oWWWWWWWWo',
+      'oWWWWWWWWo',
+      'oooooooooo',
     ],
-    paleta: { o: v('contorno'), G: v('tela-verde'), w: v('branco') },
+    paleta: { o: v('contorno'), W: v('geladeira'), g: v('cinza') },
   },
-  mesaRedonda: {
-    escala: 5,
+  bebedouro: {
+    escala: 3,
     mapa: [
-      '...oooooo...',
-      '..obbbbbbo..',
-      '.obbbbbbbbo.',
-      'obbbbbbbbbbo',
-      'obbbbbbbbbbo',
-      '.obbbbbbbbo.',
-      '..obbbbbbo..',
-      '...oooooo...',
+      '..oooo..',
+      '.obbbbo.',
+      '.oBbbBo.',
+      '..oooo..',
+      '.oWWWWo.',
+      '.oWrbWo.',
+      '.oWWWWo.',
+      '.oWWWWo.',
+      '.oooooo.',
     ],
-    paleta: { o: v('madeira-escura'), b: v('mesa-redonda') },
+    paleta: {
+      o: v('contorno'),
+      b: v('vidro'),
+      B: v('agua'),
+      W: v('geladeira'),
+      r: v('tinta-1'),
+    },
+  },
+  telaoGrafico: {
+    escala: 3,
+    mapa: [
+      'oooooooooooooooooooooo',
+      'oKKKKKKKKKKKKKKKKKKKKo',
+      'oKKKKKKKKKKKKKgKKKKKKo',
+      'oKKKKKKKKKgKKKgKKKKKKo',
+      'oKKKKKKgKKgKKKgKKgKKKo',
+      'oKKKgKKgKKgKKKgKKgKKKo',
+      'oKKKgKKgKKgKKKgKKgKKKo',
+      'oooooooooooooooooooooo',
+    ],
+    paleta: { o: v('contorno'), K: v('telao'), g: v('grafico') },
+  },
+  mesaDeReuniao: {
+    escala: 3,
+    mapa: [
+      'oooooooooooooooooooooooooo',
+      'oTTTTTTTTTTTTTTTTTTTTTTTTo',
+      'oTttttttttttttttttttttttTo',
+      'oTttttWWWttttttttWWWttttTo',
+      'oTttttttttttttttttttttttTo',
+      'oTTTTTTTTTTTTTTTTTTTTTTTTo',
+      'oooooooooooooooooooooooooo',
+      '.o......................o.',
+      ...BANCO.map((b) => `..${b}..${b}..${b}..`),
+    ],
+    paleta: {
+      o: v('contorno'),
+      T: v('madeira'),
+      t: v('mesa-redonda'),
+      W: v('papel'),
+      S: v('banco'),
+    },
+  },
+  portaDaGestao: {
+    escala: 3,
+    mapa: [
+      'oooooooooooooooo',
+      'oDDDDDDDDDDDDDDo',
+      'oDdddddDDdddddDo',
+      'oDdddddDDdddddDo',
+      'oDDDDDDDDDDDDyDo',
+      'oDdddddDDdddddDo',
+      'oDdddddDDdddddDo',
+      'oDDDDDDDDDDDDDDo',
+    ],
+    paleta: { o: v('contorno'), D: v('rodape'), d: v('madeira'), y: v('tinta-3') },
   },
   estante: {
-    escala: 5,
+    escala: 3,
     mapa: [
-      'oooooooooooooo',
-      'oRRBByyGGRRBBo',
-      'oooooooooooooo',
-      'oGGyyRRBBGGyyo',
-      'oooooooooooooo',
+      'oooooooooooooooo',
+      'oWWWWWWWWWWWWWWo',
+      'oWrbbgyrWbbgrrWo',
+      'oWrbbgyrWbbgrrWo',
+      'oWrbbgyrWbbgrrWo',
+      'oooooooooooooooo',
+      'oWgyyrbWWgrbbyWo',
+      'oWgyyrbWWgrbbyWo',
+      'oWgyyrbWWgrbbyWo',
+      'oooooooooooooooo',
+      'oWWbrrgyWWyrbbWo',
+      'oWWbrrgyWWyrbbWo',
+      'oWWbrrgyWWyrbbWo',
+      'oooooooooooooooo',
     ],
     paleta: {
-      o: v('moldura'),
-      R: v('vermelho'),
-      B: v('azul'),
-      y: v('livro-amarelo'),
-      G: v('folha'),
+      o: v('madeira-escura'),
+      W: v('balcao'),
+      r: v('tinta-1'),
+      b: v('tinta-2'),
+      g: v('tinta-4'),
+      y: v('tinta-3'),
     },
+  },
+  telaoTestes: {
+    escala: 3,
+    mapa: [
+      'oooooooooooooooooooooooooo',
+      'oKKKKKKKKKKKKKKKKKKKKKKKKo',
+      'oKgKWWWWWWKKgKWWWWWKKKKKKo',
+      'oKKKKKKKKKKKKKKKKKKKKKKKKo',
+      'oKgKWWWWWKKKrKWWWWWWKKKKKo',
+      'oKKKKKKKKKKKKKKKKKKKKKKKKo',
+      'oKgKWWWWWWWKgKWWWWKKKKKKKo',
+      'oooooooooooooooooooooooooo',
+    ],
+    paleta: {
+      o: v('contorno'),
+      K: v('telao'),
+      g: v('grafico'),
+      r: v('led-vermelho'),
+      W: v('cinza'),
+    },
+  },
+  racks: {
+    escala: 3,
+    mapa: RACK.map((l) => `${l}...${l}`),
+    paleta: { o: v('contorno'), K: v('rack'), g: v('caixa-som-cone') },
+  },
+  foguete: {
+    escala: 3,
+    mapa: [
+      '...oo...',
+      '..oRRo..',
+      '..oWWo..',
+      '.oWBBWo.',
+      '.oWBBWo.',
+      '.oWWWWo.',
+      '.oWWWWo.',
+      'oRoWWoRo',
+      'oRoWWoRo',
+      'oo.yy.oo',
+      '...yy...',
+    ],
+    paleta: {
+      o: v('contorno'),
+      R: v('tinta-1'),
+      W: v('geladeira'),
+      B: v('agua'),
+      y: v('tinta-3'),
+    },
+  },
+  palete: {
+    escala: 3,
+    mapa: [
+      '.oooooo.oooooo..',
+      '.oCCCCo.oCCCCo..',
+      '.oCccCo.oCccCo..',
+      '.oooooo.oooooo..',
+      '....oooooo......',
+      '....oCCCCo......',
+      '....oCccCo......',
+      '....oooooo......',
+      'oooooooooooooooo',
+      'oTToTToTToTToTTo',
+      'oooooooooooooooo',
+    ],
+    paleta: { o: v('contorno'), C: v('cortica'), c: v('cavalete'), T: v('madeira') },
   },
   impressora: {
     escala: 5,
@@ -374,40 +684,6 @@ const OBJ: Record<string, { mapa: string[]; paleta: Paleta; escala: number }> = 
     escala: 5,
     mapa: ['oooo', 'oggo', 'oggo', 'oooo'],
     paleta: { o: v('contorno'), g: v('lixo') },
-  },
-  palete: {
-    escala: 5,
-    mapa: ['oooooooooooooo', 'obbbbbbbbbbbbo', 'oooooooooooooo', 'oboobooboobobo'],
-    paleta: { o: v('terra'), b: v('madeira') },
-  },
-  painel: {
-    escala: 5,
-    mapa: [
-      'oooooooooooooooooooooooooooooooo',
-      'owwwwwwwwwwwwwwwwwwwwwwwwwwwwwwo',
-      'owwwwwwwwwwwwwwwwwwwwwwwwwwwwggo',
-      'owwwwwwwwwwwwwwwwwwwwwwwwwwwggwo',
-      'owwwwwwwwbbwwwwwwwwwwwwwwwwggwwo',
-      'owwwwwwwbbwwwwwwwwwwwwwwwwggwwwo',
-      'owwwwbbbbwwwwwwwyywwwwwwwggwwwwo',
-      'owwbbbwwwwwwwwyyyywwwwwwggwwwwwo',
-      'owwwwwwwwwwwwyyyyyywwwwggwwwwwwo',
-      'owrrwyywwbbwwwwwwwwwwwggwwwwwwwo',
-      'owrrwyywwbbwwggwwwwwwggwwwwwwwwo',
-      'owrrwyywwbbwwggwwwwwggwwwwwwwwwo',
-      'owwwwwwwwwwwwwwwwwwwwwwwwwwwwwwo',
-      'oooooooooooooooooooooooooooooooo',
-      '..............oooo..............',
-      '............oooooooo............',
-    ],
-    paleta: {
-      o: v('contorno'),
-      w: v('papel'),
-      b: v('papel-frontend'),
-      g: v('tela-verde'),
-      y: v('livro-amarelo'),
-      r: v('papel-conserto'),
-    },
   },
 }
 

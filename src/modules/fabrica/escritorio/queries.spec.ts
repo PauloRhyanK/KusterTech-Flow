@@ -21,9 +21,20 @@ vi.mock('../queries', () => ({
 vi.mock('./intervalos', () => ({
   lerHistorico: vi.fn(async () => ({ partes: [], etapas: [], custosPorParte: [] })),
   gastoPorPlano: vi.fn(async () => ({ 'paulorhyank--caisv2--demanda-9c44dfa8--abc123': 9.5 })),
+  lerLinhasDosPlanos: vi.fn(async () => [
+    {
+      chave: 'paulorhyank--caisv2--demanda-9c44dfa8--abc123:kit-base:run:r1',
+      tipo: 'custo',
+      papel: 'frontend',
+      inicio: '2026-11-21T00:40:00.000Z',
+      fim: null,
+      custoUsd: 2,
+    },
+  ]),
 }))
 
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
+import { lerLinhasDosPlanos } from './intervalos'
 import { obterEscritorio } from './queries'
 
 const admin: Sujeito = { usuarioId: 'u-admin', papeis: [{ papel: 'ADMIN', clienteId: null }] }
@@ -42,5 +53,18 @@ describe('escritório / queries', () => {
     mockDb.eventoDaDemanda.findMany.mockResolvedValue([])
     const r = await obterEscritorio(admin, new Date('2026-11-21T02:05:00Z'))
     expect(r.gestao['paulorhyank--caisv2--demanda-9c44dfa8--abc123']?.custo.gasto).toBe(9.5)
+  })
+
+  test('a ficha do agente leva os números do histórico dos planos do retrato', async () => {
+    mockDb.demanda.findMany.mockResolvedValue([])
+    mockDb.seedDoRepositorio.findMany.mockResolvedValue([])
+    mockDb.eventoDaDemanda.findMany.mockResolvedValue([])
+    const r = await obterEscritorio(admin, new Date('2026-11-21T02:05:00Z'))
+    expect(
+      r.escritorio.andares[0]!.agentes.find((a) => a.id === 'raia:kit-base')?.numeros.custoUsd,
+    ).toBe(2)
+    expect(lerLinhasDosPlanos).toHaveBeenCalledWith([
+      'paulorhyank--caisv2--demanda-9c44dfa8--abc123',
+    ])
   })
 })

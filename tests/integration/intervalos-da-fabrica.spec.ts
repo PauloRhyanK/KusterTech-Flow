@@ -6,6 +6,7 @@ import {
   gastoPorPlano,
   gravarIntervalosDoRetrato,
   lerHistorico,
+  lerLinhasDosPlanos,
   semearIntervalos,
 } from '@/modules/fabrica/escritorio/intervalos'
 import { limparBanco } from './banco-de-teste'
@@ -251,5 +252,20 @@ describe('intervalos da Fábrica (previsão do escritório)', () => {
     fim.execucoes = []
     await gravarIntervalosDoRetrato('fonte-1', fim)
     expect((await lerHistorico()).custosPorParte).toEqual([4])
+  })
+
+  test('lerLinhasDosPlanos traz parte e custo só dos planos pedidos, em ISO e número', async () => {
+    await gravarIntervalosDoRetrato('fonte-1', retrato())
+    const linhas = await lerLinhasDosPlanos(['paulorhyank--caisv2--demanda-9c44dfa8--abc123'])
+    expect(linhas.find((l) => l.chave === CHAVE_FUNDACAO)).toMatchObject({
+      tipo: 'parte',
+      fim: '2026-11-21T01:52:00.000Z',
+    })
+    expect(linhas.find((l) => l.tipo === 'custo')).toMatchObject({
+      papel: 'frontend',
+      custoUsd: 1.84,
+    })
+    expect(await lerLinhasDosPlanos(['outro'])).toEqual([])
+    expect(await lerLinhasDosPlanos([])).toEqual([])
   })
 })

@@ -5,7 +5,10 @@ import { TelaDoAgente } from './tela-do-agente'
 import { escritorioDeTeste } from './teste-dados'
 
 function agente(linhas: Agente['linhas']): Agente {
-  return { ...escritorioDeTeste().andares[0]!.agentes[0]!, linhas }
+  return {
+    ...escritorioDeTeste().andares[0]!.agentes.find((a) => a.id === 'raia:kit-base')!,
+    linhas,
+  }
 }
 
 const LINHAS: Agente['linhas'] = [
