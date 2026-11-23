@@ -60,46 +60,43 @@ interface Decoracao {
 // Cenário do rascunho v7, em coordenadas do mapa (canto superior esquerdo de cada objeto).
 const DECORACAO: Decoracao[] = [
   { nome: 'janelaComNuvem', x: 40, y: 9 },
-  { nome: 'janelaComNuvem', x: 290, y: 9 },
-  { nome: 'janelaComNuvem', x: 540, y: 9 },
-  { nome: 'relogio', x: 745, y: 10 },
-  { nome: 'janelaComNuvem', x: 850, y: 9 },
+  { nome: 'janelaComNuvem', x: 330, y: 9 },
+  { nome: 'janelaComNuvem', x: 620, y: 9 },
+  { nome: 'relogio', x: 851, y: 10 },
+  { nome: 'janelaComNuvem', x: 960, y: 9 },
   // triagem
-  { nome: 'tapete', x: 125, y: 216, tapete: 'tapete-triagem' },
-  { nome: 'planta', x: 214, y: 90 },
-  { nome: 'lixo', x: 120, y: 236 },
+  { nome: 'tapete', x: 125, y: 236, tapete: 'tapete-triagem' },
+  { nome: 'lixo', x: 238, y: 176 },
   // planejamento
-  { nome: 'tapete', x: 300, y: 226, tapete: 'tapete-planejamento' },
-  { nome: 'quadroPostIts', x: 377, y: 92 },
+  { nome: 'tapete', x: 332, y: 234, tapete: 'tapete-planejamento' },
+  { nome: 'quadroPostIts', x: 452, y: 90 },
   // desenho
-  { nome: 'tapete', x: 515, y: 226, tapete: 'tapete-desenho' },
-  { nome: 'painelDeCores', x: 540, y: 170 },
+  { nome: 'tapete', x: 614, y: 236, tapete: 'tapete-desenho' },
+  { nome: 'painelDeCores', x: 735, y: 151 },
   // copa: só cenário
-  { nome: 'bebedouro', x: 713, y: 100 },
-  { nome: 'geladeira', x: 753, y: 94 },
-  { nome: 'planta', x: 729, y: 156 },
-  { nome: 'sofaComGato', x: 711, y: 206 },
+  { nome: 'bebedouro', x: 832, y: 100 },
+  { nome: 'geladeira', x: 870, y: 94 },
+  { nome: 'planta', x: 848, y: 156 },
+  { nome: 'sofaComGato', x: 830, y: 206 },
   // sala de gestão
-  { nome: 'tapete', x: 865, y: 196, tapete: 'tapete-gestao' },
-  { nome: 'telaoGrafico', x: 819, y: 98 },
-  { nome: 'plantona', x: 955, y: 92 },
-  { nome: 'mesaDeReuniao', x: 905, y: 146 },
+  { nome: 'tapete', x: 938, y: 204, tapete: 'tapete-gestao' },
+  { nome: 'telaoGrafico', x: 928, y: 96 },
+  { nome: 'plantona', x: 1030, y: 90 },
+  { nome: 'mesaDeReuniao', x: 958, y: 156 },
   { nome: 'portaDaGestao', x: PORTA_DA_GESTAO.x - 24, y: GESTAO.y + GESTAO.h - 24 },
   // desenvolvimento
-  { nome: 'tapete', x: 114, y: 602, tapete: 'tapete-desenvolvimento' },
-  { nome: 'tapete', x: 270, y: 602, tapete: 'tapete-desenvolvimento' },
-  { nome: 'tapete', x: 420, y: 602, tapete: 'tapete-desenvolvimento' },
-  { nome: 'estante', x: 222, y: 594 },
+  { nome: 'tapete', x: 124, y: 614, tapete: 'tapete-desenvolvimento' },
+  { nome: 'tapete', x: 294, y: 614, tapete: 'tapete-desenvolvimento' },
+  { nome: 'estante', x: 446, y: 604 },
   // teste e revisão
-  { nome: 'tapete', x: 635, y: 608, tapete: 'tapete-teste' },
-  { nome: 'telaoTestes', x: 655, y: 476 },
-  { nome: 'planta', x: 661, y: 577 },
+  { nome: 'tapete', x: 605, y: 622, tapete: 'tapete-teste' },
+  { nome: 'telaoTestes', x: 781, y: 552 },
+  { nome: 'planta', x: 811, y: 604 },
   // publicação
-  { nome: 'racks', x: 830, y: 396 },
-  { nome: 'impressora', x: 830, y: 492 },
-  { nome: 'foguete', x: 898, y: 492 },
-  { nome: 'palete', x: 830, y: 572 },
-  { nome: 'planta', x: 884, y: 608 },
+  { nome: 'racks', x: 887, y: 396 },
+  { nome: 'impressora', x: 888, y: 468 },
+  { nome: 'foguete', x: 942, y: 462 },
+  { nome: 'palete', x: 888, y: 508 },
 ]
 
 // LEDs piscando nos racks: as casas 'gg' de cada gaveta do sprite (escala 3), duas torres a 45 px.
@@ -166,17 +163,16 @@ interface Cena {
 /** Onde cada agente fica agora, pelo estado: sentado, de pé na frente da mesa, no canto, na porta ou no conserto. */
 function montarCena(agentes: Agente[]): Cena[] {
   const lugares = lugaresDoAndar(agentes)
-  const areaPorId = new Map(agentes.map((a) => [a.id, a.area]))
   return agentes.map((agente) => {
     const { mesa, canto } = lugares.get(agente.id) ?? { mesa: null, canto: null }
     const base = { agente, mesa, canto }
     if (agente.papel === 'fixer') {
-      const idDaRaia = agente.raia ? `raia:${agente.raia}` : null
-      const mesaDaRaia = idDaRaia ? (lugares.get(idDaRaia)?.mesa ?? null) : null
+      // o conserto senta na mesa da raia; quem falhou fica de pé na frente dela
+      const mesaDaRaia = agente.raia ? (lugares.get(`raia:${agente.raia}`)?.mesa ?? null) : null
       const destino = mesaDaRaia
-        ? pontoDoConserto(mesaDaRaia, areaPorId.get(idDaRaia!) ?? agente.area)
-        : { x: AREAS[agente.area].x + 230, y: AREAS[agente.area].y + 110 }
-      return { ...base, destino, lugar: 'conserto', sentado: false }
+        ? pontoDoConserto(mesaDaRaia)
+        : soma({ x: AREAS[agente.area].x + 34, y: AREAS[agente.area].y + 40 }, DE_PE)
+      return { ...base, destino, lugar: 'conserto', sentado: mesaDaRaia !== null }
     }
     if (agente.estado === 'chamando')
       return { ...base, destino: PORTA_DA_GESTAO, lugar: 'porta', sentado: false }
@@ -235,6 +231,16 @@ export function Mapa({
   const andando = useEsteiraAndando(andar.caixas)
 
   const cena = montarCena(andar.agentes)
+  // mesas com alguém na cadeira: quem trabalha nela ou o conserto da raia dela
+  const ocupadas = new Set(
+    cena.flatMap((c) =>
+      c.lugar === 'conserto' && c.agente.raia
+        ? [`raia:${c.agente.raia}`]
+        : c.sentado
+          ? [c.agente.id]
+          : [],
+    ),
+  )
   const mesaPorId = new Map(cena.map((c) => [c.agente.id, c.mesa]))
   const esmaecido = (a: Agente) => filtro !== null && grupoDoEstado(a.estado) !== filtro
   const porLugar = new Map<string, number>()
@@ -310,7 +316,7 @@ export function Mapa({
         })}
 
         {/* Mesas: uma por agente, com a cadeira atrás (vazia quando ele não está sentado). */}
-        {cena.map(({ agente, mesa, sentado }) =>
+        {cena.map(({ agente, mesa }) =>
           mesa ? (
             <div
               key={`mesa-${agente.id}`}
@@ -320,7 +326,7 @@ export function Mapa({
               data-esmaecido={esmaecido(agente)}
             >
               <span className={s.objeto} style={{ left: CADEIRA.x, top: CADEIRA.y }}>
-                <Cadeira vazia={!sentado} />
+                <Cadeira vazia={!ocupadas.has(agente.id)} />
               </span>
               <button
                 type="button"

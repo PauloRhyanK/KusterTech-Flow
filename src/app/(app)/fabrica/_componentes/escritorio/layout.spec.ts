@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'vitest'
 import type { Area } from '@/modules/fabrica/escritorio/model'
-import { AREAS, lugaresDoAndar, PORTA_DA_GESTAO, pontoDoConserto } from './layout'
+import { hobbyDoPapel, TAMANHO_DO_CANTO } from './hobbies'
+import {
+  AREAS,
+  DE_PE,
+  lugaresDoAndar,
+  type Ponto,
+  POSE_DO_HOBBY,
+  PORTA_DA_GESTAO,
+  pontoDoConserto,
+  SENTADO,
+  soma,
+} from './layout'
 
 const ag = (id: string, papel: string, area: Area, variacao = 0) => ({ id, papel, area, variacao })
 
@@ -81,16 +92,113 @@ describe('layout do andar', () => {
     expect((Object.keys(AREAS) as Area[]).some(dentro)).toBe(false)
   })
 
-  test('o conserto fica ao lado da mesa, sem sair da área', () => {
-    const r = AREAS.desenvolvimento
-    for (const mesa of [
-      { x: r.x + 50, y: r.y + 62 },
-      { x: r.x + r.w - 60, y: r.y + 62 },
-    ]) {
-      const p = pontoDoConserto(mesa, 'desenvolvimento')
-      expect(Math.abs(p.x - mesa.x)).toBeGreaterThanOrEqual(48)
-      expect(p.x - 24).toBeGreaterThanOrEqual(r.x)
-      expect(p.x + 24).toBeLessThanOrEqual(r.x + r.w)
-    }
+  test('o conserto trabalha na mesa da raia, no lugar de quem senta', () => {
+    const mesa = { x: 300, y: 500 }
+    expect(pontoDoConserto(mesa)).toEqual(soma(mesa, SENTADO))
   })
+
+  // Pior caso razoável de cada área: quem pode estar junto no andar.
+  const f = (papel: string, n: number) => Array.from({ length: n }, () => papel)
+  const CENARIOS: [Area, string[]][] = [
+    ['triagem', f('produto', 2)],
+    ['planejamento', f('orquestrador', 2)],
+    ['desenho', ['ux-ui', 'ux-ui', 'ux-engineer']],
+    ['desenho', ['ux-ui', 'ux-engineer', 'ux-engineer']],
+    ['desenvolvimento', [...f('frontend', 5), 'backend', 'devops', 'seguranca']],
+    [
+      'desenvolvimento',
+      [...f('frontend', 2), ...f('backend', 2), ...f('devops', 2), ...f('seguranca', 2)],
+    ],
+    [
+      'desenvolvimento',
+      [...f('backend', 2), ...f('devops', 2), ...f('seguranca', 2), ...f('arquiteto', 2)],
+    ],
+    [
+      'desenvolvimento',
+      [...f('frontend', 2), ...f('arquiteto', 2), ...f('seguranca', 2), 'backend', 'devops'],
+    ],
+    ['teste', [...f('revisor', 2), ...f('qa', 2)]],
+  ]
+
+  interface Caixa {
+    x0: number
+    y0: number
+    x1: number
+    y1: number
+  }
+  const caixa = (c: Ponto, w: number, h: number): Caixa => ({
+    x0: c.x - w / 2,
+    y0: c.y - h / 2,
+    x1: c.x + w / 2,
+    y1: c.y + h / 2,
+  })
+  const sobrepoe = (a: Caixa, b: Caixa) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+  const dentro = (a: Caixa, area: Area) => {
+    const r = AREAS[area]
+    return a.x0 >= r.x && a.x1 <= r.x + r.w && a.y0 >= r.y && a.y1 <= r.y + r.h
+  }
+
+  function montar(area: Area, papeis: string[]) {
+    const vistos = new Map<string, number>()
+    const agentes = papeis.map((papel, i) => {
+      const variacao = vistos.get(papel) ?? 0
+      vistos.set(papel, variacao + 1)
+      return ag(`raia:${i}`, papel, area, variacao)
+    })
+    const l = lugaresDoAndar(agentes)
+    return agentes.map((a) => {
+      const { mesa, canto } = l.get(a.id)!
+      const hobby = hobbyDoPapel(a.papel)!
+      return {
+        a,
+        hobby,
+        mesa: mesa!,
+        canto: canto!,
+        // onde o personagem pode estar: sentado, de pé na frente da mesa, no canto
+        pontos: [soma(mesa!, SENTADO), soma(mesa!, DE_PE), soma(canto!, POSE_DO_HOBBY[hobby])],
+      }
+    })
+  }
+
+  test.each(CENARIOS)(
+    '%s com %j: personagens a 48 px uns dos outros em qualquer estado',
+    (area, papeis) => {
+      const lista = montar(area, papeis)
+      for (const [i, x] of lista.entries())
+        for (const y of lista.slice(i + 1))
+          for (const p of x.pontos)
+            for (const q of y.pontos)
+              expect(
+                Math.hypot(p.x - q.x, p.y - q.y),
+                `${x.a.papel} × ${y.a.papel}`,
+              ).toBeGreaterThanOrEqual(48)
+    },
+  )
+
+  test.each(CENARIOS)(
+    '%s com %j: personagens, mesas e cantos dentro da área e sem se sobrepor',
+    (area, papeis) => {
+      const lista = montar(area, papeis)
+      const mesas = lista.map((x) => caixa(x.mesa, 64, 48))
+      const cantos = lista.map((x) => caixa(x.canto, ...TAMANHO_DO_CANTO[x.hobby]))
+      for (const x of lista)
+        for (const p of x.pontos) expect(dentro(caixa(p, 48, 66), area)).toBe(true)
+      for (const [i, m] of mesas.entries()) {
+        expect(dentro(m, area)).toBe(true)
+        for (const n of mesas.slice(i + 1)) expect(sobrepoe(m, n)).toBe(false)
+        for (const c of cantos) expect(sobrepoe(m, c)).toBe(false)
+      }
+      for (const [i, c] of cantos.entries()) {
+        expect(dentro(c, area), `canto de ${lista[i]!.a.papel}`).toBe(true)
+        for (const [j, d] of cantos.entries()) {
+          // a mesma vaga repetida (variação 2+) se desloca 52 px de propósito
+          const mesmaVaga =
+            lista[i]!.a.papel === lista[j]!.a.papel &&
+            lista[i]!.a.variacao % 2 === lista[j]!.a.variacao % 2
+          if (j > i && !mesmaVaga)
+            expect(sobrepoe(c, d), `${lista[i]!.a.papel} × ${lista[j]!.a.papel}`).toBe(false)
+        }
+      }
+    },
+  )
 })

@@ -21,9 +21,9 @@ export const ALTURA = 680
 
 export const AREAS: Record<Area, Retangulo & { rotulo: string; cor: string }> = {
   triagem: { x: 110, y: 76, w: 150, h: 190, rotulo: 'Triagem', cor: 'area-triagem' },
-  planejamento: { x: 275, y: 76, w: 170, h: 190, rotulo: 'Planejamento', cor: 'area-planejamento' },
-  desenho: { x: 460, y: 76, w: 230, h: 190, rotulo: 'Desenho', cor: 'area-desenho' },
-  copa: { x: 705, y: 76, w: 85, h: 190, rotulo: 'Copa', cor: 'area-copa' },
+  planejamento: { x: 272, y: 76, w: 255, h: 190, rotulo: 'Planejamento', cor: 'area-planejamento' },
+  desenho: { x: 539, y: 76, w: 275, h: 190, rotulo: 'Desenho', cor: 'area-desenho' },
+  copa: { x: 826, y: 76, w: 80, h: 190, rotulo: 'Copa', cor: 'area-copa' },
   desenvolvimento: {
     x: 110,
     y: 372,
@@ -32,15 +32,16 @@ export const AREAS: Record<Area, Retangulo & { rotulo: string; cor: string }> = 
     rotulo: 'Desenvolvimento',
     cor: 'area-desenvolvimento',
   },
-  teste: { x: 585, y: 372, w: 220, h: 280, rotulo: 'Teste e revisão', cor: 'area-teste' },
-  publicacao: { x: 820, y: 372, w: 110, h: 280, rotulo: 'Publicação', cor: 'area-publicacao' },
+  teste: { x: 585, y: 372, w: 282, h: 280, rotulo: 'Teste e revisão', cor: 'area-teste' },
+  // acima da doca de entrega e à esquerda da esteira vertical
+  publicacao: { x: 880, y: 372, w: 95, h: 180, rotulo: 'Publicação', cor: 'area-publicacao' },
 }
-export const GESTAO: Retangulo = { x: 805, y: 76, w: 195, h: 190 }
+export const GESTAO: Retangulo = { x: 918, y: 76, w: 160, h: 190 }
 export const FILA: Retangulo = { x: 10, y: 372, w: 92, h: 250 }
 export const ENTRADA: Retangulo = { x: 10, y: 282, w: 90, h: 80 }
 export const ENTREGA: Retangulo = { x: 950, y: 560, w: 130, h: 100 }
 
-/** Onde fica quem chama o Paulo: na porta da sala de gestão, do lado de fora. */
+/** Onde fica quem chama o Paulo: na porta da sala de gestão. */
 export const PORTA_DA_GESTAO: Ponto = { x: GESTAO.x + 54, y: GESTAO.y + GESTAO.h - 16 }
 /** Por onde o conserto entra: fora do palco, à esquerda, na altura do corredor. */
 export const ENTRADA_DO_CONSERTO: Ponto = { x: -40, y: 320 }
@@ -50,113 +51,92 @@ type Par = readonly [number, number]
 interface LayoutDaArea {
   /** centro de cada mesa (64×48), relativo à área, na ordem em que os agentes ocupam */
   mesas: Par[]
-  /** centro do canto de cada papel, relativo à área: [vaga 0, vaga 1] */
+  /** onde fica o personagem livre de cada papel (o canto vem da pose do hobby), relativo à área: [vaga 0, vaga 1] */
   cantos: Record<string, readonly [Par, Par]>
 }
 
-// As coordenadas deixam espaço para o personagem sentado (que passa 50 px à direita do centro da mesa),
-// para quem está de pé na frente da mesa e para o trajeto de cada hobby (POSE_DO_HOBBY e globals.css).
+// Mesas a 66 px uma da outra; no Desenvolvimento, duas fileiras a 100 px (quem fica de pé na frente de uma
+// mesa da 1ª fileira fica a 48 px de quem senta na 2ª). Os cantos ficam fora da grade: numa faixa embaixo
+// (y ≥ 48 px abaixo de quem fica de pé) ou, no Desenvolvimento, também numa coluna à direita das mesas.
+// layout.spec.ts confere, para o pior caso de cada área, que os pontos de personagem (sentado, de pé, no
+// canto) ficam a 48 px uns dos outros e que mesas e cantos não se sobrepõem nem saem da área.
+// Capacidade sem sobreposição: triagem 2, planejamento 2, desenho 3, desenvolvimento 8, teste 4 agentes.
+const MESAS_EM_FILA = (n: number, y: number): Par[] =>
+  Array.from({ length: n }, (_, i) => [34 + 66 * i, y] as const)
+
 const LAYOUT: Record<Area, LayoutDaArea> = {
   triagem: {
-    mesas: [
-      [45, 62],
-      [115, 140],
-    ],
+    mesas: MESAS_EM_FILA(2, 40),
     cantos: {
       produto: [
-        [100, 150],
-        [118, 104],
+        [24, 150],
+        [82, 150],
       ],
     },
   },
   planejamento: {
-    mesas: [
-      [45, 62],
-      [125, 140],
-    ],
+    mesas: MESAS_EM_FILA(2, 40),
     cantos: {
       orquestrador: [
-        [86, 160],
-        [86, 112],
+        [24, 150],
+        [140, 150],
       ],
     },
   },
   desenho: {
-    mesas: [
-      [45, 62],
-      [150, 62],
-    ],
+    mesas: MESAS_EM_FILA(3, 40),
+    // a vaga 1 dos dois papéis é a mesma: só coincide com 4 pessoas no desenho (acima da capacidade)
     cantos: {
       'ux-ui': [
-        [84, 152],
-        [84, 104],
+        [44, 150],
+        [122, 150],
       ],
       'ux-engineer': [
-        [190, 152],
-        [190, 104],
+        [200, 150],
+        [122, 150],
       ],
     },
   },
-  copa: { mesas: [[42, 62]], cantos: {} },
+  copa: { mesas: MESAS_EM_FILA(1, 40), cantos: {} },
   desenvolvimento: {
-    mesas: [
-      [50, 62],
-      [160, 62],
-      [270, 62],
-      [380, 62],
-      [50, 158],
-      [160, 158],
-      [270, 158],
-      [380, 158],
-    ],
+    mesas: [...MESAS_EM_FILA(4, 40), ...MESAS_EM_FILA(4, 140)],
     cantos: {
       frontend: [
-        [47, 241],
-        [199, 241],
+        [100, 247],
+        [284, 247],
       ],
       backend: [
-        [335, 235],
-        [325, 160],
+        [308, 47],
+        [384, 247],
       ],
       devops: [
-        [428, 241],
-        [432, 160],
-      ],
-      arquiteto: [
-        [105, 160],
-        [160, 110],
+        [382, 40],
+        [382, 150],
       ],
       seguranca: [
-        [215, 160],
-        [270, 110],
+        [308, 96],
+        [308, 150],
+      ],
+      arquiteto: [
+        [382, 96],
+        [308, 199],
       ],
     },
   },
   teste: {
-    mesas: [
-      [50, 62],
-      [155, 62],
-      [50, 158],
-      [155, 158],
-    ],
+    mesas: MESAS_EM_FILA(4, 40),
     cantos: {
       revisor: [
-        [40, 236],
-        [95, 150],
+        [40, 150],
+        [40, 240],
       ],
       qa: [
-        [140, 230],
-        [150, 150],
+        [170, 150],
+        [170, 240],
       ],
     },
   },
-  publicacao: {
-    mesas: [
-      [55, 62],
-      [55, 158],
-    ],
-    cantos: {},
-  },
+  publicacao: { mesas: MESAS_EM_FILA(1, 40), cantos: {} },
 }
 
 /** Deslocamento da vaga repetida (variação 2 em diante). */
@@ -206,30 +186,34 @@ export function lugaresDoAndar(
     const layout = LAYOUT[a.area]
     const i = ocupadas.get(a.area) ?? 0
     ocupadas.set(a.area, i + 1)
+    // acima da capacidade, a mesa repete a da grade deslocada meia mesa, para as duas ficarem visíveis
     const volta = Math.floor(i / layout.mesas.length)
     const mesa = soma(naArea(a.area, layout.mesas[i % layout.mesas.length]!), {
-      x: volta * 16,
-      y: volta * 16,
+      x: volta * 33,
+      y: 0,
     })
 
+    const hobby = hobbyDoPapel(a.papel)
     const vagas =
-      hobbyDoPapel(a.papel) && a.papel !== null && Object.hasOwn(layout.cantos, a.papel)
+      hobby && a.papel !== null && Object.hasOwn(layout.cantos, a.papel)
         ? layout.cantos[a.papel]!
         : null
-    const canto = vagas
+    const pessoa = vagas
       ? soma(naArea(a.area, vagas[a.variacao % 2]!), {
           x: Math.floor(a.variacao / 2) * DESLOCAMENTO_DA_VAGA,
           y: 0,
         })
       : null
+    const canto =
+      pessoa && hobby
+        ? { x: pessoa.x - POSE_DO_HOBBY[hobby].x, y: pessoa.y - POSE_DO_HOBBY[hobby].y }
+        : null
     lugares.set(a.id, { mesa, canto })
   }
   return lugares
 }
 
-/** Onde o conserto para: ao lado da mesa da raia, à direita se couber na área, senão à esquerda. */
-export function pontoDoConserto(mesa: Ponto, area: Area): Ponto {
-  const r = AREAS[area]
-  const direita = mesa.x + 52
-  return { x: direita + 24 <= r.x + r.w ? direita : mesa.x - 52, y: mesa.y + 10 }
+/** Onde o conserto trabalha: na cadeira da mesa da raia (quem falhou fica de pé na frente dela). */
+export function pontoDoConserto(mesa: Ponto): Ponto {
+  return soma(mesa, SENTADO)
 }

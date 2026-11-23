@@ -147,6 +147,15 @@ describe('mapa do escritório', () => {
     expect(
       screen.getByRole('button', { name: /^conserto · kit-base:/ }).getAttribute('data-lugar'),
     ).toBe('conserto')
+    // o conserto senta na cadeira da raia; quem falhou fica de pé na frente da mesa
+    expect(
+      screen.getByRole('button', { name: /^conserto · kit-base:/ }).getAttribute('data-sentado'),
+    ).toBe('true')
+    expect(
+      container
+        .querySelector('[data-mesa="raia:kit-base"] [data-vazia]')
+        ?.getAttribute('data-vazia'),
+    ).toBe('false')
   })
 
   test('filtro esmaece quem é de outro grupo', () => {
