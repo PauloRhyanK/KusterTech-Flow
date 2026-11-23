@@ -52,6 +52,27 @@ describe('pixel art do escritório', () => {
     for (const r of rects) expect(r.getAttribute('fill')).toMatch(/^var\(--pixel-[a-z0-9-]+\)$/)
   })
 
+  test('cenário do rascunho v7 tem todos os objetos novos', () => {
+    expect(OBJETOS).toEqual(
+      expect.arrayContaining([
+        'janelaComNuvem',
+        'quadroPostIts',
+        'painelDeCores',
+        'sofaComGato',
+        'geladeira',
+        'bebedouro',
+        'telaoGrafico',
+        'mesaDeReuniao',
+        'estante',
+        'telaoTestes',
+        'racks',
+        'foguete',
+        'palete',
+        'tapete',
+      ]),
+    )
+  })
+
   test('mesa marca o estado para o CSS', () => {
     const { container } = render(<Mesa estado="falha" />)
     expect(container.firstElementChild?.getAttribute('data-estado')).toBe('falha')

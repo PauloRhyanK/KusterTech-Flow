@@ -101,6 +101,9 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
                 onAbrirTela={setTela}
                 onAbrirParte={abrirParte}
                 onAbrirGestao={() => setGestaoAberta(true)}
+                filtro={null}
+                realce={null}
+                onRealcar={() => {}}
               />
               <PlanoDaEntrega
                 fases={andar.fases}

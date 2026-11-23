@@ -1,4 +1,4 @@
-// Cantos de hobby do escritório da Fábrica: só os objetos de cada canto (o personagem entra na Task 5).
+// Cantos de hobby do escritório da Fábrica: só os objetos de cada canto (o personagem fica no mapa).
 // Sprites portados do rascunho aprovado (docs/superpowers/specs/assets/2026-11-23-escritorio-personagens-rascunho.html);
 // os que não existem lá (palavras cruzadas, blocos, plantas, cubo) seguem o mesmo estilo. Cores são tokens --pixel-*.
 import type { CSSProperties, ReactNode } from 'react'
@@ -35,7 +35,21 @@ export function hobbyDoPapel(papel: string | null): Hobby | null {
   return papel !== null && Object.hasOwn(HOBBY_DO_PAPEL, papel) ? HOBBY_DO_PAPEL[papel]! : null
 }
 
-/** Classe aplicada ao personagem (Task 5); a animação dele fica em globals.css. */
+/** O que o personagem livre está fazendo, para o aria-label e a ficha. */
+export const FAZENDO_DO_HOBBY: Record<Hobby, string> = {
+  palavrasCruzadas: 'fazendo palavras-cruzadas',
+  xadrez: 'jogando xadrez',
+  blocos: 'montando a maquete',
+  pintar: 'pintando',
+  musica: 'ouvindo música',
+  cafe: 'passando um café',
+  plantas: 'regando as plantas',
+  cubo: 'no cubo mágico',
+  fliperama: 'no fliperama',
+  leitura: 'lendo',
+}
+
+/** Classe aplicada ao personagem livre; a animação dele fica em globals.css. */
 export const CLASSE_DO_HOBBY: Record<Hobby, string> = s.hobby
 
 const ESCALA = 3
@@ -305,8 +319,8 @@ function Em({
   )
 }
 
-// Tamanho (largura, altura) de cada canto, em pixels do mapa.
-const TAMANHO: Record<Hobby, [number, number]> = {
+/** Tamanho (largura, altura) de cada canto, em pixels do mapa. */
+export const TAMANHO_DO_CANTO: Record<Hobby, [number, number]> = {
   xadrez: [108, 45],
   pintar: [78, 51],
   musica: [78, 42],
@@ -475,7 +489,7 @@ function Objetos({ hobby }: { hobby: Hobby }) {
 
 /** Só os objetos do canto de um hobby. Posição no mapa e personagem ficam por conta de quem usa. */
 export function CantoDoHobby({ hobby }: { hobby: Hobby }) {
-  const [largura, altura] = TAMANHO[hobby]
+  const [largura, altura] = TAMANHO_DO_CANTO[hobby]
   return (
     <div data-hobby={hobby} className={s.canto} style={{ width: largura, height: altura }}>
       <Objetos hobby={hobby} />

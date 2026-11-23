@@ -243,6 +243,10 @@ describe('escritório: participantes', () => {
     r.execucoes.push({ ...r.execucoes[0]!, runId: 'fix1', papel: 'fixer' })
     expect(porId(escritorio(r), 'papel:fixer')).toMatchObject({ estado: 'trabalhando' })
     expect(
+      porId(escritorio(r), 'papel:fixer')?.nome,
+      'o conserto leva o nome da parte que conserta',
+    ).toBe('conserto · kit-base')
+    expect(
       porId(escritorio(v2(), [demanda()], {}, [custo('kit-base', 'f0', 'fixer')]), 'papel:fixer'),
     ).toBeUndefined()
   })

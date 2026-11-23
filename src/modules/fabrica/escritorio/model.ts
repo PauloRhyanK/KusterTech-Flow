@@ -376,7 +376,8 @@ function montarAndar(
       id: p.id,
       runId: ativa?.runId ?? null,
       papel: p.papel,
-      nome: nomeDoAgente(p.papel, p.raia),
+      // o conserto é um personagem por papel, mas leva o nome da parte que está consertando
+      nome: nomeDoAgente(p.papel, p.papel === 'fixer' ? (ativa?.raia ?? null) : p.raia),
       area: areaDoPapel(p.papel),
       estado,
       variacao,
