@@ -162,11 +162,14 @@ function Boneca({
       type="button"
       className={s.agente}
       style={{ left: x, top: y }}
+      data-area={agente.area}
       data-trabalhando={agente.trabalhando}
       aria-label={`${agente.nome}: ${agente.balao}`}
       onClick={onAbrir}
     >
-      <span className={s.balao}>{agente.balao}</span>
+      <span className={s.balao} title={agente.balao}>
+        {agente.balao}
+      </span>
       <Boneco papel={agente.papel} semente={agente.runId} />
     </button>
   )
@@ -221,33 +224,29 @@ export function Mapa({
               }}
             >
               <span className={s.rotulo}>{r.rotulo}</span>
-              {andar.agentes
-                .map((a, i) => ({ a, p: posicoes[i]! }))
-                .filter(({ a }) => a.area === area)
-                .map(({ a, p }) => (
-                  <div
-                    key={a.runId}
-                    style={{ position: 'absolute', left: p.x - r.x, top: p.y - r.y }}
-                  >
-                    {area !== 'copa' && (
-                      <>
-                        <span className={s.objeto} style={{ left: -16, top: -32 }}>
-                          <Cadeira />
-                        </span>
-                        <button
-                          type="button"
-                          className={s.computador}
-                          style={{ left: -32, top: 24 }}
-                          aria-label={`computador de ${a.nome}: ver a tela`}
-                          onClick={() => onAbrirTela(a.runId)}
-                        >
-                          <Mesa acesa={a.trabalhando} cor={null} />
-                        </button>
-                      </>
-                    )}
-                    <Boneca agente={a} x={0} y={0} onAbrir={() => onAbrirAgente(a.runId)} />
-                  </div>
-                ))}
+              {area !== 'copa' &&
+                andar.agentes
+                  .map((a, i) => ({ a, p: posicoes[i]! }))
+                  .filter(({ a }) => a.area === area)
+                  .map(({ a, p }) => (
+                    <div
+                      key={a.runId}
+                      style={{ position: 'absolute', left: p.x - r.x, top: p.y - r.y }}
+                    >
+                      <span className={s.objeto} style={{ left: -16, top: -32 }}>
+                        <Cadeira />
+                      </span>
+                      <button
+                        type="button"
+                        className={s.computador}
+                        style={{ left: -32, top: 24 }}
+                        aria-label={`computador de ${a.nome}: ver a tela`}
+                        onClick={() => onAbrirTela(a.runId)}
+                      >
+                        <Mesa acesa={a.trabalhando} cor={null} />
+                      </button>
+                    </div>
+                  ))}
             </div>
           )
         })}
@@ -276,6 +275,18 @@ export function Mapa({
           <span key={`${o.nome}-${i}`} className={s.objeto} style={{ left: o.x, top: o.y }}>
             <Objeto nome={o.nome} />
           </span>
+        ))}
+
+        {/* Bonecos fora do fundo da área (que tem opacidade e prende o empilhamento), acima da
+            decoração e das placas, para o balão nunca ficar escondido. */}
+        {andar.agentes.map((a, i) => (
+          <Boneca
+            key={a.runId}
+            agente={a}
+            x={posicoes[i]!.x}
+            y={posicoes[i]!.y}
+            onAbrir={() => onAbrirAgente(a.runId)}
+          />
         ))}
 
         <div
@@ -324,6 +335,8 @@ export function Mapa({
           const i = porLugar.get(c.lugar) ?? 0
           porLugar.set(c.lugar, i + 1)
           const p = posicaoDaCaixa(c, i, posicaoDoAgente)
+          // Na entrega as caixas ficam a 26 px uma da outra: o nome não cabe e vai para o title.
+          const entregue = c.lugar === 'entrega'
           return (
             <button
               key={c.raia}
@@ -331,13 +344,11 @@ export function Mapa({
               className={s.caixa}
               style={{ left: p.x, top: p.y }}
               data-lugar={c.lugar}
+              title={c.raia}
               aria-label={`caixa ${c.raia}, ${c.lugar === 'fila' ? 'na fila' : c.lugar === 'mesa' ? 'na mesa' : 'entregue'}`}
               onClick={() => onAbrirParte(c.raia)}
             >
-              <span className={s.etiqueta}>
-                {c.lugar === 'entrega' ? '✓ ' : ''}
-                {c.raia}
-              </span>
+              <span className={s.etiqueta}>{entregue ? '✓' : c.raia}</span>
               <Caixa cor={c.cor} entregue={c.lugar === 'entrega'} />
             </button>
           )
