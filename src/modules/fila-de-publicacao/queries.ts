@@ -88,7 +88,13 @@ async function montarLinha(
     db.pedidoDePublicacao.findFirst({
       where: filtroDoNoAr(repo.id, base),
       orderBy: ORDEM_DO_NO_AR,
-      select: { commit: true, concluidoEm: true },
+      select: {
+        commit: true,
+        concluidoEm: true,
+        descricao: true,
+        demanda: { select: { titulo: true } },
+        id: true,
+      },
     }),
     db.pedidoDePublicacao.findMany({
       where: {
@@ -130,6 +136,10 @@ async function montarLinha(
       select: { iniciadoEm: true, concluidoEm: true },
     }),
   ])
+  // os pedidos mais antigos que a publicação no ar atendeu: subiram junto com ela
+  const subiramJunto = noAr
+    ? await db.pedidoDePublicacao.count({ where: { atendidoPorId: noAr.id, estado: 'PUBLICADO' } })
+    : 0
 
   // O PR do conserto pelo link, sem diferenciar maiúsculas (como o worker), para o aviso de revisão.
   const prDoConserto =
@@ -157,7 +167,14 @@ async function montarLinha(
       situacaoMotivo: config.situacaoMotivo,
     },
     noAr:
-      noAr?.commit && noAr.concluidoEm ? { commit: noAr.commit, desde: noAr.concluidoEm } : null,
+      noAr?.commit && noAr.concluidoEm
+        ? {
+            commit: noAr.commit,
+            desde: noAr.concluidoEm,
+            titulo: noAr.demanda?.titulo || noAr.descricao,
+            junto: subiramJunto,
+          }
+        : null,
     // O motivo de um pedido publicando é provisório (disparo não confirmado): não vai para a tela.
     publicando: publicando ? pedidoDaLinha(publicando) : null,
     aguardando: pendentes.filter((p) => p.estado !== 'PUBLICANDO').map(pedidoDaLinha),

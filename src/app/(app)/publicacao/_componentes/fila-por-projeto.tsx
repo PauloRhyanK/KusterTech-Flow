@@ -3,6 +3,7 @@ import {
   colunaDeEstado,
   historicoReescrito,
   noArDaLinha,
+  oQueEstaNoAr,
   pilulasDaLinha,
   type ChecksDoPedido,
   type ColunaDeEstado,
@@ -24,7 +25,7 @@ export interface FilaPorProjetoProps {
 
 // Abaixo de md cada linha vira um cartão; a partir de md, as quatro colunas do desenho.
 const COLUNAS =
-  'grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 md:grid-cols-[minmax(0,1fr)_8.5rem_minmax(0,2.2fr)_9.5rem]'
+  'grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 md:grid-cols-[minmax(0,1fr)_minmax(9rem,1.5fr)_minmax(0,1.8fr)_9.5rem]'
 
 const TOM_DA_PILULA: Record<TomDaPilula, string> = {
   neutro: 'border-border bg-tonal-neutro text-neutro',
@@ -121,14 +122,26 @@ function LinhaDoProjeto({
       <p className="truncate text-sm font-[650] text-text-primary" title={linha.rotulo}>
         {linha.rotulo}
       </p>
-      <p
-        className={cn(
-          'whitespace-nowrap font-mono text-xs',
-          linha.noAr ? 'text-text-primary' : 'text-text-tertiary',
+      {/* No celular, o que está no ar ocupa a linha toda: um título longo não espreme o nome do projeto. */}
+      <div className="col-span-2 min-w-0 md:col-span-1">
+        {oQueEstaNoAr(linha) && (
+          <p className="truncate text-sm text-text-primary" title={oQueEstaNoAr(linha)!}>
+            {oQueEstaNoAr(linha)}
+          </p>
         )}
-      >
-        {noArDaLinha(linha, agora)}
-      </p>
+        <p
+          className={cn(
+            'whitespace-nowrap font-mono text-xs',
+            !linha.noAr
+              ? 'text-text-tertiary'
+              : oQueEstaNoAr(linha)
+                ? 'text-text-secondary'
+                : 'text-text-primary',
+          )}
+        >
+          {noArDaLinha(linha, agora)}
+        </p>
+      </div>
       <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-[5px] md:col-span-1">
         {pilulasDaLinha(linha, agora).map((p) => (
           <PilulaDaFila key={p.chave} pilula={p} />

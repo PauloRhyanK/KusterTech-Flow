@@ -96,6 +96,26 @@ describe('FilaPorProjeto', () => {
     expect(screen.getByText('sem CI — não bloqueiam')).toBeVisible()
   })
 
+  test('a coluna No ar diz o que subiu, com o commit embaixo', () => {
+    render(
+      <FilaPorProjeto
+        {...props}
+        linhas={[
+          linha({
+            noAr: {
+              commit: 'a41c9e2' + '0'.repeat(33),
+              desde: minutos(-25),
+              titulo: 'Orientador por IA e fila de relatos',
+            },
+          }),
+        ]}
+      />,
+    )
+    const item = screen.getByRole('listitem')
+    expect(within(item).getByText('Orientador por IA e fila de relatos')).toBeVisible()
+    expect(within(item).getByText('a41c9e2 · 25 min')).toBeVisible()
+  })
+
   test('fila parada oferece "Retomar a fila"; histórico reescrito oferece "Redefinir o que está no ar" só para quem pode', () => {
     const parada = linha({
       configuracao: {
