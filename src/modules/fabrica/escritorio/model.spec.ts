@@ -4,6 +4,7 @@ import type { RetratoRecebido } from '../queries'
 import exemploV1 from '../retrato-exemplo.json'
 import exemploV2 from '../retrato-exemplo-v2.json'
 import {
+  contarEstados,
   type DemandaDaTela,
   type Escritorio,
   grupoDoEstado,
@@ -483,3 +484,13 @@ describe('escritório: números da ficha', () => {
     expect(porId(escritorio(), 'raia:kit-base')?.proximaParte).toBeNull()
   })
 })
+
+test('contarEstados agrupa falha e sem notícias como trabalhando', () =>
+  expect(
+    contarEstados([
+      { estado: 'falha' },
+      { estado: 'semNoticias' },
+      { estado: 'livre' },
+      { estado: 'chamando' },
+    ]),
+  ).toEqual({ trabalhando: 2, livre: 1, chamando: 1 }))

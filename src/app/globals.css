@@ -1418,3 +1418,8 @@ body,
     scale: -1 1;
   }
 }
+
+.esc-agente[data-realce='true'],
+.esc-caixa[data-realce='true'] {
+  filter: drop-shadow(0 0 4px var(--pixel-tela-acesa)) drop-shadow(0 0 2px var(--pixel-tela-acesa));
+}

@@ -45,7 +45,7 @@ export interface MapaProps {
   onAbrirGestao: () => void
   /** grupo aceso pelos contadores; quem é de outro grupo fica esmaecido */
   filtro: Grupo | null
-  /** id do agente realçado pelo mouse (Task 7) */
+  /** id do agente realçado pelo mouse (no mapa ou no cartão do plano) */
   realce: string | null
   onRealcar: (id: string | null) => void
 }
@@ -226,6 +226,8 @@ export function Mapa({
   onAbrirParte,
   onAbrirGestao,
   filtro,
+  realce,
+  onRealcar,
 }: MapaProps) {
   const palco = useRef<HTMLDivElement>(null)
   const escala = useEscala(palco)
@@ -356,6 +358,8 @@ export function Mapa({
               esmaecido={esmaecido(agente)}
               comemorando={comemorando.has(agente.id)}
               entrada={lugar === 'conserto' ? ENTRADA_DO_CONSERTO : null}
+              realcado={realce === agente.id}
+              onRealcar={(r) => onRealcar(r ? agente.id : null)}
               onAbrir={() => onAbrirAgente(agente.id)}
             />
           )
@@ -416,6 +420,7 @@ export function Mapa({
               className={s.caixa}
               style={{ left: p.x, top: p.y }}
               data-lugar={c.lugar}
+              data-realce={realce === `raia:${c.raia}` ? 'true' : undefined}
               title={c.raia}
               aria-label={`caixa ${c.raia}, ${c.lugar === 'fila' ? 'na fila' : c.lugar === 'mesa' ? 'na mesa' : 'entregue'}`}
               onClick={() => onAbrirParte(c.raia)}

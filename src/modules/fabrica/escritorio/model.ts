@@ -351,6 +351,12 @@ export function grupoDoEstado(e: EstadoDoAgente): Grupo {
   return e === 'livre' ? 'livre' : 'trabalhando'
 }
 
+export function contarEstados(agentes: Pick<Agente, 'estado'>[]): Record<Grupo, number> {
+  const contagem: Record<Grupo, number> = { trabalhando: 0, livre: 0, chamando: 0 }
+  for (const a of agentes) contagem[grupoDoEstado(a.estado)] += 1
+  return contagem
+}
+
 function montarAndar(
   plano: PlanoV2,
   demanda: DemandaDaTela | undefined,

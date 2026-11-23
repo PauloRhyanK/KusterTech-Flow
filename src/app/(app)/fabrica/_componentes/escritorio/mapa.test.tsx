@@ -200,4 +200,18 @@ describe('mapa do escritório', () => {
     expect(screen.getByText('✓', { selector: '.esc-balao' })).toBeInTheDocument()
     expect(document.querySelector('.esc-confete')).not.toBeNull()
   })
+
+  test('mouse no personagem pede realce do id; realce marca o personagem e a caixa', () => {
+    const onRealcar = vi.fn()
+    renderizar(undefined, { onRealcar, realce: 'raia:kit-base' })
+    const b = screen.getByRole('button', { name: /^frontend · kit-base/ })
+    fireEvent.mouseEnter(b)
+    expect(onRealcar).toHaveBeenCalledWith('raia:kit-base')
+    fireEvent.mouseLeave(b)
+    expect(onRealcar).toHaveBeenLastCalledWith(null)
+    expect(b.getAttribute('data-realce')).toBe('true')
+    expect(screen.getByRole('button', { name: /caixa kit-base/ }).getAttribute('data-realce')).toBe(
+      'true',
+    )
+  })
 })

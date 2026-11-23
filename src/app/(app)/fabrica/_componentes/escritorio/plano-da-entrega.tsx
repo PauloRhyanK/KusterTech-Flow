@@ -44,21 +44,29 @@ export function textoDosTotais(fases: FaseDoPlano[]): string {
 function Cartao({
   parte,
   selecionada,
+  realcada,
   onSelecionar,
+  onRealcar,
 }: {
   parte: Parte
   selecionada: boolean
+  realcada: boolean
   onSelecionar: () => void
+  onRealcar: (realcar: boolean) => void
 }) {
   return (
     <button
       type="button"
       onClick={onSelecionar}
+      onMouseEnter={() => onRealcar(true)}
+      onMouseLeave={() => onRealcar(false)}
+      data-realce={realcada ? 'true' : undefined}
       aria-pressed={selecionada}
       aria-label={`${parte.raia}: ${ROTULO_DA_SITUACAO[parte.situacao]}`}
       className={cn(
         'mt-2.5 block w-full rounded-padrao border border-border bg-surface p-2.5 text-left',
         selecionada && 'ring-2 ring-focus-ring',
+        realcada && 'bg-tonal-informacao',
       )}
       style={{ borderLeft: `5px solid var(--pixel-raia-${parte.cor % 8})` }}
     >
@@ -96,9 +104,18 @@ export interface PlanoDaEntregaProps {
   fases: FaseDoPlano[]
   selecionada: string | null
   onSelecionar: (raia: string) => void
+  /** raia do cartão realçado pelo mouse (no plano ou no personagem) */
+  realcada?: string | null
+  onRealcar?: (raia: string | null) => void
 }
 
-export function PlanoDaEntrega({ fases, selecionada, onSelecionar }: PlanoDaEntregaProps) {
+export function PlanoDaEntrega({
+  fases,
+  selecionada,
+  onSelecionar,
+  realcada = null,
+  onRealcar = () => {},
+}: PlanoDaEntregaProps) {
   return (
     <section aria-label="Plano da entrega">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
@@ -131,7 +148,9 @@ export function PlanoDaEntrega({ fases, selecionada, onSelecionar }: PlanoDaEntr
                   key={p.raia}
                   parte={p}
                   selecionada={selecionada === p.raia}
+                  realcada={realcada === p.raia}
                   onSelecionar={() => onSelecionar(p.raia)}
+                  onRealcar={(r) => onRealcar(r ? p.raia : null)}
                 />
               ))}
             </div>

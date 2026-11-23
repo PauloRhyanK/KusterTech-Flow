@@ -4,7 +4,12 @@
 // No celular, uma lista simples de andares (sem o mapa).
 import { type ReactNode, useState } from 'react'
 import type { DadosDaGestao } from '@/modules/fabrica/escritorio/gestao'
-import type { Escritorio as DadosDoEscritorio } from '@/modules/fabrica/escritorio/model'
+import {
+  contarEstados,
+  type Escritorio as DadosDoEscritorio,
+  type Grupo,
+} from '@/modules/fabrica/escritorio/model'
+import { Contadores } from './contadores'
 import { Detalhe, type Selecao } from './detalhe'
 import { Mapa } from './mapa'
 import { PlanoDaEntrega, textoDosTotais } from './plano-da-entrega'
@@ -28,6 +33,8 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
   const [selecao, setSelecao] = useState<Selecao>(null)
   const [tela, setTela] = useState<string | null>(null)
   const [gestaoAberta, setGestaoAberta] = useState(false)
+  const [filtro, setFiltro] = useState<Grupo | null>(null)
+  const [realce, setRealce] = useState<string | null>(null)
   const andar =
     andares.find((a) => a.planoId === planoId) ??
     andares.find((a) => a.planoId === primeiro) ??
@@ -44,6 +51,14 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
     const parte = fase?.partes.find((p) => p.raia === raia)
     if (fase && parte) setSelecao({ tipo: 'parte', parte, fase: fase.id })
   }
+  // realce é o id do agente; o plano fala em raia. Quem não tem raia (papéis) não acende cartão.
+  const raiaRealcada = andar?.agentes.find((a) => a.id === realce)?.raia ?? null
+  const realcarRaia = (raia: string | null) =>
+    setRealce(
+      raia === null
+        ? null
+        : (andar?.agentes.find((a) => a.raia === raia && a.papel !== 'fixer')?.id ?? null),
+    )
   const abrirAgente = (id: string) => {
     const agente = andar?.agentes.find((a) => a.id === id)
     if (agente) setSelecao({ tipo: 'agente', agente })
@@ -86,6 +101,8 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
           onSelecionar={(id) => {
             setPlanoId(id)
             setSelecao(null)
+            setFiltro(null)
+            setRealce(null)
           }}
         />
         <div className="min-w-0 space-y-4">
@@ -93,6 +110,11 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
             <>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="text-lg font-semibold text-text-primary">{andar.titulo}</h2>
+                <Contadores
+                  contagem={contarEstados(andar.agentes)}
+                  filtro={filtro}
+                  onFiltrar={setFiltro}
+                />
                 <span className="text-xs text-text-secondary">{textoDosTotais(andar.fases)}</span>
               </div>
               <Mapa
@@ -101,14 +123,16 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
                 onAbrirTela={setTela}
                 onAbrirParte={abrirParte}
                 onAbrirGestao={() => setGestaoAberta(true)}
-                filtro={null}
-                realce={null}
-                onRealcar={() => {}}
+                filtro={filtro}
+                realce={realce}
+                onRealcar={setRealce}
               />
               <PlanoDaEntrega
                 fases={andar.fases}
                 selecionada={selecao?.tipo === 'parte' ? selecao.parte.raia : null}
                 onSelecionar={abrirParte}
+                realcada={raiaRealcada}
+                onRealcar={realcarRaia}
               />
             </>
           ) : (

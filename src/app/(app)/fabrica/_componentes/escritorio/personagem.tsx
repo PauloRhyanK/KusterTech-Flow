@@ -59,6 +59,8 @@ export function Personagem({
   esmaecido,
   comemorando,
   entrada,
+  realcado,
+  onRealcar,
   onAbrir,
 }: {
   agente: Agente
@@ -72,6 +74,9 @@ export function Personagem({
   comemorando: boolean
   /** de onde ele entra correndo (o conserto); null para quem já está no andar */
   entrada: Ponto | null
+  /** o mouse está neste personagem ou no cartão dele no plano */
+  realcado: boolean
+  onRealcar: (realcar: boolean) => void
   onAbrir: () => void
 }) {
   const chegou = useChegada(entrada)
@@ -101,9 +106,12 @@ export function Personagem({
         data-lugar={lugar}
         data-sentado={sentado}
         data-esmaecido={esmaecido}
+        data-realce={realcado ? 'true' : undefined}
         data-comemorando={comemorando ? 'true' : undefined}
         aria-label={texto ? `${agente.nome}: ${texto}` : agente.nome}
         onClick={onAbrir}
+        onMouseEnter={() => onRealcar(true)}
+        onMouseLeave={() => onRealcar(false)}
       >
         <Boneco papel={agente.papel} variacao={agente.variacao} escala={3} />
       </button>
