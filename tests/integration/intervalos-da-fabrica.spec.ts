@@ -93,9 +93,141 @@ describe('intervalos da Fábrica (previsão do escritório)', () => {
       papel: 'backend',
       repositorio: 'kustertech-exemplo/alfa',
     })
+    // sem PR mergeado não há fim conhecido: a parte não entra no histórico
+    expect((await lerHistorico()).partes).toEqual([])
+  })
+
+  async function repositorioDeTeste() {
+    const projeto = await db.projeto.create({
+      data: { nome: 'Projeto Beta', nomeNormalizado: 'projeto beta' },
+    })
+    return db.repositorioGitHub.create({
+      data: {
+        githubId: BigInt(78),
+        instalacaoId: BigInt(1),
+        nomeCompleto: 'kustertech-exemplo/beta',
+        urlHtml: 'https://github.com/kustertech-exemplo/beta',
+        privado: true,
+        catalogadoEm: new Date('2026-11-01T00:00:00Z'),
+        projetoId: projeto.id,
+      },
+    })
+  }
+
+  test('semear usa a hora do merge do PR como fim, não a hora da sincronização', async () => {
+    const repo = await repositorioDeTeste()
+    const pr = await db.pullRequestGitHub.create({
+      data: {
+        repositorioId: repo.id,
+        githubId: BigInt(901),
+        numero: 12,
+        titulo: 'feat: parte',
+        estado: 'MERGEADO',
+        rascunho: false,
+        urlHtml: 'https://github.com/kustertech-exemplo/beta/pull/12',
+        branch: 'warren/run-com-pr',
+        shaHead: 'abc123',
+        atualizadoNoGitHub: new Date('2026-11-10T10:25:00Z'),
+        mergeadoNoGitHub: new Date('2026-11-10T10:25:00Z'),
+        sincronizadoEm: new Date('2026-11-19T06:35:00Z'),
+      },
+    })
+    const comum = {
+      repositorioId: repo.id,
+      papel: 'claude-code',
+      estado: 'CONCLUIDA' as const,
+      motivoDoEstado: 'ok',
+      iniciadaEm: new Date('2026-11-10T10:00:00Z'),
+      // a sincronização em massa de dias depois mexe no atualizadaEm: não é o fim da execução
+      atualizadaEm: new Date('2026-11-19T06:35:00Z'),
+      sincronizadaEm: new Date('2026-11-19T06:35:00Z'),
+      fonte: 'seeds',
+    }
+    await db.execucaoAgente.create({
+      data: { ...comum, runId: 'run-com-pr', pullRequestId: pr.id },
+    })
+    await db.execucaoAgente.create({ data: { ...comum, runId: 'run-sem-pr' } })
+    await semearIntervalos()
     expect((await lerHistorico()).partes).toEqual([
-      { papel: 'backend', repositorio: 'kustertech-exemplo/alfa', minutos: 40 },
+      { papel: 'claude-code', repositorio: 'kustertech-exemplo/beta', minutos: 25 },
     ])
+  })
+
+  test('semear troca o fim errado de uma semente antiga pela hora do merge', async () => {
+    const repo = await repositorioDeTeste()
+    const pr = await db.pullRequestGitHub.create({
+      data: {
+        repositorioId: repo.id,
+        githubId: BigInt(902),
+        numero: 13,
+        titulo: 'feat: antiga',
+        estado: 'MERGEADO',
+        rascunho: false,
+        urlHtml: 'https://github.com/kustertech-exemplo/beta/pull/13',
+        branch: 'warren/run-antiga-com-pr',
+        shaHead: 'def456',
+        atualizadoNoGitHub: new Date('2026-10-19T11:30:00Z'),
+        mergeadoNoGitHub: new Date('2026-10-19T11:30:00Z'),
+        sincronizadoEm: new Date('2026-11-19T06:35:00Z'),
+      },
+    })
+    await db.execucaoAgente.create({
+      data: {
+        repositorioId: repo.id,
+        runId: 'run-antiga-com-pr',
+        papel: 'claude-code',
+        estado: 'CONCLUIDA',
+        motivoDoEstado: 'ok',
+        iniciadaEm: new Date('2026-10-19T11:00:00Z'),
+        atualizadaEm: new Date('2026-11-19T06:35:00Z'),
+        sincronizadaEm: new Date('2026-11-19T06:35:00Z'),
+        pullRequestId: pr.id,
+        fonte: 'seeds',
+      },
+    })
+    await db.intervaloDaFabrica.create({
+      data: {
+        chave: 'execucao:run-antiga-com-pr',
+        repositorio: 'kustertech-exemplo/beta',
+        tipo: 'parte',
+        papel: 'claude-code',
+        inicio: new Date('2026-10-19T11:00:00Z'),
+        fim: new Date('2026-11-19T06:35:00Z'),
+      },
+    })
+    await semearIntervalos()
+    expect((await lerHistorico()).partes).toEqual([
+      { papel: 'claude-code', repositorio: 'kustertech-exemplo/beta', minutos: 30 },
+    ])
+  })
+
+  test('semear tira do histórico a semente antiga sem merge', async () => {
+    const repo = await repositorioDeTeste()
+    await db.execucaoAgente.create({
+      data: {
+        repositorioId: repo.id,
+        runId: 'run-antiga',
+        papel: 'claude-code',
+        estado: 'CONCLUIDA',
+        motivoDoEstado: 'ok',
+        iniciadaEm: new Date('2026-10-19T11:00:00Z'),
+        atualizadaEm: new Date('2026-11-19T06:35:00Z'),
+        sincronizadaEm: new Date('2026-11-19T06:35:00Z'),
+        fonte: 'seeds',
+      },
+    })
+    await db.intervaloDaFabrica.create({
+      data: {
+        chave: 'execucao:run-antiga',
+        repositorio: 'kustertech-exemplo/beta',
+        tipo: 'parte',
+        papel: 'claude-code',
+        inicio: new Date('2026-10-19T11:00:00Z'),
+        fim: new Date('2026-11-19T06:35:00Z'),
+      },
+    })
+    await semearIntervalos()
+    expect((await lerHistorico()).partes).toEqual([])
   })
 
   test('custo por execução: guarda o maior valor visto e soma por parte e por plano', async () => {

@@ -11,18 +11,22 @@ function minutos(inicio: Date, fim: Date): number {
   return Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / MINUTO))
 }
 
-/** Upsert de um intervalo; um `fim` já gravado nunca é apagado nem trocado. */
-async function gravar(dados: {
-  chave: string
-  fonteId: string | null
-  repositorio: string
-  tipo: 'parte' | 'etapa' | 'custo'
-  papel: string | null
-  etapa: string | null
-  inicio: Date
-  fim: Date | null
-  custoUsd: number | null
-}): Promise<void> {
+/** Upsert de um intervalo; um `fim` já gravado nunca é apagado nem trocado, salvo com `fimDaFonte`
+ * (a semente é dona dos seus intervalos e refaz o fim a partir da fonte). */
+async function gravar(
+  dados: {
+    chave: string
+    fonteId: string | null
+    repositorio: string
+    tipo: 'parte' | 'etapa' | 'custo'
+    papel: string | null
+    etapa: string | null
+    inicio: Date
+    fim: Date | null
+    custoUsd: number | null
+  },
+  { fimDaFonte = false }: { fimDaFonte?: boolean } = {},
+): Promise<void> {
   const existente = await db.intervaloDaFabrica.findUnique({
     where: { chave: dados.chave },
     select: { fim: true, custoUsd: true },
@@ -37,7 +41,7 @@ async function gravar(dados: {
     data: {
       papel: dados.papel,
       repositorio: dados.repositorio,
-      ...(existente.fim === null && dados.fim !== null ? { fim: dados.fim } : {}),
+      ...(fimDaFonte || (existente.fim === null && dados.fim !== null) ? { fim: dados.fim } : {}),
       // o custo de uma execução só cresce: guarda o maior valor visto
       ...(custo !== undefined &&
       (existente.custoUsd === null || custo.greaterThan(existente.custoUsd))
@@ -99,32 +103,37 @@ export async function gastoPorPlano(): Promise<Record<string, number>> {
   return gasto
 }
 
-/** Semente idempotente: partes a partir de ExecucaoAgente e etapas a partir de `etapa_concluida`. */
+/** Semente idempotente: partes a partir de ExecucaoAgente e etapas a partir de `etapa_concluida`.
+ * O fim de uma parte é a hora do merge do PR da execução; sem merge, fica sem fim (fora da previsão).
+ * `atualizadaEm` não serve: é a hora da sincronização, que pode vir dias depois. */
 export async function semearIntervalos(): Promise<void> {
   const execucoes = await db.execucaoAgente.findMany({
     where: { iniciadaEm: { not: null } },
     select: {
       runId: true,
       papel: true,
-      estado: true,
       iniciadaEm: true,
-      atualizadaEm: true,
       custo: true,
       repositorio: { select: { nomeCompleto: true } },
+      pullRequest: { select: { mergeadoNoGitHub: true } },
     },
   })
   for (const e of execucoes) {
-    await gravar({
-      chave: `execucao:${e.runId}`,
-      fonteId: null,
-      repositorio: e.repositorio.nomeCompleto,
-      tipo: 'parte',
-      papel: e.papel,
-      etapa: null,
-      inicio: e.iniciadaEm!,
-      fim: e.estado === 'CONCLUIDA' ? e.atualizadaEm : null,
-      custoUsd: e.custo === null ? null : Number(e.custo),
-    })
+    const merge = e.pullRequest?.mergeadoNoGitHub ?? null
+    await gravar(
+      {
+        chave: `execucao:${e.runId}`,
+        fonteId: null,
+        repositorio: e.repositorio.nomeCompleto,
+        tipo: 'parte',
+        papel: e.papel,
+        etapa: null,
+        inicio: e.iniciadaEm!,
+        fim: merge !== null && merge > e.iniciadaEm! ? merge : null,
+        custoUsd: e.custo === null ? null : Number(e.custo),
+      },
+      { fimDaFonte: true },
+    )
   }
 
   const eventos = await db.eventoDaDemanda.findMany({
