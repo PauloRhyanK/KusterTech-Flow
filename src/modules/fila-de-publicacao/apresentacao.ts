@@ -379,7 +379,10 @@ export function montarResumoDaPublicacao(
     subindo: quadroDoSubindo(linhas, agora),
     naFila: {
       n: String(naFila),
-      m: naFila === 0 ? 'nada esperando' : `em ${plural(projetosNaFila, 'projeto', 'projetos')}`,
+      m:
+        naFila === 0
+          ? 'nada pronto esperando'
+          : `em ${plural(projetosNaFila, 'projeto', 'projetos')}`,
     },
     lote:
       lote === 0

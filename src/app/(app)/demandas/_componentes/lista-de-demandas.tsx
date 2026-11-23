@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { IconeDoTipo } from './icone-do-tipo'
 import { TrilhoDeEtapas } from './trilho-de-etapas'
 
-const TOM_DO_ESTADO: Record<TomDaDemanda, string> = {
+export const TOM_DO_ESTADO: Record<TomDaDemanda, string> = {
   erro: 'text-erro',
   atencao: 'text-atencao',
   informacao: 'text-informacao',
