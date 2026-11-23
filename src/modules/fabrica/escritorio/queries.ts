@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import type { EtapaDefinida } from '@/modules/demandas/model'
 import { obterRetratoMaisRecente, type RetratoRecebido } from '../queries'
 import { type DadosDaGestao, montarGestao } from './gestao'
-import { gastoPorPlano, lerHistorico } from './intervalos'
+import { gastoPorPlano, lerHistorico, lerLinhasDosPlanos } from './intervalos'
 import { type DemandaDaTela, type Escritorio, montarEscritorio } from './model'
 
 export interface DadosDoEscritorio {
@@ -54,7 +54,11 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
         })
   const titulos = Object.fromEntries(seeds.map((s) => [s.seedId, s.titulo]))
 
-  const escritorio = montarEscritorio({ recebido, demandas, titulos, historico: [] }, agora)
+  const linhasDoHistorico = await lerLinhasDosPlanos((retrato?.planos ?? []).map((p) => p.id))
+  const escritorio = montarEscritorio(
+    { recebido, demandas, titulos, historico: linhasDoHistorico },
+    agora,
+  )
   const gestao: Record<string, DadosDaGestao> = {}
   if (retrato && escritorio.andares.length > 0) {
     const historico = await lerHistorico()

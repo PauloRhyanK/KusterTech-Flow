@@ -417,3 +417,65 @@ describe('escritório: caixas e plano', () => {
     expect(kit!.agenteRunId).toBe('run_kitbase01')
   })
 })
+
+const parte = (raia: string, inicio: string, fim: string | null): LinhaDoHistorico => ({
+  chave: `${PLANO}:${raia}`,
+  tipo: 'parte',
+  papel: 'frontend',
+  inicio,
+  fim,
+  custoUsd: null,
+})
+
+describe('escritório: números da ficha', () => {
+  test('raia entregue: 1 entregue, minutos do intervalo e custo das execuções dela', () => {
+    const h = [
+      parte('relatos-fundacao', '2026-11-21T00:50:00Z', '2026-11-21T01:52:00Z'),
+      custo('relatos-fundacao', 'a1', 'frontend', 0.5),
+      custo('relatos-fundacao', 'a2', 'frontend', 0.25),
+      custo('relatos-fundacao', 'rv', 'revisor', 9),
+    ]
+    expect(porId(escritorio(v2(), [demanda()], {}, h), 'raia:relatos-fundacao')?.numeros).toEqual({
+      entregues: 1,
+      minutos: 62,
+      custoUsd: 0.75,
+    })
+  })
+
+  test('parte aberta conta até agora', () => {
+    const h = [parte('kit-base', '2026-11-21T01:30:00Z', null)]
+    expect(porId(escritorio(v2(), [demanda()], {}, h), 'raia:kit-base')?.numeros).toEqual({
+      entregues: 0,
+      minutos: 35,
+      custoUsd: 0,
+    })
+  })
+
+  test('personagem por papel: sem entregues e minutos, custo das execuções do papel neste plano', () => {
+    const h = [
+      custo('kit-base', 'r1', 'revisor', 0.2),
+      custo('relatos-fundacao', 'r2', 'revisor', 0.3),
+      { ...custo('x', 'r3', 'revisor', 5), chave: 'outro:x:run:r3' },
+    ]
+    expect(porId(escritorio(v2(), [demanda()], {}, h), 'papel:revisor')?.numeros).toEqual({
+      entregues: null,
+      minutos: null,
+      custoUsd: 0.5,
+    })
+  })
+
+  test('próxima parte: a próxima raia na fila com o mesmo papel, pelo título da seed', () => {
+    const r = v2()
+    const kit = r.planos[0]!.fases[1]!.raias[0]!
+    r.planos[0]!.fases[1]!.raias.push({
+      ...kit,
+      id: 'tutoriais',
+      situacao: null,
+      estado: 'planejada',
+      seedId: 'S1',
+    })
+    const e = escritorio(r, [demanda()], { S1: 'Tutoriais do kit' })
+    expect(porId(e, 'raia:kit-base')?.proximaParte).toBe('Tutoriais do kit')
+    expect(porId(escritorio(), 'raia:kit-base')?.proximaParte).toBeNull()
+  })
+})

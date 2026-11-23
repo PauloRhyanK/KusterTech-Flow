@@ -3,6 +3,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import type { RetratoV2 } from '../contrato'
+import type { LinhaDoHistorico } from './model'
 import type { Historico } from './previsao'
 
 const MINUTO = 60_000
@@ -97,6 +98,27 @@ export async function gastoPorPlano(): Promise<Record<string, number>> {
     gasto[plano] = Math.round(((gasto[plano] ?? 0) + Number(l.custoUsd ?? 0)) * 10000) / 10000
   }
   return gasto
+}
+
+/** Partes e custos dos planos pedidos, para as fichas do escritório (datas em ISO, custo em número). */
+export async function lerLinhasDosPlanos(planoIds: string[]): Promise<LinhaDoHistorico[]> {
+  if (planoIds.length === 0) return []
+  const linhas = await db.intervaloDaFabrica.findMany({
+    where: {
+      tipo: { in: ['parte', 'custo'] },
+      OR: planoIds.map((id) => ({ chave: { startsWith: `${id}:` } })),
+    },
+    select: { chave: true, tipo: true, papel: true, inicio: true, fim: true, custoUsd: true },
+    orderBy: { inicio: 'asc' },
+  })
+  return linhas.map((l) => ({
+    chave: l.chave,
+    tipo: l.tipo as 'parte' | 'custo',
+    papel: l.papel,
+    inicio: l.inicio.toISOString(),
+    fim: l.fim ? l.fim.toISOString() : null,
+    custoUsd: l.custoUsd === null ? null : Number(l.custoUsd),
+  }))
 }
 
 /** Semente idempotente: partes a partir de ExecucaoAgente e etapas a partir de `etapa_concluida`. */

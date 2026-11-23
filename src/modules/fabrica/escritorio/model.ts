@@ -61,6 +61,10 @@ export interface Agente {
   inicio: string | null
   custoUsd: number | null
   modelo: string | null
+  /** números da ficha; entregues e minutos são null para o personagem de papel (sem raia própria) */
+  numeros: { entregues: number | null; minutos: number | null; custoUsd: number }
+  /** título da seed da próxima raia na fila com o mesmo papel */
+  proximaParte: string | null
 }
 
 export interface Caixa {
@@ -292,6 +296,56 @@ export function textoDoChamado(demanda: DemandaDaTela | undefined, plano: PlanoV
   return deEspera ?? plano.decisoes[0]?.titulo ?? 'Sua vez nesta etapa'
 }
 
+const arredondar = (v: number) => Math.round(v * 10000) / 10000
+
+export function numerosDoParticipante(
+  p: { papel: string | null; raia: string | null },
+  plano: PlanoV2,
+  historico: LinhaDoHistorico[],
+  agora: Date,
+): Agente['numeros'] {
+  const prefixo = `${plano.id}:`
+  const custo = historico
+    .filter(
+      (l) =>
+        l.tipo === 'custo' &&
+        l.chave.startsWith(prefixo) &&
+        l.papel === p.papel &&
+        (p.raia === null || l.chave.slice(prefixo.length).split(':')[0] === p.raia),
+    )
+    .reduce((soma, l) => soma + (l.custoUsd ?? 0), 0)
+  if (p.raia === null) return { entregues: null, minutos: null, custoUsd: arredondar(custo) }
+  const raia = plano.fases.flatMap((f) => f.raias).find((r) => r.id === p.raia)
+  const linha = historico.find((l) => l.tipo === 'parte' && l.chave === `${prefixo}${p.raia}`)
+  const minutos = linha
+    ? Math.max(
+        0,
+        Math.round(
+          ((linha.fim ? new Date(linha.fim) : agora).getTime() - new Date(linha.inicio).getTime()) /
+            60_000,
+        ),
+      )
+    : null
+  return {
+    entregues: raia && lugarDaCaixa(raia.situacao) === 'entrega' ? 1 : 0,
+    minutos,
+    custoUsd: arredondar(custo),
+  }
+}
+
+/** O título da seed da próxima raia na fila com o mesmo papel (a raia do personagem não conta). */
+export function proximaParteDe(
+  p: { papel: string | null; raia: string | null },
+  plano: PlanoV2,
+  titulos: Record<string, string>,
+): string | null {
+  if (p.raia === null) return null
+  const proxima = plano.fases
+    .flatMap((f) => f.raias)
+    .find((r) => r.id !== p.raia && r.papel === p.papel && lugarDaCaixa(r.situacao) === 'fila')
+  return (proxima?.seedId && titulos[proxima.seedId]) || null
+}
+
 export function grupoDoEstado(e: EstadoDoAgente): Grupo {
   if (e === 'chamando') return 'chamando'
   return e === 'livre' ? 'livre' : 'trabalhando'
@@ -332,6 +386,8 @@ function montarAndar(
       inicio: ativa?.inicio ?? raia?.inicio ?? null,
       custoUsd: ativa?.custoUsd ?? null,
       modelo: ativa?.modelo ?? null,
+      numeros: numerosDoParticipante(p, plano, historico, agora),
+      proximaParte: proximaParteDe(p, plano, titulos),
     }
   })
 
