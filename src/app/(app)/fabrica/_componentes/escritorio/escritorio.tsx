@@ -143,7 +143,7 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
           )}
         </div>
         <aside className="rounded-padrao border border-border bg-surface p-4">
-          <Detalhe selecao={selecao} />
+          <Detalhe selecao={selecao} onAbrirTela={setTela} agora={agoraData} />
         </aside>
       </div>
 
