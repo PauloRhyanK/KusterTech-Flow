@@ -1,10 +1,12 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { type ClipboardEvent, type DragEvent, useActionState, useRef, useState } from 'react'
 import { criarDemandaAction } from '@/app/(app)/demandas/nova/actions'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
+import { descreverTamanho, juntarAnexos, MAXIMO_DE_ANEXOS } from '@/modules/demandas/anexos'
 import { ROTULO_DO_NIVEL } from '@/modules/demandas/apresentacao'
+import { CONTEUDOS_ACEITOS } from '@/modules/demandas/transicoes'
 import { NIVEIS } from '@/modules/demandas/contrato'
 import type { FormularioDeDemanda } from '@/modules/demandas/queries'
 
@@ -17,6 +19,103 @@ const CLASSE_CAMPO =
 const CLASSE_ROTULO = 'block text-sm font-medium text-text-primary'
 const CLASSE_PILULA =
   'cursor-pointer rounded-full border border-border-strong px-3.5 py-1.5 text-sm font-[550] text-text-primary has-[:checked]:border-text-primary has-[:checked]:bg-text-primary has-[:checked]:text-surface has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-focus-ring'
+
+function Anexos({
+  arquivos,
+  erro,
+  aoEscolher,
+  aoRemover,
+}: {
+  arquivos: File[]
+  erro: string | null
+  aoEscolher: (novos: File[]) => void
+  aoRemover: (indice: number) => void
+}) {
+  const seletor = useRef<HTMLInputElement>(null)
+  const [arrastando, setArrastando] = useState(false)
+  const cheio = arquivos.length >= MAXIMO_DE_ANEXOS
+
+  const soltar = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setArrastando(false)
+    aoEscolher(Array.from(e.dataTransfer.files))
+  }
+
+  return (
+    <div className="space-y-2 pt-1">
+      <div
+        data-testid="zona-de-anexos"
+        onDragOver={(e) => {
+          e.preventDefault()
+          setArrastando(true)
+        }}
+        onDragLeave={() => setArrastando(false)}
+        onDrop={soltar}
+        className={`flex flex-wrap items-center gap-3 rounded-compacto border border-dashed px-3 py-2.5 ${
+          arrastando ? 'border-focus-ring bg-surface-subtle' : 'border-border-strong'
+        }`}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={cheio}
+          onClick={() => seletor.current?.click()}
+        >
+          Anexar arquivo
+        </Button>
+        <span className="text-xs text-text-secondary">
+          {cheio
+            ? `Limite de ${MAXIMO_DE_ANEXOS} anexos.`
+            : 'Ou arraste aqui, ou cole uma imagem nos detalhes. Imagem ou áudio, até 3 de 10 MB.'}
+        </span>
+        <input
+          ref={seletor}
+          type="file"
+          multiple
+          aria-label="Anexos"
+          accept={CONTEUDOS_ACEITOS.anexo.join(',')}
+          className="sr-only"
+          tabIndex={-1}
+          onChange={(e) => {
+            aoEscolher(Array.from(e.target.files ?? []))
+            e.target.value = ''
+          }}
+        />
+      </div>
+
+      {arquivos.length > 0 && (
+        <ul className="space-y-1">
+          {arquivos.map((a, i) => (
+            <li
+              key={`${a.name}-${a.size}-${i}`}
+              className="flex items-center gap-2 rounded-compacto border border-border px-3 py-1.5 text-sm"
+            >
+              <span className="text-xs text-text-secondary">
+                {a.type.startsWith('audio/') ? 'Áudio' : 'Imagem'}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-text-primary">{a.name}</span>
+              <span className="text-xs text-text-secondary">{descreverTamanho(a.size)}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Remover ${a.name}`}
+                onClick={() => aoRemover(i)}
+              >
+                Remover
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p aria-live="polite" className={erro ? 'text-xs text-erro' : 'sr-only'}>
+        {erro ?? ''}
+      </p>
+    </div>
+  )
+}
 
 function Pilulas({
   legenda,
@@ -58,6 +157,35 @@ export function FormularioNovaDemanda({ projetos }: FormularioNovaDemandaProps) 
   const [projetoId, setProjetoId] = useState(projetos[0]?.id ?? '')
   const [nivelEscolhido, setNivelEscolhido] = useState<string | null>(null)
   const [temTela, setTemTela] = useState('sim')
+  // Controlados: o React 19 limpa campos não controlados ao fim da ação, mesmo quando ela volta com erro.
+  const [titulo, setTitulo] = useState('')
+  const [descricao, setDescricao] = useState('')
+  const [anexos, setAnexos] = useState<File[]>([])
+  const [erroDosAnexos, setErroDosAnexos] = useState<string | null>(null)
+
+  const escolher = (novos: File[]) => {
+    if (novos.length === 0) return
+    const r = juntarAnexos(anexos, novos)
+    setAnexos(r.arquivos)
+    setErroDosAnexos(r.erro)
+  }
+
+  const colar = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imagens = Array.from(e.clipboardData.files).filter((f) =>
+      CONTEUDOS_ACEITOS.anexo.includes(f.type),
+    )
+    // Planilhas e editores põem texto e uma imagem de prévia juntos: com texto, cola o texto.
+    if (imagens.length === 0 || e.clipboardData.getData('text/plain')) return
+    e.preventDefault()
+    escolher(imagens)
+  }
+
+  // Os anexos vivem no estado (para listar e remover); entram no envio aqui.
+  const enviar = (form: FormData) => {
+    form.delete('anexos')
+    for (const a of anexos) form.append('anexos', a)
+    criar(form)
+  }
 
   const projeto = projetos.find((p) => p.id === projetoId)
   // Enquanto a pessoa não escolheu, o nível acompanha o padrão do projeto.
@@ -65,7 +193,7 @@ export function FormularioNovaDemanda({ projetos }: FormularioNovaDemandaProps) 
 
   return (
     <form
-      action={criar}
+      action={enviar}
       className="max-w-[620px] space-y-5 rounded-padrao border border-border bg-surface p-6"
     >
       <MensagensDeEstado estado={estado} />
@@ -126,6 +254,8 @@ export function FormularioNovaDemanda({ projetos }: FormularioNovaDemandaProps) 
           type="text"
           required
           maxLength={120}
+          value={titulo}
+          onChange={(e) => setTitulo(e.target.value)}
           placeholder="Título curto"
           className={CLASSE_CAMPO}
         />
@@ -140,21 +270,21 @@ export function FormularioNovaDemanda({ projetos }: FormularioNovaDemandaProps) 
           name="descricao"
           rows={4}
           maxLength={4000}
+          value={descricao}
+          onChange={(e) => setDescricao(e.target.value)}
           placeholder="Escreva, cole imagem ou anexe um áudio"
+          onPaste={colar}
           className={CLASSE_CAMPO}
         />
-        <label htmlFor="nova-demanda-anexos" className="block pt-1 text-xs text-text-secondary">
-          Anexos
-        </label>
-        <input
-          id="nova-demanda-anexos"
-          name="anexos"
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/webp,audio/*"
-          className="block w-full text-sm text-text-secondary"
+        <Anexos
+          arquivos={anexos}
+          erro={erroDosAnexos}
+          aoEscolher={escolher}
+          aoRemover={(i) => {
+            setAnexos((atuais) => atuais.filter((_, j) => j !== i))
+            setErroDosAnexos(null)
+          }}
         />
-        <p className="text-xs text-text-secondary">Até 3 arquivos de 10 MB.</p>
       </div>
 
       <Pilulas

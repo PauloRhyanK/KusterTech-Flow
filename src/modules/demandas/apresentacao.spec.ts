@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  demandasQueVemAi,
   avisoDeFabricaSemBuscar,
   avisosDoImpacto,
   cabecalhoDaEntrega,
@@ -629,5 +630,34 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
     const d = demanda({ etapaAtual: 'desenvolvida', encerrada: 'descartada' })
     expect(rotuloDoEstado(d)).toEqual({ texto: 'Encerrada', tom: 'neutro' })
     expect(grupoDaDemanda(d)).toBeNull()
+  })
+})
+
+describe('demandasQueVemAi', () => {
+  // A tela Publicação mostra o que a Fábrica ainda está fazendo: o que espera você primeiro, depois o que anda.
+  test('só as abertas; espera você, depois em andamento, depois triagem; cada uma com o estado', () => {
+    const lista = demandasQueVemAi([
+      demanda({ id: 'triagem', titulo: 'Nova', etapaAtual: 'recebida' }),
+      demanda({
+        id: 'andando',
+        titulo: 'Bot de áudio',
+        etapaAtual: 'desenvolvida',
+        concluidas: ['recebida', 'planejada', 'desenho'],
+      }),
+      demanda({ id: 'entregue', encerrada: 'entregue', etapaAtual: 'entregue' }),
+      demanda({
+        id: 'espera',
+        titulo: 'CRM',
+        etapaAtual: 'desenho',
+        espera: 'aprovar_desenho',
+        concluidas: ['recebida', 'planejada'],
+      }),
+    ])
+    expect(lista.map((d) => [d.id, d.estado.texto])).toEqual([
+      ['espera', 'Aprovar desenho'],
+      ['andando', 'Desenvolvendo'],
+      ['triagem', 'Triagem'],
+    ])
+    expect(lista[1]).toMatchObject({ titulo: 'Bot de áudio', projeto: 'Projeto Alfa' })
   })
 })

@@ -137,6 +137,28 @@ export function rotuloDoEstado(d: DemandaNaLista): { texto: string; tom: TomDaDe
   return { texto: TEXTO_DO_MARCO[marco], tom: 'execucao' }
 }
 
+export interface DemandaQueVemAi {
+  id: string
+  titulo: string
+  projeto: string
+  estado: { texto: string; tom: TomDaDemanda }
+}
+
+const ORDEM_DO_GRUPO = { espera_voce: 0, em_andamento: 1, na_fila: 2 } as const
+
+/** O que a Fábrica ainda está fazendo (as abertas): o que espera você, depois o que anda, depois a triagem. */
+export function demandasQueVemAi(demandas: readonly DemandaNaLista[]): DemandaQueVemAi[] {
+  return demandas
+    .flatMap((d) => {
+      const grupo = grupoDaDemanda(d)
+      return grupo === null || !(grupo in ORDEM_DO_GRUPO)
+        ? []
+        : [{ d, ordem: ORDEM_DO_GRUPO[grupo as keyof typeof ORDEM_DO_GRUPO] }]
+    })
+    .sort((a, b) => a.ordem - b.ordem || b.d.atualizadaEm.getTime() - a.d.atualizadaEm.getTime())
+    .map(({ d }) => ({ id: d.id, titulo: d.titulo, projeto: d.projeto, estado: rotuloDoEstado(d) }))
+}
+
 export function trilho(
   etapas: readonly EtapaDefinida[],
   d: DemandaNaLista,

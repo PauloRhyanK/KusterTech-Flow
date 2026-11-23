@@ -17,7 +17,12 @@ const resumo: ResumoDaPublicacao = {
 describe('QuadrosDaPublicacao', () => {
   test('renderiza os quatro rótulos do desenho', () => {
     render(<QuadrosDaPublicacao resumo={resumo} />)
-    for (const rotulo of ['Subindo agora', 'Na fila', 'Lote desta noite', 'Último lote']) {
+    for (const rotulo of [
+      'Subindo agora',
+      'Pronto para subir',
+      'Lote desta noite',
+      'Último lote',
+    ]) {
       expect(screen.getByText(rotulo)).toBeVisible()
     }
     expect(screen.getByText('Projeto Alfa · Corrige PDF cortado')).toBeVisible()

@@ -25,7 +25,9 @@ import {
   textoDoEvento,
   trilho,
   avisoDeFabricaSemBuscar,
+  demandasQueVemAi,
   type DemandaNaLista,
+  type DemandaQueVemAi,
   type PaginaDaDemanda,
   type TelaDeDemandas,
   type TriagemDaDemanda,
@@ -513,4 +515,46 @@ export async function obterDemandasDoProjeto(
     nivelPadrao: minusculo<Nivel>(projeto.nivelPadraoDeDemanda),
     modelos: modelos.map(({ id, nome, etapas }) => ({ id, nome, etapas })),
   }
+}
+
+/** As demandas abertas que a Fábrica ainda está fazendo, para a tela Publicação. */
+export async function obterDemandasQueVemAi(sujeito: Sujeito): Promise<DemandaQueVemAi[]> {
+  exigirPermissao(sujeito, 'desenvolvimento.ler')
+  const abertas = await db.demanda.findMany({
+    where: { encerrada: null, projeto: { arquivadoEm: null } },
+    select: {
+      id: true,
+      titulo: true,
+      tipo: true,
+      etapas: true,
+      temTela: true,
+      etapaAtual: true,
+      concluidas: true,
+      espera: true,
+      encerrada: true,
+      destino: true,
+      criadaEm: true,
+      esperaDesde: true,
+      atualizadaEm: true,
+      projeto: { select: { nome: true } },
+    },
+  })
+  return demandasQueVemAi(
+    abertas.map((d) => ({
+      id: d.id,
+      titulo: d.titulo,
+      tipo: d.tipo ? minusculo<TipoDeDemanda>(d.tipo) : null,
+      projeto: d.projeto.nome,
+      etapas: d.etapas as unknown as EtapaDefinida[],
+      temTela: d.temTela,
+      etapaAtual: d.etapaAtual,
+      concluidas: d.concluidas,
+      espera: d.espera as Espera | null,
+      encerrada: null,
+      destino: d.destino ? minusculo<Destino>(d.destino) : null,
+      criadaEm: d.criadaEm,
+      esperaDesde: d.esperaDesde,
+      atualizadaEm: d.atualizadaEm,
+    })),
+  )
 }
