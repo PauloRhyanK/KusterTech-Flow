@@ -21,6 +21,7 @@ MAX_TENTATIVAS_REVISAO = 2
 MAX_RECUSAS_DE_MERGE = 3
 MAX_FALHAS_ACORDAR = 3
 MAX_INTERRUPCOES = 3
+MAX_FIXERS = 2
 TERMINAIS = ("mergeada", "obsoleta")
 ESTADOS_DE_GATE = ("em_revisao", "aguardando_gates", "corrigindo")
 MOTIVOS_DO_PAULO = ("nova_spec", "fase_concluida")
@@ -87,6 +88,8 @@ def _seed_nova(raia_id: str, agora=None) -> dict:
         "tentativasRevisao": 0,
         "fixerRunId": None,
         "fixerUsado": False,
+        "fixersUsados": 0,
+        "rodadaDoFixer": None,
         "tentativasMerge": 0,
         "interrupcoes": 0,
         "pendenteHumano": None,
@@ -456,7 +459,10 @@ def registrar_fim_de_run(
             seed["fixerRunId"] = None
             if interrompido:
                 # o fixer volta a ser emitido: devolve o veredito que o motivou
-                seed["fixerUsado"] = False
+                # devolve só o fixer interrompido; a rodada anterior é desconhecida (conta como mudada)
+                seed["fixersUsados"] = max(0, fixers_usados(seed) - 1)
+                seed["fixerUsado"] = seed["fixersUsados"] >= 1
+                seed["rodadaDoFixer"] = None
                 seed["veredito"] = seed.get("vereditoAnterior")
                 _contar_interrupcao(estado, seed_id, seed, motivo_falha)
             elif estado_run == "succeeded":
@@ -509,6 +515,38 @@ def _ci_ausente_recente(seed: dict, agora) -> bool:
     return datetime.timedelta(0) <= decorrido < ESPERA_CI_AUSENTE
 
 
+def _normalizar(texto) -> str:
+    return " ".join(str(texto).lower().split())
+
+
+def chave_da_rodada(motivos: list, achados: list | None) -> list[str]:
+    """Identifica os problemas de uma rodada de gate, para saber se mudaram depois de um fixer."""
+    chave = set()
+    for a in achados if isinstance(achados, list) else []:
+        a = a if isinstance(a, dict) else {}
+        chave.add(f"{_normalizar(a.get('arquivo'))}|{_normalizar(a.get('motivo'))}")
+    for m in motivos if isinstance(motivos, list) else []:
+        if not str(m).startswith("revisão pediu correções"):
+            chave.add(f"motivo|{_normalizar(m)}")
+    return sorted(chave)
+
+
+def fixers_usados(seed: dict) -> int:
+    usado = seed.get("fixerUsado")
+    if not isinstance(usado, bool):
+        return MAX_FIXERS  # malformado ou ausente conta como esgotado
+    n = seed.get("fixersUsados")
+    if _inteiro(n) and n >= 0:
+        return n
+    return 1 if usado else 0  # estado antigo: só existe o booleano
+
+
+def _gastar_fixer(seed: dict, acao: dict) -> None:
+    seed["fixersUsados"] = fixers_usados(seed) + 1
+    seed["fixerUsado"] = True
+    seed["rodadaDoFixer"] = chave_da_rodada(acao.get("motivos"), acao.get("achados"))
+
+
 def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional=False) -> list[dict]:
     head = seed.get("headSha")
     r = gates.avaliar_merge(
@@ -527,15 +565,19 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional
     if decisao == "humano":
         return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": list(r["motivos"])}]
     if decisao == "corrigir":
-        if seed.get("fixerUsado") is False:
-            achados = _dict(seed.get("veredito")).get("achados")
+        n = fixers_usados(seed)
+        achados = _dict(seed.get("veredito")).get("achados")
+        achados = copy.deepcopy(achados) if isinstance(achados, list) else []
+        if n == 0 or (
+            n < MAX_FIXERS and chave_da_rodada(r["motivos"], achados) != seed.get("rodadaDoFixer")
+        ):
             return [
                 {
                     "tipo": "corrigir",
                     "seed": seed_id,
                     "sha": head,
                     "motivos": list(r["motivos"]),
-                    "achados": copy.deepcopy(achados) if isinstance(achados, list) else [],
+                    "achados": achados,
                 }
             ]
         return [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id}]
@@ -813,13 +855,13 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
     elif tipo == "corrigir":
         if _texto(resultado.get("runId")):
             seed["fixerRunId"] = resultado["runId"]
-            seed["fixerUsado"] = True
+            _gastar_fixer(seed, acao)
             seed["vereditoAnterior"] = seed.get("veredito")
             seed["veredito"] = None
             seed["tentativasRevisao"] = 0
             marcar_estado_da_seed(seed, "corrigindo")
         else:
-            seed["fixerUsado"] = True
+            _gastar_fixer(seed, acao)
             _pedir_humano(estado, seed_id, seed, "despacho do fixer sem runId")
     elif tipo == "verificar":
         verificacao = resultado.get("verificacao")

@@ -310,6 +310,8 @@ class TestRegistrarPlano(unittest.TestCase):
                 "tentativasRevisao": 0,
                 "fixerRunId": None,
                 "fixerUsado": False,
+                "fixersUsados": 0,
+                "rodadaDoFixer": None,
                 "tentativasMerge": 0,
                 "interrupcoes": 0,
                 "pendenteHumano": None,
@@ -1287,6 +1289,88 @@ class TestNovaTentativa(unittest.TestCase):
         e = est.registrar_fim_de_run(e, run_revisao, estado_run="succeeded", motivo_falha=None, veredito=veredito("zzz"), cota=False)
         [acao] = da_seed(acoes(e))
         self.assertEqual((acao["tipo"], acao["sha"]), ("corrigir", "zzz"))
+
+
+class TestSegundoFixer(unittest.TestCase):
+    A1 = [{"arquivo": "a.tsx", "motivo": "x"}]
+    B1 = [{"arquivo": "b.tsx", "motivo": "y"}]
+
+    def rodada(self, e, sha, run, achados, codigo=0, ci="verde"):
+        e = est.registrar_pr(e, "s1", head_sha=sha, branch="warren/s1", arquivos=["src/a/x.ts"], ci=ci)
+        e = revisar(e, sha, run, veredito(sha, "correcoes", achados) if achados else veredito(sha))
+        return verificar(e, sha, codigo=codigo)
+
+    def fixer(self, e, run):
+        [acao] = da_seed(acoes(e))
+        e = est.aplicar(e, acao, {"runId": run})
+        return acao, est.registrar_fim_de_run(e, run, estado_run="succeeded", motivo_falha=None, veredito=None, cota=False)
+
+    def primeira(self, achados=None, codigo=0):
+        e = com_pr(sha="bbb")
+        e = revisar(e, "bbb", "rv1", veredito("bbb", "correcoes", achados) if achados else veredito("bbb"))
+        e = verificar(e, "bbb", codigo=codigo)
+        return self.fixer(e, "fx1")[1]
+
+    def test_segundo_fixer_quando_os_achados_mudaram(self):
+        e = self.primeira(self.A1)
+        e = self.rodada(e, "ccc", "rv2", self.B1)
+        [acao] = da_seed(acoes(e))
+        self.assertEqual((acao["tipo"], acao["achados"]), ("corrigir", self.B1))
+        e = est.aplicar(e, acao, {"runId": "fx2"})
+        self.assertEqual((e["seeds"]["s1"]["fixersUsados"], e["seeds"]["s1"]["fixerUsado"]), (2, True))
+
+    def test_mesmos_achados_depois_do_fixer_acordam_o_orquestrador(self):
+        e = self.primeira(self.A1)
+        e = self.rodada(e, "ccc", "rv2", [{"arquivo": "a.tsx", "motivo": "  X "}])
+        self.assertEqual(
+            da_seed(acoes(e)), [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}]
+        )
+
+    def test_terceira_rodada_nunca_ganha_fixer(self):
+        e = self.primeira(self.A1)
+        e = self.rodada(e, "ccc", "rv2", self.B1)
+        e = self.fixer(e, "fx2")[1]
+        e = self.rodada(e, "ddd", "rv3", [{"arquivo": "c.tsx", "motivo": "z"}])
+        self.assertEqual(
+            da_seed(acoes(e)), [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}]
+        )
+
+    def test_estado_antigo_com_fixer_usado_conta_um(self):
+        e = self.primeira(self.A1)
+        s = e["seeds"]["s1"]
+        del s["fixersUsados"], s["rodadaDoFixer"]
+        self.assertEqual(s["fixerUsado"], True)
+        e = self.rodada(e, "ccc", "rv2", self.B1)
+        [acao] = da_seed(acoes(e))
+        self.assertEqual(acao["tipo"], "corrigir")
+        e = self.fixer(e, "fx2")[1]
+        e = self.rodada(e, "ddd", "rv3", [{"arquivo": "c.tsx", "motivo": "z"}])
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["acordar"])
+
+    def test_verificacao_vermelha_igual_nao_ganha_segundo_fixer(self):
+        e = self.primeira(codigo=1)
+        e = self.rodada(e, "ccc", "rv2", None, codigo=1)
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["acordar"])
+
+    def test_interrupcao_do_segundo_fixer_devolve_so_ele(self):
+        e = self.primeira(self.A1)
+        e = self.rodada(e, "ccc", "rv2", self.B1)
+        [acao] = da_seed(acoes(e))
+        e = est.aplicar(e, acao, {"runId": "fx2"})
+        e = est.registrar_fim_de_run(e, "fx2", estado_run="failed", motivo_falha="provider_error", veredito=None, cota=True)
+        s = e["seeds"]["s1"]
+        self.assertEqual((s["fixersUsados"], s["fixerUsado"]), (1, True))
+        self.assertEqual(s["veredito"]["achados"], self.B1)
+        e["pausado"] = None
+        self.assertEqual(da_seed(acoes(e)), [acao])
+
+    def test_chave_da_rodada_normaliza(self):
+        a = est.chave_da_rodada(["revisão pediu correções: a.tsx: X"], [{"arquivo": "a.tsx", "motivo": " X  y "}])
+        b = est.chave_da_rodada(["revisão pediu correções: a.tsx: x"], [{"arquivo": "a.tsx", "motivo": "x y"}])
+        self.assertEqual(a, b)
+        c = est.chave_da_rodada([], [{"arquivo": "b", "motivo": "1"}, {"arquivo": "a", "motivo": "2"}])
+        d = est.chave_da_rodada([], [{"arquivo": "a", "motivo": "2"}, {"arquivo": "b", "motivo": "1"}])
+        self.assertEqual(c, d)
 
 
 class TestCotaEOomNoRun(unittest.TestCase):
