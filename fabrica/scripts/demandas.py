@@ -2586,13 +2586,20 @@ class _Passo:
         `correcao.revisao` guarda `sha`, `branch`, `nonce`, `inicio`, `runId`, `emCurso` e `falhas`, gravados antes do
         POST pago (sem `runId`, o run é achado pelo nonce). Aprovado no mesmo sha: merge nesse head. Reprovado: trava
         com o primeiro achado. Run falho ou sem veredito válido (ou de outro sha): revisa mais uma vez e, na segunda,
-        trava. O head que andou descarta a revisão; o run dela ainda vivo vira `correcaoSuperada` e segura a vaga."""
+        trava. O head que andou descarta a revisão (o run dela ainda vivo vira `correcaoSuperada` e segura a vaga), salvo
+        quando só ganhou arquivos de controle do Warren (`revisao.head`): aí o veredito do `sha` revisado vale."""
         c = it["correcao"]
         url, head = c["prUrl"], pr["headSha"]
         rev = c.get("revisao") if isinstance(c.get("revisao"), dict) else None
-        if rev is not None and rev.get("sha") != head:
-            self.largar_revisao(it)
-            rev = None
+        if rev is not None and head not in (rev.get("sha"), rev.get("head")):
+            repo = it.get("repo") or demanda["repositorio"]
+            if self.so_controle_do_warren(repo, rev.get("sha"), head):
+                # o Warren empurra `chore(warren): seeds state` ao fechar o run do revisor: o código revisado é o mesmo
+                rev["head"] = head
+                self.salvar()
+            else:
+                self.largar_revisao(it)
+                rev = None
         if rev is None:
             self.nova_revisao(id_, it, demanda, pr, falhas=0)
             return
@@ -2623,6 +2630,17 @@ class _Passo:
             self.correcao_mergeada(id_, it, demanda)
         else:
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def so_controle_do_warren(self, repo: str, base, head: str) -> bool:
+        """`head` descende de `base` e só mudou arquivos de controle do Warren (como em `_herdar_gates_do_head`)."""
+        if not isinstance(base, str) or not base:
+            return False
+        try:
+            arquivos = self.forja.arquivos_entre(repo, base, head)
+        except Exception as exc:  # noqa: BLE001 - sem a comparação, a revisão é refeita
+            self.erro(None, exc)
+            return False
+        return bool(arquivos) and all(despachante._so_controle(a) for a in arquivos)
 
     def run_da_revisao(self, id_: str, it: dict, demanda: dict, rev: dict):
         """O run da revisão em curso, quando terminou (404 conta como falho); senão `None`: adota pelo nonce ou repete

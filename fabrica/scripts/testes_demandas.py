@@ -2359,6 +2359,41 @@ class TestesTesteNoNavegador(BasePasso):
         self.assertEqual(self.forja.merges, [(PR_C, novo)])
         self.assertEqual(self.reservas(), {})
 
+    def test_commit_de_controle_do_warren_depois_do_revisor_mantem_o_veredito(self):
+        # ao fechar o run do revisor, o Warren empurra `chore(warren): seeds state`: o head muda, o código não
+        run_id = self.revisar_correcao_sem_ci()
+        novo = "2" * 40
+        self.veredito(run_id, "aprovado")
+        self.forja.definir_pr(PR_C, head_sha=novo, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx", ".seeds/issues.jsonl"])
+        self.forja.definir_ci(REPO, novo, "ausente")
+        self.forja.definir_comparacao(REPO, HEAD_C, novo, [".seeds/issues.jsonl"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, novo)])
+        self.assertEqual(len(self.despachos()), 3)  # nenhum revisor a mais
+
+    def test_commit_de_controle_com_o_revisor_rodando_nao_larga_a_revisao(self):
+        run_id = self.revisar_correcao_sem_ci()
+        novo = "2" * 40
+        self.forja.definir_pr(PR_C, head_sha=novo, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx", ".seeds/issues.jsonl"])
+        self.forja.definir_ci(REPO, novo, "ausente")
+        self.forja.definir_comparacao(REPO, HEAD_C, novo, [".seeds/issues.jsonl"])
+        self.passo(ClienteDeBusca())
+        self.veredito(run_id, "aprovado")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, novo)])
+        self.assertEqual(len(self.despachos()), 3)
+
+    def test_head_que_andou_com_codigo_alem_do_controle_revisa_de_novo(self):
+        run_id = self.revisar_correcao_sem_ci()
+        novo = "2" * 40
+        self.veredito(run_id, "aprovado")
+        self.forja.definir_pr(PR_C, head_sha=novo, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx"])
+        self.forja.definir_ci(REPO, novo, "ausente")
+        self.forja.definir_comparacao(REPO, HEAD_C, novo, [".seeds/issues.jsonl", "src/app/clientes/page.tsx"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        self.assertEqual(len(self.despachos()), 4)
+
     def test_head_que_andou_com_o_revisor_rodando_espera_o_run_antigo(self):
         run_id = self.revisar_correcao_sem_ci()
         novo = "2" * 40
