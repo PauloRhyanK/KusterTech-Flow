@@ -8,8 +8,8 @@ Kit para entregar features de projetos de clientes com equipes de agentes de IA 
 2. **Plano aprovado:** o Paulo mergeia esse PR em `main`.
 3. **Despachante** (`scripts/despachante.py`, sem LLM, serviço de usuário): despacha um Plan Run do Warren por raia pronta da `faseAtual`, até o limite de paralelismo.
 4. **Equipes:** cada raia roda com o perfil do seu papel (`equipes/<papel>.md`) e `PADROES-COMUNS.md`; cada seed abre um PR.
-5. **Gates:** revisor cego no mesmo head, fixer no máximo uma vez, CI verde, verificação da raia num contêiner Docker descartável e arquivos protegidos.
-6. **Merge** pelo despachante, com o sha do head. Exceções acordam o orquestrador (`orquestrador.md`), que replaneja por PR.
+5. **Gates:** revisor cego no mesmo head, fixer no máximo duas vezes (a 2ª só quando os achados mudaram), CI verde, verificação da raia num contêiner Docker descartável e arquivos protegidos.
+6. **Merge** pelo despachante, com o sha do head. Exceções acordam o orquestrador (`orquestrador.md`), que replaneja por PR. Quando o gate cobra um critério ou uma partição que o plano escreveu errado, o orquestrador faz uma emenda da raia (mesmo `planoSeeds`) e o despachante revê o mesmo PR, até 2 emendas por seed; depois disso o gate vermelho vai ao Paulo, sem acordar o orquestrador.
 7. **Homologação:** no fim de cada fase o orquestrador propõe o avanço da `faseAtual` num PR, e o merge do Paulo é a aprovação da fase.
 
 ## Instalar num projeto cliente

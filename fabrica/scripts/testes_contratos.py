@@ -231,6 +231,27 @@ class TestesOrquestrador(unittest.TestCase):
         cls.texto = ler(ORQUESTRADOR)
         cls.entrada = secao(cls.texto, "Entrada de cada acordada")
 
+    def test_orquestrador_descreve_a_emenda(self):
+        self.assertIn("emenda", self.texto)
+        self.assertIn("planoSeeds", self.texto)
+        self.assertIn("mesmo PR", self.texto)
+        self.assertIn("MAX_EMENDAS", self.texto)
+        gate = secao(self.texto, "`gate_falhou_apos_fixer`", "###")
+        self.assertIsNotNone(gate)
+        self.assertIn("Nunca afrouxe um critério de aceite", gate)
+        self.assertNotIn("Não peça outro fixer", gate)
+        self.assertIn("rodadaDoFixer", gate)
+        self.assertIn("fixersUsados", gate)
+
+    def test_orquestrador_confere_criterio_contra_o_contrato(self):
+        self.assertIn("contrato em `main`", self.texto)
+
+    def test_fixer_no_maximo_duas_vezes(self):
+        for caminho in (KIT / "equipes" / "fixer.md", KIT / "PADROES-COMUNS.md", KIT / "README.md"):
+            texto = ler(caminho)
+            self.assertIn("no máximo duas vezes", texto, caminho.name)
+            self.assertNotIn("no máximo uma vez", texto, caminho.name)
+
     def test_tamanho(self):
         self.assertLessEqual(len(self.texto.splitlines()), 260)
 
