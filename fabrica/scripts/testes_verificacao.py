@@ -189,8 +189,9 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(r, {"sha": SHA, "codigo": 0, "saida": ""})
         self.assertEqual(
             fake.tipos(),
-            ["fetch", "ls-tree", "cat-file", "rede-create", "principal", "rm", "rede-rm"],
+            ["fetch", "ls-tree", "cat-file", "image", "rede-create", "principal", "rm", "rede-rm"],
         )
+        self.assertEqual(fake.argv("image"), ["docker", "image", "inspect", "--format", "{{.Id}}", IMAGEM])
         src = src_do_principal(fake)
         self.assertEqual(fake.argv("fetch"), GIT_OPCOES + ["fetch", "--quiet", "origin"])
         self.assertEqual(fake.argv("rede-create"), ["docker", "network", "create"] + ROTULOS + ["fabrica-verif-" + ID])
@@ -345,7 +346,7 @@ class TestesVerificarComFalso(unittest.TestCase):
         _, fake = self.verificar(conteiner=cfg)
         self.assertEqual(
             fake.tipos(),
-            ["fetch", "ls-tree", "cat-file", "rede-create", "servico", "servico", "principal", "rm", "rm", "rm", "rede-rm"],
+            ["fetch", "ls-tree", "cat-file", "image", "image", "image", "rede-create", "servico", "servico", "principal", "rm", "rm", "rm", "rede-rm"],
         )
         self.assertEqual(
             fake.argv("servico", 0),
@@ -391,6 +392,44 @@ class TestesVerificarComFalso(unittest.TestCase):
         self.assertEqual(fake.tipos().count("servico"), 1)
         self.assertIn("rede-rm", fake.tipos())
         self.assertIn("fabrica-verif-%s-db" % ID, [fake.argv("rm", i)[-1] for i in range(fake.tipos().count("rm"))])
+
+    # Imagens baixadas antes, com prazo próprio
+
+    def test_imagem_ausente_e_baixada_antes_com_prazo_proprio(self):
+        cfg = {"imagem": IMAGEM, "servicos": [{"nome": "db", "imagem": "postgres:18.6"}]}
+        fake = DockerFalso()
+        fake.respostas["image"] = [proc(), proc(1, "", "No such image: postgres:18.6")]
+        r, fake = self.verificar(fake=fake, conteiner=cfg)
+        self.assertEqual(r["codigo"], 0)
+        self.assertEqual(fake.tipos()[3:7], ["image", "image", "pull", "rede-create"])
+        self.assertEqual(fake.argv("pull"), ["docker", "pull", "--quiet", "postgres:18.6"])
+        self.assertEqual(fake.kwargs("pull")["timeout"], verificacao.TIMEOUT_PULL_S)
+        self.assertGreater(verificacao.TIMEOUT_PULL_S, verificacao.TIMEOUT_DOCKER_S)
+
+    def test_pull_que_estoura_o_prazo_e_falha_do_host_nao_do_codigo(self):
+        cfg = {"imagem": IMAGEM, "servicos": [{"nome": "db", "imagem": "postgres:18.6"}]}
+        fake = DockerFalso()
+        fake.respostas["image"] = [proc(), proc(1)]
+        fake.respostas["pull"] = subprocess.TimeoutExpired(["docker"], 5)
+        r, fake = self.verificar(fake=fake, conteiner=cfg)
+        self.assertEqual((r["codigo"], r.get("interno")), (124, True))
+        self.assertIn("postgres:18.6", r["saida"])
+        self.assertNotIn("rede-create", fake.tipos())
+        self.assertNotIn("principal", fake.tipos())
+
+    def test_pull_recusado_e_falha_do_host(self):
+        fake = DockerFalso()
+        fake.respostas["image"] = [proc(1)]
+        fake.respostas["pull"] = [proc(1, "", "toomanyrequests")]
+        r, fake = self.verificar(fake=fake)
+        self.assertEqual((r["codigo"], r.get("interno")), (1, True))
+        self.assertIn("toomanyrequests", r["saida"])
+        self.assertNotIn("principal", fake.tipos())
+
+    def test_imagem_repetida_e_conferida_uma_vez(self):
+        cfg = {"imagem": "postgres:16", "servicos": [{"nome": "db", "imagem": "postgres:16"}]}
+        _, fake = self.verificar(conteiner=cfg)
+        self.assertEqual(fake.tipos().count("image"), 1)
 
     # Timeout, saída e avisos
 

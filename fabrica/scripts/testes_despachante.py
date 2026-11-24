@@ -5524,6 +5524,44 @@ class TestesCorrecaoFinal(Base):
                 self.assertEqual(len(pausas), 1)
                 self.assertEqual(len(self.verificacoes), 1)
 
+    def test_f2c_imagem_que_nao_baixou_adia_sem_pausar_e_tenta_no_ciclo_seguinte(self):
+        respostas = [
+            {"codigo": 124, "saida": "docker pull postgres:18.6: tempo esgotado", "interno": True, "imagemIndisponivel": True},
+            {"codigo": 0, "saida": "ok"},
+        ]
+
+        def verificar(repo_dir, sha, comando, *, conteiner):
+            self.verificacoes.append((repo_dir, sha, comando, conteiner))
+            return dict(respostas.pop(0) if len(respostas) > 1 else respostas[0], sha=sha)
+
+        self.verificar_falso = verificar
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        e = self.estado()
+        self.assertIsNone(e["pausado"])
+        self.assertIsNone(e["seeds"]["s-1"]["verificacao"])
+        self.assertEqual(self.runs(HAIKU), [])  # nada ao fixer
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual(self.estado()["adiamentosRede"], {"imagem:a": 1})
+        self.terminar_revisao(H1)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(len(self.verificacoes), 2)
+        self.assertEqual(self.forja.merges, [(PR, H1)])
+        self.assertEqual(self.estado()["adiamentosRede"], {})
+
+    def test_f2c_imagem_que_nunca_baixa_pausa_depois_dos_adiamentos(self):
+        self._verificacao_fixa(124, "docker pull postgres:18.6: tempo esgotado", interno=True, imagemIndisponivel=True)
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        for _ in range(despachante.MAX_ADIAMENTOS_DE_REDE + 2):
+            d.ciclo()
+        self.assertTrue(self.estado()["pausado"])
+        self.assertEqual(self.runs(HAIKU), [])
+
     def test_f2a_codigo_2_do_comando_continua_indo_para_o_fixer(self):
         self._verificacao_fixa(2, "lint falhou")
         d = self.preparar_raia()
