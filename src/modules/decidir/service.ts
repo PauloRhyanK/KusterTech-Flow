@@ -21,15 +21,24 @@ import { ErroDeIntegracao } from '@/modules/github/erros'
 import { obterFonteGitHub, type FonteGitHub, type RefRepositorio } from '@/modules/github/fonte'
 import { mensagemDeFalha, resumirChecks, resumirErroParaLog } from '@/modules/github/model'
 import {
+  CONFIG_DA_FABRICA,
   arquivosForaDoPermitido,
   cartaoDaRespostaRapida,
+  protegidosDaConfig,
   estadoDoCi,
   validarCartao,
   type Cartao,
   type ContextoDoItem,
+  type EstadoDoCi,
 } from './cartao'
 import { LIMITE_DA_MENSAGEM, type RespostaDoAtendente } from './contrato'
-import { RESPOSTAS_DO_FLOW, amanhaAsSeis, motivosDaIssue, textoDaTrava } from './model'
+import {
+  RESPOSTAS_DO_FLOW,
+  amanhaAsSeis,
+  motivosDaIssue,
+  numeroDoPrDaTrava,
+  textoDaTrava,
+} from './model'
 import { localizarItem, type ItemLocalizado } from './queries'
 
 /** O que fica em `Conversa.contexto`: o lido ao abrir (PR do fim de fase e o relato até 4000). */
@@ -138,6 +147,8 @@ interface Leitura {
   corpo: string | null
   /** Por que o contexto do GitHub ficou de fora; vira a mensagem de abertura. */
   aviso: string | null
+  /** Na trava: o PR que ela cita e o estado lido dele, para a mensagem de abertura. */
+  prDaTrava?: string
 }
 
 function contextoSemGitHub(l: ItemLocalizado): ContextoDaConversa {
@@ -163,9 +174,90 @@ function mensagemDoErro(erro: unknown): string {
   return mensagemDeFalha('desconhecida')
 }
 
+function repositorioLigado(nomeCompleto: string) {
+  return db.repositorioGitHub.findFirst({
+    where: {
+      nomeCompleto: { equals: nomeCompleto, mode: 'insensitive' },
+      projetoId: { not: null },
+      removidoDaInstalacaoEm: null,
+    },
+    select: { githubId: true, instalacaoId: true, nomeCompleto: true },
+  })
+}
+
+const ROTULO_DO_CI: Record<EstadoDoCi, string> = {
+  verde: 'CI verde',
+  pendente: 'CI rodando',
+  vermelho: 'CI vermelho',
+  ausente: 'não há CI configurado',
+}
+
+const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`
+
+/**
+ * O PR que a trava da demanda cita (o da correção): com ele aberto, o contexto ganha o PR e o
+ * cartão de merge; já mergeado, fechado ou ilegível, só a linha com o link e o porquê.
+ */
+async function lerPrDaTrava(
+  l: ItemLocalizado,
+  ref: Extract<ItemLocalizado['item']['ref'], { tipo: 'demanda' }>,
+  fonte: FonteGitHub | null,
+): Promise<Leitura> {
+  const base = contextoSemGitHub(l)
+  const semPr: Leitura = { contexto: base, corpo: null, aviso: null }
+  const url = l.demanda?.urlDaTrava ?? null
+  const numero = numeroDoPrDaTrava(url, l.item.repositorio)
+  if (url === null || numero === null) return semPr
+  const linha = (estado: string): Leitura => ({
+    ...semPr,
+    prDaTrava: `PR #${numero} (${url}): ${estado}`,
+  })
+
+  const repo = await repositorioLigado(l.item.repositorio)
+  if (!repo) return linha(`o repositório ${l.item.repositorio} não está ligado ao Flow.`)
+  if (!fonte) return linha('a GitHub App não está configurada.')
+  try {
+    const pr = await fonte.lerPullRequestParaMerge(repo, numero)
+    if (!pr) return linha('não foi encontrado no GitHub.')
+    if (pr.repositorio.toLowerCase() !== repo.nomeCompleto.toLowerCase()) {
+      return linha('é de outro repositório.')
+    }
+    if (pr.estado === 'MERGEADO') return linha('já foi mergeado.')
+    if (pr.estado === 'FECHADO') return linha('foi fechado sem merge.')
+    const [checks, status] = await Promise.all([
+      fonte.listarChecks(repo, pr.head),
+      fonte.lerStatusCombinado(repo, pr.head),
+    ])
+    const ci = estadoDoCi(resumirChecks(checks), status)
+    const estado = `aberto, ${ROTULO_DO_CI[ci]}, ${plural(pr.arquivos.length, 'arquivo', 'arquivos')}.`
+    // Só a trava da correção vira cartão de merge (`travaDeCorrecao`); nas outras, o link e o estado.
+    if (ref.prDaTrava !== numero) return linha(estado)
+    const protegidosDoRepo = protegidosDaConfig(await fonte.lerArquivo(repo, CONFIG_DA_FABRICA))
+    if (protegidosDoRepo === null) {
+      return linha(
+        `${estado} A ${CONFIG_DA_FABRICA} do repositório está ilegível; confira no GitHub.`,
+      )
+    }
+    const fora = arquivosForaDoPermitido(pr.arquivos, null, protegidosDoRepo)
+    const protegido =
+      fora.length > 0 ? ` Mexe em caminho protegido: ${fora.slice(0, 5).join(', ')}.` : ''
+    return {
+      contexto: { ...base, pr: { url, numero, head: pr.head, fora, ci } },
+      corpo: null,
+      aviso: null,
+      prDaTrava: `PR #${numero} (${url}): ${estado}${protegido}`,
+    }
+  } catch (erro) {
+    return linha(`não consegui ler no GitHub. ${mensagemDoErro(erro)}`)
+  }
+}
+
 async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promise<Leitura> {
   const ref = l.item.ref
-  if (ref.tipo === 'demanda') return { contexto: contextoSemGitHub(l), corpo: null, aviso: null }
+  if (ref.tipo === 'demanda') {
+    if (ref.espera === 'travada') return lerPrDaTrava(l, ref, fonte)
+    return { contexto: contextoSemGitHub(l), corpo: null, aviso: null }
+  }
 
   const fimDeFase = l.item.tipo === 'fim_de_fase'
   const prefixo = fimDeFase
@@ -178,14 +270,7 @@ async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promis
   })
 
   const repositorioDaIssue = repositorioDoItem(l.item)
-  const repo = await db.repositorioGitHub.findFirst({
-    where: {
-      nomeCompleto: { equals: repositorioDaIssue, mode: 'insensitive' },
-      projetoId: { not: null },
-      removidoDaInstalacaoEm: null,
-    },
-    select: { githubId: true, instalacaoId: true, nomeCompleto: true },
-  })
+  const repo = await repositorioLigado(repositorioDaIssue)
   if (!repo) return vazio(`O repositório ${repositorioDaIssue} não está ligado ao Flow.`)
   if (!fonte) return vazio(`${prefixo}a GitHub App não está configurada.`)
   const refRepo: RefRepositorio = repo
@@ -273,8 +358,16 @@ function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
       const versao = item.ref.tipo === 'demanda' ? item.ref.versaoDoDesenho : 0
       return flow(`O desenho da versão ${versao} está pronto. Abra para conferir antes de aprovar.`)
     }
-    case 'trava':
-      return flow(textoDaTrava(demanda?.espera ?? 'travada', demanda?.esperaMotivo ?? null))
+    case 'trava': {
+      const texto = textoDaTrava(demanda?.espera ?? 'travada', demanda?.esperaMotivo ?? null)
+      return flow(
+        leitura.prDaTrava
+          ? `${texto}
+
+${leitura.prDaTrava}`
+          : texto,
+      )
+    }
     case 'concluir_etapa': {
       const rotulo = item.ref.tipo === 'demanda' ? item.ref.rotuloDaEtapa : ''
       return flow(
@@ -323,6 +416,13 @@ function cartaoDeAbertura(l: ItemLocalizado, contexto: ContextoDoItem): Cartao |
     }
     case 'fim_de_fase': {
       if (contexto.pr === null) return null
+      const r = validarCartao(item, contexto, { acao: 'aprovar_e_mergear' })
+      return r.ok ? r.cartao : null
+    }
+    // O PR da correção aberto, sem CI rodando ou vermelho: o merge já vem proposto.
+    case 'trava': {
+      const pr = contexto.pr
+      if (pr === null || pr.ci === 'pendente' || pr.ci === 'vermelho') return null
       const r = validarCartao(item, contexto, { acao: 'aprovar_e_mergear' })
       return r.ok ? r.cartao : null
     }

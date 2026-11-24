@@ -83,7 +83,7 @@ export function linhasDoCartao(c: Cartao): Linha[] {
           rotulo: 'Ação',
           valor: `aprovar e mergear o PR #${c.numero} (head ${c.head.slice(0, 7)}, conferido)`,
         },
-        { rotulo: 'Depois', valor: 'a Fábrica começa a próxima fase' },
+        { rotulo: 'Depois', valor: 'a Fábrica segue sozinha com o PR mergeado' },
         ...(c.protegidos.length > 0
           ? [{ rotulo: 'Também mexe em', valor: c.protegidos.join(', '), atencao: true }]
           : []),

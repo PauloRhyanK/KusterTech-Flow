@@ -49,6 +49,23 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
       _count: { select: { arquivos: { where: { tipo: 'ANEXO', apagadoEm: null } } } },
     },
   })
+  // O link de cada trava vem do último `travada` da demanda (o PR da correção, quando há).
+  const travadas = linhas.filter((d) => d.espera === 'travada').map((d) => d.id)
+  const eventos =
+    travadas.length > 0
+      ? await db.eventoDaDemanda.findMany({
+          where: { demandaId: { in: travadas }, tipo: 'travada' },
+          orderBy: { seq: 'desc' },
+          distinct: ['demandaId'],
+          select: { demandaId: true, dados: true },
+        })
+      : []
+  const urlDaTrava = new Map(
+    eventos.map((e) => {
+      const url = (e.dados as { url?: unknown } | null)?.url
+      return [e.demandaId, typeof url === 'string' ? url : null] as const
+    }),
+  )
   return linhas.map((d) => {
     const triagem = triagemSchema.safeParse(d.triagem)
     return {
@@ -61,6 +78,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
       nivel: minusculo<Nivel>(d.nivel),
       espera: d.espera as Espera,
       esperaMotivo: d.esperaMotivo,
+      urlDaTrava: urlDaTrava.get(d.id) ?? null,
       esperaDesde: d.esperaDesde ?? d.atualizadaEm,
       versaoDoDesenho: d.versaoDoDesenho,
       etapaAtual: d.etapaAtual,

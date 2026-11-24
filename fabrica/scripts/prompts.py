@@ -733,6 +733,8 @@ def prompt_atendente(*, conversa: dict, motivo: str | None = None) -> str:
     partes += [
         "1. Leia AGENTS.md, CLAUDE.md, as decisões e a spec do repositório e o código que o item toca.",
         "2. Você só lê: não mude arquivo, não abra PR e não rode comando que escreva.",
+        "   Você não acessa o GitHub: o PR, o CI e o estado do item vêm nos fatos e nas mensagens do Flow. "
+        "Não deduza PR pelo histórico local; se o fato não está aqui, diga que não sabe.",
         "3. Pergunte só o que falta, uma coisa por vez, em mensagens curtas e em português simples.",
         "4. Quando houver o suficiente, proponha o cartão; o Paulo confirma ou ajusta. Nunca diga que algo foi feito: "
         "só o cartão confirmado faz.",

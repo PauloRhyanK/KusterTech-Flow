@@ -177,6 +177,106 @@ describe('decidir / GET conversas do atendente', () => {
     expect(fonte.conversasBuscadasEm?.toISOString()).toBe(AGORA.toISOString())
   })
 
+  test('trava: o atendente recebe o PR da trava nos fatos e o merge nas ações só com o PR lido', async () => {
+    const pr = `https://github.com/${REPO}/pull/412`
+    for (const [fonte, acoes, fato] of [
+      [
+        criarFonteFixtures() as FonteGitHub,
+        ['retomar', 'encerrar', 'aprovar_e_mergear'],
+        `PR: ${pr} (aberto, CI verde; lido pelo Flow ao abrir)`,
+      ],
+      [
+        { ...criarFonteFixtures(), lerPullRequestParaMerge: async () => null } as FonteGitHub,
+        ['retomar', 'encerrar'],
+        `PR: ${pr} (o estado está na primeira mensagem do Flow)`,
+      ],
+    ] as const) {
+      await db.conversa.deleteMany()
+      await db.demanda.deleteMany()
+      const esperaDesde = new Date(AGORA.getTime() - 60 * 60_000)
+      const d = await db.demanda.create({
+        data: {
+          projetoId,
+          repositorioId,
+          titulo: 'Suporte por IA',
+          tipo: 'AJUSTE',
+          nivel: 'VAI_SOZINHO',
+          temTela: true,
+          origem: 'FLOW',
+          etapas: [],
+          etapaAtual: 'testada',
+          espera: 'travada',
+          esperaMotivo: 'PR de correção sem CI: revise e faça o merge',
+          esperaDesde,
+        },
+      })
+      await db.eventoDaDemanda.create({
+        data: {
+          idExterno: randomUUID(),
+          demandaId: d.id,
+          tipo: 'travada',
+          origem: 'fabrica',
+          dados: { motivo: 'PR de correção sem CI: revise e faça o merge', url: pr },
+          em: esperaDesde,
+        },
+      })
+      const chave = chaveDaDemanda(d.id, 'travada', esperaDesde)
+      const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => fonte })
+      await enviarMensagem(
+        admin,
+        { conversaId, id: randomUUID(), texto: 'Pode seguir?', imagens: [] },
+        AGORA,
+      )
+      const corpo = (await pedirBusca()).corpo as {
+        conversas: { item: { acoes: string[]; fatos: string[] } }[]
+      }
+      expect(corpo.conversas[0]!.item.acoes).toEqual(acoes)
+      expect(corpo.conversas[0]!.item.fatos).toContain(fato)
+    }
+  })
+
+  test('trava citando PR de outro repositório: nenhum fato de PR para o atendente', async () => {
+    const esperaDesde = new Date(AGORA.getTime() - 60 * 60_000)
+    const d = await db.demanda.create({
+      data: {
+        projetoId,
+        repositorioId,
+        titulo: 'Outro repo',
+        tipo: 'AJUSTE',
+        nivel: 'VAI_SOZINHO',
+        temTela: true,
+        origem: 'FLOW',
+        etapas: [],
+        etapaAtual: 'testada',
+        espera: 'travada',
+        esperaMotivo: 'o PR da correção está em outro repositório',
+        esperaDesde,
+      },
+    })
+    await db.eventoDaDemanda.create({
+      data: {
+        idExterno: randomUUID(),
+        demandaId: d.id,
+        tipo: 'travada',
+        origem: 'fabrica',
+        dados: {
+          motivo: 'o PR da correção está em outro repositório',
+          url: 'https://github.com/outro/repo/pull/9',
+        },
+        em: esperaDesde,
+      },
+    })
+    const chave = chaveDaDemanda(d.id, 'travada', esperaDesde)
+    const { conversaId } = await abrirItem(admin, chave, AGORA, comFixtures)
+    await enviarMensagem(
+      admin,
+      { conversaId, id: randomUUID(), texto: 'E aí?', imagens: [] },
+      AGORA,
+    )
+    const corpo = (await pedirBusca()).corpo as { conversas: { item: { fatos: string[] } }[] }
+    expect(corpo.conversas[0]!.item.fatos.some((f) => f.startsWith('PR:'))).toBe(false)
+  })
+
   test('não traz conversa encerrada nem conversa cujo item saiu da pilha', async () => {
     const encerrada = await perguntar('Encerrada', new Date('2026-11-21T14:00:00Z'))
     const saiu = await perguntar('Saiu da pilha', new Date('2026-11-21T14:05:00Z'))

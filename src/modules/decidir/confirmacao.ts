@@ -23,10 +23,12 @@ import {
 } from '@/modules/github/fonte'
 import { mensagemDeFalha, resumirChecks, resumirErroParaLog } from '@/modules/github/model'
 import {
+  CONFIG_DA_FABRICA,
   arquivosForaDoPermitido,
   avaliarMerge,
   efeitoDoCartao,
   estadoDoCi,
+  protegidosDaConfig,
   validarCartao,
   type Cartao,
   type ContextoDoItem,
@@ -219,6 +221,9 @@ async function ciDoHead(
   return estadoDoCi(resumirChecks(checks), status)
 }
 
+const CONFIG_ILEGIVEL = `A ${CONFIG_DA_FABRICA} do repositório está ilegível; confira no GitHub.`
+const TRAVA_MUDOU = 'A trava mudou e não cita mais este PR. Abra o item de novo.'
+
 function headMudou(head: string): string {
   return `O PR mudou desde a conferência (head ${head.slice(0, 7)}). Confira de novo.`
 }
@@ -228,9 +233,10 @@ async function refazerComHeadNovo(
   ref: RefRepositorio,
   cartao: Extract<Cartao, { acao: 'aprovar_e_mergear' }>,
   pr: PullRequestParaMerge,
-  feature: string,
+  feature: string | null,
+  protegidosDoRepo: readonly string[],
 ): Promise<Aplicado> {
-  const fora = arquivosForaDoPermitido(pr.arquivos, feature)
+  const fora = arquivosForaDoPermitido(pr.arquivos, feature, protegidosDoRepo)
   const ci = await ciDoHead(fonte, ref, pr.head)
   return {
     ok: false,
@@ -279,17 +285,21 @@ async function mergearPr(
   ref: RefRepositorio,
   repositorio: string,
   cartao: Extract<Cartao, { acao: 'aprovar_e_mergear' }>,
-  feature: string,
+  feature: string | null,
 ): Promise<Aplicado> {
   const padrao = (await fonte.lerCabecaDoBranchPadrao(ref)).branch
   // Lido de novo agora, logo antes do merge: o que vale é o PR atual, não o da abertura.
   const pr = await fonte.lerPullRequestParaMerge(ref, cartao.numero)
   if (!pr) return { ok: false, erro: `O PR #${cartao.numero} não foi encontrado.` }
   const ci = pr.estado === 'ABERTO' ? await ciDoHead(fonte, ref, pr.head) : 'ausente'
-  const av = avaliarMerge({ repositorio, pr, ci, cartao, feature })
+  // No PR da trava, os protegidos da config do branch padrão, lidos agora (como a Fábrica faz).
+  const protegidosDoRepo =
+    feature === null ? protegidosDaConfig(await fonte.lerArquivo(ref, CONFIG_DA_FABRICA)) : []
+  if (protegidosDoRepo === null) return { ok: false, erro: CONFIG_ILEGIVEL }
+  const av = avaliarMerge({ repositorio, pr, ci, cartao, feature, protegidosDoRepo })
   if (!av.ok) {
     return av.headNovo
-      ? refazerComHeadNovo(fonte, ref, cartao, pr, feature)
+      ? refazerComHeadNovo(fonte, ref, cartao, pr, feature, protegidosDoRepo)
       : { ok: false, erro: av.motivo }
   }
   if (pr.base !== padrao) {
@@ -303,7 +313,20 @@ async function mergearPr(
   // 409: o head andou entre a leitura e o PUT.
   const novo = await fonte.lerPullRequestParaMerge(ref, cartao.numero)
   if (!novo || novo.head === cartao.head) return { ok: false, erro: headMudou(cartao.head) }
-  return refazerComHeadNovo(fonte, ref, cartao, novo, feature)
+  return refazerComHeadNovo(fonte, ref, cartao, novo, feature, protegidosDoRepo)
+}
+
+/**
+ * O PR da trava entrou: a retomada avisa a Fábrica, que confere o merge e segue a correção. Se a
+ * Fábrica já destravou sozinha (viu o merge antes), a retomada é recusada e não há o que fazer.
+ */
+async function retomarDepoisDoMerge(sujeito: Sujeito, demandaId: string, numero: number) {
+  try {
+    await retomarDemanda(sujeito, demandaId, `PR #${numero} mergeado pelo Flow.`)
+  } catch (erro) {
+    if (!(erro instanceof ErroDeDominio)) throw erro
+    log.info({ demandaId, motivo: erro.message }, 'decidir: retomada depois do merge não coube')
+  }
 }
 
 async function aplicarEfeito(
@@ -344,7 +367,11 @@ async function aplicarEfeito(
           return await responderIssue(fonte, ref, efeito, alvo.progresso, alvo.posse)
         }
         if (alvo.cartao.acao !== 'aprovar_e_mergear') return { ok: false, erro: NAO_ENCONTRADO }
-        return await mergearPr(fonte, ref, alvo.repositorio, alvo.cartao, efeito.feature)
+        const r = await mergearPr(fonte, ref, alvo.repositorio, alvo.cartao, efeito.feature)
+        if (r.ok === true && efeito.demandaId) {
+          await retomarDepoisDoMerge(sujeito, efeito.demandaId, efeito.numero)
+        }
+        return r
       }
     }
   } catch (erro) {
@@ -361,8 +388,11 @@ async function aplicarEfeito(
 function revalidar(item: ItemDaPilha, contexto: ContextoDoItem, cartao: Cartao): string | null {
   const proposta: Record<string, unknown> = { ...cartao }
   for (const campo of CAMPOS_DO_FLOW) delete proposta[campo]
-  // O PR é conferido pelas guardas do merge, com o PR lido agora.
-  if (cartao.acao === 'aprovar_e_mergear') return null
+  // O PR é conferido pelas guardas do merge, com o PR lido agora; na trava, ele ainda é o citado.
+  if (cartao.acao === 'aprovar_e_mergear') {
+    if (item.ref.tipo === 'demanda' && item.ref.prDaTrava !== cartao.numero) return TRAVA_MUDOU
+    return null
+  }
   const v = validarCartao(item, contexto, proposta)
   if (!v.ok) return v.motivo
   const novo = v.cartao as Record<string, unknown>

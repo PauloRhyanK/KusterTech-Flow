@@ -35,7 +35,9 @@ describe('CartaoDeFecho', () => {
     expect(
       screen.getByText(linha('Ação: aprovar e mergear o PR #412 (head a41c9e2, conferido)')),
     ).toBeInTheDocument()
-    expect(screen.getByText(linha('Depois: a Fábrica começa a próxima fase'))).toBeInTheDocument()
+    expect(
+      screen.getByText(linha('Depois: a Fábrica segue sozinha com o PR mergeado')),
+    ).toBeInTheDocument()
     expect(screen.queryByText(/Também mexe em/)).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar e mergear' }))

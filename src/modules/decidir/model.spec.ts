@@ -5,6 +5,8 @@ import {
   chaveDaIssue,
   chaveValida,
   montarPilha,
+  numeroDoPrDaTrava,
+  travaDeCorrecao,
   motivosDaIssue,
   textoDaTrava,
   tipoDaDecisao,
@@ -27,6 +29,7 @@ function demanda(o: Partial<DemandaEsperando> = {}): DemandaEsperando {
     nivel: 'vai_sozinho',
     espera: 'decidir_destino',
     esperaMotivo: null,
+    urlDaTrava: null,
     esperaDesde: new Date('2026-11-21T12:00:00Z'),
     versaoDoDesenho: 0,
     etapaAtual: 'triagem',
@@ -302,5 +305,61 @@ describe('textoDaTrava', () => {
   it('sem motivo usa o texto padrão', () => {
     expect(textoDaTrava('travada', null)).toBe('A demanda está travada e espera você.')
     expect(textoDaTrava('teste_falhou', '  ')).toMatch(/^O teste no navegador falhou\.\n\nRetomar:/)
+  })
+})
+
+describe('numeroDoPrDaTrava', () => {
+  const repo = 'kustertech-exemplo/alfa'
+  it('só o PR do repositório da demanda, sem diferença de caixa', () => {
+    expect(numeroDoPrDaTrava('https://github.com/kustertech-exemplo/alfa/pull/500', repo)).toBe(500)
+    expect(numeroDoPrDaTrava('https://github.com/Kustertech-Exemplo/Alfa/pull/7', repo)).toBe(7)
+  })
+  it('outro repositório, issue, lixo ou nulo não têm PR', () => {
+    expect(
+      numeroDoPrDaTrava('https://github.com/kustertech-exemplo/beta/pull/500', repo),
+    ).toBeNull()
+    expect(
+      numeroDoPrDaTrava('https://github.com/kustertech-exemplo/alfa/issues/5', repo),
+    ).toBeNull()
+    expect(numeroDoPrDaTrava('https://github.com/kustertech-exemplo/alfa/pull/0', repo)).toBeNull()
+    expect(
+      numeroDoPrDaTrava('https://github.com/kustertech-exemplo/alfa/pull/5/files', repo),
+    ).toBeNull()
+    expect(numeroDoPrDaTrava(null, repo)).toBeNull()
+  })
+})
+
+describe('travaDeCorrecao', () => {
+  it('só os motivos da correção com PR aberto para conferir (demandas.py)', () => {
+    for (const m of [
+      'PR de correção sem CI: revise e faça o merge',
+      'o PR da correção mexe em caminho protegido: .github/x.yml',
+      'o PR da correção do teste está com o CI vermelho',
+      'o CI da correção do teste não terminou em 2 h',
+      'o GitHub recusou o merge da correção',
+      'O revisor da Fábrica reprovou a correção: falta o teste do quadro',
+      'O revisor da Fábrica não conseguiu avaliar a correção, nem na segunda tentativa',
+      'O revisor da Fábrica passou de 2 h sem avaliar a correção',
+    ]) {
+      expect(travaDeCorrecao(m), m).toBe(true)
+    }
+    for (const m of [
+      'o PR do plano foi recusado',
+      'o desenho foi recusado',
+      'o PR da correção já estava mergeado antes de o kit conferir',
+      'o PR da correção está em outro repositório',
+      null,
+    ]) {
+      expect(travaDeCorrecao(m), String(m)).toBe(false)
+    }
+  })
+
+  it('a trava de correção leva o número do PR na ref; as outras, não', () => {
+    const pr = 'https://github.com/kustertech-exemplo/alfa/pull/500'
+    const trava = (esperaMotivo: string) =>
+      pilha({ demandas: [demanda({ espera: 'travada', esperaMotivo, urlDaTrava: pr })] }).itens[0]!
+        .ref
+    expect(trava('PR de correção sem CI: revise e faça o merge')).toMatchObject({ prDaTrava: 500 })
+    expect(trava('o PR do plano foi recusado')).toMatchObject({ prDaTrava: null })
   })
 })

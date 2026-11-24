@@ -39,6 +39,7 @@ function item(n: number): ItemDaPilha {
       versaoDoDesenho: 0,
       etapaAtual: 'triagem',
       rotuloDaEtapa: 'Triagem',
+      prDaTrava: null,
     },
   }
 }

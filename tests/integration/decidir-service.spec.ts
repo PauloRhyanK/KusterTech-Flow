@@ -176,6 +176,73 @@ async function criarPedido(): Promise<{ id: string; chave: string }> {
   return { id: d.id, chave: chaveDaDemanda(d.id, 'decidir_destino', esperaDesde) }
 }
 
+const PR_500 = `https://github.com/${REPO}/pull/500`
+const HEAD_500 = '076dd868bc48bdda75d51bcb697fb2408ec0f1d8'
+const MOTIVO_SEM_CI = 'PR de correção sem CI: revise e faça o merge'
+
+async function criarTravada(
+  url: string | null = PR_500,
+  motivo = MOTIVO_SEM_CI,
+): Promise<{ id: string; chave: string }> {
+  const esperaDesde = new Date(AGORA.getTime() - 30 * 60_000)
+  const d = await db.demanda.create({
+    data: {
+      projetoId,
+      repositorioId,
+      titulo: 'Suporte por IA no CRM',
+      tipo: 'FUNCAO_NOVA',
+      nivel: 'VAI_SOZINHO',
+      temTela: true,
+      origem: 'FLOW',
+      etapas: [],
+      etapaAtual: 'testada',
+      espera: 'travada',
+      esperaMotivo: motivo,
+      esperaDesde,
+    },
+  })
+  await db.eventoDaDemanda.create({
+    data: {
+      idExterno: randomUUID(),
+      demandaId: d.id,
+      tipo: 'travada',
+      origem: 'fabrica',
+      dados: { motivo, url },
+      em: esperaDesde,
+    },
+  })
+  return { id: d.id, chave: chaveDaDemanda(d.id, 'travada', esperaDesde) }
+}
+
+/** O PR 500 da correção: aberto, sem CI nenhum, mexendo em `arquivos`. */
+function fonteDoPr500(
+  o: {
+    estado?: 'ABERTO' | 'MERGEADO' | 'FECHADO'
+    arquivos?: string[]
+    config?: string | null
+  } = {},
+): FonteGitHub {
+  const f = criarFonteFixtures()
+  return {
+    ...f,
+    lerArquivo: async (_repo, caminho) =>
+      caminho === '.fabrica/config.json' ? (o.config ?? null) : null,
+    lerPullRequestParaMerge: async (_repo, numero) =>
+      numero === 500
+        ? {
+            repositorio: REPO,
+            estado: o.estado ?? 'ABERTO',
+            head: HEAD_500,
+            base: 'main',
+            arquivos: o.arquivos ?? ['front/a.ts', 'front/a.test.ts'],
+            urlHtml: PR_500,
+          }
+        : null,
+    listarChecks: async () => [],
+    lerStatusCombinado: async () => null,
+  }
+}
+
 async function mensagens(conversaId: string) {
   return db.mensagem.findMany({ where: { conversaId }, orderBy: { seq: 'asc' } })
 }
@@ -376,6 +443,101 @@ describe('decidir / service (integração)', () => {
       'As raias da fase entraram (3 de 3) e não há CI configurado. O PR mexe só no plano.' +
         MOTIVOS_DA_41,
     )
+  })
+
+  test('abrirItem da trava com o PR da correção aberto: link e estado na mensagem, contexto.pr e cartão de merge proposto', async () => {
+    const { chave } = await criarTravada()
+    const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => fonteDoPr500() })
+
+    const conversa = await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })
+    expect(conversa.contexto).toMatchObject({
+      pr: { url: PR_500, numero: 500, head: HEAD_500, fora: [], ci: 'ausente' },
+    })
+    const ms = await mensagens(conversaId)
+    expect(ms[0]).toMatchObject({
+      autor: 'FLOW',
+      texto: `${MOTIVO_SEM_CI}\n\nPR #500 (${PR_500}): aberto, não há CI configurado, 2 arquivos.`,
+      respostasRapidas: ['Retomar', 'Encerrar a demanda'],
+    })
+    const cs = await cartoes(conversaId)
+    expect(cs).toHaveLength(1)
+    expect(cs[0]).toMatchObject({ origem: 'flow', estado: 'PROPOSTO' })
+    expect(cs[0]!.conteudo).toEqual({
+      acao: 'aprovar_e_mergear',
+      pr: PR_500,
+      numero: 500,
+      head: HEAD_500,
+      protegidos: [],
+    })
+  })
+
+  test('abrirItem da trava: caminho protegido no PR aparece na mensagem e no cartão', async () => {
+    const { chave } = await criarTravada()
+    const fonte = fonteDoPr500({ arquivos: ['front/a.ts', '.claude/x.md'] })
+    const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => fonte })
+    expect((await mensagens(conversaId))[0]!.texto).toBe(
+      `${MOTIVO_SEM_CI}\n\nPR #500 (${PR_500}): aberto, não há CI configurado, 2 arquivos. ` +
+        'Mexe em caminho protegido: .claude/x.md.',
+    )
+    expect((await cartoes(conversaId))[0]!.conteudo).toMatchObject({ protegidos: ['.claude/x.md'] })
+  })
+
+  test('abrirItem da trava com o PR já mergeado, com o GitHub fora ou sem PR: sem cartão, e o link quando há', async () => {
+    const casos: [FonteGitHub, string | null, string][] = [
+      [
+        fonteDoPr500({ estado: 'MERGEADO' }),
+        PR_500,
+        `${MOTIVO_SEM_CI}\n\nPR #500 (${PR_500}): já foi mergeado.`,
+      ],
+      [
+        fonteFora(),
+        PR_500,
+        `${MOTIVO_SEM_CI}\n\nPR #500 (${PR_500}): não consegui ler no GitHub. Não foi possível falar com o GitHub.`,
+      ],
+      [fonteDoPr500(), null, MOTIVO_SEM_CI],
+    ]
+    for (const [fonte, url, texto] of casos) {
+      await db.conversa.deleteMany()
+      await db.demanda.deleteMany()
+      const { chave } = await criarTravada(url)
+      const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => fonte })
+      const conversa = await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })
+      expect(conversa.contexto).toMatchObject({ pr: null })
+      expect((await mensagens(conversaId))[0]!.texto).toBe(texto)
+      expect(await cartoes(conversaId)).toEqual([])
+    }
+  })
+
+  test('abrirItem de trava que não é da correção (plano recusado): link e estado, sem cartão de merge', async () => {
+    const { chave } = await criarTravada(PR_500, 'o PR do plano foi recusado')
+    const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => fonteDoPr500() })
+    const conversa = await db.conversa.findUniqueOrThrow({ where: { id: conversaId } })
+    expect(conversa.contexto).toMatchObject({ pr: null })
+    expect((await mensagens(conversaId))[0]!.texto).toBe(
+      `o PR do plano foi recusado\n\nPR #500 (${PR_500}): aberto, não há CI configurado, 2 arquivos.`,
+    )
+    expect(await cartoes(conversaId)).toEqual([])
+  })
+
+  test('abrirItem da trava: os protegidos da config do repositório entram no cartão; config ilegível não vira cartão', async () => {
+    const { chave } = await criarTravada()
+    const fonte = fonteDoPr500({
+      arquivos: ['front/a.ts', 'infra/deploy.sh'],
+      config: '{"protegidos": ["infra/"]}',
+    })
+    const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => fonte })
+    expect((await cartoes(conversaId))[0]!.conteudo).toMatchObject({
+      protegidos: ['infra/deploy.sh'],
+    })
+
+    await db.conversa.deleteMany()
+    const ilegivel = fonteDoPr500({ config: '{' })
+    const r = await abrirItem(admin, chave, AGORA, { fonte: () => ilegivel })
+    expect((await mensagens(r.conversaId))[0]!.texto).toBe(
+      `${MOTIVO_SEM_CI}\n\nPR #500 (${PR_500}): aberto, não há CI configurado, 2 arquivos. ` +
+        'A .fabrica/config.json do repositório está ilegível; confira no GitHub.',
+    )
+    expect(await cartoes(r.conversaId)).toEqual([])
   })
 
   test('abrirItem da decisão lê o repositório da URL da issue, não o do plano', async () => {

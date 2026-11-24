@@ -386,6 +386,67 @@ describe('decidir / confirmação (integração)', () => {
     ).toBe(1)
   })
 
+  test('trava com o PR da correção: confirmar o merge mergeia o PR e retoma a demanda', async () => {
+    const id = await novaDemanda('Suporte por IA')
+    expect((await daFabrica(id, triagem('fila_de_agentes'))).resultado).toBe('aplicado')
+    const pr = `https://github.com/${REPO}/pull/412`
+    const t = await daFabrica(id, {
+      tipo: 'travada',
+      ator: 'fabrica',
+      dados: { motivo: 'PR de correção sem CI: revise e faça o merge', url: pr },
+    })
+    expect(t.resultado).toBe('aplicado')
+    const f = criarFonteFixtures()
+    const { conversaId } = await abrirItem(admin, await chaveAtual(id), AGORA, { fonte: () => f })
+    const cartao = await cartaoProposto(conversaId)
+    expect(cartao.conteudo).toMatchObject({ acao: 'aprovar_e_mergear', pr, numero: 412 })
+
+    const r = await confirmarCartao(admin, cartao.id, AGORA, { fonte: f })
+    expect(r.resultado).toBe('confirmado')
+    expect(f.escritas).toEqual([{ tipo: 'mergear', repositorio: REPO, numero: 412 }])
+    const ev = await db.eventoDaDemanda.findFirstOrThrow({
+      where: { demandaId: id, tipo: 'retomada' },
+    })
+    expect(ev).toMatchObject({ origem: 'paulo', usuarioId: admin.usuarioId })
+    expect(JSON.stringify(ev.dados)).toContain('PR #412 mergeado pelo Flow.')
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).espera).not.toBe('travada')
+  })
+
+  test('trava com o PR da correção: a trava nova sem o PR recusa o cartão velho; protegido da config na hora do merge recusa', async () => {
+    const id = await novaDemanda('Suporte por IA')
+    expect((await daFabrica(id, triagem('fila_de_agentes'))).resultado).toBe('aplicado')
+    const pr = `https://github.com/${REPO}/pull/412`
+    const travar = (url: string | null) =>
+      daFabrica(id, {
+        tipo: 'travada',
+        ator: 'fabrica',
+        dados: { motivo: 'PR de correção sem CI: revise e faça o merge', url },
+      })
+    expect((await travar(pr)).resultado).toBe('aplicado')
+    const chave = await chaveAtual(id)
+
+    // Protegido na config do repositório depois da abertura: o merge confere de novo e recusa.
+    const f = criarFonteFixtures()
+    const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => f })
+    const cartao = await cartaoProposto(conversaId)
+    const comConfig: FonteGitHub = {
+      ...f,
+      lerArquivo: async (_r, c) => (c === '.fabrica/config.json' ? '{"protegidos": ["**"]}' : null),
+    }
+    const r1 = await confirmarCartao(admin, cartao.id, AGORA, { fonte: comConfig })
+    expect(r1.resultado).not.toBe('confirmado')
+    expect(f.escritas).toEqual([])
+
+    // A Fábrica trava de novo sem PR (mesma chave): o cartão do PR 412 não vale mais.
+    expect((await travar(null)).resultado).toBe('aplicado')
+    expect(await chaveAtual(id)).toBe(chave)
+    const proposto = await cartaoProposto(conversaId)
+    const r2 = await confirmarCartao(admin, proposto.id, AGORA, { fonte: f })
+    expect(r2.resultado).not.toBe('confirmado')
+    expect(f.escritas).toEqual([])
+    expect(await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'retomada' } })).toBe(0)
+  })
+
   test('perfil sem projetos.gerenciar → ErroDeAutorizacao e o cartão continua PROPOSTO', async () => {
     const a = await demandaTravada('Cor do botão')
     const { cartaoId, conversaId } = await abrirComCartao(a.chave, { acao: 'retomar' })
