@@ -24,6 +24,7 @@ function item(n: number, extra: Partial<ItemDaPilha> = {}): ItemDaPilha {
       versaoDoDesenho: 0,
       etapaAtual: 'triagem',
       rotuloDaEtapa: 'Triagem',
+      prDaTrava: null,
     },
     ...extra,
   }

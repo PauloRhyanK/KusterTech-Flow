@@ -4,7 +4,7 @@ import { log } from '@/lib/log'
 import { lerRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { autenticarFonte, type EntradaDaRecepcao } from '@/modules/fabrica/recepcao'
 import { resumirErroParaLog } from '@/modules/github/model'
-import { ACOES_POR_TIPO } from './cartao'
+import { acoesDoItem, type ContextoDoItem, type EstadoDoCi } from './cartao'
 import {
   ATIVA_POR_MS,
   LIMITE_DE_CONVERSAS,
@@ -14,8 +14,31 @@ import {
   type BuscaDoAtendente,
   type ConversaParaOAtendente,
 } from './contrato'
+import { numeroDoPrDaTrava } from './model'
 import { localizarItem } from './queries'
 import { registrarRespostaDoAtendente } from './service'
+
+const CI_DO_FATO: Record<EstadoDoCi, string> = {
+  verde: 'CI verde',
+  pendente: 'CI rodando',
+  vermelho: 'CI vermelho',
+  ausente: 'sem CI configurado',
+}
+
+/**
+ * O PR do item, como fato: o atendente não lê o GitHub, então o link e o estado vêm do Flow. Sem
+ * o PR lido ao abrir, o link da trava e onde está o estado (a primeira mensagem do Flow).
+ */
+function fatoDoPr(pr: ContextoDoItem['pr'], urlDaTrava: string | null): string[] {
+  if (pr) return [`PR: ${pr.url} (aberto, ${CI_DO_FATO[pr.ci]}; lido pelo Flow ao abrir)`]
+  if (urlDaTrava) return [`PR: ${urlDaTrava} (o estado está na primeira mensagem do Flow)`]
+  return []
+}
+
+/** O link da trava só quando é de PR do repositório do item (o mesmo filtro da mensagem do Flow). */
+function urlDoRepositorio(url: string | null, repositorio: string): string | null {
+  return numeroDoPrDaTrava(url, repositorio) === null ? null : url
+}
 
 type Saida<S extends number> = { status: S; corpo: object }
 
@@ -65,7 +88,9 @@ export async function buscarConversasParaOAtendente(
         orderBy: { criadoEm: 'asc' },
         select: { mensagemId: true, nome: true, conteudo: true },
       })
-      const relato = (c.contexto as { relato?: unknown } | null)?.relato
+      const contexto = c.contexto as { relato?: unknown; pr?: ContextoDoItem['pr'] } | null
+      const relato = contexto?.relato
+      const pr = contexto?.pr ?? null
       conversas.push({
         id: c.id,
         repositorio: c.repositorio,
@@ -76,9 +101,12 @@ export async function buscarConversasParaOAtendente(
           tipo: l.item.tipo,
           titulo: l.item.titulo,
           pergunta: l.item.pergunta,
-          fatos: l.item.fatos.map((f) => `${f.rotulo}: ${f.valor}`),
+          fatos: [
+            ...l.item.fatos.map((f) => `${f.rotulo}: ${f.valor}`),
+            ...fatoDoPr(pr, urlDoRepositorio(l.demanda?.urlDaTrava ?? null, l.item.repositorio)),
+          ],
           relato: typeof relato === 'string' ? relato : null,
-          acoes: [...ACOES_POR_TIPO[l.item.tipo]],
+          acoes: acoesDoItem(l.item.tipo, { pr }),
         },
         mensagens: recentes.reverse().map((m) => ({
           id: m.id,

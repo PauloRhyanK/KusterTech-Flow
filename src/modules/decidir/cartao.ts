@@ -25,8 +25,13 @@ export const ACOES_POR_TIPO: Record<TipoDeItem, readonly Acao[]> = {
   desenho: ['aprovar_desenho', 'ajustar_desenho'],
   decisao_da_fabrica: ['responder'],
   fim_de_fase: ['aprovar_e_mergear', 'pedir_mudanca'],
-  trava: ['retomar', 'encerrar'],
+  trava: ['retomar', 'encerrar', 'aprovar_e_mergear'],
   concluir_etapa: ['concluir'],
+}
+
+/** As ações que o item aceita agora: o merge só existe com o PR lido ao abrir. */
+export function acoesDoItem(tipo: TipoDeItem, contexto: ContextoDoItem): Acao[] {
+  return ACOES_POR_TIPO[tipo].filter((a) => a !== 'aprovar_e_mergear' || contexto.pr !== null)
 }
 
 type DestinoDoCartao = 'urgente' | 'lote_da_noite' | 'fila_de_agentes'
@@ -54,7 +59,10 @@ export type Cartao =
 
 export type EstadoDoCi = 'verde' | 'pendente' | 'vermelho' | 'ausente'
 
-/** Só o fim de fase tem PR; lido ao abrir o item. `fora` = arquivos fora do permitido ao orquestrador. */
+/**
+ * O PR lido ao abrir o item: o do fim de fase ou o da trava da demanda. `fora` = arquivos fora do
+ * permitido (ao orquestrador, no fim de fase; os caminhos protegidos da Fábrica, na demanda).
+ */
 export interface ContextoDoItem {
   pr: { url: string; numero: number; head: string; fora: string[]; ci: EstadoDoCi } | null
 }
@@ -118,6 +126,21 @@ function obrigatorioAparado(texto: string, limite: number): string {
   return t
 }
 
+function cartaoDeMerge(contexto: ContextoDoItem): Resultado {
+  const pr = contexto.pr
+  if (pr === null) return { ok: false, motivo: SEM_PR }
+  return {
+    ok: true,
+    cartao: {
+      acao: 'aprovar_e_mergear',
+      pr: pr.url,
+      numero: pr.numero,
+      head: pr.head,
+      protegidos: [...pr.fora],
+    },
+  }
+}
+
 function montar(item: ItemDaPilha, contexto: ContextoDoItem, p: Proposta): Resultado {
   const ref = item.ref
   if (ref.tipo === 'demanda') {
@@ -164,6 +187,8 @@ function montar(item: ItemDaPilha, contexto: ContextoDoItem, p: Proposta): Resul
         return { ok: true, cartao: { acao: 'encerrar' } }
       case 'concluir':
         return { ok: true, cartao: { acao: 'concluir', etapa: ref.etapaAtual } }
+      case 'aprovar_e_mergear':
+        return cartaoDeMerge(contexto)
       default:
         return { ok: false, motivo: NAO_VALE }
     }
@@ -179,20 +204,8 @@ function montar(item: ItemDaPilha, contexto: ContextoDoItem, p: Proposta): Resul
         ok: true,
         cartao: { acao: 'pedir_mudanca', texto: obrigatorioAparado(p.texto, LIMITE_DO_COMENTARIO) },
       }
-    case 'aprovar_e_mergear': {
-      const pr = contexto.pr
-      if (pr === null) return { ok: false, motivo: SEM_PR }
-      return {
-        ok: true,
-        cartao: {
-          acao: 'aprovar_e_mergear',
-          pr: pr.url,
-          numero: pr.numero,
-          head: pr.head,
-          protegidos: [...pr.fora],
-        },
-      }
-    }
+    case 'aprovar_e_mergear':
+      return cartaoDeMerge(contexto)
     default:
       return { ok: false, motivo: NAO_VALE }
   }
@@ -270,7 +283,10 @@ export type Efeito =
   | {
       tipo: 'mergear_pr'
       repositorio: string
-      feature: string
+      /** A feature do plano no fim de fase; `null` no PR da trava da demanda. */
+      feature: string | null
+      /** Na trava: a demanda retomada depois do merge. */
+      demandaId?: string
       numero: number
       head: string
       protegidos: string[]
@@ -310,6 +326,17 @@ export function efeitoDoCartao(item: ItemDaPilha, cartao: Cartao): Efeito {
         }
       case 'concluir':
         return { tipo: 'concluir_etapa', demandaId, chave: cartao.etapa }
+      // Depois do merge, a retomada avisa a Fábrica, que confere o PR e segue a correção.
+      case 'aprovar_e_mergear':
+        return {
+          tipo: 'mergear_pr',
+          repositorio: item.repositorio,
+          feature: null,
+          demandaId,
+          numero: cartao.numero,
+          head: cartao.head,
+          protegidos: [...cartao.protegidos],
+        }
     }
   } else {
     switch (cartao.acao) {
@@ -379,12 +406,82 @@ function permitido(caminho: string, plano: string | null): boolean {
   return PREFIXOS_PERMITIDOS.some((p) => caminho.startsWith(p))
 }
 
-/** Os arquivos fora do permitido ao orquestrador do plano da `feature`, sem repetição e na ordem. */
-export function arquivosForaDoPermitido(arquivos: readonly string[], feature: string): string[] {
-  const plano = caminhoDoPlano(feature)
-  const fora: string[] = []
-  for (const a of arquivos) if (!permitido(a, plano) && !fora.includes(a)) fora.push(a)
-  return fora
+/** Os caminhos que a Fábrica nunca mergeia sozinha (`despachante.PROTEGIDOS_FIXOS`). */
+export const PROTEGIDOS_DA_FABRICA = ['.fabrica/', '.claude/', '.warren/'] as const
+
+/** O caminho da config da Fábrica no repositório (`CAMINHO_CONFIG_DO_REPO` no kit). */
+export const CONFIG_DA_FABRICA = '.fabrica/config.json'
+
+/**
+ * Os `protegidos` da config, como `config_do_repo` no kit: ausente, nenhum extra; fora do formato,
+ * `null` (a Fábrica trava a correção, e o Flow não mergeia às cegas).
+ */
+export function protegidosDaConfig(bruto: string | null): string[] | null {
+  if (bruto === null) return []
+  let config: unknown
+  try {
+    config = JSON.parse(bruto)
+  } catch {
+    return null
+  }
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) return null
+  const protegidos = (config as { protegidos?: unknown }).protegidos ?? []
+  if (!Array.isArray(protegidos)) return null
+  if (!protegidos.every((g) => typeof g === 'string' && g !== '')) return null
+  return protegidos as string[]
+}
+
+function globParaRegex(glob: string): string {
+  let r = ''
+  for (let i = 0; i < glob.length;) {
+    if (glob.startsWith('**/', i)) {
+      r += '(?:.*/)?'
+      i += 3
+    } else if (glob.startsWith('**', i)) {
+      r += '.*'
+      i += 2
+    } else if (glob[i] === '*') {
+      r += '[^/]*'
+      i += 1
+    } else if (glob[i] === '?') {
+      r += '[^/]'
+      i += 1
+    } else {
+      r += glob[i]!.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&')
+      i += 1
+    }
+  }
+  return r
+}
+
+/**
+ * O glob dos `protegidos` como `globs.casa_glob` no kit: `**` casa qualquer sequência, `*` e `?`
+ * ficam num segmento; com a barra final, casa o diretório e tudo abaixo dele.
+ */
+export function casaGlob(caminho: string, glob: string): boolean {
+  const regex = globParaRegex(glob)
+  return new RegExp(glob.endsWith('/') ? `^${regex}` : `^${regex}$`, 's').test(caminho)
+}
+
+/**
+ * Os arquivos fora do permitido, sem repetição e na ordem: com a `feature`, os que o orquestrador
+ * do plano dela não pode tocar; sem ela (o PR da trava da demanda), os caminhos protegidos da
+ * Fábrica e os `protegidos` da `.fabrica/config.json` do branch padrão do repositório.
+ */
+export function arquivosForaDoPermitido(
+  arquivos: readonly string[],
+  feature: string | null,
+  protegidosDoRepo: readonly string[] = [],
+): string[] {
+  const plano = feature === null ? null : caminhoDoPlano(feature)
+  const fora = (a: string) =>
+    feature === null
+      ? PROTEGIDOS_DA_FABRICA.some((p) => a.startsWith(p)) ||
+        protegidosDoRepo.some((g) => casaGlob(a, g))
+      : !permitido(a, plano)
+  const lista: string[] = []
+  for (const a of arquivos) if (fora(a) && !lista.includes(a)) lista.push(a)
+  return lista
 }
 
 export function estadoDoCi(
@@ -407,8 +504,10 @@ export function avaliarMerge(e: {
   }
   ci: EstadoDoCi
   cartao: { head: string; protegidos: readonly string[] }
-  /** A feature do plano do item: só o arquivo dele é permitido. */
-  feature: string
+  /** A feature do plano do item: só o arquivo dele é permitido; `null` no PR da trava. */
+  feature: string | null
+  /** No PR da trava: os `protegidos` da config do repositório, lidos agora. */
+  protegidosDoRepo?: readonly string[]
 }): { ok: true; jaMergeado: boolean } | { ok: false; motivo: string; headNovo?: string } {
   const { pr, cartao } = e
   if (pr.repositorio.toLowerCase() !== e.repositorio.toLowerCase()) {
@@ -426,7 +525,7 @@ export function avaliarMerge(e: {
   }
   if (e.ci === 'pendente') return { ok: false, motivo: `O CI ainda está rodando no head ${curto}.` }
   if (e.ci === 'vermelho') return { ok: false, motivo: `O CI falhou no head ${curto}.` }
-  const naoDitos = arquivosForaDoPermitido(pr.arquivos, e.feature).filter(
+  const naoDitos = arquivosForaDoPermitido(pr.arquivos, e.feature, e.protegidosDoRepo).filter(
     (a) => !cartao.protegidos.includes(a),
   )
   if (naoDitos.length > 0) {

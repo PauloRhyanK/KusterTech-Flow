@@ -845,6 +845,8 @@ MOTIVO_PR_DO_TESTE_FECHADO = "o PR do teste foi fechado"
 MOTIVO_TESTE_OUTRO_REPO = "o PR do teste está em outro repositório"
 MOTIVO_TESTE_RECUSADO = "o Flow recusou o teste enviado pela Fábrica"
 MOTIVO_ERRO_DO_TESTE = "o teste parou: o mesmo erro %d ciclos seguidos (%s)"
+# o Decidir do Flow oferece o merge pelo cartão nas travas da correção com PR aberto pelo texto destes motivos
+# (`MOTIVOS_DA_CORRECAO_COM_PR` em src/modules/decidir/model.ts): mudou um texto aqui, muda lá
 MOTIVO_CORRECAO_SEM_PR = "o frontend terminou sem PR da correção 2 vezes"
 MOTIVO_LINK_DA_CORRECAO = "o run da correção devolveu um link de PR inválido"
 MOTIVO_PR_DA_CORRECAO_FECHADO = "o PR da correção foi fechado sem merge"

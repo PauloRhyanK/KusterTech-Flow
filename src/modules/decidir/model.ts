@@ -30,6 +30,8 @@ export interface DemandaEsperando {
   nivel: Nivel
   espera: Espera
   esperaMotivo: string | null
+  /** O link do último `travada` (o PR da correção, quando há); só na espera `travada`. */
+  urlDaTrava: string | null
   esperaDesde: Date
   versaoDoDesenho: number
   etapaAtual: string
@@ -67,6 +69,8 @@ export type RefDoItem =
       versaoDoDesenho: number
       etapaAtual: string
       rotuloDaEtapa: string
+      /** O PR da trava de correção (o Paulo pode mergear pelo cartão); `null` nas outras. */
+      prDaTrava: number | null
     }
   | {
       tipo: 'issue'
@@ -156,6 +160,42 @@ const CHAVE_DE_DEMANDA =
 export function chaveValida(chave: string): boolean {
   if (chave.startsWith('issue:')) return URL_DE_ISSUE.test(chave.slice('issue:'.length))
   return CHAVE_DE_DEMANDA.test(chave)
+}
+
+const URL_DE_PR = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/([1-9][0-9]*)$/
+
+/** O número do PR que a trava cita, só se for do repositório da demanda. */
+export function numeroDoPrDaTrava(url: string | null, repositorio: string): number | null {
+  const m = URL_DE_PR.exec(url ?? '')
+  if (!m || m[1]!.toLowerCase() !== repositorio.toLowerCase()) return null
+  return Number(m[2])
+}
+
+/**
+ * Os motivos de `travar_correcao` (fabrica/scripts/demandas.py, `MOTIVO_*CORRECAO*`) com o PR da
+ * correção aberto para o Paulo mergear: depois do merge, a retomada leva a Fábrica a conferir o
+ * PR mergeado e seguir. Nas outras travas (plano, desenho, teste) a retomada refaz o trabalho, então
+ * nunca há merge pelo cartão. Mudou um motivo lá, muda aqui.
+ */
+const MOTIVOS_DA_CORRECAO_COM_PR = [
+  'PR de correção sem CI: revise e faça o merge',
+  'o PR da correção do teste está com o CI vermelho',
+  'o CI da correção do teste não terminou em 2 h',
+  'o GitHub recusou o merge da correção',
+  'O revisor da Fábrica não conseguiu avaliar a correção, nem na segunda tentativa',
+  'O revisor da Fábrica passou de 2 h sem avaliar a correção',
+]
+const PREFIXOS_DA_CORRECAO_COM_PR = [
+  'o PR da correção mexe em caminho protegido: ',
+  'O revisor da Fábrica reprovou a correção: ',
+]
+
+export function travaDeCorrecao(motivo: string | null): boolean {
+  const m = (motivo ?? '').trim()
+  return (
+    MOTIVOS_DA_CORRECAO_COM_PR.includes(m) ||
+    PREFIXOS_DA_CORRECAO_COM_PR.some((p) => m.startsWith(p))
+  )
 }
 
 export function tipoDaDemanda(d: DemandaEsperando): TipoDeItem | null {
@@ -269,6 +309,10 @@ function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): Item
       versaoDoDesenho: d.versaoDoDesenho,
       etapaAtual: d.etapaAtual,
       rotuloDaEtapa: d.rotuloDaEtapa,
+      prDaTrava:
+        d.espera === 'travada' && travaDeCorrecao(d.esperaMotivo)
+          ? numeroDoPrDaTrava(d.urlDaTrava, d.repositorio)
+          : null,
     },
   }
 }

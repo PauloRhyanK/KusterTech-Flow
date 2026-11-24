@@ -28,6 +28,7 @@ const PEDIDO: ItemDaPilha = {
     versaoDoDesenho: 0,
     etapaAtual: 'triagem',
     rotuloDaEtapa: 'Triagem',
+    prDaTrava: null,
   },
 }
 

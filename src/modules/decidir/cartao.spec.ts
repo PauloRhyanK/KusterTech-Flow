@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { ErroDeDominio } from '@/lib/erros'
 import {
   ACOES_POR_TIPO,
+  acoesDoItem,
   arquivosForaDoPermitido,
   avaliarMerge,
+  casaGlob,
+  protegidosDaConfig,
   cartaoDaRespostaRapida,
   comentarioSeguro,
   efeitoDoCartao,
@@ -39,6 +42,7 @@ function itemDeDemanda(tipo: TipoDeItem, o: Partial<ItemDaPilha['ref']> = {}): I
       versaoDoDesenho: 3,
       etapaAtual: 'homologacao',
       rotuloDaEtapa: 'Homologação',
+      prDaTrava: null,
       ...o,
     } as ItemDaPilha['ref'],
   }
@@ -84,9 +88,100 @@ describe('ACOES_POR_TIPO', () => {
       desenho: ['aprovar_desenho', 'ajustar_desenho'],
       decisao_da_fabrica: ['responder'],
       fim_de_fase: ['aprovar_e_mergear', 'pedir_mudanca'],
-      trava: ['retomar', 'encerrar'],
+      trava: ['retomar', 'encerrar', 'aprovar_e_mergear'],
       concluir_etapa: ['concluir'],
     })
+  })
+})
+
+describe('acoesDoItem', () => {
+  it('sem PR lido, o merge sai da lista (a trava e o fim de fase)', () => {
+    expect(acoesDoItem('trava', SEM_PR)).toEqual(['retomar', 'encerrar'])
+    expect(acoesDoItem('fim_de_fase', SEM_PR)).toEqual(['pedir_mudanca'])
+    expect(acoesDoItem('trava', COM_PR)).toEqual(['retomar', 'encerrar', 'aprovar_e_mergear'])
+    expect(acoesDoItem('pedido', SEM_PR)).toEqual(['destino', 'guardar', 'recusar'])
+  })
+})
+
+describe('trava com o PR da correção', () => {
+  const trava = () => itemDeDemanda('trava', { espera: 'travada' })
+
+  it('o merge vira cartão com o PR lido; sem PR, não vale', () => {
+    expect(validarCartao(trava(), COM_PR, { acao: 'aprovar_e_mergear' })).toEqual({
+      ok: true,
+      cartao: {
+        acao: 'aprovar_e_mergear',
+        pr: PR_URL,
+        numero: 412,
+        head: HEAD,
+        protegidos: ['src/a.ts'],
+      },
+    })
+    expect(validarCartao(trava(), SEM_PR, { acao: 'aprovar_e_mergear' })).toEqual({
+      ok: false,
+      motivo: 'O PR não pôde ser lido; abra no GitHub.',
+    })
+  })
+
+  it('o merge de outra espera da demanda não vale', () => {
+    expect(validarCartao(itemDeDemanda('desenho'), COM_PR, { acao: 'aprovar_e_mergear' }).ok).toBe(
+      false,
+    )
+  })
+
+  it('o efeito mergeia o PR e retoma a demanda', () => {
+    expect(
+      efeitoDoCartao(trava(), {
+        acao: 'aprovar_e_mergear',
+        pr: PR_URL,
+        numero: 412,
+        head: HEAD,
+        protegidos: [],
+      }),
+    ).toEqual({
+      tipo: 'mergear_pr',
+      repositorio: 'kustertech-exemplo/alfa',
+      feature: null,
+      demandaId: 'd1',
+      numero: 412,
+      head: HEAD,
+      protegidos: [],
+    })
+  })
+
+  it('no PR da demanda, fora do permitido é só o caminho protegido da Fábrica', () => {
+    expect(
+      arquivosForaDoPermitido(
+        [
+          'front/a.ts',
+          '.fabrica/config.json',
+          '.claude/x.md',
+          '.warren/y',
+          'front/a.ts',
+          '.github/ci.yml',
+        ],
+        null,
+      ),
+    ).toEqual(['.fabrica/config.json', '.claude/x.md', '.warren/y'])
+  })
+
+  it('avaliarMerge da demanda aceita CI ausente e cobra o protegido não dito', () => {
+    const base = {
+      repositorio: 'kustertech-exemplo/alfa',
+      pr: {
+        repositorio: 'kustertech-exemplo/alfa',
+        estado: 'ABERTO' as const,
+        head: HEAD,
+        arquivos: ['front/a.ts'],
+      },
+      ci: 'ausente' as const,
+      cartao: { head: HEAD, protegidos: [] as string[] },
+      feature: null,
+    }
+    expect(avaliarMerge(base)).toEqual({ ok: true, jaMergeado: false })
+    expect(
+      avaliarMerge({ ...base, pr: { ...base.pr, arquivos: ['front/a.ts', '.claude/x.md'] } }),
+    ).toEqual({ ok: false, motivo: 'O PR mexe em .claude/x.md e o cartão não disse.' })
   })
 })
 
@@ -605,5 +700,76 @@ describe('avaliarMerge', () => {
         cartao: { head: HEAD, protegidos: ['.fabrica/planos/outra-feature.json'] },
       }),
     ).toEqual({ ok: true, jaMergeado: false })
+  })
+})
+
+describe('casaGlob (como globs.casa_glob da Fábrica)', () => {
+  it.each([
+    ['src/a/b.ts', 'src/**', true],
+    ['src/a/b.ts', 'src/*.ts', false],
+    ['src/b.ts', 'src/*.ts', true],
+    ['src/a/b.ts', 'src/a/', true],
+    ['src/ab/b.ts', 'src/a/', false],
+    ['.env.local', '.env*', true],
+    ['a.ts', '?.ts', true],
+    ['ab.ts', '?.ts', false],
+    ['a/b', 'a?b', false],
+    ['a.ts', 'a.ts', true],
+    ['axts', 'a.ts', false],
+    ['src/a.tsx', 'src/*.ts', false],
+    ['xsrc/a.ts', 'src/*.ts', false],
+    ['a.ts.bak', 'a.ts', false],
+    ['xsrc/a/b.ts', 'src/a/', false],
+    ['src/a/x.ts', 'src/*/', true],
+    ['src/a/b/x.ts', 'src/*/', true],
+    ['src/x.ts', 'src/*/', false],
+    ['src/clientes/x.ts', '**/clientes/', true],
+    ['a/b/clientes/x.ts', '**/clientes/', true],
+    ['a(b)+c.ts', 'a(b)+c.ts', true],
+  ])('%s em %s → %s', (caminho, glob, esperado) => {
+    expect(casaGlob(caminho, glob)).toBe(esperado)
+  })
+})
+
+describe('protegidos do repositório no PR da trava', () => {
+  it('arquivosForaDoPermitido soma os fixos da Fábrica e os da config do repositório', () => {
+    expect(
+      arquivosForaDoPermitido(['front/a.ts', 'infra/deploy.sh', '.claude/x.md'], null, ['infra/']),
+    ).toEqual(['infra/deploy.sh', '.claude/x.md'])
+  })
+
+  it('avaliarMerge cobra o protegido da config que o cartão não disse', () => {
+    const base = {
+      repositorio: 'kustertech-exemplo/alfa',
+      pr: {
+        repositorio: 'kustertech-exemplo/alfa',
+        estado: 'ABERTO' as const,
+        head: HEAD,
+        arquivos: ['front/a.ts', 'infra/deploy.sh'],
+      },
+      ci: 'ausente' as const,
+      cartao: { head: HEAD, protegidos: [] as string[] },
+      feature: null,
+      protegidosDoRepo: ['infra/**'],
+    }
+    expect(avaliarMerge(base)).toEqual({
+      ok: false,
+      motivo: 'O PR mexe em infra/deploy.sh e o cartão não disse.',
+    })
+    expect(
+      avaliarMerge({ ...base, cartao: { head: HEAD, protegidos: ['infra/deploy.sh'] } }),
+    ).toEqual({ ok: true, jaMergeado: false })
+  })
+})
+
+describe('protegidosDaConfig (como config_do_repo da Fábrica)', () => {
+  it('ausente: nenhum extra; válida: a lista; ilegível: null', () => {
+    expect(protegidosDaConfig(null)).toEqual([])
+    expect(protegidosDaConfig('{}')).toEqual([])
+    expect(protegidosDaConfig('{"protegidos": ["infra/", "*.sql"]}')).toEqual(['infra/', '*.sql'])
+    expect(protegidosDaConfig('{')).toBeNull()
+    expect(protegidosDaConfig('[]')).toBeNull()
+    expect(protegidosDaConfig('{"protegidos": "infra/"}')).toBeNull()
+    expect(protegidosDaConfig('{"protegidos": ["", "a"]}')).toBeNull()
   })
 })
