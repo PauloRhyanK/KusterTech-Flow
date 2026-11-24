@@ -2197,6 +2197,149 @@ class TestSubstituirRaia(unittest.TestCase):
                 self.assertEqual(novo["seeds"], e["seeds"])
 
 
+def _concluir(e, raia_id, seed_id=None):
+    """Despacha e conclui a raia; `seed_id` deixa uma seed mergeada dela no estado."""
+    e = despachar(e, raia_id)
+    filhos = [filho(seed_id, "merged", run="r-" + seed_id)] if seed_id else []
+    return est.registrar_plano(e, raia_id, estado_plano="succeeded", falha=None, filhos=filhos)
+
+
+def _com_plano_seeds(p, raia_id, plano_seeds):
+    p = copy.deepcopy(p)
+    next(r for r in p["raias"] if r["id"] == raia_id)["planoSeeds"] = plano_seeds
+    return p
+
+
+class TestReabrirRaia(unittest.TestCase):
+    """2ª rodada de uma raia `concluida`: o orquestrador muda o `planoSeeds` dela no plano."""
+
+    def test_volta_a_planejada_com_o_plano_novo_e_guarda_as_seeds_da_rodada_anterior(self):
+        e = _concluir(estado_inicial(), "a", "s0")
+        e["raias"]["a"]["replanejamentos"] = 1
+        antes = copy.deepcopy(e)
+        p = _com_plano_seeds(plano(), "a", "pl-00aa")
+        novo = est.reabrir_raia(e, p, "a")
+        self.assertEqual(e, antes)
+        self.assertEqual(novo["raias"]["a"], dict(est._raia_nova("pl-00aa"), replanejamentos=1, reaberturas=1))
+        self.assertEqual(novo["seeds"], e["seeds"])
+        self.assertEqual(novo["seeds"]["s0"]["estado"], "mergeada")
+        self.assertIn({"tipo": "despachar_raia", "raia": "a"}, acoes(novo, p))
+        self.assertEqual(da_seed(acoes(novo, p), "s0"), [])
+
+    def test_idempotente(self):
+        e = _concluir(estado_inicial(), "a", "s0")
+        p = _com_plano_seeds(plano(), "a", "pl-00aa")
+        uma = est.reabrir_raia(e, p, "a")
+        self.assertEqual(est.reabrir_raia(uma, p, "a"), uma)
+
+    def test_segunda_reabertura_conta(self):
+        e = _concluir(estado_inicial(), "a")
+        e = est.reabrir_raia(e, _com_plano_seeds(plano(), "a", "pl-00aa"), "a")
+        e = _concluir(e, "a")
+        e = est.reabrir_raia(e, _com_plano_seeds(plano(), "a", "pl-00ab"), "a")
+        self.assertEqual((e["raias"]["a"]["planoSeeds"], e["raias"]["a"]["reaberturas"]), ("pl-00ab", 2))
+
+    def test_mesmo_planoseeds_ou_entrada_invalida_nao_muda_nada(self):
+        e = _concluir(estado_inicial(), "a")
+        for p, raia_id in (
+            (plano(), "a"),
+            (_com_plano_seeds(plano(), "a", None), "a"),
+            (_com_plano_seeds(plano(), "a", ""), "a"),
+            (plano(), "zz"),
+            ({}, "a"),
+        ):
+            with self.subTest(raia=raia_id, plano=p):
+                novo = est.reabrir_raia(e, p, raia_id)
+                self.assertEqual(novo["raias"], e["raias"])
+                self.assertEqual(novo["seeds"], e["seeds"])
+
+    def test_so_raia_concluida_e_reaberta(self):
+        for estado in ("planejada", "executando", "falhou"):
+            with self.subTest(estado=estado):
+                e = _concluir(estado_inicial(), "a")
+                e["raias"]["a"]["estado"] = estado
+                novo = est.reabrir_raia(e, _com_plano_seeds(plano(), "a", "pl-00aa"), "a")
+                self.assertEqual(novo["raias"]["a"], e["raias"]["a"])
+
+    def test_dependente_planejada_espera_a_raia_reaberta_concluir_de_novo(self):
+        p = plano()
+        next(r for r in p["raias"] if r["id"] == "c")["dependeDe"] = ["fundacao", "a"]
+        next(r for r in p["raias"] if r["id"] == "b")["dependeDe"] = ["fundacao", "a"]
+        e = _concluir(estado_inicial(), "a")
+        e = despachar(e, "b")  # b já começou: fica como está
+        self.assertIn({"tipo": "despachar_raia", "raia": "c"}, acoes(e, p))
+        p2 = _com_plano_seeds(p, "a", "pl-00aa")
+        e = est.reabrir_raia(e, p2, "a")
+        self.assertEqual(e["raias"]["b"]["estado"], "executando")
+        self.assertEqual(e["raias"]["b"]["planRunId"], "plan_b")
+        despachos = dos_tipos(acoes(e, p2), "despachar_raia")
+        self.assertIn({"tipo": "despachar_raia", "raia": "a"}, despachos)
+        self.assertNotIn({"tipo": "despachar_raia", "raia": "c"}, despachos)
+        e = _concluir(e, "a")
+        self.assertIn({"tipo": "despachar_raia", "raia": "c"}, acoes(e, p2))
+
+    def fase_nucleo_concluida(self):
+        e = estado_inicial(limite=4)
+        for raia_id in ("a", "b", "c", "d"):
+            e = _concluir(e, raia_id)
+        acordar = {"tipo": "acordar", "motivo": "fase_concluida", "alvo": "nucleo"}
+        self.assertIn(acordar, acoes(e))
+        e = est.aplicar(e, acordar, {"runId": "orq1"})
+        e = est.concluir_orquestrador(e)
+        e["acordarPendentes"] = [{"motivo": "fase_concluida", "alvo": "nucleo"}, {"motivo": "raia_falhou", "alvo": "x"}]
+        self.assertNotIn(acordar, acoes(e))
+        return e, acordar
+
+    def test_raia_da_fase_atual_reabre_a_homologacao_da_fase(self):
+        e, acordar = self.fase_nucleo_concluida()
+        p = _com_plano_seeds(plano(), "a", "pl-00aa")
+        e = est.reabrir_raia(e, p, "a")
+        self.assertNotIn("fase_concluida:nucleo", e["chavesAcordadas"])
+        self.assertEqual(e["acordarPendentes"], [{"motivo": "raia_falhou", "alvo": "x"}])
+        self.assertNotIn(acordar, acoes(e, p))
+        self.assertFalse(est.plano_concluido(e, p))
+        e = _concluir(e, "a")
+        self.assertIn(acordar, acoes(e, p))
+
+    def test_raia_de_fase_anterior_e_reaberta_e_despachada_e_segura_a_fase_atual(self):
+        e, acordar = self.fase_nucleo_concluida()
+        p = _com_plano_seeds(plano(), "fundacao", "pl-00f0")
+        e = est.reabrir_raia(e, p, "fundacao")
+        self.assertEqual(e["raias"]["fundacao"]["estado"], "planejada")
+        self.assertNotIn("fase_concluida:nucleo", e["chavesAcordadas"])
+        lista = acoes(e, p)
+        self.assertIn({"tipo": "despachar_raia", "raia": "fundacao"}, lista)
+        self.assertNotIn(acordar, lista)
+        e = despachar(e, "fundacao")
+        self.assertNotIn(acordar, acoes(e, p))
+        e = est.registrar_plano(e, "fundacao", estado_plano="succeeded", falha=None, filhos=[])
+        self.assertIn(acordar, acoes(e, p))
+
+    def test_raia_de_fase_anterior_segura_as_dependentes_planejadas(self):
+        e = estado_inicial()
+        p = _com_plano_seeds(plano(), "fundacao", "pl-00f0")
+        e = est.reabrir_raia(e, p, "fundacao")
+        despachos = dos_tipos(acoes(e, p), "despachar_raia")
+        self.assertEqual(despachos, [{"tipo": "despachar_raia", "raia": "fundacao"}])
+
+    def test_raia_de_fase_posterior_espera_a_fase_dela_e_nao_mexe_na_fase_atual(self):
+        e = est.novo_estado(plano("fundacao"), projeto="prj_x", repo="dono/nome")
+        e["raias"]["a"]["estado"] = "concluida"
+        e["chavesAcordadas"] = ["fase_concluida:fundacao"]
+        p = _com_plano_seeds(plano("fundacao"), "a", "pl-00aa")
+        e = est.reabrir_raia(e, p, "a")
+        self.assertEqual(e["raias"]["a"]["estado"], "planejada")
+        self.assertEqual(e["chavesAcordadas"], ["fase_concluida:fundacao"])
+        self.assertNotIn({"tipo": "despachar_raia", "raia": "a"}, acoes(e, p))
+
+    def test_reaberturas_sobrevivem_ao_replanejamento(self):
+        e = _concluir(estado_inicial(), "a")
+        e = est.reabrir_raia(e, _com_plano_seeds(plano(), "a", "pl-00aa"), "a")
+        e = despachar(e, "a")
+        e = est.substituir_raia(e, "a", "pl-00ab")
+        self.assertEqual(e["raias"]["a"]["reaberturas"], 1)
+
+
 
 T0 = datetime.datetime(2026, 11, 3, 12, 0, 0)
 

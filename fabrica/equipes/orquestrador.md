@@ -19,6 +19,8 @@ Conduzir um **plano de feature já preparado e aprovado** até a entrega, usando
 - Solicitar especialista adequado para diagnóstico/correção, preservando escopo e limites de autonomia.
 - Manter o plano coerente com o estado real dos PRs, Seeds e validações.
 - Escalar ao humano **somente decisões reservadas**: produto/escopo, segurança de alto impacto, caminhos protegidos, mudança de modelo/executor, limites aprovados e falha sem recuperação segura.
+- Limitação técnica do kit ou do despachante **não** é decisão do humano (ele decide só produto, escopo, custo e segurança): escolher a opção que não muda requisitos nem critérios, seguir e registrar o raciocínio em `.fabrica/planejamento/<feature>/`.
+- Para uma 2ª rodada de uma raia já concluída, trocar o `planoSeeds` dela no plano: o despachante reabre a raia sozinho (veja `orquestrador.md`, "Saída").
 
 ## 3. Mentalidade e conhecimento
 
