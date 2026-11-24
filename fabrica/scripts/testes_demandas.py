@@ -2233,6 +2233,211 @@ class TestesTesteNoNavegador(BasePasso):
         self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
         self.assertEqual(self.forja.merges, [])
 
+    # -------------------------------------------------- correção sem CI revisada pela Fábrica (ciObrigatorioNasSeeds false)
+
+    def sem_ci_obrigatorio(self, valor=False):
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/config.json", json.dumps({"protegidos": [], "ciObrigatorioNasSeeds": valor}))
+
+    def veredito(self, run_id, resultado="aprovado", *, sha=HEAD_C, achados=(), estado="succeeded", motivo=None):
+        corpo = json.dumps({"sha": sha, "resultado": resultado, "achados": list(achados)})
+        self.motor.definir_texto(run_id, "Revisei.\n%s\n%s\n%s\n" % (prompts.INICIO_VEREDITO, corpo, prompts.FIM_VEREDITO))
+        self.motor.definir_run(run_id, estado=estado, motivoFalha=motivo)
+
+    def revisar_correcao_sem_ci(self):
+        """A correção entrega o PR sem CI num repositório com `ciObrigatorioNasSeeds: false`: o revisor fica despachado."""
+        self.sem_ci_obrigatorio()
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="ausente")
+        self.passo(ClienteDeBusca())
+        return self.item()["correcao"]["revisao"]["runId"]
+
+    def test_correcao_sem_ci_com_ci_opcional_despacha_o_revisor_no_head_do_pr(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.assertEqual((self.saida(), self.forja.merges), ([], []))
+        self.assertEqual(len(self.despachos()), 3)
+        revisao = self.despachos()[2]
+        rev = CONFIG_DO_KIT["modelos"]["revisor"]
+        self.assertEqual((revisao["agente"], revisao["modelo"], revisao["max_custo_usd"]), (rev["agente"], rev["modelo"], rev["maxCustoUsd"]))
+        nonce = demandas.nonce_do_motor(ID, "revisao", 2)
+        self.assertEqual(revisao["chave_idempotencia"], nonce)
+        self.assertTrue(revisao["prompt"].endswith("<!-- fabrica:nonce=%s -->" % nonce))
+        self.assertEqual(revisao["branch_existente"], "fabrica/correcao-11111111")
+        for trecho in (HEAD_C, PR_C, prompts.INICIO_VEREDITO, "o botão salvar não responde"):
+            self.assertIn(trecho, revisao["prompt"])
+        self.assertEqual((self.item()["correcao"]["revisao"]["sha"], run_id), (HEAD_C, "run-3"))
+        # gravado com o nonce antes do POST
+        antes = [s for s in self.salvos if (s["demandas"]["itens"][ID].get("correcao") or {}).get("revisao", {}).get("nonce") == nonce]
+        self.assertIsNone(antes[0]["demandas"]["itens"][ID]["correcao"]["revisao"]["runId"])
+        # a vaga da correção passa ao revisor (nada a mais reservado)
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        self.assertEqual(demandas.chaves_ocupando(self.estado, AGORA), {demandas.chave(ID)})
+        # o run ainda roda: nada
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.despachos()), self.saida(), self.forja.merges), (3, [], []))
+
+    def test_correcao_sem_ci_aprovada_pelo_revisor_mergeia_e_solta_a_vaga(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.veredito(run_id, "aprovado")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+        self.assertEqual([(e["tipo"], e["dados"]) for e in self.saida()], [("etapa_concluida", {"marco": "desenvolvida"})])
+        self.assertEqual((self.reservas(), len(self.despachos())), ({}, 3))
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("testada"), cursor="4")))
+        self.assertEqual(len(self.despachos()), 4)  # testa de novo
+
+    def test_revisor_que_nao_commita_ainda_vale_o_veredito(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.veredito(run_id, "aprovado", estado="failed", motivo="no_changes")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+
+    def test_correcao_sem_ci_reprovada_pelo_revisor_trava_com_o_motivo_simples(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.veredito(run_id, "correcoes", achados=[{"arquivo": "src/app/clientes/page.tsx", "motivo": "o botão continua sem salvar"}, {"arquivo": "x", "motivo": "outro"}])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "O revisor da Fábrica reprovou a correção: o botão continua sem salvar", "url": PR_C}))
+        self.assertEqual(self.reservas(), {})
+        # a trava no Flow e o PR aberto: nada
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="4")))
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 3))
+        # o Paulo mergeia o PR mesmo assim: segue sozinho
+        self.paulo_mergeia()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="5")))
+        self.assertEqual([e["tipo"] for e in self.saida()], ["destravada", "etapa_concluida"])
+
+    def test_retomada_depois_da_reprovacao_revisa_de_novo(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.veredito(run_id, "correcoes", achados=[{"arquivo": "a", "motivo": "falta o teste"}])
+        self.passo(ClienteDeBusca())
+        self.enviado()
+        self.avancar(60)
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", eventos=RETOMADA), cursor="4")))
+        self.assertEqual(len(self.despachos()), 4)
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        self.veredito(self.item()["correcao"]["revisao"]["runId"], "aprovado")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+
+    def test_revisor_sem_veredito_revisa_uma_vez_mais_e_depois_trava(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.motor.definir_texto(run_id, "esqueci o bloco")
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.despachos()), self.saida()), (4, []))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        segundo = self.item()["correcao"]["revisao"]["runId"]
+        self.assertNotEqual(segundo, run_id)
+        self.motor.definir_run(segundo, estado="failed", motivoFalha="agent_error")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": demandas.MOTIVO_REVISAO_SEM_VEREDITO, "url": PR_C}))
+        self.assertEqual((self.reservas(), len(self.despachos())), ({}, 4))
+
+    def test_veredito_de_outro_sha_nao_vale(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.veredito(run_id, "aprovado", sha="9" * 40)
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.forja.merges, len(self.despachos())), ([], 4))
+
+    def test_head_que_andou_descarta_o_veredito_e_revisa_no_head_novo(self):
+        run_id = self.revisar_correcao_sem_ci()
+        novo = "2" * 40
+        self.veredito(run_id, "aprovado")
+        self.forja.definir_pr(PR_C, head_sha=novo, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx"])
+        self.forja.definir_ci(REPO, novo, "ausente")
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.forja.merges, self.saida()), ([], []))
+        self.assertEqual(len(self.despachos()), 4)
+        self.assertIn(novo, self.despachos()[3]["prompt"])
+        self.assertEqual(self.item()["correcao"]["revisao"]["sha"], novo)
+        self.veredito(self.item()["correcao"]["revisao"]["runId"], "aprovado", sha=novo)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, novo)])
+        self.assertEqual(self.reservas(), {})
+
+    def test_head_que_andou_com_o_revisor_rodando_espera_o_run_antigo(self):
+        run_id = self.revisar_correcao_sem_ci()
+        novo = "2" * 40
+        self.forja.definir_pr(PR_C, head_sha=novo, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx"])
+        self.forja.definir_ci(REPO, novo, "ausente")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 3)  # nunca dois runs da demanda ao mesmo tempo
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        self.veredito(run_id, "aprovado")  # o antigo termina: o veredito dele não vale
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.forja.merges, len(self.despachos())), ([], 4))
+        self.assertEqual(self.item()["correcao"]["revisao"]["sha"], novo)
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+
+    def test_queda_no_post_do_revisor_acha_o_run_pelo_nonce(self):
+        self.sem_ci_obrigatorio()
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="ausente")
+        self.motor.falhar_despacho("incerta")
+        self.passo(ClienteDeBusca())
+        self.assertIsNone(self.item()["correcao"]["revisao"]["runId"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertEqual(self.item()["correcao"]["revisao"]["runId"], "run-3")
+
+    def test_paulo_descarta_a_demanda_com_o_revisor_rodando_segura_a_vaga_ate_o_run_terminar(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", encerrada="descartada"), cursor="4")))
+        self.assertIn(ID, self.estado["demandas"]["itens"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        self.veredito(run_id, "aprovado")
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca())
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+        self.assertEqual((self.reservas(), self.forja.merges), ({}, []))
+
+    def test_revisor_que_passa_do_teto_trava_e_segura_a_vaga_ate_terminar(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.avancar(demandas.TETO_RUN_S + 60)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": demandas.MOTIVO_TETO_DA_REVISAO, "url": PR_C}))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        self.veredito(run_id, "aprovado")
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="4")))
+        self.assertEqual((self.reservas(), self.forja.merges), ({}, []))
+
+    def test_correcao_sem_ci_sem_modelo_do_revisor_trava_para_o_paulo(self):
+        self.sem_ci_obrigatorio()
+        modelos = {k: v for k, v in CONFIG_DO_KIT["modelos"].items() if k != "revisor"}
+        self.falhar_o_teste()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")), modelos=modelos)
+        self.entregar_correcao(self.item()["runId"], ci="ausente")
+        self.passo(ClienteDeBusca(), modelos=modelos)
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "PR de correção sem CI: revise e faça o merge", "url": PR_C})
+        self.assertEqual((self.reservas(), len(self.despachos())), ({}, 2))
+
+    def test_ci_obrigatorio_nas_seeds_true_mantem_a_trava_para_o_paulo(self):
+        self.sem_ci_obrigatorio(True)
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="ausente")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "PR de correção sem CI: revise e faça o merge", "url": PR_C})
+        self.assertEqual((self.reservas(), len(self.despachos()), self.forja.merges), ({}, 2, []))
+
+    def test_ci_obrigatorio_nas_seeds_torto_trava_com_a_config_ilegivel(self):
+        self.sem_ci_obrigatorio("nao")
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="ausente")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "a .fabrica/config.json do repositório está ilegível", "url": PR_C})
+
+    def test_ci_verde_com_ci_opcional_mergeia_sem_revisor(self):
+        self.sem_ci_obrigatorio()
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="verde")
+        self.passo(ClienteDeBusca())
+        self.assertEqual((self.forja.merges, len(self.despachos())), ([(PR_C, HEAD_C)], 2))
+
     def test_descartada_pelo_paulo_com_a_correcao_no_meio_solta_a_vaga_quando_o_run_termina(self):
         run_id = self.corrigir_depois_da_falha()
         self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
