@@ -52,8 +52,11 @@ de celular, cada captura e depois o evento `teste` vão à caixa de saída e o P
 volta a etapa para `desenvolvida` e o kit despacha a correção (`frontend`, `modelos.frontend`, a partir do branch
 padrão), mergeada atrás das guardas só com CI `verde` e seguida de `etapa_concluida` (`desenvolvida`). Sem CI nenhum,
 com `"ciObrigatorioNasSeeds": false` na config do repositório, um run do `revisor` confere o PR no head (o veredito das
-seeds, `correcao.revisao`, com a vaga da demanda) e o aprovado mergeia; senão a demanda trava para o Paulo revisar e
-mergear o PR (o merge dele segue sem retomada). Na segunda
+seeds, `correcao.revisao`, com a vaga da demanda) e o aprovado mergeia. O reprovado ganha um conserto: um run do
+`frontend` no branch do PR, com os achados do revisor (`correcao.conserto`, até 2 por PR em `correcao.consertos`); o
+head novo é revisado de novo, e o conserto sem commit conta como rodada. Reprovado depois dos dois consertos, a demanda
+trava, e a retomada do Paulo fecha o PR e corrige do zero a partir do branch padrão. Com a config padrão, a demanda
+trava para o Paulo revisar e mergear o PR (o merge dele segue sem retomada). Na segunda
 falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Nunca há
 dois runs da demanda ao mesmo tempo: o run que passou do teto (ou foi superado) segura a vaga até terminar.
 """
@@ -862,6 +865,11 @@ MOTIVO_REVISAO_REPROVOU = "O revisor da Fábrica reprovou a correção: %s"
 MOTIVO_REVISAO_SEM_MOTIVO = "ele não escreveu o porquê"
 MOTIVO_REVISAO_SEM_VEREDITO = "O revisor da Fábrica não conseguiu avaliar a correção, nem na segunda tentativa"
 MOTIVO_TETO_DA_REVISAO = "O revisor da Fábrica passou de 2 h sem avaliar a correção"
+# reprovada, a Fábrica conserta o mesmo PR (um run do `frontend` no branch dele, com os achados) até 2 vezes; depois
+# disso, trava com o mesmo começo do `MOTIVO_REVISAO_REPROVOU` (o Decidir oferece o merge pelo cartão por ele)
+CONSERTOS_DA_CORRECAO = 2
+MOTIVO_REVISAO_REPROVOU_DEPOIS_DOS_CONSERTOS = MOTIVO_REVISAO_REPROVOU % "%s (mesmo depois de dois consertos da Fábrica)"
+COMENTARIO_DA_CORRECAO_REFEITA = "A Fábrica refaz a correção a partir do branch padrão: este PR foi reprovado mesmo depois dos consertos."
 # capturas enviadas por run de teste: o teste e o reteste da primeira falha (80 MB) deixam a demanda abaixo dos
 # 100 MB do Flow, com espaço para o desenho
 LIMITE_CAPTURAS_POR_TESTE = 40 * 1024 * 1024
@@ -2430,20 +2438,26 @@ class _Passo:
         self.despachar_correcao(id_, it, demanda)
 
     def despachar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
-        modelo = self.modelo_da_correcao
-        prompt = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=it["correcao"].get("resumo") or "")
+        """O POST do run da correção (a partir do branch padrão) ou, com `correcao.conserto`, do conserto no branch do PR."""
+        modelo, c = self.modelo_da_correcao, it["correcao"]
+        conserto = c.get("conserto") if isinstance(c.get("conserto"), dict) else None
+        if conserto is None:
+            prompt, branch = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=c.get("resumo") or ""), None
+        else:
+            prompt = prompts.prompt_conserto_da_correcao(demanda=demanda, resumo=c.get("resumo") or "", achados=conserto.get("achados") or [], pr_url=c["prUrl"])
+            branch = conserto["branch"]
         run_id = self.motor.despachar_run(
             projeto=it["projeto"],
             agente=modelo["agente"],
             modelo=modelo["modelo"],
             prompt=despachante._com_nonce(prompt, it["nonce"]),
-            branch_existente=None,
+            branch_existente=branch,
             max_custo_usd=modelo["maxCustoUsd"],
             chave_idempotencia=it["nonce"],
         )
         it["runId"] = run_id
         self.salvar()
-        self.eventos.append({"evento": "demanda_correcao", "id": id_, "runId": run_id})
+        self.eventos.append({"evento": "demanda_correcao" if conserto is None else "demanda_conserto_da_correcao", "id": id_, "runId": run_id})
 
     def acompanhar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         c = _dados(it, "correcao")
@@ -2452,12 +2466,16 @@ class _Passo:
             return
         if it.get("alvo") != "corrigindo":
             return  # mergeada: o Flow volta (ou já está) em `testada`
-        if c.get("prUrl"):
+        conserto = c.get("conserto") if isinstance(c.get("conserto"), dict) else None
+        if c.get("prUrl") and conserto is None:
             self.conferir_correcao(id_, it, demanda)  # o run terminou: vale o teto do CI pendente
+            return
+        if conserto is not None and c.get("terminou"):
+            self.fim_do_conserto(id_, it, demanda)  # o conserto terminou e o seguinte esperava a vaga (ou a drenagem)
             return
         inicio = _instante(it.get("inicio"))
         if inicio is None or (self.agora - inicio).total_seconds() > TETO_RUN_S:
-            self.travar_correcao(id_, it, MOTIVO_TETO_RUN, None, vivo=True)
+            self.travar_correcao(id_, it, MOTIVO_TETO_RUN, c.get("prUrl"), vivo=True)
             return
         if not it.get("runId"):
             run_id = self.motor.procurar_run(it["projeto"], it["nonce"], self.desde(it))
@@ -2478,6 +2496,9 @@ class _Passo:
         if not c.get("terminou"):
             c["terminou"] = True
             self.salvar()
+        if conserto is not None:
+            self.fim_do_conserto(id_, it, demanda)
+            return
         pr_url = run.get("prUrl")
         if isinstance(pr_url, str) and pr_url:
             c["prUrl"] = pr_url
@@ -2492,28 +2513,51 @@ class _Passo:
 
     def retomar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         """A correção travou: só a retomada do Paulo (depois da trava) mexe. Com o merge feito, manda a conclusão de
-        novo; com o PR, confere o mesmo PR (o Paulo pode ter consertado o CI); sem PR, corrige do zero."""
+        novo; com o PR reprovado pelo revisor mesmo depois dos consertos (`correcao.consertosEsgotados`), fecha o PR
+        com um comentário e corrige do zero a partir do branch padrão (`refazer_correcao`); com outro PR, confere o
+        mesmo PR (o Paulo pode ter consertado o CI); sem PR, corrige do zero."""
         if not _retomada_nova(it, demanda):
             return
         c = _dados(it, "correcao")
         if c.get("mergeado"):
             it.update(travaDaCorrecao=False, inicio=self.agora_texto)
             self.correcao_mergeada(id_, it, demanda)
+        elif c.get("prUrl") and c.get("consertosEsgotados"):
+            self.refazer_correcao(id_, it, demanda)
         elif c.get("prUrl"):
             c.pop("ciPendenteDesde", None)
             c.pop("revisao", None)  # sem CI, o revisor confere de novo (o Paulo pode ter mexido no PR)
+            c.pop("conserto", None)  # o conserto que travou (teto, erro) não volta: o revisor confere o head atual
             it.update(travaDaCorrecao=False, alvo="corrigindo", inicio=self.agora_texto)
             self.salvar()
             self.conferir_correcao(id_, it, demanda)
         else:
             self.corrigir(id_, it, demanda)  # sem vaga, a trava (e a retomada) ficam para o ciclo seguinte
 
+    def refazer_correcao(self, id_: str, it: dict, demanda: dict) -> None:
+        """A retomada depois da trava dos consertos: revisar o mesmo head de novo daria a mesma reprovação. O PR aberto
+        é fechado com `COMENTARIO_DA_CORRECAO_REFEITA` (mergeado pelo Paulo, vale como em `merge_da_correcao_vale`) e
+        a correção recomeça do zero, a partir do branch padrão, com o resumo do teste. Sem vaga, `corrigir` não mexe
+        no estado: a retomada (com o PR já fechado) é refeita no ciclo seguinte."""
+        c = it["correcao"]
+        repo = it.get("repo") or demanda["repositorio"]
+        pr = despachante._dict(self.forja.pr(c["prUrl"]))
+        if pr.get("mergeado") is True and str(pr.get("repo")).lower() == str(repo).lower() and self.merge_da_correcao_vale(repo, c, pr):
+            it.update(travaDaCorrecao=False, inicio=self.agora_texto)
+            self.correcao_mergeada(id_, it, demanda)
+            return
+        if pr.get("aberto") is True:
+            self.forja.fechar_pr(c["prUrl"], COMENTARIO_DA_CORRECAO_REFEITA)
+            self.eventos.append({"evento": "demanda_correcao_refeita", "id": id_, "prUrl": c["prUrl"]})
+        self.corrigir(id_, it, demanda)
+
     def conferir_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         """As guardas do merge do PR da correção, no mesmo head: o repositório da demanda, nada em
         `despachante.PROTEGIDOS_FIXOS` nem nos `protegidos` da `.fabrica/config.json` do branch padrão, e CI `verde`.
         CI vermelho (ou pendente acima de 2 h) trava com a URL. Sem CI nenhum, trava para o Paulo revisar e mergear,
         a não ser que a config do repositório traga `"ciObrigatorioNasSeeds": false`: aí o revisor da Fábrica confere
-        o PR no head (`revisar_correcao`) e o veredito aprovado mergeia, como nas seeds. Já mergeado só vale como em
+        o PR no head (`revisar_correcao`) e o veredito aprovado mergeia, como nas seeds; o reprovado é consertado no
+        mesmo PR (`consertar`) e o head novo passa por aqui de novo. Já mergeado só vale como em
         `merge_da_correcao_vale`."""
         c = it["correcao"]
         url = c["prUrl"]
@@ -2584,8 +2628,9 @@ class _Passo:
         no branch do PR, com o veredito das seeds (`prompts.extrair_veredito`) no head observado.
 
         `correcao.revisao` guarda `sha`, `branch`, `nonce`, `inicio`, `runId`, `emCurso` e `falhas`, gravados antes do
-        POST pago (sem `runId`, o run é achado pelo nonce). Aprovado no mesmo sha: merge nesse head. Reprovado: trava
-        com o primeiro achado. Run falho ou sem veredito válido (ou de outro sha): revisa mais uma vez e, na segunda,
+        POST pago (sem `runId`, o run é achado pelo nonce). Aprovado no mesmo sha: merge nesse head. Reprovado: o
+        conserto no mesmo branch, com os achados (`consertar`, até `CONSERTOS_DA_CORRECAO` vezes; depois, a trava com o
+        primeiro achado). Run falho ou sem veredito válido (ou de outro sha): revisa mais uma vez e, na segunda,
         trava. O head que andou descarta a revisão (o run dela ainda vivo vira `correcaoSuperada` e segura a vaga), salvo
         quando só ganhou arquivos de controle do Warren (`revisao.head`): aí o veredito do `sha` revisado vale."""
         c = it["correcao"]
@@ -2621,15 +2666,66 @@ class _Passo:
                 self.nova_revisao(id_, it, demanda, pr, falhas=falhas)
             return
         if veredito.get("resultado") != "aprovado":
-            motivos = (a.get("motivo") for a in veredito.get("achados") or [])
-            achado = next((m for m in motivos if isinstance(m, str) and m.strip()), None)
-            achado = " ".join(achado.split())[:LIMITE_ACHADO_DA_REVISAO] if achado else MOTIVO_REVISAO_SEM_MOTIVO
-            self.travar_correcao(id_, it, MOTIVO_REVISAO_REPROVOU % achado, url)
+            self.consertar(id_, it, demanda, veredito.get("achados"), sha=head, branch=rev["branch"])
             return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.correcao_mergeada(id_, it, demanda)
         else:
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def consertar(self, id_: str, it: dict, demanda: dict, achados, *, sha: str, branch: str) -> None:
+        """O revisor reprovou o PR da correção no head `sha`: um run do `frontend` (`modelos.frontend`) no mesmo branch,
+        com os achados (`prompts.prompt_conserto_da_correcao`), até `CONSERTOS_DA_CORRECAO` vezes por PR
+        (`correcao.consertos`). Passadas as rodadas (ou sem o modelo), trava com o primeiro achado.
+
+        `correcao.conserto` guarda `sha` (o head reprovado), `branch` e `achados`; o run usa os campos do run da
+        correção (`nonce` de `"conserto"`, `inicio`, `runId`, `correcao.terminou`), gravados antes do POST pago (sem
+        `runId`, o run é achado pelo nonce). A vaga passa do revisor ao conserto (`passar_a_vaga`); com drenagem, um
+        run superado vivo ou sem vaga, espera o ciclo seguinte (a revisão reprovada, ou o conserto terminado, fica no
+        estado e decide de novo)."""
+        c = it["correcao"]
+        achados = [a for a in achados if isinstance(a, dict)] if isinstance(achados, list) else []
+        consertos = c.get("consertos") if isinstance(c.get("consertos"), int) else 0
+        if consertos >= CONSERTOS_DA_CORRECAO or self.modelo_da_correcao is None:
+            if self.modelo_da_correcao is None:
+                self.sem_modelo(PAPEL_DA_CORRECAO)
+            motivos = (a.get("motivo") for a in achados)
+            achado = next((m for m in motivos if isinstance(m, str) and m.strip()), None)
+            achado = " ".join(achado.split())[:LIMITE_ACHADO_DA_REVISAO] if achado else MOTIVO_REVISAO_SEM_MOTIVO
+            esgotados = consertos >= CONSERTOS_DA_CORRECAO
+            if esgotados:
+                c["consertosEsgotados"] = True  # a retomada do Paulo refaz a correção do zero (`refazer_correcao`)
+            c.pop("conserto", None)
+            self.travar_correcao(id_, it, (MOTIVO_REVISAO_REPROVOU_DEPOIS_DOS_CONSERTOS if esgotados else MOTIVO_REVISAO_REPROVOU) % achado, c["prUrl"])
+            return
+        if _run_superado_vivo(it) or capacidade.ler(self.capacidade).get("drenagem"):
+            return
+        if not self.passar_a_vaga(id_, PAPEL_DA_CORRECAO):
+            return
+        c.pop("revisao", None)
+        c.update(consertos=consertos + 1, conserto={"sha": sha, "branch": branch, "achados": achados}, terminou=False)
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(nonce=nonce_do_motor(id_, "conserto", tentativa), tentativa=tentativa + 1, inicio=self.agora_texto, runId=None)
+        self.salvar()  # antes do POST pago
+        self.despachar_correcao(id_, it, demanda)
+
+    def fim_do_conserto(self, id_: str, it: dict, demanda: dict) -> None:
+        """O run do conserto terminou. Com código novo no PR (o head andou além dos arquivos de controle do Warren), ou
+        com o PR fechado ou mergeado, as guardas conferem o PR de novo (head novo, revisão nova). Sem commit novo (o
+        agente não mudou nada, ou o run falhou antes), a rodada conta como falha: conserta de novo ou, passadas as
+        rodadas, trava (`consertar`)."""
+        c = it["correcao"]
+        conserto = c["conserto"]
+        repo = it.get("repo") or demanda["repositorio"]
+        pr = despachante._dict(self.forja.pr(c["prUrl"]))
+        head, sha = pr.get("headSha"), conserto.get("sha")
+        mudou = not isinstance(head, str) or not head or (head != sha and not self.so_controle_do_warren(repo, sha, head))
+        if pr.get("aberto") is not True or mudou:
+            c.pop("conserto", None)
+            self.salvar()
+            self.conferir_correcao(id_, it, demanda)
+            return
+        self.consertar(id_, it, demanda, conserto.get("achados"), sha=sha, branch=conserto.get("branch"))
 
     def so_controle_do_warren(self, repo: str, base, head: str) -> bool:
         """`head` descende de `base` e só mudou arquivos de controle do Warren (como em `_herdar_gates_do_head`)."""
@@ -2694,7 +2790,7 @@ class _Passo:
         branch = pr.get("branch")
         if not isinstance(branch, str) or not branch:
             raise RuntimeError("PR da correção sem branch")
-        if not self.reservar_revisao(id_):
+        if not self.passar_a_vaga(id_, PAPEL_DA_REVISAO):
             return
         tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
         it["correcao"]["revisao"] = {
@@ -2710,14 +2806,18 @@ class _Passo:
         self.salvar()  # antes do POST pago
         self.despachar_revisao(id_, it, demanda)
 
-    def reservar_revisao(self, id_: str) -> bool:
-        """A vaga da demanda passa do run da correção (que já terminou) ao revisor; sem ela (a retomada do Paulo depois
-        de uma trava que a soltou), reserva uma nova."""
+    def passar_a_vaga(self, id_: str, papel: str) -> bool:
+        """A vaga da demanda passa entre a correção (ou o conserto) e o revisor, cujo run já terminou: `papel` toma o
+        lugar do outro, sem reservar nada a mais; sem nenhum dos dois (a retomada do Paulo depois de uma trava que a
+        soltou), reserva uma nova."""
         reservas = capacidade.ler(self.capacidade)["reservas"].get(chave(id_), [])
-        if PAPEL_DA_CORRECAO in reservas:
-            capacidade.sincronizar(self.capacidade, chave(id_), (set(reservas) - {PAPEL_DA_CORRECAO}) | {PAPEL_DA_REVISAO})
+        if papel in reservas:
             return True
-        return capacidade.reservar(self.capacidade, chave(id_), PAPEL_DA_REVISAO, mem_disponivel_mb=self.mem_disponivel_mb)
+        outros = set(reservas) & {PAPEL_DA_CORRECAO, PAPEL_DA_REVISAO}
+        if outros:
+            capacidade.sincronizar(self.capacidade, chave(id_), (set(reservas) - outros) | {papel})
+            return True
+        return capacidade.reservar(self.capacidade, chave(id_), papel, mem_disponivel_mb=self.mem_disponivel_mb)
 
     def despachar_revisao(self, id_: str, it: dict, demanda: dict) -> None:
         c = it["correcao"]

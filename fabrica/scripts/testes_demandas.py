@@ -1941,6 +1941,12 @@ HEAD_T2 = "f" * 40
 HEAD_C = "1" * 40
 BRANCH_T = "fabrica/teste-11111111"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+HEAD_C2 = "2" * 40
+HEAD_C3 = "3" * 40
+ACHADOS_DA_REVISAO = [
+    {"arquivo": "src/app/tutorial.tsx", "motivo": "No celular o tutorial ainda não funciona"},
+    {"arquivo": "src/app/x.ts", "motivo": "falta o teste"},
+]
 RETOMADA = [{"id": OUTRO, "tipo": "retomada", "origem": "paulo", "em": "2026-11-20T10:01:00Z", "dados": {}}]
 
 
@@ -2291,35 +2297,157 @@ class TestesTesteNoNavegador(BasePasso):
         self.passo(ClienteDeBusca())
         self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
 
-    def test_correcao_sem_ci_reprovada_pelo_revisor_trava_com_o_motivo_simples(self):
-        run_id = self.revisar_correcao_sem_ci()
-        self.veredito(run_id, "correcoes", achados=[{"arquivo": "src/app/clientes/page.tsx", "motivo": "o botão continua sem salvar"}, {"arquivo": "x", "motivo": "outro"}])
+    # reprovada pelo revisor: o conserto (um run do frontend no mesmo branch do PR, com os achados), até 2 vezes
+
+    def reprovar(self, achados=ACHADOS_DA_REVISAO):
+        """O revisor em curso reprova o head que revisou: o conserto fica despachado (devolve o run dele)."""
+        rev = self.item()["correcao"]["revisao"]
+        self.veredito(rev["runId"], "correcoes", sha=rev["sha"], achados=achados)
         self.passo(ClienteDeBusca())
+        return self.item()["runId"]
+
+    def consertar(self, run_id, head, *, estado="succeeded", motivo=None):
+        """O conserto termina com o PR no `head` (sem CI): o mesmo head de antes é conserto sem commit."""
+        self.forja.definir_pr(PR_C, head_sha=head, branch="fabrica/correcao-11111111", arquivos=["src/app/clientes/page.tsx"])
+        self.forja.definir_ci(REPO, head, "ausente")
+        self.motor.definir_run(run_id, estado=estado, motivoFalha=motivo, prUrl=PR_C if estado == "succeeded" else None)
+        self.passo(ClienteDeBusca())
+
+    def reprovar_depois_de_dois_consertos(self):
+        self.revisar_correcao_sem_ci()
+        self.consertar(self.reprovar(), HEAD_C2)
+        self.consertar(self.reprovar(), HEAD_C3)
+        self.reprovar()
+
+    def test_correcao_reprovada_pelo_revisor_despacha_o_conserto_no_mesmo_branch_com_os_achados(self):
+        self.revisar_correcao_sem_ci()
+        conserto = self.reprovar()
+        self.assertEqual((self.saida(), self.forja.merges, self.forja.fechados[1:]), ([], [], []))  # só o PR do teste foi fechado
+        self.assertEqual(len(self.despachos()), 4)
+        despacho = self.despachos()[3]
+        frontend = CONFIG_DO_KIT["modelos"]["frontend"]
+        self.assertEqual((despacho["agente"], despacho["modelo"], despacho["max_custo_usd"]), (frontend["agente"], frontend["modelo"], frontend["maxCustoUsd"]))
+        self.assertEqual(despacho["branch_existente"], "fabrica/correcao-11111111")
+        nonce = demandas.nonce_do_motor(ID, "conserto", 3)
+        self.assertEqual(despacho["chave_idempotencia"], nonce)
+        self.assertTrue(despacho["prompt"].endswith("<!-- fabrica:nonce=%s -->" % nonce))
+        for trecho in (PR_C, "src/app/tutorial.tsx", "No celular o tutorial ainda não funciona", "src/app/x.ts", "falta o teste", "o botão salvar não responde"):
+            self.assertIn(trecho, despacho["prompt"])
+        c = self.item()["correcao"]
+        self.assertEqual((c["consertos"], c["conserto"]["sha"], conserto), (1, HEAD_C, "run-4"))
+        self.assertNotIn("revisao", c)
+        # gravado com o nonce antes do POST
+        antes = [s["demandas"]["itens"][ID] for s in self.salvos if s["demandas"]["itens"][ID].get("nonce") == nonce]
+        self.assertIsNone(antes[0]["runId"])
+        # a vaga do revisor passa ao conserto (nada a mais reservado)
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        self.assertEqual(demandas.chaves_ocupando(self.estado, AGORA), {demandas.chave(ID)})
+        # o conserto ainda roda: nada
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.despachos()), self.saida()), (4, []))
+
+    def test_conserto_com_commit_novo_e_revisado_de_novo_e_aprovado_mergeia(self):
+        self.revisar_correcao_sem_ci()
+        self.consertar(self.reprovar(), HEAD_C2)
+        self.assertEqual(len(self.despachos()), 5)
+        revisao = self.despachos()[4]
+        self.assertEqual(revisao["branch_existente"], "fabrica/correcao-11111111")
+        self.assertIn(HEAD_C2, revisao["prompt"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        self.assertNotIn("conserto", self.item()["correcao"])
+        self.veredito(self.item()["correcao"]["revisao"]["runId"], "aprovado", sha=HEAD_C2)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C2)])
+        self.assertEqual([(e["tipo"], e["dados"]) for e in self.saida()], [("etapa_concluida", {"marco": "desenvolvida"})])
+        self.assertEqual(self.reservas(), {})
+
+    def test_reprovada_depois_de_dois_consertos_trava_com_o_motivo_simples(self):
+        self.reprovar_depois_de_dois_consertos()
+        self.assertEqual(len(self.despachos()), 7)  # teste, correção e três revisões com dois consertos no meio
         self.assertEqual(self.forja.merges, [])
         (evento,) = self.saida()
-        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": "O revisor da Fábrica reprovou a correção: o botão continua sem salvar", "url": PR_C}))
-        self.assertEqual(self.reservas(), {})
+        motivo = "O revisor da Fábrica reprovou a correção: No celular o tutorial ainda não funciona (mesmo depois de dois consertos da Fábrica)"
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": motivo, "url": PR_C}))
+        self.assertEqual((self.reservas(), demandas.chaves_ocupando(self.estado, AGORA)), ({}, set()))
         # a trava no Flow e o PR aberto: nada
         self.enviado()
         self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="4")))
-        self.assertEqual((self.saida(), len(self.despachos())), ([], 3))
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 7))
         # o Paulo mergeia o PR mesmo assim: segue sozinho
-        self.paulo_mergeia()
+        self.paulo_mergeia(head=HEAD_C3)
         self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", espera="travada"), cursor="5")))
         self.assertEqual([e["tipo"] for e in self.saida()], ["destravada", "etapa_concluida"])
 
-    def test_retomada_depois_da_reprovacao_revisa_de_novo(self):
-        run_id = self.revisar_correcao_sem_ci()
-        self.veredito(run_id, "correcoes", achados=[{"arquivo": "a", "motivo": "falta o teste"}])
-        self.passo(ClienteDeBusca())
+    def test_retomada_depois_dos_consertos_fecha_o_pr_e_corrige_do_zero_a_partir_de_main(self):
+        self.reprovar_depois_de_dois_consertos()
         self.enviado()
         self.avancar(60)
         self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", eventos=RETOMADA), cursor="4")))
-        self.assertEqual(len(self.despachos()), 4)
-        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
-        self.veredito(self.item()["correcao"]["revisao"]["runId"], "aprovado")
+        self.assertEqual(self.forja.fechados[1:], [(PR_C, demandas.COMENTARIO_DA_CORRECAO_REFEITA)])
+        self.assertEqual(len(self.despachos()), 8)
+        nova = self.despachos()[7]
+        self.assertIsNone(nova["branch_existente"])
+        self.assertIn("Corrija a partir de main", nova["prompt"])
+        self.assertIn("o botão salvar não responde", nova["prompt"])
+        c = self.item()["correcao"]
+        self.assertEqual((c.get("prUrl"), c.get("consertos", 0), self.item()["travaDaCorrecao"]), (None, 0, False))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        self.assertEqual(self.forja.merges, [])
+
+    def test_queda_no_post_do_conserto_acha_o_run_pelo_nonce(self):
+        self.revisar_correcao_sem_ci()
+        rev = self.item()["correcao"]["revisao"]
+        self.veredito(rev["runId"], "correcoes", achados=ACHADOS_DA_REVISAO)
+        self.motor.falhar_despacho("incerta")
         self.passo(ClienteDeBusca())
-        self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+        self.assertIsNone(self.item()["runId"])
+        self.assertEqual(self.item()["correcao"]["conserto"]["branch"], "fabrica/correcao-11111111")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 4)  # nenhum POST a mais
+        self.assertEqual(self.item()["runId"], "run-4")
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+
+    def test_conserto_sem_commit_conta_como_rodada_e_na_segunda_trava(self):
+        self.revisar_correcao_sem_ci()
+        # o frontend não mudou nada (o Warren dá o run como falho sem commit): conta, e o conserto vai de novo
+        self.consertar(self.reprovar(), HEAD_C, estado="failed", motivo="no_changes")
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 5))
+        segundo = self.despachos()[4]
+        self.assertEqual(segundo["branch_existente"], "fabrica/correcao-11111111")
+        self.assertIn("No celular o tutorial ainda não funciona", segundo["prompt"])
+        self.assertEqual(self.item()["correcao"]["consertos"], 2)
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        # o segundo só ganha o commit de controle do Warren: também não mudou o código
+        self.forja.definir_comparacao(REPO, HEAD_C, HEAD_C2, [".seeds/issues.jsonl"])
+        self.consertar(self.item()["runId"], HEAD_C2)
+        (evento,) = self.saida()
+        motivo = "O revisor da Fábrica reprovou a correção: No celular o tutorial ainda não funciona (mesmo depois de dois consertos da Fábrica)"
+        self.assertEqual((evento["tipo"], evento["dados"]), ("travada", {"motivo": motivo, "url": PR_C}))
+        self.assertEqual((self.reservas(), len(self.despachos()), self.forja.merges), ({}, 5, []))
+
+    def test_conserto_espera_a_drenagem_com_a_vaga_do_revisor(self):
+        self.revisar_correcao_sem_ci()
+        capacidade.definir_drenagem(self.capacidade, AGORA)
+        self.reprovar()
+        self.assertEqual((len(self.despachos()), self.saida()), (3, []))
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["revisor"]})
+        capacidade.definir_drenagem(self.capacidade, None)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 4)
+        self.assertEqual(self.despachos()[3]["branch_existente"], "fabrica/correcao-11111111")
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+
+    def test_paulo_descarta_a_demanda_com_o_conserto_rodando_segura_a_vaga_ate_o_run_terminar(self):
+        self.revisar_correcao_sem_ci()
+        conserto = self.reprovar()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida", encerrada="descartada"), cursor="4")))
+        self.assertIn(ID, self.estado["demandas"]["itens"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+        self.motor.definir_run(conserto, estado="succeeded", prUrl=PR_C)
+        self.passo(ClienteDeBusca())
+        self.passo(ClienteDeBusca())
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+        self.assertEqual((self.reservas(), self.forja.merges), ({}, []))
 
     def test_revisor_sem_veredito_revisa_uma_vez_mais_e_depois_trava(self):
         run_id = self.revisar_correcao_sem_ci()
