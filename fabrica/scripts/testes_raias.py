@@ -428,6 +428,23 @@ class TestesRaiasProntas(unittest.TestCase):
         self.assertEqual(prontas, ["fundacao"])
 
 
+class TestesImpressaoDaRaia(unittest.TestCase):
+    def test_impressao_estavel_e_sensivel(self):
+        base = {"id": "a", "criteriosAceite": ["c1", "c2"], "arquivos": ["src/a/"], "verificacao": "pnpm test", "dependeDe": []}
+        reordenada = {k: base[k] for k in reversed(list(base))}
+        impressao = raias.impressao_da_raia(base)
+        self.assertRegex(impressao, r"^[0-9a-f]{64}$")
+        self.assertEqual(raias.impressao_da_raia(reordenada), impressao)
+        self.assertNotEqual(raias.impressao_da_raia(dict(base, criteriosAceite=["c1", "c3"])), impressao)
+        self.assertNotEqual(raias.impressao_da_raia(dict(base, arquivos=["src/a/", "src/b/**"])), impressao)
+        self.assertEqual(raias.impressao_da_raia(dict(base, verificacao="pnpm e2e")), impressao)
+        self.assertEqual(raias.impressao_da_raia(dict(base, dependeDe=["x"])), impressao)
+        self.assertEqual(
+            raias.impressao_da_raia({"id": "a"}),
+            raias.impressao_da_raia({"id": "a", "criteriosAceite": [], "arquivos": []}),
+        )
+
+
 class TestesCli(unittest.TestCase):
     def executar(self, plano):
         with tempfile.TemporaryDirectory() as pasta:

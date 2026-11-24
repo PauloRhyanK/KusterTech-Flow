@@ -29,6 +29,6 @@ Cada achado e motivo recebido foi corrigido ou, se não for reproduzível, está
 
 ## Skills Superpowers
 
-`systematic-debugging` para reproduzir antes de corrigir, `test-driven-development` quando o achado é comportamento, e `verification-before-completion` antes de parar. O fixer roda no máximo uma vez por seed; depois disso, quem decide é o orquestrador.
+`systematic-debugging` para reproduzir antes de corrigir, `test-driven-development` quando o achado é comportamento, e `verification-before-completion` antes de parar. O fixer roda no máximo duas vezes por seed (a 2ª só quando os achados mudaram); depois disso, quem decide é o orquestrador.
 
 > Aplicam-se também os princípios de `../PADROES-COMUNS.md`.

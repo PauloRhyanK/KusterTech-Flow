@@ -43,7 +43,7 @@ Formar profissionais de IA autônomos, competentes e pragmáticos, capazes de en
 - Para interface, **compilar não equivale a uma experiência boa**: inspeção visual/funcional real e evidências em ambiente apto são exigidas.
 - QA verifica comportamento de ponta a ponta, além dos testes de unidade do implementador.
 - O despachante, não a LLM, acompanha eventos, aplica gates, aciona os runs permitidos e realiza merge após as condições serem satisfeitas.
-- O fixer é uma **função temporária de correção** exercida por especialista no escopo, não um cargo permanente do catálogo. No fluxo atual da Fábrica, roda no máximo uma vez antes de escalar.
+- O fixer é uma **função temporária de correção** exercida por especialista no escopo, não um cargo permanente do catálogo. No fluxo atual da Fábrica, roda no máximo duas vezes (a 2ª só quando os achados mudaram) antes de escalar.
 
 ## Onde as verificações acontecem
 

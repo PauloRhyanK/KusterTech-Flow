@@ -46,6 +46,7 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
     """Prompt do revisor independente do PR da seed, no commit `sha`."""
     criterios = raia.get("criteriosAceite") or []
     lista = "\n".join(f"- {c}" for c in criterios) or "- (nenhum critério listado)"
+    particao = _lista_de_arquivos(raia.get("arquivos")) or "- (nenhum arquivo listado)"
     exemplo = json.dumps(
         {
             "sha": sha,
@@ -61,6 +62,10 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
         "Confira o diff do PR contra cada critério de aceite da raia:\n"
         f"{lista}\n"
         "\n"
+        "Partição da raia (arquivos que ela pode tocar):\n"
+        f"{particao}\n"
+        "Arquivo fora da partição só é achado se a mudança precisava estar nele.\n"
+        "\n"
         "Não faça commit nem push: você só lê e avalia.\n"
         "\n"
         "Termine a sua mensagem final com o bloco abaixo, como a última coisa escrita.\n"
@@ -75,21 +80,37 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
     )
 
 
+def _lista_de_arquivos(arquivos) -> str:
+    """Os globs da partição da raia, um por linha (entrada malformada vira lista vazia)."""
+    return "\n".join(f"- {a}" for a in (arquivos if isinstance(arquivos, list) else []) if isinstance(a, str))
+
+
 def prompt_fixer(
-    *, seed_id: str, papel: str, motivos: list[str], achados: list[dict], saida_verificacao: str
+    *,
+    seed_id: str,
+    papel: str,
+    motivos: list[str],
+    achados: list[dict],
+    saida_verificacao: str,
+    arquivos: list[str] | None = None,
 ) -> str:
-    """Prompt do fixer: o especialista da raia (`papel`) em modo de correção, só no que foi listado."""
+    """Prompt do fixer: o especialista da raia (`papel`) em modo de correção, só no que foi listado.
+
+    `arquivos`: a partição da raia; sem ela (chamada antiga), o prompt não traz a seção."""
     pacote = _pacote_do_papel(papel)
     linhas_motivos = "\n".join(f"- {m}" for m in motivos) or "- (nenhum)"
     linhas_achados = "\n".join(f"- {a.get('arquivo')}: {a.get('motivo')}" for a in achados) or "- (nenhum)"
     saida = saida_verificacao[-LIMITE_SAIDA_VERIFICACAO:]
+    particao = _lista_de_arquivos(arquivos)
+    particao = f"Corrija só dentro destes arquivos (a partição da raia):\n{particao}\n\n" if particao else ""
     return (
         f"Você corrige o PR da seed {seed_id}.\n"
         "\n"
         "Leia `AGENTS.md`, o pacote `.fabrica/equipes/fixer.md` e o pacote do papel da raia `" + pacote + "`.\n"
         "Corrija só o listado abaixo, sem ampliar o escopo. Faça commit na branch atual do PR.\n"
         "\n"
-        "Motivos:\n"
+        + particao
+        + "Motivos:\n"
         f"{linhas_motivos}\n"
         "\n"
         "Achados da revisão:\n"

@@ -2282,6 +2282,19 @@ class TestesConfig(Base):
         self.assertIn(".fabrica/equipes/ux-ui.md", fixer["prompt"])
         self.assertNotIn("ux-engineer", fixer["prompt"])
 
+    def test_revisor_e_fixer_recebem_a_particao_da_raia(self):
+        d = self.preparar_raia(plano(raia("a", arquivos=["src/a/", "src/compartilhado/x.ts"])))
+        self.abrir_pr(H1, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.assertEqual([a["tipo"] for a in d.ciclo()], ["corrigir"])
+        (fixer,) = self.runs(HAIKU)
+        self.assertIn("Corrija só dentro destes arquivos", fixer["prompt"])
+        self.assertIn("- src/compartilhado/x.ts", fixer["prompt"])
+        (revisor,) = self.runs(CONFIG["modelos"]["revisor"]["modelo"])
+        self.assertIn("Partição da raia", revisor["prompt"])
+        self.assertIn("- src/compartilhado/x.ts", revisor["prompt"])
+
     def test_fixer_sem_papel_conhecido_nao_e_despachado(self):
         d = self.preparar_raia()
         self.abrir_pr(H1, ci="vermelho")
@@ -7011,6 +7024,123 @@ class TestesCapacidadeGlobal(Base):
             with self.subTest(extra=extra):
                 with self.assertRaises(despachante.ConfigInvalida):
                     self.novo(**extra)
+
+
+class TestesEmendaDaRaia(Base):
+    def emendada(self):
+        r = raia("a")
+        r["criteriosAceite"] = ["a pronta", "a com paginação"]
+        return r
+
+    def ate_acordar_apos_fixer(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="succeeded")
+        self.mover_head(H2, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(H2)
+        acoes = d.ciclo()
+        self.assertEqual([(a["tipo"], a.get("motivo")) for a in acoes], [("acordar", "gate_falhou_apos_fixer")])
+        return d
+
+    def test_revisar_leva_a_impressao_da_raia_atual(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertTrue(seed["revisaoRunId"])
+        self.assertEqual(seed["revisadaContra"], despachante.raias.impressao_da_raia(raia("a")))
+
+    def test_reabrir_seed_esquece_a_acordada_gasta(self):
+        d = self.ate_acordar_apos_fixer()
+        self.assertIn("gate_falhou_apos_fixer:s-1", self.estado()["chavesAcordadas"])
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.publicar(plano(self.emendada()))
+        acoes = d.ciclo()
+        contra = despachante.raias.impressao_da_raia(self.emendada())
+        self.assertEqual(acoes[0], {"tipo": "reabrir_seed", "seed": "s-1", "contra": contra})
+        # a seed reaberta não recebe outra ação no mesmo ciclo
+        self.assertEqual([a for a in acoes[1:] if a.get("seed") == "s-1" or a.get("alvo") == "s-1"], [])
+        e = self.estado()
+        self.assertNotIn("gate_falhou_apos_fixer:s-1", e["chavesAcordadas"])
+        self.assertIsNone(e["seeds"]["s-1"]["veredito"])
+        self.assertIsNone(e["seeds"]["s-1"]["revisaoRunId"])
+        self.assertEqual(e["seeds"]["s-1"]["fixersUsados"], 0)
+        (linha,) = [l for l in self.log() if l.get("evento") == "emenda_reabriu_seed"]
+        self.assertEqual((linha["seed"], linha["emendas"]), ("s-1", 1))
+        # o ciclo seguinte revê o mesmo PR no mesmo head, contra a raia emendada (a verificação de H2 vale)
+        acoes = d.ciclo()
+        self.assertEqual([(a["tipo"], a.get("sha")) for a in acoes], [("revisar", H2)])
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual((seed["revisaoSha"], seed["revisadaContra"]), (H2, contra))
+        self.terminar_revisao(H2)
+        acoes = d.ciclo()
+        # com o fixer devolvido pela emenda, o gate vermelho ganha um fixer antes de acordar
+        self.assertEqual([a["tipo"] for a in acoes], ["corrigir"])
+
+    def test_no_teto_de_emendas_o_gate_vermelho_vai_ao_paulo(self):
+        d = self.ate_acordar_apos_fixer()
+        d.estado["seeds"]["s-1"]["emendas"] = est.MAX_EMENDAS - 1
+        d._salvar()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
+        d.ciclo()
+        self.publicar(plano(self.emendada()))
+        acoes = d.ciclo()
+        self.assertEqual(acoes[0]["tipo"], "reabrir_seed")
+        e = self.estado()
+        self.assertNotIn("gate_falhou_apos_fixer:s-1", e["chavesAcordadas"])
+        # a última emenda ainda devolve os fixers
+        self.assertEqual((e["seeds"]["s-1"]["emendas"], e["seeds"]["s-1"]["fixersUsados"]), (est.MAX_EMENDAS, 0))
+        acoes = d.ciclo()
+        self.assertEqual([(a["tipo"], a.get("sha")) for a in acoes], [("revisar", H2)])
+        self.terminar_revisao(H2)
+        self.assertEqual([a["tipo"] for a in d.ciclo()], ["corrigir"])
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="succeeded")
+        h4 = "4" * 40
+        self.mover_head(h4, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(h4)
+        orquestradores = len(self.runs(FABLE))
+        acoes = d.ciclo()
+        motivo = "gate vermelho depois de %d emendas da raia" % est.MAX_EMENDAS
+        self.assertEqual(acoes, [{"tipo": "aguardar_humano", "seed": "s-1", "motivos": [motivo]}])
+        self.assertEqual(len(self.runs(FABLE)), orquestradores)
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        self.assertTrue(any(motivo in corpo for _, corpo in self.forja.decisoes))
+
+    def test_reabrir_seed_tira_da_fila_a_acordada_da_seed(self):
+        d = self.ate_acordar_apos_fixer()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
+        d.ciclo()
+        self.publicar(plano(self.emendada()))
+        outra = {"motivo": "raia_falhou", "alvo": "b", "contexto": {}}
+        d.estado["acordarPendentes"] = [
+            {"motivo": "gate_falhou_apos_fixer", "alvo": "s-1", "contexto": {}, "repetir": True},
+            {"motivo": "seed_parada", "alvo": "s-1", "contexto": {}},
+            {"motivo": "gate_falhou_apos_fixer", "alvo": "s-2", "contexto": {}},
+            outra,
+        ]
+        d._reabrir_seed({"tipo": "reabrir_seed", "seed": "s-1", "contra": "x"})
+        self.assertEqual(
+            self.estado()["acordarPendentes"],
+            [{"motivo": "gate_falhou_apos_fixer", "alvo": "s-2", "contexto": {}}, outra],
+        )
+
+    def test_contexto_da_acordada_traz_a_rodada_anterior(self):
+        d = self.preparar_raia()
+        d.estado["seeds"]["s-1"] = dict(est._seed_nova("a"), fixersUsados=2, rodadaDoFixer=["a.tsx|x"])
+        contexto = d._contexto({"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s-1"})
+        self.assertEqual((contexto["fixersUsados"], contexto["rodadaDoFixer"]), (2, ["a.tsx|x"]))
 
 
 if __name__ == "__main__":

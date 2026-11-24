@@ -21,6 +21,8 @@ MAX_TENTATIVAS_REVISAO = 2
 MAX_RECUSAS_DE_MERGE = 3
 MAX_FALHAS_ACORDAR = 3
 MAX_INTERRUPCOES = 3
+MAX_FIXERS = 2
+MAX_EMENDAS = 2
 TERMINAIS = ("mergeada", "obsoleta")
 ESTADOS_DE_GATE = ("em_revisao", "aguardando_gates", "corrigindo")
 MOTIVOS_DO_PAULO = ("nova_spec", "fase_concluida")
@@ -87,6 +89,10 @@ def _seed_nova(raia_id: str, agora=None) -> dict:
         "tentativasRevisao": 0,
         "fixerRunId": None,
         "fixerUsado": False,
+        "fixersUsados": 0,
+        "rodadaDoFixer": None,
+        "revisadaContra": None,
+        "emendas": 0,
         "tentativasMerge": 0,
         "interrupcoes": 0,
         "pendenteHumano": None,
@@ -455,8 +461,11 @@ def registrar_fim_de_run(
             achou = True
             seed["fixerRunId"] = None
             if interrompido:
-                # o fixer volta a ser emitido: devolve o veredito que o motivou
-                seed["fixerUsado"] = False
+                # o fixer volta a ser emitido: devolve só ele e o veredito que o motivou; a rodada fica
+                # desconhecida (conta como mudada)
+                seed["fixersUsados"] = max(0, fixers_usados(seed) - 1)
+                seed["fixerUsado"] = seed["fixersUsados"] >= 1
+                seed["rodadaDoFixer"] = None
                 seed["veredito"] = seed.get("vereditoAnterior")
                 _contar_interrupcao(estado, seed_id, seed, motivo_falha)
             elif estado_run == "succeeded":
@@ -509,6 +518,38 @@ def _ci_ausente_recente(seed: dict, agora) -> bool:
     return datetime.timedelta(0) <= decorrido < ESPERA_CI_AUSENTE
 
 
+def _normalizar(texto) -> str:
+    return " ".join(str(texto).lower().split())
+
+
+def chave_da_rodada(motivos: list, achados: list | None) -> list[str]:
+    """Identifica os problemas de uma rodada de gate, para saber se mudaram depois de um fixer."""
+    chave = set()
+    for a in achados if isinstance(achados, list) else []:
+        a = a if isinstance(a, dict) else {}
+        chave.add(f"{_normalizar(a.get('arquivo'))}|{_normalizar(a.get('motivo'))}")
+    for m in motivos if isinstance(motivos, list) else []:
+        if not str(m).startswith("revisão pediu correções"):
+            chave.add(f"motivo|{_normalizar(m)}")
+    return sorted(chave)
+
+
+def fixers_usados(seed: dict) -> int:
+    usado = seed.get("fixerUsado")
+    if not isinstance(usado, bool):
+        return MAX_FIXERS  # malformado ou ausente conta como esgotado
+    n = seed.get("fixersUsados")
+    if _inteiro(n) and n >= 0:
+        return n
+    return 1 if usado else 0  # estado antigo: só existe o booleano
+
+
+def _gastar_fixer(seed: dict, acao: dict) -> None:
+    seed["fixersUsados"] = fixers_usados(seed) + 1
+    seed["fixerUsado"] = True
+    seed["rodadaDoFixer"] = chave_da_rodada(acao.get("motivos"), acao.get("achados"))
+
+
 def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional=False) -> list[dict]:
     head = seed.get("headSha")
     r = gates.avaliar_merge(
@@ -527,17 +568,26 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional
     if decisao == "humano":
         return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": list(r["motivos"])}]
     if decisao == "corrigir":
-        if seed.get("fixerUsado") is False:
-            achados = _dict(seed.get("veredito")).get("achados")
+        n = fixers_usados(seed)
+        achados = _dict(seed.get("veredito")).get("achados")
+        achados = copy.deepcopy(achados) if isinstance(achados, list) else []
+        if n == 0 or (
+            n < MAX_FIXERS and chave_da_rodada(r["motivos"], achados) != seed.get("rodadaDoFixer")
+        ):
             return [
                 {
                     "tipo": "corrigir",
                     "seed": seed_id,
                     "sha": head,
                     "motivos": list(r["motivos"]),
-                    "achados": copy.deepcopy(achados) if isinstance(achados, list) else [],
+                    "achados": achados,
                 }
             ]
+        emendas = seed.get("emendas")
+        if _inteiro(emendas) and emendas >= MAX_EMENDAS:
+            # a raia já teve as emendas do teto e o gate segue vermelho: o orquestrador não é chamado de novo
+            motivo = f"gate vermelho depois de {emendas} emendas da raia"
+            return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": [motivo]}]
         return [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id}]
     if decisao != "aguardar":
         return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": [f"decisão desconhecida {decisao!r}"]}]
@@ -550,6 +600,32 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional
     if "verificacao" in r["faltando"]:
         acoes.append({"tipo": "verificar", "seed": seed_id, "sha": head})
     return acoes
+
+
+def _reabertura(seed_id: str, seed, plano: dict, raias_do_estado: dict):
+    """`reabrir_seed` quando a raia da seed, no plano, não é mais aquela contra a qual o PR foi revisto."""
+    if not isinstance(seed, dict) or not _texto(seed.get("revisadaContra")) or not _texto(seed.get("pr")):
+        return None
+    # a decisão do Paulo vem antes: a seed é reaberta quando sair da trava
+    if seed.get("estado") in TERMINAIS + ("fechada", "bloqueada_humano") or seed.get("pendenteHumano"):
+        return None
+    # run em curso: espera ele terminar (o veredito dele é da raia antiga e também cai)
+    if seed.get("revisaoRunId") is not None or seed.get("fixerRunId") is not None:
+        return None
+    # só revive a seed que falhou depois do fixer (a do passo 4); outra falha não é da emenda
+    if seed.get("estado") == "falhou" and fixers_usados(seed) < 1:
+        return None
+    if _dict(raias_do_estado.get(seed.get("raia"))).get("estado") != "executando":
+        return None
+    raia = next(
+        (r for r in _lista(plano.get("raias")) if isinstance(r, dict) and r.get("id") == seed.get("raia")), None
+    )
+    if raia is None:
+        return None
+    nova = raias.impressao_da_raia(raia)
+    if nova == seed["revisadaContra"]:
+        return None
+    return {"tipo": "reabrir_seed", "seed": seed_id, "contra": nova}
 
 
 def _fase_atual(plano: dict):
@@ -575,9 +651,19 @@ def proximas_acoes(
     acoes: list[dict] = []
     raias_do_estado = {i: r for i, r in _raias(estado).items() if isinstance(r, dict)}
 
+    # 0. emenda da raia (critérios ou partição mudaram no plano): o mesmo PR é revisto, sem outras ações no ciclo
+    reabertas = set()
+    for seed_id, seed in _seeds(estado).items():
+        acao = _reabertura(seed_id, seed, plano, raias_do_estado)
+        if acao is not None:
+            acoes.append(acao)
+            reabertas.add(seed_id)
+
+    chaves = _lista(estado.get("chavesAcordadas"))
+
     # 1. seeds: decisões humanas pendentes e gates dos PRs
     for seed_id, seed in _seeds(estado).items():
-        if not isinstance(seed, dict):
+        if not isinstance(seed, dict) or seed_id in reabertas:
             continue
         pendente = seed.get("pendenteHumano")
         # a trava vai ao orquestrador; o `acordar` repetido é descartado no fim e o vigia do despachante decide quando
@@ -600,6 +686,13 @@ def proximas_acoes(
             for a in _acoes_da_seed(seed_id, seed, protegidos, agora, ci_opcional):
                 # raia falha: quem decide o destino do PR é o orquestrador
                 if raia_falhou and a["tipo"] == "mergear":
+                    continue
+                # a rodada já é do orquestrador (chave gasta): nada de outro fixer, nem no estado antigo sem `rodadaDoFixer`
+                if (
+                    a["tipo"] == "corrigir"
+                    and fixers_usados(seed) >= 1
+                    and _chave("gate_falhou_apos_fixer", seed_id) in chaves
+                ):
                     continue
                 if vai_ao_orquestrador and a["tipo"] == "aguardar_humano" and a["motivos"] == ["revisor sem veredito válido"]:
                     a = {"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id}
@@ -628,6 +721,7 @@ def proximas_acoes(
     for seed_id, seed in _seeds(estado).items():
         if (
             isinstance(seed, dict)
+            and seed_id not in reabertas
             and seed.get("estado") == "falhou"
             and seed.get("fixerUsado") is True
             and not seed.get("pendenteHumano")
@@ -650,7 +744,6 @@ def proximas_acoes(
 
     # um só orquestrador: no máximo um `acordar`, nunca com outro em curso nem repetido
     orquestrador_livre = _dict(estado.get("orquestrador")).get("runId") is None
-    chaves = _lista(estado.get("chavesAcordadas"))
     final, acordou = [], False
     for acao in acoes:
         if acao["tipo"] == "acordar":
@@ -794,7 +887,7 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
             _avisar(estado, f"acordar falhou {falhas} vezes seguidas: despachante pausado")
         return estado
 
-    if tipo not in ("revisar", "verificar", "corrigir", "mergear", "aguardar_humano"):
+    if tipo not in ("revisar", "verificar", "corrigir", "mergear", "aguardar_humano", "reabrir_seed"):
         _avisar(estado, f"aplicar: tipo de ação desconhecido {tipo!r}")
         return estado
     seed_id = acao.get("seed")
@@ -802,8 +895,23 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
     if seed is None:
         return estado
 
-    if tipo == "revisar":
+    if tipo == "reabrir_seed":
+        seed["veredito"] = None
+        seed["vereditoAnterior"] = None
+        seed["tentativasRevisao"] = 0
+        seed["revisadaContra"] = acao.get("contra") if _texto(acao.get("contra")) else None
+        emendas = seed.get("emendas")
+        seed["emendas"] = (emendas if _inteiro(emendas) and emendas >= 0 else 0) + 1
+        if seed["emendas"] <= MAX_EMENDAS:
+            seed["fixersUsados"] = 0
+            seed["fixerUsado"] = False
+            seed["rodadaDoFixer"] = None
+        if seed.get("estado") == "falhou":
+            marcar_estado_da_seed(seed, "em_revisao")  # o estado de uma seed com PR aberto esperando revisão
+    elif tipo == "revisar":
         if _texto(resultado.get("runId")):
+            if _texto(acao.get("contra")):
+                seed["revisadaContra"] = acao["contra"]
             seed["revisaoRunId"] = resultado["runId"]
             seed["revisaoSha"] = acao.get("sha") if _texto(acao.get("sha")) else None
             tentativas = seed.get("tentativasRevisao")
@@ -813,13 +921,13 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
     elif tipo == "corrigir":
         if _texto(resultado.get("runId")):
             seed["fixerRunId"] = resultado["runId"]
-            seed["fixerUsado"] = True
+            _gastar_fixer(seed, acao)
             seed["vereditoAnterior"] = seed.get("veredito")
             seed["veredito"] = None
             seed["tentativasRevisao"] = 0
             marcar_estado_da_seed(seed, "corrigindo")
         else:
-            seed["fixerUsado"] = True
+            _gastar_fixer(seed, acao)
             _pedir_humano(estado, seed_id, seed, "despacho do fixer sem runId")
     elif tipo == "verificar":
         verificacao = resultado.get("verificacao")
