@@ -7143,5 +7143,74 @@ class TestesEmendaDaRaia(Base):
         self.assertEqual((contexto["fixersUsados"], contexto["rodadaDoFixer"]), (2, ["a.tsx|x"]))
 
 
+class TestesReaberturaDeRaiaConcluida(Base):
+    """2ª rodada: planoSeeds novo numa raia `concluida` reabre a raia (caso modo-editor/kit-base)."""
+
+    def raia_concluida(self):
+        d = self.preparar_raia()
+        self.motor.definir_plano(
+            "plano-1", "succeeded", [{"seedId": "s-1", "estado": "merged", "runId": "run-filho", "prUrl": PR}]
+        )
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "concluida")
+        return d
+
+    def test_planoseeds_novo_reabre_e_redespacha_sem_cancelar_nada(self):
+        d = self.raia_concluida()
+        self.publicar(plano(raia("a", plano_seeds="pl-00a2")))
+        acoes = d.ciclo()
+        self.assertIn({"tipo": "reabrir_raia", "raia": "a", "planoSeeds": "pl-00a2"}, acoes)
+        self.assertEqual([x["plano_seeds"] for x in self.planos_despachados()], ["pl-000a", "pl-00a2"])
+        self.assertNotIn("cancelar_plano", [nome for nome, _ in self.motor.chamadas])
+        raia_ = self.estado()["raias"]["a"]
+        self.assertEqual((raia_["estado"], raia_["planoSeeds"], raia_["reaberturas"]), ("executando", "pl-00a2", 1))
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "mergeada")
+        self.assertNotIn("fase_concluida:f1", self.estado()["chavesAcordadas"])
+        [evento] = [x for x in self.log() if x.get("evento") == "raia_reaberta"]
+        self.assertEqual((evento["raia"], evento["de"], evento["para"]), ("a", "pl-000a", "pl-00a2"))
+        d.ciclo()
+        self.assertEqual(len(self.planos_despachados()), 2)
+        self.assertEqual(self.forja.fechados, [])
+
+    def test_queda_depois_de_gravar_a_reabertura_nao_reabre_de_novo(self):
+        d = self.raia_concluida()
+        self.publicar(plano(raia("a", plano_seeds="pl-00a2")))
+        original = d._log
+
+        def cair(registro):
+            if registro.get("evento") == "raia_reaberta":
+                raise KeyboardInterrupt
+            original(registro)
+
+        d._log = cair
+        with self.assertRaises(KeyboardInterrupt):
+            d.ciclo()
+        raia_ = self.estado()["raias"]["a"]
+        self.assertEqual((raia_["estado"], raia_["planoSeeds"], raia_["reaberturas"]), ("planejada", "pl-00a2", 1))
+        outro = self.novo()
+        outro.ciclo()
+        outro.ciclo()
+        raia_ = self.estado()["raias"]["a"]
+        self.assertEqual((raia_["estado"], raia_["reaberturas"]), ("executando", 1))
+        self.assertEqual([x["plano_seeds"] for x in self.planos_despachados()], ["pl-000a", "pl-00a2"])
+
+    def test_mesmo_planoseeds_nao_reabre(self):
+        d = self.raia_concluida()
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "concluida")
+        self.assertEqual(len(self.planos_despachados()), 1)
+
+    def test_raia_de_fase_anterior_e_reaberta_e_despachada(self):
+        d = self.preparar_raia(_plano_de_duas_fases(fase="f2"))
+        d.estado["raias"]["a"].update(estado="concluida", planRunId="plano-0")
+        d._salvar()
+        novo = _plano_de_duas_fases(fase="f2")
+        novo["raias"][0]["planoSeeds"] = "pl-00a2"
+        self.publicar(novo)
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+        self.assertEqual(self.planos_despachados()[-1]["plano_seeds"], "pl-00a2")
+
+
 if __name__ == "__main__":
     unittest.main()

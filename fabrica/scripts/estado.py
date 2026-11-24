@@ -129,7 +129,18 @@ def _reiniciada(raia: dict, plano_seeds) -> dict:
     anteriores = raia.get("replanejamentos")
     nova = _raia_nova(plano_seeds)
     nova["replanejamentos"] = (anteriores if _inteiro(anteriores) and anteriores >= 0 else 0) + 1
+    if _inteiro(raia.get("reaberturas")):
+        nova["reaberturas"] = raia["reaberturas"]
     return nova
+
+
+def _reabertas_em_curso(raias_do_estado: dict) -> set:
+    """Raias reabertas para uma 2ª rodada (`reabrir_raia`) que ainda não concluíram de novo."""
+    return {
+        i
+        for i, r in raias_do_estado.items()
+        if isinstance(r, dict) and _inteiro(r.get("reaberturas")) and r["reaberturas"] > 0 and r.get("estado") != "concluida"
+    }
 
 
 def _raias_do_plano(plano) -> list[tuple[str, object]]:
@@ -273,6 +284,52 @@ def substituir_raia(estado: dict, raia_id: str, plano_seeds: str) -> dict:
         return estado
     _raias(estado)[raia_id] = _reiniciada(raia, plano_seeds)
     _raias(estado)[raia_id]["seedsSubstituidas"] = _remover_tentativa(estado, raia_id, avisar=False)
+    return estado
+
+
+def reabrir_raia(estado: dict, plano: dict, raia_id: str) -> dict:
+    """2ª rodada de uma raia `concluida` cujo `planoSeeds` mudou no plano: ela volta a `planejada` com o novo.
+
+    Não há Plan Run a cancelar e as seeds da rodada anterior já terminaram: elas ficam no estado (histórico).
+    `replanejamentos` (F2c, que conta falhas) não muda; `reaberturas` conta as rodadas extras.
+
+    Fases: a raia da fase atual ou de uma anterior tira `fase_concluida:<faseAtual>` de `chavesAcordadas` e de
+    `acordarPendentes`, porque a fase atual só termina de novo quando a raia reaberta concluir (a de fase
+    anterior é despachada mesmo fora da fase atual, ver `raias.raias_prontas`). A de fase posterior volta a
+    `planejada` e espera a fase dela, sem mexer na fase atual.
+
+    Idempotente: raia que não está `concluida` (inclusive a já reaberta) ou `planoSeeds` igual/ausente no
+    plano voltam sem mudança.
+    """
+    estado = copy.deepcopy(estado)
+    plano = _dict(copy.deepcopy(plano))
+    raia = _raias(estado).get(raia_id) if isinstance(raia_id, str) else None
+    plano_seeds = dict(_raias_do_plano(plano)).get(raia_id)
+    if (
+        not isinstance(raia, dict)
+        or raia.get("estado") != "concluida"
+        or not _texto(plano_seeds)
+        or not _texto(raia.get("planoSeeds"))
+        or plano_seeds == raia["planoSeeds"]
+    ):
+        return estado
+    nova = _raia_nova(plano_seeds)
+    if "replanejamentos" in raia:
+        nova["replanejamentos"] = raia["replanejamentos"]
+    anteriores = raia.get("reaberturas")
+    nova["reaberturas"] = (anteriores if _inteiro(anteriores) and anteriores >= 0 else 0) + 1
+    _raias(estado)[raia_id] = nova
+    fase_id, membros = _fase_atual(plano)
+    if fase_id is not None and (raia_id in membros or raia_id in raias.raias_de_fases_anteriores(plano)):
+        chave = _chave("fase_concluida", fase_id)
+        if chave in _lista(estado.get("chavesAcordadas")):
+            estado["chavesAcordadas"] = [c for c in estado["chavesAcordadas"] if c != chave]
+        if isinstance(estado.get("acordarPendentes"), list):
+            estado["acordarPendentes"] = [
+                p
+                for p in estado["acordarPendentes"]
+                if not (_dict(p).get("motivo") == "fase_concluida" and _dict(p).get("alvo") == fase_id)
+            ]
     return estado
 
 
@@ -708,11 +765,12 @@ def proximas_acoes(
     # 3. raias novas, até o limite de paralelismo
     limite = estado.get("limiteParalelo")
     vagas = limite - len(executando) if _inteiro(limite) else 0
+    raias_reabertas = _reabertas_em_curso(raias_do_estado)
     if vagas > 0:
         concluidas = {i for i, r in raias_do_estado.items() if r.get("estado") == "concluida"}
         prontas = [
             i
-            for i in raias.raias_prontas(plano, concluidas, set(executando))
+            for i in raias.raias_prontas(plano, concluidas, set(executando), raias_reabertas)
             if i in raias_do_estado and raias_do_estado[i].get("estado") == "planejada"
         ]
         acoes.extend({"tipo": "despachar_raia", "raia": i} for i in prontas[:vagas])
@@ -735,10 +793,12 @@ def proximas_acoes(
         if raia.get("estado") == "falhou":
             acoes.append({"tipo": "acordar", "motivo": "raia_falhou", "alvo": id_})
 
-    # 6. fase atual concluída
+    # 6. fase atual concluída (e nenhuma raia de fase anterior reaberta ainda em curso)
     fase_id, membros = _fase_atual(plano)
-    if membros and all(
-        raias_do_estado.get(m, {}).get("estado") == "concluida" for m in membros
+    if (
+        membros
+        and all(raias_do_estado.get(m, {}).get("estado") == "concluida" for m in membros)
+        and not (raias_reabertas & raias.raias_de_fases_anteriores(plano))
     ):
         acoes.append({"tipo": "acordar", "motivo": "fase_concluida", "alvo": fase_id})
 

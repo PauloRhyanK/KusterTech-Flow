@@ -2904,6 +2904,33 @@ class Despachante:
                 acoes.append({"tipo": "cancelar_raia", "raia": raia_id, "planoSeeds": novo})
         return acoes
 
+    def _acoes_de_reabertura(self) -> list[dict]:
+        """Raias `concluida` cujo `planoSeeds` mudou no plano: é a 2ª rodada que o orquestrador pediu."""
+        acoes = []
+        for raia_id, raia in _dict(self.estado.get("raias")).items():
+            raia = _dict(raia)
+            novo = _dict(self._raia_do_plano(raia_id)).get("planoSeeds")
+            if raia.get("estado") == "concluida" and _texto(novo) and _texto(raia.get("planoSeeds")) and novo != raia["planoSeeds"]:
+                acoes.append({"tipo": "reabrir_raia", "raia": raia_id, "planoSeeds": novo})
+        return acoes
+
+    def _reabrir_raia(self, acao: dict) -> None:
+        """Sem Plan Run nem PR a fechar: uma gravação só; a queda antes dela refaz a reabertura no próximo ciclo."""
+        raia_id = acao["raia"]
+        anterior = _dict(_dict(self.estado.get("raias")).get(raia_id)).get("planoSeeds")
+        self.estado = est.reabrir_raia(self.estado, self.plano, raia_id)
+        self._salvar()
+        raia = _dict(_dict(self.estado.get("raias")).get(raia_id))
+        self._log(
+            {
+                "evento": "raia_reaberta",
+                "raia": raia_id,
+                "de": anterior,
+                "para": raia.get("planoSeeds"),
+                "reaberturas": raia.get("reaberturas"),
+            }
+        )
+
     def _cancelar_raia(self, acao: dict) -> None:
         raia_id = acao["raia"]
         raia = _dict(_dict(self.estado.get("raias")).get(raia_id))
@@ -3067,6 +3094,9 @@ class Despachante:
         if self.estado.get("pausado"):
             return []
         executadas = []
+        for acao in self._acoes_de_reabertura():
+            self._reabrir_raia(acao)
+            executadas.append(acao)
         for acao in self._acoes_de_substituicao():
             self._cancelar_raia(acao)
             executadas.append(acao)

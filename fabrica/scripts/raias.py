@@ -202,8 +202,24 @@ def validar_plano(plano: dict) -> list[str]:
     return erros
 
 
-def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[str]:
-    """Raias da fase atual, ainda não iniciadas, com todas as dependências concluídas."""
+def raias_de_fases_anteriores(plano: dict) -> set[str]:
+    """Ids de raia das fases que vêm antes de `faseAtual` (vazio se `faseAtual` não existe)."""
+    anteriores: set[str] = set()
+    for fase in _lista(plano.get("fases")):
+        if not isinstance(fase, dict):
+            continue
+        if fase.get("id") == plano.get("faseAtual"):
+            return anteriores
+        anteriores.update(i for i in _lista(fase.get("raias")) if isinstance(i, str))
+    return set()
+
+
+def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str], reabertas=frozenset()) -> list[str]:
+    """Raias da fase atual, ainda não iniciadas, com todas as dependências concluídas.
+
+    `reabertas`: raias reabertas para uma 2ª rodada; as de fases anteriores à atual também entram (as de
+    fases posteriores esperam a fase delas, como as outras).
+    """
     fase_atual = next(
         (
             f
@@ -213,6 +229,7 @@ def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[s
         {},
     )
     da_fase = {i for i in _lista(fase_atual.get("raias")) if isinstance(i, str)}
+    da_fase |= raias_de_fases_anteriores(plano) & set(reabertas)
     return [
         r["id"]
         for r in _lista(plano.get("raias"))

@@ -427,6 +427,21 @@ class TestesRaiasProntas(unittest.TestCase):
         prontas = raias.raias_prontas(plano_referencia(), set(), set())
         self.assertEqual(prontas, ["fundacao"])
 
+    def test_raia_reaberta_de_fase_anterior_e_pronta(self):
+        prontas = raias.raias_prontas(self.plano_no_nucleo(), set(), set(), reabertas={"fundacao"})
+        self.assertEqual(prontas, ["fundacao"])
+        # ativa ou concluída continua fora
+        self.assertEqual(raias.raias_prontas(self.plano_no_nucleo(), set(), {"fundacao"}, reabertas={"fundacao"}), [])
+
+    def test_raia_reaberta_de_fase_posterior_espera_a_fase_dela(self):
+        prontas = raias.raias_prontas(plano_referencia(), set(), set(), reabertas={"back-clientes"})
+        self.assertEqual(prontas, ["fundacao"])
+
+    def test_fases_anteriores(self):
+        self.assertEqual(raias.raias_de_fases_anteriores(self.plano_no_nucleo()), {"fundacao"})
+        self.assertEqual(raias.raias_de_fases_anteriores(plano_referencia()), set())
+        self.assertEqual(raias.raias_de_fases_anteriores({"faseAtual": "x", "fases": [42]}), set())
+
 
 class TestesImpressaoDaRaia(unittest.TestCase):
     def test_impressao_estavel_e_sensivel(self):
