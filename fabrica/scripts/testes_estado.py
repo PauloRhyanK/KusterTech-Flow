@@ -312,6 +312,8 @@ class TestRegistrarPlano(unittest.TestCase):
                 "fixerUsado": False,
                 "fixersUsados": 0,
                 "rodadaDoFixer": None,
+                "revisadaContra": None,
+                "emendas": 0,
                 "tentativasMerge": 0,
                 "interrupcoes": 0,
                 "pendenteHumano": None,
@@ -1372,6 +1374,122 @@ class TestSegundoFixer(unittest.TestCase):
         d = est.chave_da_rodada([], [{"arquivo": "a", "motivo": "2"}, {"arquivo": "b", "motivo": "1"}])
         self.assertEqual(c, d)
 
+
+
+def _raia_a(p):
+    return next(r for r in p["raias"] if r["id"] == "a")
+
+
+class TestEmendaDaRaia(unittest.TestCase):
+    A1 = [{"arquivo": "a.tsx", "motivo": "x"}]
+
+    def antiga(self):
+        return raias.impressao_da_raia(_raia_a(plano()))
+
+    def emendado(self):
+        p = plano()
+        _raia_a(p)["criteriosAceite"] = ["a pronta", "a com paginação"]
+        return p
+
+    def montar(self, fixers=2, emendas=None):
+        e = com_pr(sha="bbb")
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb", "contra": self.antiga()}, {"runId": "rv1"})
+        e = est.registrar_fim_de_run(
+            e, "rv1", estado_run="succeeded", motivo_falha=None, veredito=veredito("bbb", "correcoes", self.A1), cota=False
+        )
+        e = verificar(e, "bbb")
+        s = e["seeds"]["s1"]
+        s["fixersUsados"] = fixers
+        s["fixerUsado"] = fixers > 0
+        s["rodadaDoFixer"] = est.chave_da_rodada([], self.A1)
+        if emendas is not None:
+            s["emendas"] = emendas
+        return e
+
+    def test_revisar_grava_contra_qual_raia_foi_revisada(self):
+        e = com_pr(sha="bbb")
+        e = est.aplicar(e, {"tipo": "revisar", "seed": "s1", "sha": "bbb", "contra": "abc"}, {"runId": "rv1"})
+        self.assertEqual(e["seeds"]["s1"]["revisadaContra"], "abc")
+        sem_run = est.aplicar(com_pr(sha="bbb"), {"tipo": "revisar", "seed": "s1", "sha": "bbb", "contra": "abc"}, {})
+        self.assertIsNone(sem_run["seeds"]["s1"]["revisadaContra"])
+
+    def test_emenda_da_raia_reabre_a_seed(self):
+        e = self.montar()
+        # sem emenda, a mesma rodada depois de dois fixers acorda o orquestrador
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["acordar"])
+        nova = raias.impressao_da_raia(_raia_a(self.emendado()))
+        self.assertNotEqual(nova, self.antiga())
+        lista = acoes(e, self.emendado())
+        self.assertEqual(da_seed(lista), [{"tipo": "reabrir_seed", "seed": "s1", "contra": nova}])
+        self.assertEqual([a for a in lista if a["tipo"] == "acordar"], [])
+        e = est.aplicar(e, da_seed(lista)[0], {})
+        s = e["seeds"]["s1"]
+        self.assertIsNone(s["veredito"])
+        self.assertIsNone(s["vereditoAnterior"])
+        self.assertEqual(s["tentativasRevisao"], 0)
+        self.assertEqual(s["fixersUsados"], 0)
+        self.assertFalse(s["fixerUsado"])
+        self.assertIsNone(s["rodadaDoFixer"])
+        self.assertEqual(s["emendas"], 1)
+        self.assertEqual(s["revisadaContra"], nova)
+        # a verificação do head continua valendo: só a revisão é refeita, no mesmo head
+        self.assertEqual(da_seed(acoes(e, self.emendado())), [{"tipo": "revisar", "seed": "s1", "sha": "bbb"}])
+
+    def test_emenda_reabre_seed_que_falhou_depois_do_fixer(self):
+        e = self.montar(fixers=1)
+        marcar = e["seeds"]["s1"]
+        marcar["estado"] = "falhou"
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["acordar"])
+        [acao] = da_seed(acoes(e, self.emendado()))
+        self.assertEqual(acao["tipo"], "reabrir_seed")
+        e = est.aplicar(e, acao, {})
+        self.assertEqual(e["seeds"]["s1"]["estado"], "em_revisao")
+        self.assertEqual(da_seed(acoes(e, self.emendado())), [{"tipo": "revisar", "seed": "s1", "sha": "bbb"}])
+
+    def test_emenda_que_nao_muda_a_raia_nao_reabre(self):
+        e = self.montar()
+        p = plano()
+        next(r for r in p["raias"] if r["id"] == "b")["criteriosAceite"] = ["b mudou"]
+        _raia_a(p)["verificacao"] = "pnpm test -- --reporter=dot"
+        reformatado = {k: _raia_a(p)[k] for k in reversed(list(_raia_a(p)))}
+        p["raias"] = [reformatado if r["id"] == "a" else r for r in p["raias"]]
+        self.assertEqual(dos_tipos(acoes(e, p), "reabrir_seed"), [])
+
+    def test_seed_sem_revisada_contra_nao_reabre(self):
+        e = self.montar()
+        del e["seeds"]["s1"]["revisadaContra"]
+        self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
+        e["seeds"]["s1"]["revisadaContra"] = None
+        self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
+
+    def test_depois_de_max_emendas_reabre_sem_devolver_fixer(self):
+        e = self.montar(emendas=est.MAX_EMENDAS)
+        [acao] = da_seed(acoes(e, self.emendado()))
+        self.assertEqual(acao["tipo"], "reabrir_seed")
+        e = est.aplicar(e, acao, {})
+        s = e["seeds"]["s1"]
+        self.assertIsNone(s["veredito"])
+        self.assertEqual(s["emendas"], est.MAX_EMENDAS + 1)
+        self.assertEqual(s["fixersUsados"], 2)
+        self.assertTrue(s["fixerUsado"])
+        self.assertEqual(s["rodadaDoFixer"], est.chave_da_rodada([], self.A1))
+
+    def test_seed_mergeada_ou_fechada_nao_reabre(self):
+        for ajuste in ({"estado": "mergeada"}, {"estado": "obsoleta"}, {"estado": "fechada"}, {"estado": "bloqueada_humano"}, {"pendenteHumano": "x"}, {"pr": None}):
+            with self.subTest(ajuste=ajuste):
+                e = self.montar()
+                e["seeds"]["s1"].update(ajuste)
+                self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
+
+    def test_raia_que_nao_esta_executando_nao_reabre(self):
+        e = self.montar()
+        e["raias"]["a"]["estado"] = "falhou"
+        self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
+
+    def test_revisao_em_curso_espera_para_reabrir(self):
+        e = self.montar()
+        e["seeds"]["s1"]["revisaoRunId"] = "rv9"
+        self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
 
 class TestCotaEOomNoRun(unittest.TestCase):
     """B: cota e OOM interrompem o run sem gastar o fixer nem a tentativa de revisão."""

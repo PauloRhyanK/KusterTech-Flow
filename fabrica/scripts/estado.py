@@ -22,6 +22,7 @@ MAX_RECUSAS_DE_MERGE = 3
 MAX_FALHAS_ACORDAR = 3
 MAX_INTERRUPCOES = 3
 MAX_FIXERS = 2
+MAX_EMENDAS = 2
 TERMINAIS = ("mergeada", "obsoleta")
 ESTADOS_DE_GATE = ("em_revisao", "aguardando_gates", "corrigindo")
 MOTIVOS_DO_PAULO = ("nova_spec", "fase_concluida")
@@ -90,6 +91,8 @@ def _seed_nova(raia_id: str, agora=None) -> dict:
         "fixerUsado": False,
         "fixersUsados": 0,
         "rodadaDoFixer": None,
+        "revisadaContra": None,
+        "emendas": 0,
         "tentativasMerge": 0,
         "interrupcoes": 0,
         "pendenteHumano": None,
@@ -594,6 +597,29 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional
     return acoes
 
 
+def _reabertura(seed_id: str, seed, plano: dict, raias_do_estado: dict):
+    """`reabrir_seed` quando a raia da seed, no plano, não é mais aquela contra a qual o PR foi revisto."""
+    if not isinstance(seed, dict) or not _texto(seed.get("revisadaContra")) or not _texto(seed.get("pr")):
+        return None
+    # a decisão do Paulo vem antes: a seed é reaberta quando sair da trava
+    if seed.get("estado") in TERMINAIS + ("fechada", "bloqueada_humano") or seed.get("pendenteHumano"):
+        return None
+    # run em curso: espera ele terminar (o veredito dele é da raia antiga e também cai)
+    if seed.get("revisaoRunId") is not None or seed.get("fixerRunId") is not None:
+        return None
+    if _dict(raias_do_estado.get(seed.get("raia"))).get("estado") != "executando":
+        return None
+    raia = next(
+        (r for r in _lista(plano.get("raias")) if isinstance(r, dict) and r.get("id") == seed.get("raia")), None
+    )
+    if raia is None:
+        return None
+    nova = raias.impressao_da_raia(raia)
+    if nova == seed["revisadaContra"]:
+        return None
+    return {"tipo": "reabrir_seed", "seed": seed_id, "contra": nova}
+
+
 def _fase_atual(plano: dict):
     """(id, ids de raia) da fase atual, ou (None, []) se ela não existir."""
     for fase in _lista(plano.get("fases")):
@@ -617,9 +643,17 @@ def proximas_acoes(
     acoes: list[dict] = []
     raias_do_estado = {i: r for i, r in _raias(estado).items() if isinstance(r, dict)}
 
+    # 0. emenda da raia (critérios ou partição mudaram no plano): o mesmo PR é revisto, sem outras ações no ciclo
+    reabertas = set()
+    for seed_id, seed in _seeds(estado).items():
+        acao = _reabertura(seed_id, seed, plano, raias_do_estado)
+        if acao is not None:
+            acoes.append(acao)
+            reabertas.add(seed_id)
+
     # 1. seeds: decisões humanas pendentes e gates dos PRs
     for seed_id, seed in _seeds(estado).items():
-        if not isinstance(seed, dict):
+        if not isinstance(seed, dict) or seed_id in reabertas:
             continue
         pendente = seed.get("pendenteHumano")
         # a trava vai ao orquestrador; o `acordar` repetido é descartado no fim e o vigia do despachante decide quando
@@ -670,6 +704,7 @@ def proximas_acoes(
     for seed_id, seed in _seeds(estado).items():
         if (
             isinstance(seed, dict)
+            and seed_id not in reabertas
             and seed.get("estado") == "falhou"
             and seed.get("fixerUsado") is True
             and not seed.get("pendenteHumano")
@@ -836,7 +871,7 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
             _avisar(estado, f"acordar falhou {falhas} vezes seguidas: despachante pausado")
         return estado
 
-    if tipo not in ("revisar", "verificar", "corrigir", "mergear", "aguardar_humano"):
+    if tipo not in ("revisar", "verificar", "corrigir", "mergear", "aguardar_humano", "reabrir_seed"):
         _avisar(estado, f"aplicar: tipo de ação desconhecido {tipo!r}")
         return estado
     seed_id = acao.get("seed")
@@ -844,8 +879,23 @@ def aplicar(estado: dict, acao: dict, resultado: dict) -> dict:
     if seed is None:
         return estado
 
-    if tipo == "revisar":
+    if tipo == "reabrir_seed":
+        seed["veredito"] = None
+        seed["vereditoAnterior"] = None
+        seed["tentativasRevisao"] = 0
+        seed["revisadaContra"] = acao.get("contra") if _texto(acao.get("contra")) else None
+        emendas = seed.get("emendas")
+        seed["emendas"] = (emendas if _inteiro(emendas) and emendas >= 0 else 0) + 1
+        if seed["emendas"] <= MAX_EMENDAS:
+            seed["fixersUsados"] = 0
+            seed["fixerUsado"] = False
+            seed["rodadaDoFixer"] = None
+        if seed.get("estado") == "falhou":
+            marcar_estado_da_seed(seed, "em_revisao")  # o estado de uma seed com PR aberto esperando revisão
+    elif tipo == "revisar":
         if _texto(resultado.get("runId")):
+            if _texto(acao.get("contra")):
+                seed["revisadaContra"] = acao["contra"]
             seed["revisaoRunId"] = resultado["runId"]
             seed["revisaoSha"] = acao.get("sha") if _texto(acao.get("sha")) else None
             tentativas = seed.get("tentativasRevisao")

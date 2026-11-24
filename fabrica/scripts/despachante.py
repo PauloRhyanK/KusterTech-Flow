@@ -2868,6 +2868,8 @@ class Despachante:
                     "ci": seed.get("ci"),
                     "veredito": seed.get("veredito"),
                     "relatoDoFixer": seed.get("relatoDoFixer"),
+                    "rodadaDoFixer": seed.get("rodadaDoFixer"),
+                    "fixersUsados": seed.get("fixersUsados"),
                     "verificacao": {"codigo": verif.get("codigo"), "saida": str(verif.get("saida") or "")[-2000:]},
                 }
             )
@@ -2966,6 +2968,18 @@ class Despachante:
         self.estado.pop("acaoEmCurso", None)
         self._salvar()
         self._log({"evento": "acao", "acao": dict(acao), "resultado": {"cancelado": plan_run_id, "prsFechados": abertos}})
+
+    def _reabrir_seed(self, acao: dict) -> None:
+        """Emenda da raia: o veredito antigo cai, o mesmo PR é revisto e o orquestrador pode ser acordado de novo."""
+        seed_id = acao.get("seed")
+        self.estado = est.aplicar(self.estado, acao, {})
+        removidas = {"gate_falhou_apos_fixer:%s" % seed_id, "seed_parada:%s" % seed_id}
+        chaves = _lista(self.estado.get("chavesAcordadas"))
+        if any(c in removidas for c in chaves):
+            self.estado["chavesAcordadas"] = [c for c in chaves if c not in removidas]
+        self._salvar()
+        emendas = _dict(_dict(self.estado.get("seeds")).get(seed_id)).get("emendas")
+        self._log({"evento": "emenda_reabriu_seed", "seed": seed_id, "emendas": emendas})
 
     def _raia_da_acordada(self, acao: dict):
         if acao.get("motivo") == "raia_falhou":
@@ -3067,7 +3081,9 @@ class Despachante:
             a
             for a in acoes
             if self._acao_permitida(a)
-            and not (a.get("tipo") in ACOES_DE_GATE and _dict(seeds.get(a.get("seed"))).get("raia") in pendentes)
+            and not (
+                a.get("tipo") in ACOES_DE_GATE + ("reabrir_seed",) and _dict(seeds.get(a.get("seed"))).get("raia") in pendentes
+            )
             and not (a.get("tipo") == "retomar_raia" and a.get("raia") in pendentes)
             and _chave_acao(a) not in incertas
             and not (a.get("tipo") == "acordar" and orquestrador_incerto)
@@ -3093,6 +3109,10 @@ class Despachante:
         for acao in acoes:
             if self.estado.get("pausado"):
                 break
+            if acao.get("tipo") == "reabrir_seed":
+                self._reabrir_seed(acao)
+                executadas.append(acao)
+                continue
             if not self._liberada_pela_capacidade(acao):
                 continue  # sem vaga ou sem a trava: fica para o próximo ciclo, antes de gravar a intenção
             self._executar(acao)
@@ -3258,6 +3278,10 @@ class Despachante:
         tipo = acao.get("tipo")
         if tipo == "acordar" and not isinstance(acao.get("contexto"), dict):
             acao["contexto"] = self._contexto(acao)
+        if tipo == "revisar" and "contra" not in acao:
+            # a raia que o revisor vê no prompt: uma emenda dela depois disso reabre a revisão
+            raia = self._raia_do_plano(_dict(_dict(self.estado.get("seeds")).get(acao.get("seed"))).get("raia"))
+            acao["contra"] = raias.impressao_da_raia(_dict(raia))
         nonce = raiz = desde = None
         if tipo in ACOES_COM_INTENCAO:
             # P1: o nonce vai para acaoEmCurso antes do envio e na última linha do texto enviado.

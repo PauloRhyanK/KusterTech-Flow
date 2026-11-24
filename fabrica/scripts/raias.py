@@ -1,6 +1,7 @@
 """Validação do plano de raias (`.fabrica/plano.json`) e seleção de raias prontas."""
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -223,6 +224,17 @@ def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[s
         and all(isinstance(d, str) and d in concluidas for d in _lista(r.get("dependeDe")))
     ]
 
+
+
+def impressao_da_raia(raia: dict) -> str:
+    """sha256 dos critérios de aceite e da partição (`arquivos`) da raia: muda quando uma emenda muda o que se revisa."""
+    raia = raia if isinstance(raia, dict) else {}
+    texto = json.dumps(
+        {"criteriosAceite": _lista(raia.get("criteriosAceite")), "arquivos": _lista(raia.get("arquivos"))},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
 def _validar_arquivo(caminho: str) -> int:
     try:
