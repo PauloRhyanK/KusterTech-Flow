@@ -2060,6 +2060,20 @@ class TestesTesteNoNavegador(BasePasso):
         self.assertEqual(evento["dados"], {"motivo": "o qa não subiu o sistema no run: o README pede um banco externo", "url": PR_T})
         self.assertEqual((len(self.despachos()), self.reservas()), (1, {}))
 
+    def test_detalhes_do_teste_vao_so_para_a_correcao_e_o_resumo_vai_ao_flow(self):
+        run_id = self.abrir_teste()
+        corpo = json.dumps({"resultado": "falhou", "resumo": "O salvar não funciona.", "detalhes": "peca.tsx:264 undefined is not iterable"})
+        self.entregar_teste(run_id, teste=corpo)
+        self.passo(ClienteDeBusca())
+        evento = self.estado["demandas"]["saida"][-1]["evento"]
+        self.assertEqual(evento["dados"]["resumo"], "O salvar não funciona.")
+        self.assertNotIn("detalhes", evento["dados"])
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        correcao = self.despachos()[1]
+        self.assertIn("peca.tsx:264 undefined is not iterable", correcao["prompt"])
+        self.assertIn("O salvar não funciona.", correcao["prompt"])
+
     def test_pr_do_teste_fora_da_pasta_da_demanda_trava_sem_enviar(self):
         run_id = self.abrir_teste()
         self.entregar_teste(run_id, extras=("src/app/page.tsx",))

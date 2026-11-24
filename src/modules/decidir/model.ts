@@ -128,6 +128,19 @@ export const RESPOSTAS_DO_FLOW: Record<TipoDeItem, readonly { chave: string; rot
   decisao_da_fabrica: [],
 }
 
+const BOTOES_DO_TESTE_QUE_FALHOU =
+  'Retomar: um agente corrige o que falhou e o teste roda de novo.\n' +
+  'Encerrar a demanda: ela fecha como está, sem correção.'
+
+/** O texto da trava no Decidir; no teste que falhou, diz o que cada botão faz. */
+export function textoDaTrava(espera: Espera, motivo: string | null): string {
+  const limpo = motivo?.trim() ?? ''
+  if (espera === 'teste_falhou') {
+    return `${limpo || 'O teste no navegador falhou.'}\n\n${BOTOES_DO_TESTE_QUE_FALHOU}`
+  }
+  return limpo || 'A demanda está travada e espera você.'
+}
+
 export function chaveDaDemanda(id: string, espera: Espera, desde: Date): string {
   return `demanda:${id}:${espera}:${desde.getTime()}`
 }

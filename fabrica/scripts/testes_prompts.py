@@ -821,7 +821,11 @@ class TesteNoNavegadorTest(unittest.TestCase):
             "Percorra o fluxo da demanda",
             "Capture desktop em 1440×900 e celular em 390×844, em PNG, em `.fabrica/demandas/%s/capturas/desktop-NN.png` e "
             "`celular-NN.png` (até 10 de cada, até 10 MB cada)" % id_,
-            'Grave `.fabrica/demandas/%s/teste.json` com `{"resultado": "passou" | "falhou", "resumo": "…"}`' % id_,
+            'Grave `.fabrica/demandas/%s/teste.json` com `{"resultado": "passou" | "falhou", "resumo": "…", "detalhes": "…"}`' % id_,
+            "`resumo` é para o Paulo, que não é técnico",
+            "sem nome de arquivo, porta, comando, mensagem de erro nem termo de código",
+            "`Funcionou:` e `Não funcionou:`",
+            "`detalhes` é para o agente que vai corrigir",
             "Compare com o desenho aprovado em `.fabrica/demandas/%s/desenho.html`" % id_,
             "Abra um PR em rascunho só com `.fabrica/demandas/%s/**`; ele não será mergeado" % id_,
             '`{"resultado": "nao_subiu", "resumo": "…"}`',
