@@ -3622,13 +3622,19 @@ class Despachante:
         return False
 
     def _verificacao_nao_executou(self, raia_id, comando: str, resultado):
-        """F2: o comando nem rodou. Docker (125/126) ou o próprio verificador (`interno`) pausam a fábrica; o comando
+        """F2: o comando nem rodou. A imagem que não baixou (`imagemIndisponivel`) adia e tenta no ciclo seguinte (pausa
+        só depois de `MAX_ADIAMENTOS_DE_REDE` seguidos). Docker (125/126) ou o próprio verificador (`interno`) pausam a fábrica; o comando
         ausente na imagem (127) abre uma decisão da raia. Nos dois casos nada vai ao fixer nem ao orquestrador."""
         if not isinstance(resultado, dict) or not _inteiro(resultado.get("codigo")):
             return None
         codigo = resultado["codigo"]
         linhas = [linha.strip() for linha in str(resultado.get("saida") or "").splitlines() if linha.strip()]
         detalhe = _cortar(linhas[-1], 160) if linhas else "(sem saída)"
+        if resultado.get("imagemIndisponivel") is True:
+            # F2c: a imagem não baixou (rede, registro): adia e tenta no ciclo seguinte; seguidas demais, pausa
+            self._aviso("verificação da raia %s adiada: %s" % (raia_id, detalhe))
+            self._contar_adiamento("imagem:%s" % raia_id)
+            return {"adiado": True, "naoExecutou": codigo}
         if resultado.get("interno") is True or codigo in CODIGOS_DOCKER_NAO_EXECUTOU:
             self.estado["pausado"] = self._seguro("verificação não executou: código %d: %s" % (codigo, detalhe), 200)
             self._salvar()
@@ -3774,6 +3780,7 @@ class Despachante:
             nao_executou = self._verificacao_nao_executou(seed.get("raia"), comando, resultado)
             if nao_executou is not None:
                 return nao_executou
+            _dict(self.estado.get("adiamentosRede")).pop("imagem:%s" % seed.get("raia"), None)
             return {"verificacao": resultado}
 
         if tipo == "mergear":

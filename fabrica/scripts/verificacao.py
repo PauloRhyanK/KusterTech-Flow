@@ -40,6 +40,9 @@ PREFIXO_ROTULO_ID = "fabrica.verif.id="
 HOSTS_NEUTRALIZADOS = ("host.docker.internal:127.0.0.1", "gateway.docker.internal:127.0.0.1")
 LIMITE_AVISOS = 1000
 TIMEOUT_DOCKER_S = 120
+# o pull de uma imagem ausente tem prazo próprio: a limpeza diária da oficina apaga imagens sem contêiner há 72 h, e a
+# dos `servicos` (descartáveis) volta a ser baixada; dentro dos 120 s do `docker run -d` ela às vezes não chegava
+TIMEOUT_PULL_S = 1200
 TIMEOUT_LIMPEZA_S = 60
 CODIGO_TIMEOUT = 124
 CODIGO_ENTRADA_INVALIDA = 2
@@ -162,7 +165,9 @@ def _aviso_e_saida(avisos: list[str], saida: str) -> str:
     return texto + (saida[-restante:] if restante > 0 else "")
 
 
-def _resposta(sha, codigo: int, saida: str = "", avisos: list[str] | None = None, *, interno: bool = False) -> dict:
+def _resposta(
+    sha, codigo: int, saida: str = "", avisos: list[str] | None = None, *, interno: bool = False, imagem: bool = False
+) -> dict:
     """F2a: `interno: True` quando a falha é do próprio verificador (config, export, docker de controle, binário do
     host), não do comando no contêiner; o despachante pausa em vez de chamar o fixer."""
     if codigo == 0 and not interno and FILTRO_VAZIO in saida:
@@ -172,6 +177,9 @@ def _resposta(sha, codigo: int, saida: str = "", avisos: list[str] | None = None
     resposta = {"sha": sha, "codigo": codigo, "saida": _aviso_e_saida(avisos or [], saida)}
     if interno:
         resposta["interno"] = True
+    if imagem:
+        # o pull de uma imagem não terminou (rede, registro): passageiro, o despachante tenta de novo sem pausar
+        resposta["imagemIndisponivel"] = True
     return resposta
 
 
@@ -291,6 +299,7 @@ def verificar(
     src = os.path.join(base, "src")
     criados = {"rede": False, "servicos": []}
     interno = []  # F2a: marcado quando a falha é do verificador, não do comando no contêiner
+    sem_imagem = []  # F2c: o pull de uma imagem não terminou
 
     def docker(args: list[str], timeout: int):
         return executar(["docker"] + args, capture_output=True, text=True, errors="replace", timeout=timeout)
@@ -316,6 +325,21 @@ def verificar(
             return CODIGO_NAO_EXECUTOU, _falha_ao_executar("git", erro)
 
         try:
+            for imagem in dict.fromkeys([config["imagem"]] + [s["imagem"] for s in config["servicos"]]):
+                if docker(["image", "inspect", "--format", "{{.Id}}", imagem], TIMEOUT_DOCKER_S).returncode == 0:
+                    continue
+                try:
+                    baixada = docker(["pull", "--quiet", imagem], TIMEOUT_PULL_S)
+                except subprocess.TimeoutExpired as erro:
+                    # falha do host (rede, registro), não do código: o despachante pausa em vez de chamar o fixer
+                    interno.append(True)
+                    sem_imagem.append(True)
+                    avisos.insert(0, "docker pull %s: tempo esgotado após %s s" % (imagem, TIMEOUT_PULL_S))
+                    return CODIGO_TIMEOUT, _texto(erro.stdout) + _texto(erro.stderr)
+                if baixada.returncode != 0:
+                    interno.append(True)
+                    sem_imagem.append(True)
+                    return baixada.returncode, "docker pull %s: %s%s" % (imagem, _texto(baixada.stdout), _texto(baixada.stderr))
             criados["rede"] = True
             criar_rede = ["network", "create"] + _rotulos(ident) + (["--internal"] if config["rede"] == "isolada" else [])
             resultado = docker(criar_rede + [rede], TIMEOUT_DOCKER_S)
@@ -375,7 +399,7 @@ def verificar(
         codigo, saida = corpo()
     finally:
         _limpar(executar, principal, criados, rede, base, avisos)
-    return _resposta(sha, codigo, saida, avisos, interno=bool(interno))
+    return _resposta(sha, codigo, saida, avisos, interno=bool(interno), imagem=bool(sem_imagem))
 
 
 def _falha_ao_executar(programa: str, erro: OSError) -> str:
