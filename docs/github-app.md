@@ -25,13 +25,14 @@ Somente **permissões de repositório**. Nenhuma permissão de organização ou 
 | Issues | Leitura e escrita | leitura espelha as issues; escrita é para a triagem de correção do Incremento 5b (D32) e, no Decidir, para responder as decisões da Fábrica (comentar e fechar a issue `fabrica:decisao`) |
 | Pull requests | Leitura e escrita | leitura: PRs e vínculo PR → issue; escrita: merge do fim de fase pelo Decidir (`PUT /pulls/<n>/merge` com o head conferido) |
 | Checks | Leitura | resumo de checks dos PRs |
+| Commit statuses | Leitura | estado combinado do head (`GET /commits/<sha>/status`): o CI do PR no fim de fase e na trava da correção, no Decidir; sem ela, o GitHub responde 403 e o Decidir não lê o PR |
 | Deployments | Leitura | evidência de deploy lida pelo worker (Incremento 4) |
 
 A Central escreve no GitHub só pelo Decidir (abaixo): comenta e fecha issues `fabrica:decisao` e mergeia o PR do orquestrador no fim de fase. A escrita em Issues também cobre a triagem de correção do Incremento 5b.
 
 As permissões não mudam com o Incremento 4 (Contents e Deployments já estavam previstas) e os eventos continuam **nenhum**. O Incremento 9 também não pede permissão nova: usa o Contents já concedido, só para leitura de arquivos.
 
-**Decidir.** A tela Decidir escreve no GitHub em dois casos: responder uma decisão da Fábrica (Issues: comentar e fechar) e aprovar um fim de fase (Contents e Pull requests: mergear o PR do orquestrador). Por isso Contents e Pull requests passam a **Leitura e escrita**; Issues continua como estava. Numa instalação antiga, aceite o pedido de novas permissões em Settings → Applications → Configure. Sem elas, a confirmação do cartão mostra "A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita (veja docs/github-app.md)." e o item fica na pilha: nada é marcado como feito, e basta confirmar de novo depois de conceder a permissão.
+**Decidir.** A tela Decidir escreve no GitHub em dois casos: responder uma decisão da Fábrica (Issues: comentar e fechar) e aprovar um fim de fase (Contents e Pull requests: mergear o PR do orquestrador). Por isso Contents e Pull requests passam a **Leitura e escrita**, e o CI do PR pede **Commit statuses** em leitura; Issues continua como estava. Numa instalação antiga, aceite o pedido de novas permissões em Settings → Applications → Configure. Sem elas, a confirmação do cartão mostra "A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita e Commit statuses com leitura (veja docs/github-app.md)." e o item fica na pilha: nada é marcado como feito, e basta confirmar de novo depois de conceder a permissão.
 
 ## 2. Instalar
 
