@@ -132,6 +132,16 @@ class PromptRevisorTest(unittest.TestCase):
         self.assertIn("aprovado", self.texto)
         self.assertIn("correcoes", self.texto)
 
+    def test_lista_a_particao_da_raia(self):
+        self.assertIn("Partição da raia (arquivos que ela pode tocar):", self.texto)
+        self.assertIn("- src/modules/clientes/", self.texto)
+        self.assertIn("fora da partição", self.texto)
+
+    def test_raia_sem_arquivos_nao_quebra(self):
+        raia = raia_referencia()
+        del raia["arquivos"]
+        self.assertIn("- (nenhum arquivo listado)", prompt_revisor(seed_id="sd-1", raia=raia, sha=SHA))
+
     def test_raia_sem_criterios_nao_quebra(self):
         raia = raia_referencia()
         del raia["criteriosAceite"]
@@ -178,6 +188,21 @@ class PromptFixerTest(unittest.TestCase):
     def test_papel_e_obrigatorio(self):
         with self.assertRaises(TypeError):
             prompt_fixer(seed_id="sd-42", motivos=[], achados=[], saida_verificacao="")
+
+    def test_lista_a_particao_da_raia(self):
+        texto = self.chamar()
+        self.assertNotIn("Corrija só dentro destes arquivos", texto)
+        texto = prompt_fixer(
+            seed_id="sd-42",
+            papel="backend",
+            motivos=[],
+            achados=[],
+            saida_verificacao="",
+            arquivos=["src/modules/clientes/", "src/app/clientes/**"],
+        )
+        self.assertIn("Corrija só dentro destes arquivos", texto)
+        self.assertIn("- src/modules/clientes/", texto)
+        self.assertIn("- src/app/clientes/**", texto)
 
     def test_lista_motivos_e_achados(self):
         texto = self.chamar(

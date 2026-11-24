@@ -1461,6 +1461,13 @@ class TestEmendaDaRaia(unittest.TestCase):
         e["seeds"]["s1"]["revisadaContra"] = None
         self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
 
+    def test_a_ultima_emenda_ainda_devolve_os_fixers(self):
+        e = self.montar(emendas=est.MAX_EMENDAS - 1)
+        [acao] = da_seed(acoes(e, self.emendado()))
+        e = est.aplicar(e, acao, {})
+        s = e["seeds"]["s1"]
+        self.assertEqual((s["emendas"], s["fixersUsados"], s["fixerUsado"]), (est.MAX_EMENDAS, 0, False))
+
     def test_depois_de_max_emendas_reabre_sem_devolver_fixer(self):
         e = self.montar(emendas=est.MAX_EMENDAS)
         [acao] = da_seed(acoes(e, self.emendado()))
@@ -1473,14 +1480,31 @@ class TestEmendaDaRaia(unittest.TestCase):
         self.assertTrue(s["fixerUsado"])
         self.assertEqual(s["rodadaDoFixer"], est.chave_da_rodada([], self.A1))
 
-    def test_alem_do_teto_de_emendas_gate_vermelho_vai_ao_paulo(self):
-        e = self.montar(emendas=est.MAX_EMENDAS + 1)
+    def test_no_teto_de_emendas_gate_vermelho_vai_ao_paulo(self):
+        for emendas in (est.MAX_EMENDAS, est.MAX_EMENDAS + 1):
+            with self.subTest(emendas=emendas):
+                lista = acoes(self.montar(emendas=emendas))
+                motivo = f"gate vermelho depois de {emendas} emendas da raia"
+                self.assertEqual(da_seed(lista), [{"tipo": "aguardar_humano", "seed": "s1", "motivos": [motivo]}])
+                self.assertEqual(dos_tipos(lista, "acordar"), [])
+        # abaixo do teto ainda acorda o orquestrador
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(self.montar(emendas=est.MAX_EMENDAS - 1)))], ["acordar"])
+
+    def test_estado_antigo_com_a_rodada_ja_no_orquestrador_nao_ganha_fixer(self):
+        e = self.montar(fixers=1)
+        s = e["seeds"]["s1"]
+        del s["fixersUsados"]
+        del s["rodadaDoFixer"]
+        # sem a chave gasta: o estado antigo ganha o 2º fixer (a rodada é desconhecida)
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(e))], ["corrigir"])
+        e["chavesAcordadas"] = ["gate_falhou_apos_fixer:s1"]
         lista = acoes(e)
-        motivo = f"gate vermelho depois de {est.MAX_EMENDAS + 1} emendas da raia"
-        self.assertEqual(da_seed(lista), [{"tipo": "aguardar_humano", "seed": "s1", "motivos": [motivo]}])
-        self.assertEqual(dos_tipos(lista, "acordar"), [])
-        # no teto ainda acorda o orquestrador
-        self.assertEqual([a["tipo"] for a in da_seed(acoes(self.montar(emendas=est.MAX_EMENDAS)))], ["acordar"])
+        self.assertEqual(dos_tipos(lista, "corrigir", "acordar"), [])
+
+    def test_seed_que_falhou_sem_fixer_nao_reabre(self):
+        e = self.montar(fixers=0)
+        e["seeds"]["s1"]["estado"] = "falhou"
+        self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
 
     def test_seed_mergeada_ou_fechada_nao_reabre(self):
         for ajuste in ({"estado": "mergeada"}, {"estado": "obsoleta"}, {"estado": "fechada"}, {"estado": "bloqueada_humano"}, {"pendenteHumano": "x"}, {"pr": None}):

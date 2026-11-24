@@ -461,8 +461,8 @@ def registrar_fim_de_run(
             achou = True
             seed["fixerRunId"] = None
             if interrompido:
-                # o fixer volta a ser emitido: devolve o veredito que o motivou
-                # devolve só o fixer interrompido; a rodada anterior é desconhecida (conta como mudada)
+                # o fixer volta a ser emitido: devolve só ele e o veredito que o motivou; a rodada fica
+                # desconhecida (conta como mudada)
                 seed["fixersUsados"] = max(0, fixers_usados(seed) - 1)
                 seed["fixerUsado"] = seed["fixersUsados"] >= 1
                 seed["rodadaDoFixer"] = None
@@ -584,8 +584,8 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional
                 }
             ]
         emendas = seed.get("emendas")
-        if _inteiro(emendas) and emendas > MAX_EMENDAS:
-            # a raia já foi emendada além do teto e o gate segue vermelho: o orquestrador não é chamado de novo
+        if _inteiro(emendas) and emendas >= MAX_EMENDAS:
+            # a raia já teve as emendas do teto e o gate segue vermelho: o orquestrador não é chamado de novo
             motivo = f"gate vermelho depois de {emendas} emendas da raia"
             return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": [motivo]}]
         return [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id}]
@@ -611,6 +611,9 @@ def _reabertura(seed_id: str, seed, plano: dict, raias_do_estado: dict):
         return None
     # run em curso: espera ele terminar (o veredito dele é da raia antiga e também cai)
     if seed.get("revisaoRunId") is not None or seed.get("fixerRunId") is not None:
+        return None
+    # só revive a seed que falhou depois do fixer (a do passo 4); outra falha não é da emenda
+    if seed.get("estado") == "falhou" and fixers_usados(seed) < 1:
         return None
     if _dict(raias_do_estado.get(seed.get("raia"))).get("estado") != "executando":
         return None
@@ -656,6 +659,8 @@ def proximas_acoes(
             acoes.append(acao)
             reabertas.add(seed_id)
 
+    chaves = _lista(estado.get("chavesAcordadas"))
+
     # 1. seeds: decisões humanas pendentes e gates dos PRs
     for seed_id, seed in _seeds(estado).items():
         if not isinstance(seed, dict) or seed_id in reabertas:
@@ -681,6 +686,13 @@ def proximas_acoes(
             for a in _acoes_da_seed(seed_id, seed, protegidos, agora, ci_opcional):
                 # raia falha: quem decide o destino do PR é o orquestrador
                 if raia_falhou and a["tipo"] == "mergear":
+                    continue
+                # a rodada já é do orquestrador (chave gasta): nada de outro fixer, nem no estado antigo sem `rodadaDoFixer`
+                if (
+                    a["tipo"] == "corrigir"
+                    and fixers_usados(seed) >= 1
+                    and _chave("gate_falhou_apos_fixer", seed_id) in chaves
+                ):
                     continue
                 if vai_ao_orquestrador and a["tipo"] == "aguardar_humano" and a["motivos"] == ["revisor sem veredito válido"]:
                     a = {"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id}
@@ -732,7 +744,6 @@ def proximas_acoes(
 
     # um só orquestrador: no máximo um `acordar`, nunca com outro em curso nem repetido
     orquestrador_livre = _dict(estado.get("orquestrador")).get("runId") is None
-    chaves = _lista(estado.get("chavesAcordadas"))
     final, acordou = [], False
     for acao in acoes:
         if acao["tipo"] == "acordar":

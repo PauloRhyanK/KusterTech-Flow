@@ -2977,6 +2977,14 @@ class Despachante:
         chaves = _lista(self.estado.get("chavesAcordadas"))
         if any(c in removidas for c in chaves):
             self.estado["chavesAcordadas"] = [c for c in chaves if c not in removidas]
+        # a acordada da seed que voltou à fila (run do orquestrador que falhou) também é da raia antiga
+        self.estado["acordarPendentes"] = [
+            p
+            for p in _lista(self.estado.get("acordarPendentes"))
+            if not (
+                _dict(p).get("motivo") in ("gate_falhou_apos_fixer", "seed_parada") and _dict(p).get("alvo") == seed_id
+            )
+        ]
         self._salvar()
         emendas = _dict(_dict(self.estado.get("seeds")).get(seed_id)).get("emendas")
         self._log({"evento": "emenda_reabriu_seed", "seed": seed_id, "emendas": emendas})
@@ -3707,6 +3715,7 @@ class Despachante:
                         motivos=[m for m in _lista(acao.get("motivos")) if isinstance(m, str)],
                         achados=[a for a in _lista(acao.get("achados")) if isinstance(a, dict)],
                         saida_verificacao=saida if isinstance(saida, str) else "",
+                        arquivos=_dict(self._raia_do_plano(seed.get("raia"))).get("arquivos"),
                     )
                 except ValueError as exc:
                     raise _NaoExecutada(str(exc)) from None

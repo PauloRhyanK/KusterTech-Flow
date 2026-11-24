@@ -2282,6 +2282,19 @@ class TestesConfig(Base):
         self.assertIn(".fabrica/equipes/ux-ui.md", fixer["prompt"])
         self.assertNotIn("ux-engineer", fixer["prompt"])
 
+    def test_revisor_e_fixer_recebem_a_particao_da_raia(self):
+        d = self.preparar_raia(plano(raia("a", arquivos=["src/a/", "src/compartilhado/x.ts"])))
+        self.abrir_pr(H1, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.assertEqual([a["tipo"] for a in d.ciclo()], ["corrigir"])
+        (fixer,) = self.runs(HAIKU)
+        self.assertIn("Corrija só dentro destes arquivos", fixer["prompt"])
+        self.assertIn("- src/compartilhado/x.ts", fixer["prompt"])
+        (revisor,) = self.runs(CONFIG["modelos"]["revisor"]["modelo"])
+        self.assertIn("Partição da raia", revisor["prompt"])
+        self.assertIn("- src/compartilhado/x.ts", revisor["prompt"])
+
     def test_fixer_sem_papel_conhecido_nao_e_despachado(self):
         d = self.preparar_raia()
         self.abrir_pr(H1, ci="vermelho")
@@ -7072,9 +7085,9 @@ class TestesEmendaDaRaia(Base):
         # com o fixer devolvido pela emenda, o gate vermelho ganha um fixer antes de acordar
         self.assertEqual([a["tipo"] for a in acoes], ["corrigir"])
 
-    def test_alem_do_teto_de_emendas_o_gate_vermelho_vai_ao_paulo(self):
+    def test_no_teto_de_emendas_o_gate_vermelho_vai_ao_paulo(self):
         d = self.ate_acordar_apos_fixer()
-        d.estado["seeds"]["s-1"]["emendas"] = est.MAX_EMENDAS
+        d.estado["seeds"]["s-1"]["emendas"] = est.MAX_EMENDAS - 1
         d._salvar()
         rid = self.estado()["orquestrador"]["runId"]
         self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
@@ -7084,17 +7097,44 @@ class TestesEmendaDaRaia(Base):
         self.assertEqual(acoes[0]["tipo"], "reabrir_seed")
         e = self.estado()
         self.assertNotIn("gate_falhou_apos_fixer:s-1", e["chavesAcordadas"])
-        self.assertEqual((e["seeds"]["s-1"]["emendas"], e["seeds"]["s-1"]["fixersUsados"]), (est.MAX_EMENDAS + 1, 1))
+        # a última emenda ainda devolve os fixers
+        self.assertEqual((e["seeds"]["s-1"]["emendas"], e["seeds"]["s-1"]["fixersUsados"]), (est.MAX_EMENDAS, 0))
         acoes = d.ciclo()
         self.assertEqual([(a["tipo"], a.get("sha")) for a in acoes], [("revisar", H2)])
         self.terminar_revisao(H2)
+        self.assertEqual([a["tipo"] for a in d.ciclo()], ["corrigir"])
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="succeeded")
+        h4 = "4" * 40
+        self.mover_head(h4, ci="vermelho")
+        d.ciclo()
+        self.terminar_revisao(h4)
         orquestradores = len(self.runs(FABLE))
         acoes = d.ciclo()
-        motivo = "gate vermelho depois de %d emendas da raia" % (est.MAX_EMENDAS + 1)
+        motivo = "gate vermelho depois de %d emendas da raia" % est.MAX_EMENDAS
         self.assertEqual(acoes, [{"tipo": "aguardar_humano", "seed": "s-1", "motivos": [motivo]}])
         self.assertEqual(len(self.runs(FABLE)), orquestradores)
         self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
         self.assertTrue(any(motivo in corpo for _, corpo in self.forja.decisoes))
+
+    def test_reabrir_seed_tira_da_fila_a_acordada_da_seed(self):
+        d = self.ate_acordar_apos_fixer()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
+        d.ciclo()
+        self.publicar(plano(self.emendada()))
+        outra = {"motivo": "raia_falhou", "alvo": "b", "contexto": {}}
+        d.estado["acordarPendentes"] = [
+            {"motivo": "gate_falhou_apos_fixer", "alvo": "s-1", "contexto": {}, "repetir": True},
+            {"motivo": "seed_parada", "alvo": "s-1", "contexto": {}},
+            {"motivo": "gate_falhou_apos_fixer", "alvo": "s-2", "contexto": {}},
+            outra,
+        ]
+        d._reabrir_seed({"tipo": "reabrir_seed", "seed": "s-1", "contra": "x"})
+        self.assertEqual(
+            self.estado()["acordarPendentes"],
+            [{"motivo": "gate_falhou_apos_fixer", "alvo": "s-2", "contexto": {}}, outra],
+        )
 
     def test_contexto_da_acordada_traz_a_rodada_anterior(self):
         d = self.preparar_raia()
