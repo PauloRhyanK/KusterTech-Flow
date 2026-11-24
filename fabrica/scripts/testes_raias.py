@@ -428,7 +428,6 @@ class TestesRaiasProntas(unittest.TestCase):
         self.assertEqual(prontas, ["fundacao"])
 
 
-
 class TestesImpressaoDaRaia(unittest.TestCase):
     def test_impressao_estavel_e_sensivel(self):
         base = {"id": "a", "criteriosAceite": ["c1", "c2"], "arquivos": ["src/a/"], "verificacao": "pnpm test", "dependeDe": []}
@@ -444,6 +443,7 @@ class TestesImpressaoDaRaia(unittest.TestCase):
             raias.impressao_da_raia({"id": "a"}),
             raias.impressao_da_raia({"id": "a", "criteriosAceite": [], "arquivos": []}),
         )
+
 
 class TestesCli(unittest.TestCase):
     def executar(self, plano):

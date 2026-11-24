@@ -1375,7 +1375,6 @@ class TestSegundoFixer(unittest.TestCase):
         self.assertEqual(c, d)
 
 
-
 def _raia_a(p):
     return next(r for r in p["raias"] if r["id"] == "a")
 
@@ -1474,6 +1473,15 @@ class TestEmendaDaRaia(unittest.TestCase):
         self.assertTrue(s["fixerUsado"])
         self.assertEqual(s["rodadaDoFixer"], est.chave_da_rodada([], self.A1))
 
+    def test_alem_do_teto_de_emendas_gate_vermelho_vai_ao_paulo(self):
+        e = self.montar(emendas=est.MAX_EMENDAS + 1)
+        lista = acoes(e)
+        motivo = f"gate vermelho depois de {est.MAX_EMENDAS + 1} emendas da raia"
+        self.assertEqual(da_seed(lista), [{"tipo": "aguardar_humano", "seed": "s1", "motivos": [motivo]}])
+        self.assertEqual(dos_tipos(lista, "acordar"), [])
+        # no teto ainda acorda o orquestrador
+        self.assertEqual([a["tipo"] for a in da_seed(acoes(self.montar(emendas=est.MAX_EMENDAS)))], ["acordar"])
+
     def test_seed_mergeada_ou_fechada_nao_reabre(self):
         for ajuste in ({"estado": "mergeada"}, {"estado": "obsoleta"}, {"estado": "fechada"}, {"estado": "bloqueada_humano"}, {"pendenteHumano": "x"}, {"pr": None}):
             with self.subTest(ajuste=ajuste):
@@ -1490,6 +1498,7 @@ class TestEmendaDaRaia(unittest.TestCase):
         e = self.montar()
         e["seeds"]["s1"]["revisaoRunId"] = "rv9"
         self.assertEqual(dos_tipos(acoes(e, self.emendado()), "reabrir_seed"), [])
+
 
 class TestCotaEOomNoRun(unittest.TestCase):
     """B: cota e OOM interrompem o run sem gastar o fixer nem a tentativa de revisão."""

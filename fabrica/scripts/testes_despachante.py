@@ -7013,7 +7013,6 @@ class TestesCapacidadeGlobal(Base):
                     self.novo(**extra)
 
 
-
 class TestesEmendaDaRaia(Base):
     def emendada(self):
         r = raia("a")
@@ -7046,34 +7045,63 @@ class TestesEmendaDaRaia(Base):
     def test_reabrir_seed_esquece_a_acordada_gasta(self):
         d = self.ate_acordar_apos_fixer()
         self.assertIn("gate_falhou_apos_fixer:s-1", self.estado()["chavesAcordadas"])
-        # fixers esgotados mesmo depois da emenda: o próximo gate vermelho volta ao orquestrador
-        d.estado["seeds"]["s-1"]["emendas"] = est.MAX_EMENDAS
-        d._salvar()
         rid = self.estado()["orquestrador"]["runId"]
         self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
         d.ciclo()
         self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
         self.publicar(plano(self.emendada()))
         acoes = d.ciclo()
-        self.assertEqual(acoes[0], {"tipo": "reabrir_seed", "seed": "s-1", "contra": despachante.raias.impressao_da_raia(self.emendada())})
+        contra = despachante.raias.impressao_da_raia(self.emendada())
+        self.assertEqual(acoes[0], {"tipo": "reabrir_seed", "seed": "s-1", "contra": contra})
+        # a seed reaberta não recebe outra ação no mesmo ciclo
+        self.assertEqual([a for a in acoes[1:] if a.get("seed") == "s-1" or a.get("alvo") == "s-1"], [])
         e = self.estado()
         self.assertNotIn("gate_falhou_apos_fixer:s-1", e["chavesAcordadas"])
         self.assertIsNone(e["seeds"]["s-1"]["veredito"])
+        self.assertIsNone(e["seeds"]["s-1"]["revisaoRunId"])
+        self.assertEqual(e["seeds"]["s-1"]["fixersUsados"], 0)
         (linha,) = [l for l in self.log() if l.get("evento") == "emenda_reabriu_seed"]
-        self.assertEqual((linha["seed"], linha["emendas"]), ("s-1", est.MAX_EMENDAS + 1))
-        # a mesma PR é revista no mesmo head, contra a raia emendada
-        if not self.estado()["seeds"]["s-1"]["revisaoRunId"]:
-            d.ciclo()
-        self.assertEqual(self.estado()["seeds"]["s-1"]["revisaoSha"], H2)
+        self.assertEqual((linha["seed"], linha["emendas"]), ("s-1", 1))
+        # o ciclo seguinte revê o mesmo PR no mesmo head, contra a raia emendada (a verificação de H2 vale)
+        acoes = d.ciclo()
+        self.assertEqual([(a["tipo"], a.get("sha")) for a in acoes], [("revisar", H2)])
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual((seed["revisaoSha"], seed["revisadaContra"]), (H2, contra))
         self.terminar_revisao(H2)
         acoes = d.ciclo()
-        self.assertEqual([(a["tipo"], a.get("motivo")) for a in acoes], [("acordar", "gate_falhou_apos_fixer")])
+        # com o fixer devolvido pela emenda, o gate vermelho ganha um fixer antes de acordar
+        self.assertEqual([a["tipo"] for a in acoes], ["corrigir"])
+
+    def test_alem_do_teto_de_emendas_o_gate_vermelho_vai_ao_paulo(self):
+        d = self.ate_acordar_apos_fixer()
+        d.estado["seeds"]["s-1"]["emendas"] = est.MAX_EMENDAS
+        d._salvar()
+        rid = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano(self.emendada()))
+        d.ciclo()
+        self.publicar(plano(self.emendada()))
+        acoes = d.ciclo()
+        self.assertEqual(acoes[0]["tipo"], "reabrir_seed")
+        e = self.estado()
+        self.assertNotIn("gate_falhou_apos_fixer:s-1", e["chavesAcordadas"])
+        self.assertEqual((e["seeds"]["s-1"]["emendas"], e["seeds"]["s-1"]["fixersUsados"]), (est.MAX_EMENDAS + 1, 1))
+        acoes = d.ciclo()
+        self.assertEqual([(a["tipo"], a.get("sha")) for a in acoes], [("revisar", H2)])
+        self.terminar_revisao(H2)
+        orquestradores = len(self.runs(FABLE))
+        acoes = d.ciclo()
+        motivo = "gate vermelho depois de %d emendas da raia" % (est.MAX_EMENDAS + 1)
+        self.assertEqual(acoes, [{"tipo": "aguardar_humano", "seed": "s-1", "motivos": [motivo]}])
+        self.assertEqual(len(self.runs(FABLE)), orquestradores)
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        self.assertTrue(any(motivo in corpo for _, corpo in self.forja.decisoes))
 
     def test_contexto_da_acordada_traz_a_rodada_anterior(self):
         d = self.preparar_raia()
         d.estado["seeds"]["s-1"] = dict(est._seed_nova("a"), fixersUsados=2, rodadaDoFixer=["a.tsx|x"])
         contexto = d._contexto({"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s-1"})
         self.assertEqual((contexto["fixersUsados"], contexto["rodadaDoFixer"]), (2, ["a.tsx|x"]))
+
 
 if __name__ == "__main__":
     unittest.main()

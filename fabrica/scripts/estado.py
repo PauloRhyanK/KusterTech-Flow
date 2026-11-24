@@ -583,6 +583,11 @@ def _acoes_da_seed(seed_id: str, seed: dict, protegidos, agora=None, ci_opcional
                     "achados": achados,
                 }
             ]
+        emendas = seed.get("emendas")
+        if _inteiro(emendas) and emendas > MAX_EMENDAS:
+            # a raia já foi emendada além do teto e o gate segue vermelho: o orquestrador não é chamado de novo
+            motivo = f"gate vermelho depois de {emendas} emendas da raia"
+            return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": [motivo]}]
         return [{"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id}]
     if decisao != "aguardar":
         return [{"tipo": "aguardar_humano", "seed": seed_id, "motivos": [f"decisão desconhecida {decisao!r}"]}]

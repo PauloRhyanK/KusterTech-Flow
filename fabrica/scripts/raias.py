@@ -225,7 +225,6 @@ def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[s
     ]
 
 
-
 def impressao_da_raia(raia: dict) -> str:
     """sha256 dos critérios de aceite e da partição (`arquivos`) da raia: muda quando uma emenda muda o que se revisa."""
     raia = raia if isinstance(raia, dict) else {}
@@ -235,6 +234,7 @@ def impressao_da_raia(raia: dict) -> str:
         ensure_ascii=False,
     )
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
 
 def _validar_arquivo(caminho: str) -> int:
     try:
