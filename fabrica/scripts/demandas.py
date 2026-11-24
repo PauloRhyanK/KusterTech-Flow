@@ -952,8 +952,9 @@ def _resumo_do_teste(valor) -> str | None:
 
 
 def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
-    """O `teste.json` e as capturas do head do PR do teste: `{"resultado", "resumo", "capturas": [{"caminho", "tela",
-    "dados"}]}` (as capturas em ordem de caminho, até 10 por tela).
+    """O `teste.json` e as capturas do head do PR do teste: `{"resultado", "resumo", "detalhes", "capturas": [{"caminho",
+    "tela", "dados"}]}` (as capturas em ordem de caminho, até 10 por tela). O `resumo` vai ao Flow (é o que o Paulo lê);
+    o `detalhes` (opcional, `None` se faltar) fica no kit e vai só para a correção.
 
     `teste.json` ausente, fora de UTF-8/JSON, com `resultado` desconhecido ou sem `resumo` → `None`. Captura fora do
     nome `desktop-NN.png`/`celular-NN.png`, que não é PNG ou acima de 10 MB fica de fora (o Flow a recusaria).
@@ -980,7 +981,7 @@ def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
             continue
         por_tela[m.group(1)] += 1
         capturas.append({"caminho": caminho, "tela": m.group(1), "dados": bytes(dados)})
-    return {"resultado": teste["resultado"], "resumo": resumo, "capturas": capturas}
+    return {"resultado": teste["resultado"], "resumo": resumo, "detalhes": _resumo_do_teste(teste.get("detalhes")), "capturas": capturas}
 
 
 def _capturas_no_limite(capturas: list[dict]) -> tuple[list[dict], int]:
@@ -2278,7 +2279,14 @@ class _Passo:
         resultado = dict(resultado, resumo=resumo)
         dados = {"resultado": resultado["resultado"], "resumo": resumo, "capturas": ids}
         enfileirar_evento(self.estado, id_, "teste", dados, agora=self.agora_texto)
-        t.update(enviado=True, enviadoEm=self.agora_texto, resultado=resultado["resultado"], resumo=resultado["resumo"], fecharPr=True)
+        t.update(
+            enviado=True,
+            enviadoEm=self.agora_texto,
+            resultado=resultado["resultado"],
+            resumo=resultado["resumo"],
+            detalhes=resultado.get("detalhes"),
+            fecharPr=True,
+        )
         self.sair_do_teste(id_, it, fase="testando")
         self.eventos.append({"evento": "demanda_teste_enviado", "id": id_, "resultado": resultado["resultado"], "prUrl": t.get("prUrl")})
         self.fechar_pr_do_teste(id_, it)
@@ -2369,6 +2377,8 @@ class _Passo:
             return
         teste = it.get("teste") if isinstance(it.get("teste"), dict) else {}
         resumo = teste.get("resumo") or (demanda.get("espera") or {}).get("motivo") or ""
+        if teste.get("detalhes"):  # o `resumo` é o do Paulo; o técnico vai junto para quem corrige
+            resumo = "%s\n\n%s" % (resumo, teste["detalhes"])
         it.update(
             fase="corrigindo",
             alvo="corrigindo",

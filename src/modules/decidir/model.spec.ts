@@ -6,6 +6,7 @@ import {
   chaveValida,
   montarPilha,
   motivosDaIssue,
+  textoDaTrava,
   tipoDaDecisao,
   tipoDaDemanda,
   type DecisaoDoRetrato,
@@ -284,5 +285,22 @@ describe('motivosDaIssue', () => {
     })
     const [longo] = motivosDaIssue(corpo('- ' + 'x'.repeat(300))).motivos
     expect(longo).toBe('x'.repeat(199) + '…')
+  })
+})
+
+describe('textoDaTrava', () => {
+  it('teste que falhou explica o que cada botão faz, depois do resumo do teste', () => {
+    expect(textoDaTrava('teste_falhou', 'Quase tudo funciona.\n')).toBe(
+      'Quase tudo funciona.\n\nRetomar: um agente corrige o que falhou e o teste roda de novo.\nEncerrar a demanda: ela fecha como está, sem correção.',
+    )
+  })
+
+  it('trava comum mostra só o motivo', () => {
+    expect(textoDaTrava('travada', ' O PR não passou no CI. ')).toBe('O PR não passou no CI.')
+  })
+
+  it('sem motivo usa o texto padrão', () => {
+    expect(textoDaTrava('travada', null)).toBe('A demanda está travada e espera você.')
+    expect(textoDaTrava('teste_falhou', '  ')).toMatch(/^O teste no navegador falhou\.\n\nRetomar:/)
   })
 })

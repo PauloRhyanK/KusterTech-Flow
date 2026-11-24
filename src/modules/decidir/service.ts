@@ -29,7 +29,7 @@ import {
   type ContextoDoItem,
 } from './cartao'
 import { LIMITE_DA_MENSAGEM, type RespostaDoAtendente } from './contrato'
-import { RESPOSTAS_DO_FLOW, amanhaAsSeis, motivosDaIssue } from './model'
+import { RESPOSTAS_DO_FLOW, amanhaAsSeis, motivosDaIssue, textoDaTrava } from './model'
 import { localizarItem, type ItemLocalizado } from './queries'
 
 /** O que fica em `Conversa.contexto`: o lido ao abrir (PR do fim de fase e o relato até 4000). */
@@ -274,7 +274,7 @@ function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
       return flow(`O desenho da versão ${versao} está pronto. Abra para conferir antes de aprovar.`)
     }
     case 'trava':
-      return flow(demanda?.esperaMotivo?.trim() || 'A demanda está travada e espera você.')
+      return flow(textoDaTrava(demanda?.espera ?? 'travada', demanda?.esperaMotivo ?? null))
     case 'concluir_etapa': {
       const rotulo = item.ref.tipo === 'demanda' ? item.ref.rotuloDaEtapa : ''
       return flow(

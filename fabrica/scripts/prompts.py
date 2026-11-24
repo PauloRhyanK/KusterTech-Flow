@@ -467,8 +467,13 @@ def prompt_teste_no_navegador(*, demanda: dict, desenho: str | None, refazer: bo
         "2. Percorra o fluxo da demanda, do começo ao fim, como quem pediu.",
         f"3. Capture desktop em 1440×900 e celular em 390×844, em PNG, em `{pasta}/capturas/desktop-NN.png` e "
         "`celular-NN.png` (até 10 de cada, até 10 MB cada).",
-        f'4. Grave `{pasta}/teste.json` com `{{"resultado": "passou" | "falhou", "resumo": "…"}}`: o resumo diz o que '
-        "foi percorrido e, se falhou, o que quebrou e onde (até 2000 caracteres).",
+        f'4. Grave `{pasta}/teste.json` com `{{"resultado": "passou" | "falhou", "resumo": "…", "detalhes": "…"}}`.',
+        "   - `resumo` é para o Paulo, que não é técnico e lê no celular: até 600 caracteres, em português simples, "
+        "sem nome de arquivo, porta, comando, mensagem de erro nem termo de código. Comece pelo veredito numa frase "
+        "(por exemplo: \"Quase tudo funciona, mas o tutorial guiado não.\"), depois `Funcionou:` e `Não funcionou:` em "
+        "tópicos curtos com `- `, um por linha, dizendo o que quem usa vê.",
+        "   - `detalhes` é para o agente que vai corrigir: o que foi percorrido e, se falhou, o que quebrou, onde "
+        "(arquivo, linha, mensagem) e como reproduzir (até 2000 caracteres).",
     ]
     if desenho:
         partes.append(f"5. Compare com o desenho aprovado em `{desenho}`; diferença que atrapalha o uso é falha.")
