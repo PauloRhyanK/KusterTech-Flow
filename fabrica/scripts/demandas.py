@@ -50,8 +50,10 @@ de celular, cada captura e depois o evento `teste` vão à caixa de saída e o P
 (ou com o `teste.json` torto), o run é refeito uma vez no mesmo branch e, na segunda, a demanda fica `travada`; o
 `nao_subiu` do qa (o projeto não sobe num run) trava com o motivo. Quem decide a correção é o Flow: na primeira falha
 volta a etapa para `desenvolvida` e o kit despacha a correção (`frontend`, `modelos.frontend`, a partir do branch
-padrão), mergeada atrás das guardas só com CI `verde` e seguida de `etapa_concluida` (`desenvolvida`); sem CI nenhum
-a demanda trava para o Paulo revisar e mergear o PR (o merge dele segue sem retomada); na segunda
+padrão), mergeada atrás das guardas só com CI `verde` e seguida de `etapa_concluida` (`desenvolvida`). Sem CI nenhum,
+com `"ciObrigatorioNasSeeds": false` na config do repositório, um run do `revisor` confere o PR no head (o veredito das
+seeds, `correcao.revisao`, com a vaga da demanda) e o aprovado mergeia; senão a demanda trava para o Paulo revisar e
+mergear o PR (o merge dele segue sem retomada). Na segunda
 falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Nunca há
 dois runs da demanda ao mesmo tempo: o run que passou do teto (ou foi superado) segura a vaga até terminar.
 """
@@ -504,11 +506,21 @@ def _segura_a_trava(it: dict):
     return None
 
 
+def _revisao_em_curso(it: dict):
+    """A revisão da correção sem CI (`correcao.revisao`) com o run despachado e ainda não visto terminar; senão `None`."""
+    c = it.get("correcao") if isinstance(it.get("correcao"), dict) else {}
+    rev = c.get("revisao")
+    return rev if isinstance(rev, dict) and rev.get("emCurso") and (rev.get("runId") or rev.get("nonce")) else None
+
+
 def _seguram_a_vaga(it: dict) -> list:
     """`(fase, inicio, teto, ci)` de cada coisa que segura a vaga da demanda: a fase com vaga e os runs superados."""
     seguram = []
     if it.get("fase") in FASES_COM_VAGA and (it.get("runId") or it.get("alvo") == it.get("fase")):
         seguram.append((it["fase"], it.get("inicio"), TETO_RUN_S, _ci_pendente(it)))
+        rev = _revisao_em_curso(it)
+        if rev is not None:  # o revisor da correção sem CI começa depois do run da correção: vale o teto dele
+            seguram.append(("revisao", rev.get("inicio"), TETO_RUN_S, []))
     for campo in RUNS_SUPERADOS:
         if isinstance(it.get(campo), dict):
             seguram.append((campo, it[campo].get("inicio"), TETO_RUN_S, []))
@@ -839,6 +851,15 @@ MOTIVO_PR_DA_CORRECAO_FECHADO = "o PR da correção foi fechado sem merge"
 MOTIVO_CORRECAO_OUTRO_REPO = "o PR da correção está em outro repositório"
 MOTIVO_CORRECAO_JA_MERGEADA = "o PR da correção já estava mergeado antes de o kit conferir"
 MOTIVO_CORRECAO_SEM_CI = "PR de correção sem CI: revise e faça o merge"
+# sem CI, com `ciObrigatorioNasSeeds: false` na config do repositório, quem confere a correção é o revisor da Fábrica
+# (o mesmo veredito das seeds); os motivos vão ao Paulo, que não é técnico
+PAPEL_DA_REVISAO = "revisor"
+TENTATIVAS_DA_REVISAO = 2  # a revisão e uma nova, quando a primeira não deixa veredito válido
+LIMITE_ACHADO_DA_REVISAO = 160
+MOTIVO_REVISAO_REPROVOU = "O revisor da Fábrica reprovou a correção: %s"
+MOTIVO_REVISAO_SEM_MOTIVO = "ele não escreveu o porquê"
+MOTIVO_REVISAO_SEM_VEREDITO = "O revisor da Fábrica não conseguiu avaliar a correção, nem na segunda tentativa"
+MOTIVO_TETO_DA_REVISAO = "O revisor da Fábrica passou de 2 h sem avaliar a correção"
 # capturas enviadas por run de teste: o teste e o reteste da primeira falha (80 MB) deixam a demanda abaixo dos
 # 100 MB do Flow, com espaço para o desenho
 LIMITE_CAPTURAS_POR_TESTE = 40 * 1024 * 1024
@@ -1026,6 +1047,7 @@ class _Passo:
         self.modelo_do_desenho = _modelo(modelos, PAPEL_DO_DESENHO)
         self.modelo_do_teste = _modelo(modelos, PAPEL_DO_TESTE)
         self.modelo_da_correcao = _modelo(modelos, PAPEL_DA_CORRECAO)
+        self.modelo_da_revisao = _modelo(modelos, PAPEL_DA_REVISAO)
         self.mem_disponivel_mb = mem_disponivel_mb
         self.publicacao = publicacao if isinstance(publicacao, dict) and publicacao.get("url") and publicacao.get("token_file") else None
         self.pedir_publicacao = pedir_publicacao or publicar.pedir
@@ -1670,20 +1692,26 @@ class _Passo:
             self.novo_run_do_plano(id_, it, demanda, it["tentativa"] + 1)
 
     def config_do_repo(self, repo: str):
-        """`protegidos` e `ciObrigatorioNoPlano` da `.fabrica/config.json` do branch padrão, nunca do head do PR (que
-        poderia reescrevê-la para passar). Ausente: sem protegidos extras e CI opcional; ilegível: `None`."""
+        """`(protegidos, ciObrigatorioNoPlano, ciObrigatorioNasSeeds)` da `.fabrica/config.json` do branch padrão, nunca
+        do head do PR (que poderia reescrevê-la para passar). Ausente: sem protegidos extras, CI opcional no plano e
+        obrigatório nas seeds (o padrão do despachante); ilegível: `None`."""
         bruto = self.forja.arquivo(repo, self.forja.branch_padrao(repo), CAMINHO_CONFIG_DO_REPO)
         if bruto is None:
-            return [], False
+            return [], False, True
         try:
             config = json.loads(bruto)
         except ValueError:
             return None
-        protegidos = config.get("protegidos", []) if isinstance(config, dict) else None
-        obrigatorio = config.get("ciObrigatorioNoPlano", False) if isinstance(config, dict) else None
-        if not isinstance(protegidos, list) or not all(isinstance(g, str) and g for g in protegidos) or not isinstance(obrigatorio, bool):
+        if not isinstance(config, dict):
             return None
-        return protegidos, obrigatorio
+        protegidos = config.get("protegidos", [])
+        obrigatorio = config.get("ciObrigatorioNoPlano", False)
+        nas_seeds = config.get("ciObrigatorioNasSeeds", True)
+        if not isinstance(protegidos, list) or not all(isinstance(g, str) and g for g in protegidos):
+            return None
+        if not isinstance(obrigatorio, bool) or not isinstance(nas_seeds, bool):
+            return None
+        return protegidos, obrigatorio, nas_seeds
 
     def motivo_do_plano(self, id_: str, repo: str, head: str, caminho: str):
         """O plano no head passa em `validar_plano` e é desta demanda; senão, o motivo."""
@@ -1745,7 +1773,7 @@ class _Passo:
         if config is None:
             self.travar_plano(id_, it, MOTIVO_CONFIG_ILEGIVEL, url)
             return
-        protegidos, ci_obrigatorio = config
+        protegidos, ci_obrigatorio, _ = config
         protegido = next((a for a in arquivos if any(globs.casa_glob(a, g) for g in protegidos)), None)
         if protegido is not None:
             self.travar_plano(id_, it, MOTIVO_PROTEGIDO % protegido, url)
@@ -2471,6 +2499,7 @@ class _Passo:
             self.correcao_mergeada(id_, it, demanda)
         elif c.get("prUrl"):
             c.pop("ciPendenteDesde", None)
+            c.pop("revisao", None)  # sem CI, o revisor confere de novo (o Paulo pode ter mexido no PR)
             it.update(travaDaCorrecao=False, alvo="corrigindo", inicio=self.agora_texto)
             self.salvar()
             self.conferir_correcao(id_, it, demanda)
@@ -2480,8 +2509,10 @@ class _Passo:
     def conferir_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         """As guardas do merge do PR da correção, no mesmo head: o repositório da demanda, nada em
         `despachante.PROTEGIDOS_FIXOS` nem nos `protegidos` da `.fabrica/config.json` do branch padrão, e CI `verde`.
-        CI vermelho (ou pendente acima de 2 h) trava com a URL; sem CI nenhum trava para o Paulo revisar e mergear.
-        Já mergeado só vale como em `merge_da_correcao_vale`."""
+        CI vermelho (ou pendente acima de 2 h) trava com a URL. Sem CI nenhum, trava para o Paulo revisar e mergear,
+        a não ser que a config do repositório traga `"ciObrigatorioNasSeeds": false`: aí o revisor da Fábrica confere
+        o PR no head (`revisar_correcao`) e o veredito aprovado mergeia, como nas seeds. Já mergeado só vale como em
+        `merge_da_correcao_vale`."""
         c = it["correcao"]
         url = c["prUrl"]
         repo = it.get("repo") or demanda["repositorio"]
@@ -2530,9 +2561,13 @@ class _Passo:
                 self.travar_correcao(id_, it, MOTIVO_CI_DA_CORRECAO_PENDENTE, url)
             return
         if ci == "ausente":
-            # código de produto sem CI nenhum não entra sozinho: o Paulo revisa e mergeia (`seguir_correcao_sem_ci`)
+            # código de produto sem CI nenhum só entra sozinho com `ciObrigatorioNasSeeds: false` e o veredito do
+            # revisor; senão o Paulo revisa e mergeia. Mergeado por ele, a demanda segue (`seguir_correcao_sem_ci`)
             c["semCi"] = True
-            self.travar_correcao(id_, it, MOTIVO_CORRECAO_SEM_CI, url)
+            if config[2] is not False:
+                self.travar_correcao(id_, it, MOTIVO_CORRECAO_SEM_CI, url)
+            else:
+                self.revisar_correcao(id_, it, demanda, pr)
             return
         if ci != "verde":
             self.travar_correcao(id_, it, MOTIVO_CI_DA_CORRECAO, url)
@@ -2541,6 +2576,145 @@ class _Passo:
             self.correcao_mergeada(id_, it, demanda)
         else:
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def revisar_correcao(self, id_: str, it: dict, demanda: dict, pr: dict) -> None:
+        """A correção sem CI num repositório com `ciObrigatorioNasSeeds: false`: um run do `revisor` (`modelos.revisor`)
+        no branch do PR, com o veredito das seeds (`prompts.extrair_veredito`) no head observado.
+
+        `correcao.revisao` guarda `sha`, `branch`, `nonce`, `inicio`, `runId`, `emCurso` e `falhas`, gravados antes do
+        POST pago (sem `runId`, o run é achado pelo nonce). Aprovado no mesmo sha: merge nesse head. Reprovado: trava
+        com o primeiro achado. Run falho ou sem veredito válido (ou de outro sha): revisa mais uma vez e, na segunda,
+        trava. O head que andou descarta a revisão; o run dela ainda vivo vira `correcaoSuperada` e segura a vaga."""
+        c = it["correcao"]
+        url, head = c["prUrl"], pr["headSha"]
+        rev = c.get("revisao") if isinstance(c.get("revisao"), dict) else None
+        if rev is not None and rev.get("sha") != head:
+            self.largar_revisao(it)
+            rev = None
+        if rev is None:
+            self.nova_revisao(id_, it, demanda, pr, falhas=0)
+            return
+        if rev.get("emCurso"):
+            run = self.run_da_revisao(id_, it, demanda, rev)
+            if run is None:
+                return
+            texto = self.motor.ultimo_texto(rev["runId"])
+            # o revisor não commita: o Warren pode dar o run como falho por isso, e o veredito dele ainda vale
+            valido = run.get("estado") == "succeeded" or (run.get("estado") == "failed" and run.get("motivoFalha") in despachante.MOTIVOS_SEM_COMMIT)
+            rev.update(emCurso=False, veredito=despachante._veredito_limpo(prompts.extrair_veredito(texto)) if valido else None)
+            self.salvar()
+        veredito = rev.get("veredito") if isinstance(rev.get("veredito"), dict) else None
+        if veredito is None or veredito.get("sha") != rev.get("sha"):
+            falhas = (rev.get("falhas") if isinstance(rev.get("falhas"), int) else 0) + 1
+            if falhas >= TENTATIVAS_DA_REVISAO:
+                self.travar_correcao(id_, it, MOTIVO_REVISAO_SEM_VEREDITO, url)
+            else:
+                self.nova_revisao(id_, it, demanda, pr, falhas=falhas)
+            return
+        if veredito.get("resultado") != "aprovado":
+            motivos = (a.get("motivo") for a in veredito.get("achados") or [])
+            achado = next((m for m in motivos if isinstance(m, str) and m.strip()), None)
+            achado = " ".join(achado.split())[:LIMITE_ACHADO_DA_REVISAO] if achado else MOTIVO_REVISAO_SEM_MOTIVO
+            self.travar_correcao(id_, it, MOTIVO_REVISAO_REPROVOU % achado, url)
+            return
+        if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
+            self.correcao_mergeada(id_, it, demanda)
+        else:
+            self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def run_da_revisao(self, id_: str, it: dict, demanda: dict, rev: dict):
+        """O run da revisão em curso, quando terminou (404 conta como falho); senão `None`: adota pelo nonce ou repete
+        o POST com a mesma chave, e passado o teto trava (o run vivo segura a vaga em `correcaoSuperada`)."""
+        inicio = _instante(rev.get("inicio"))
+        if inicio is None or (self.agora - inicio).total_seconds() > TETO_RUN_S:
+            self.travar_correcao(id_, it, MOTIVO_TETO_DA_REVISAO, it["correcao"]["prUrl"])
+            return None
+        if not rev.get("runId"):
+            run_id = self.motor.procurar_run(it["projeto"], rev["nonce"], self.desde(rev))
+            if run_id is not None:
+                rev["runId"] = run_id
+                self.salvar()
+            elif self.modelo_da_revisao is not None:
+                self.despachar_revisao(id_, it, demanda)
+            return None
+        try:
+            run = despachante._dict(self.motor.run(rev["runId"]))
+        except Exception as exc:
+            if not despachante._eh_404(exc):
+                raise
+            run = {"estado": "failed"}
+        return run if run.get("estado") in despachante.TERMINAIS_DE_RUN else None
+
+    def largar_revisao(self, it: dict) -> None:
+        """A revisão de outro head não vale: sai do estado; o run dela ainda vivo vira `correcaoSuperada` (a vaga fica
+        com ele até terminar, e a revisão nova espera)."""
+        rev = it["correcao"].get("revisao")
+        vivo = _revisao_em_curso(it) is not None
+        if vivo and rev.get("runId"):
+            try:
+                vivo = despachante._dict(self.motor.run(rev["runId"])).get("estado") not in despachante.TERMINAIS_DE_RUN
+            except Exception as exc:
+                if not despachante._eh_404(exc):
+                    raise
+                vivo = False
+        if vivo:
+            it["correcaoSuperada"] = {"runId": rev.get("runId"), "nonce": rev.get("nonce"), "projeto": it.get("projeto"), "inicio": rev.get("inicio")}
+        it["correcao"].pop("revisao", None)
+        self.salvar()
+
+    def nova_revisao(self, id_: str, it: dict, demanda: dict, pr: dict, *, falhas: int) -> None:
+        """Despacha o revisor no head do PR. Sem `modelos.revisor`, trava para o Paulo como sem a config; sem vaga, com
+        drenagem ou com um run superado vivo, espera o ciclo seguinte (a fase segue em `corrigindo`)."""
+        if self.modelo_da_revisao is None:
+            self.sem_modelo(PAPEL_DA_REVISAO)
+            self.travar_correcao(id_, it, MOTIVO_CORRECAO_SEM_CI, it["correcao"]["prUrl"])
+            return
+        if _run_superado_vivo(it) or capacidade.ler(self.capacidade).get("drenagem"):
+            return
+        branch = pr.get("branch")
+        if not isinstance(branch, str) or not branch:
+            raise RuntimeError("PR da correção sem branch")
+        if not self.reservar_revisao(id_):
+            return
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it["correcao"]["revisao"] = {
+            "sha": pr["headSha"],
+            "branch": branch,
+            "nonce": nonce_do_motor(id_, "revisao", tentativa),
+            "inicio": self.agora_texto,
+            "runId": None,
+            "emCurso": True,
+            "falhas": falhas,
+        }
+        it["tentativa"] = tentativa + 1
+        self.salvar()  # antes do POST pago
+        self.despachar_revisao(id_, it, demanda)
+
+    def reservar_revisao(self, id_: str) -> bool:
+        """A vaga da demanda passa do run da correção (que já terminou) ao revisor; sem ela (a retomada do Paulo depois
+        de uma trava que a soltou), reserva uma nova."""
+        reservas = capacidade.ler(self.capacidade)["reservas"].get(chave(id_), [])
+        if PAPEL_DA_CORRECAO in reservas:
+            capacidade.sincronizar(self.capacidade, chave(id_), (set(reservas) - {PAPEL_DA_CORRECAO}) | {PAPEL_DA_REVISAO})
+            return True
+        return capacidade.reservar(self.capacidade, chave(id_), PAPEL_DA_REVISAO, mem_disponivel_mb=self.mem_disponivel_mb)
+
+    def despachar_revisao(self, id_: str, it: dict, demanda: dict) -> None:
+        c = it["correcao"]
+        rev, modelo = c["revisao"], self.modelo_da_revisao
+        prompt = prompts.prompt_revisor_da_correcao(demanda=demanda, resumo=c.get("resumo") or "", sha=rev["sha"], pr_url=c["prUrl"])
+        run_id = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompt, rev["nonce"]),
+            branch_existente=rev["branch"],
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=rev["nonce"],
+        )
+        rev["runId"] = run_id
+        self.salvar()
+        self.eventos.append({"evento": "demanda_revisao_da_correcao", "id": id_, "runId": run_id, "sha": rev["sha"]})
 
     def merge_da_correcao_vale(self, repo: str, c: dict, pr: dict) -> bool:
         """O PR da correção (o `prUrl` que o run devolveu) mergeado conta só se o kit já o viu aberto (`headSha`
@@ -2586,9 +2760,14 @@ class _Passo:
         self.eventos.append({"evento": "demanda_correcao_mergeada", "id": id_, "prUrl": c.get("prUrl")})
 
     def sair_da_correcao(self, id_: str, it: dict, *, vivo: bool = False, **campos) -> None:
-        """Toda saída do run da correção: solta a vaga e grava (`vivo`: como em `sair_do_teste`, em `correcaoSuperada`)."""
+        """Toda saída do run da correção: solta a vaga e grava (`vivo`: como em `sair_do_teste`, em `correcaoSuperada`).
+        O revisor da correção sem CI ainda em curso vira `correcaoSuperada` em qualquer saída: segura a vaga até terminar."""
         c = _dados(it, "correcao")
-        if vivo and not c.get("terminou") and (it.get("runId") or it.get("nonce")):
+        rev = _revisao_em_curso(it)
+        if rev is not None:
+            it["correcaoSuperada"] = {"runId": rev.get("runId"), "nonce": rev.get("nonce"), "projeto": it.get("projeto"), "inicio": rev.get("inicio")}
+            c.pop("revisao", None)
+        elif vivo and not c.get("terminou") and (it.get("runId") or it.get("nonce")):
             it["correcaoSuperada"] = {"runId": it.get("runId"), "nonce": it.get("nonce"), "projeto": it.get("projeto"), "inicio": it.get("inicio")}
         else:
             capacidade.sincronizar(self.capacidade, chave(id_), set())

@@ -47,14 +47,6 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
     criterios = raia.get("criteriosAceite") or []
     lista = "\n".join(f"- {c}" for c in criterios) or "- (nenhum critério listado)"
     particao = _lista_de_arquivos(raia.get("arquivos")) or "- (nenhum arquivo listado)"
-    exemplo = json.dumps(
-        {
-            "sha": sha,
-            "resultado": "correcoes",
-            "achados": [{"arquivo": ARQUIVO_EXEMPLO, "motivo": MOTIVO_EXEMPLO}],
-        },
-        ensure_ascii=False,
-    )
     return (
         f"Você revisa o PR da seed {seed_id} no commit {sha}.\n"
         "\n"
@@ -65,7 +57,45 @@ def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:
         "Partição da raia (arquivos que ela pode tocar):\n"
         f"{particao}\n"
         "Arquivo fora da partição só é achado se a mudança precisava estar nele.\n"
-        "\n"
+        "\n" + _pedido_do_veredito(sha)
+    )
+
+
+def prompt_revisor_da_correcao(*, demanda: dict, resumo: str, sha: str, pr_url: str) -> str:
+    """Prompt do revisor independente do PR da correção do teste (repositório sem CI), no commit `sha`. O resumo do
+    teste vai entre as marcas de dados, como em `prompt_correcao_do_teste`; o veredito é o mesmo das seeds."""
+    texto = _dado_da_demanda(resumo, LIMITE_RESUMO_DO_TESTE) or "(sem resumo)"
+    partes = [
+        f"Você revisa o PR da correção {pr_url} no commit {sha}, do repositório {demanda.get('repositorio')}.",
+        "O repositório não tem CI: o seu veredito decide se a Fábrica mergeia a correção.",
+        "",
+        "Leia `AGENTS.md` e o seu pacote de papel `.fabrica/equipes/revisor.md`.",
+        "",
+        *_cabecalho_da_demanda(demanda),
+        "O que o teste no navegador achou (o que a correção precisa resolver):",
+        INICIO_TESTE,
+        texto,
+        FIM_TESTE,
+        "",
+        "Confira o diff do PR: ele resolve o que o teste achou, sem quebrar o resto, e as verificações do AGENTS.md",
+        "passam (rode-as no branch do PR).",
+        "O primeiro achado vai ao Paulo, que não é técnico: escreva cada motivo numa frase curta, em português simples.",
+        "",
+    ]
+    return "\n".join(partes) + "\n" + _pedido_do_veredito(sha)
+
+
+def _pedido_do_veredito(sha: str) -> str:
+    """O fim do prompt de todo revisor: não commitar e o bloco do veredito (lido por `extrair_veredito`)."""
+    exemplo = json.dumps(
+        {
+            "sha": sha,
+            "resultado": "correcoes",
+            "achados": [{"arquivo": ARQUIVO_EXEMPLO, "motivo": MOTIVO_EXEMPLO}],
+        },
+        ensure_ascii=False,
+    )
+    return (
         "Não faça commit nem push: você só lê e avalia.\n"
         "\n"
         "Termine a sua mensagem final com o bloco abaixo, como a última coisa escrita.\n"
