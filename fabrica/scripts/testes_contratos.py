@@ -247,7 +247,7 @@ class TestesOrquestrador(unittest.TestCase):
         self.assertIn("contrato em `main`", self.texto)
 
     def test_fixer_no_maximo_duas_vezes(self):
-        for caminho in (KIT / "equipes" / "fixer.md", KIT / "PADROES-COMUNS.md", KIT / "README.md"):
+        for caminho in (KIT / "equipes" / "fixer.md", KIT / "equipes" / "orquestrador.md", KIT / "PADROES-COMUNS.md", KIT / "README.md"):
             texto = ler(caminho)
             self.assertIn("no máximo duas vezes", texto, caminho.name)
             self.assertNotIn("no máximo uma vez", texto, caminho.name)
