@@ -174,7 +174,7 @@ const MENSAGENS_DE_FALHA: Record<CategoriaDeFalha, string> = {
   desconhecida: 'Falha inesperada na sincronização.',
   'commit-desconhecido': 'O GitHub não encontrou um dos commits comparados.',
   'sem-permissao':
-    'A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita (veja docs/github-app.md).',
+    'A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita e Commit statuses com leitura (veja docs/github-app.md).',
 }
 
 export function mensagemDeFalha(c: CategoriaDeFalha): string {

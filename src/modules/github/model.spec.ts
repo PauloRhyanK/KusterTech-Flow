@@ -327,7 +327,7 @@ describe('mensagemDeFalha e ErroDeIntegracao', () => {
 
   test('mensagemDeFalha("sem-permissao") cita Issues, Contents e Pull requests', () => {
     expect(mensagemDeFalha('sem-permissao')).toBe(
-      'A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita (veja docs/github-app.md).',
+      'A GitHub App não tem permissão para isso. Na instalação, dê Issues, Contents e Pull requests com escrita e Commit statuses com leitura (veja docs/github-app.md).',
     )
   })
 
