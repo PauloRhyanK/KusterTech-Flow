@@ -258,6 +258,14 @@ async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promis
     if (ref.espera === 'travada') return lerPrDaTrava(l, ref, fonte)
     return { contexto: contextoSemGitHub(l), corpo: null, aviso: null }
   }
+  // O aviso da publicação já traz o que importa; o run está no relato do item.
+  if (ref.tipo === 'publicacao') {
+    return {
+      contexto: { pr: null, relato: l.item.relato?.resumo ?? null },
+      corpo: null,
+      aviso: null,
+    }
+  }
 
   const fimDeFase = l.item.tipo === 'fim_de_fase'
   const prefixo = fimDeFase
@@ -395,6 +403,8 @@ ${leitura.prDaTrava}`
         `As raias da fase entraram (${raias.concluidas} de ${raias.total}) e ${ci}. ${fim}${porque}`,
       )
     }
+    case 'publicacao':
+      return flow(`${item.relato?.resumo ?? item.titulo}. ${item.pergunta}`)
     case 'decisao_da_fabrica': {
       if (leitura.aviso !== null) return flow(leitura.aviso)
       const corpo = leitura.corpo?.trim()

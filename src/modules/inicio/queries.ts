@@ -340,7 +340,7 @@ function comDecidir(
   const daPilha = { demandas: new Set<string>(), decisoes: new Set<string>() }
   for (const i of pilha.itens) {
     if (i.ref.tipo === 'demanda') daPilha.demandas.add(i.ref.demandaId)
-    else daPilha.decisoes.add(i.ref.url)
+    else if (i.ref.tipo === 'issue') daPilha.decisoes.add(i.ref.url)
   }
   const resultado: FonteDeEspera[] = fontes.map((f) =>
     'falha' in f

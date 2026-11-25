@@ -5,6 +5,7 @@ import { moduloAtivo } from '@/lib/modulos'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import type { Retrato } from '@/modules/fabrica/contrato'
 import { lerRetratoMaisRecente, obterRetratoMaisRecente } from '@/modules/fabrica/queries'
+import { avisosParaODecidir } from '@/modules/fila-de-publicacao/queries'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { PLANO_EM_CURSO } from '@/modules/inicio/model'
 import { triagemSchema } from '@/modules/demandas/contrato'
@@ -13,6 +14,7 @@ import type { Cartao } from './cartao'
 import {
   chaveValida,
   montarPilha,
+  type AvisoDaPublicacaoNaPilha,
   type DecisaoDoRetrato,
   type DemandaEsperando,
   type ItemDaPilha,
@@ -136,6 +138,21 @@ async function nomesDosProjetos(repos: readonly string[]): Promise<Map<string, s
 
 const CHAVE_DE_DEMANDA = /^demanda:([^:\s]+):/
 
+/**
+ * Os avisos da fila de publicação (falhou, parou, dispensou) entram na pilha com o módulo ativo.
+ * `null` quando a leitura falhou: a pilha segue sem eles, e o arquivamento não encerra nenhuma
+ * conversa de publicação por isso.
+ */
+export async function publicacoesNaPilha(agora: Date): Promise<AvisoDaPublicacaoNaPilha[] | null> {
+  if (!moduloAtivo('fila-de-publicacao')) return []
+  try {
+    return await avisosParaODecidir(agora)
+  } catch (erro) {
+    log.error({ erro: resumirErroParaLog(erro) }, 'decidir: avisos da publicação não lidos')
+    return null
+  }
+}
+
 export interface ItemLocalizado {
   item: ItemDaPilha
   demanda: DemandaEsperando | null
@@ -166,11 +183,15 @@ export async function localizarItem(
         retrato !== undefined ? retrato : ((await lerRetratoMaisRecente())?.retrato ?? null),
       )
     : []
+  const publicacoes = chave.startsWith('publicacao:')
+    ? ((await publicacoesNaPilha(agora)) ?? [])
+    : []
   const nomes = await nomesDosProjetos([...new Set(decisoes.map((d) => d.repo))])
   // Só a marca de encerrada tira o item; ela já foi conferida acima.
   const { itens } = montarPilha({
     demandas,
     decisoes,
+    publicacoes,
     marcas: [],
     agora,
     nomeDoProjeto: (repo) => nomes.get(repo.toLowerCase()) ?? null,
@@ -216,16 +237,25 @@ export interface PilhaDoDecidir {
 /** A pilha do Paulo: o que espera resposta (demandas e decisões do último retrato), na ordem do model. */
 export async function obterPilha(sujeito: Sujeito, agora: Date): Promise<PilhaDoDecidir> {
   exigirLeituraDoDecidir(sujeito)
-  const [demandas, recebido] = await Promise.all([
+  const [demandas, recebido, lidas] = await Promise.all([
     demandasEsperando(),
     obterRetratoMaisRecente(sujeito),
+    publicacoesNaPilha(agora),
   ])
+  const publicacoes = lidas ?? []
   const decisoes = decisoesDoRetrato(recebido?.retrato ?? null)
   const nomes = await nomesDosProjetos([...new Set(decisoes.map((d) => d.repo))])
   const nomeDoProjeto = (repo: string) => nomes.get(repo.toLowerCase()) ?? null
 
   // Só as conversas dos itens candidatos são lidas: a leitura não cresce com o histórico.
-  const candidatos = montarPilha({ demandas, decisoes, marcas: [], agora, nomeDoProjeto })
+  const candidatos = montarPilha({
+    demandas,
+    decisoes,
+    publicacoes,
+    marcas: [],
+    agora,
+    nomeDoProjeto,
+  })
   const chaves = [...candidatos.itens, ...candidatos.guardados].map((i) => i.chave)
   const linhas =
     chaves.length === 0
@@ -244,6 +274,7 @@ export async function obterPilha(sujeito: Sujeito, agora: Date): Promise<PilhaDo
   const { itens, guardados } = montarPilha({
     demandas,
     decisoes,
+    publicacoes,
     marcas: linhas.map((c) => ({
       chave: c.chave,
       encerrada: c.encerradaEm !== null,

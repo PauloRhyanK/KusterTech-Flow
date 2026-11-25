@@ -2,6 +2,7 @@ import type { ResumoDeChecks } from '@prisma/client'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
+import type { AvisoDaPublicacaoNaPilha } from '@/modules/decidir/model'
 import { esperasDaPublicacao, type ItemDeEspera } from '@/modules/inicio/model'
 import {
   avisosDaPublicacao,
@@ -52,6 +53,7 @@ function pedidoDaLinha(p: {
   checks: ResumoDeChecks | null
   iniciadoEm: Date | null
   verificandoDesde: Date | null
+  conferindoDesde: Date | null
 }): PedidoDaLinha {
   return {
     id: p.id,
@@ -62,6 +64,7 @@ function pedidoDaLinha(p: {
     checks: checksDe(p.checks),
     iniciadoEm: p.iniciadoEm,
     verificandoDesde: p.verificandoDesde,
+    conferindoDesde: p.conferindoDesde,
   }
 }
 
@@ -77,6 +80,9 @@ async function montarLinha(
       situacaoDesde: Date | null
       situacaoMotivo: string | null
       baseRedefinidaEm: Date | null
+      urlDaVersao: string | null
+      versaoNoAr: string | null
+      versaoConferidaEm: Date | null
     } | null
   },
   repositoriosDoProjeto: number,
@@ -84,58 +90,76 @@ async function montarLinha(
   const config = repo.configuracaoDePublicacao
   const base = config?.baseRedefinidaEm ?? null
   const depoisDaBase = base ? { concluidoEm: { gt: base } } : {}
-  const [noAr, pendentes, conserto, ultimaFalha, ultimoRecusado, duracoes] = await Promise.all([
-    db.pedidoDePublicacao.findFirst({
-      where: filtroDoNoAr(repo.id, base),
-      orderBy: ORDEM_DO_NO_AR,
-      select: {
-        commit: true,
-        concluidoEm: true,
-        descricao: true,
-        demanda: { select: { titulo: true } },
-        id: true,
-      },
-    }),
-    db.pedidoDePublicacao.findMany({
-      where: {
-        repositorioId: repo.id,
-        estado: { in: ['NA_FILA', 'VERIFICANDO', 'PUBLICANDO'] },
-        atendidoPorId: null,
-      },
-      orderBy: [{ criadoEm: 'asc' }, { id: 'asc' }],
-    }),
-    db.pedidoDeConserto.findFirst({
-      where: { repositorioId: repo.id },
-      orderBy: { abertoEm: 'desc' },
-    }),
-    db.pedidoDePublicacao.findFirst({
-      where: { repositorioId: repo.id, estado: 'FALHOU', atendidoPorId: null },
-      orderBy: [{ concluidoEm: { sort: 'desc', nulls: 'last' } }, { criadoEm: 'desc' }],
-      select: { commit: true, execucaoUrl: true },
-    }),
-    db.pedidoDePublicacao.findFirst({
-      where: {
-        repositorioId: repo.id,
-        estado: 'RECUSADO',
-        concluidoEm: base ? { gt: base } : { not: null },
-      },
-      orderBy: { concluidoEm: 'desc' },
-      select: { motivo: true, concluidoEm: true },
-    }),
-    db.pedidoDePublicacao.findMany({
-      where: {
-        repositorioId: repo.id,
-        estado: 'PUBLICADO',
-        atendidoPorId: null,
-        iniciadoEm: { not: null },
-        concluidoEm: { not: null },
-        ...depoisDaBase,
-      },
-      orderBy: { concluidoEm: 'desc' },
-      take: AMOSTRAS_DA_DURACAO,
-      select: { iniciadoEm: true, concluidoEm: true },
-    }),
-  ])
+  const [noAr, pendentes, conserto, ultimaFalha, ultimoRecusado, duracoes, ultimoDispensado] =
+    await Promise.all([
+      db.pedidoDePublicacao.findFirst({
+        where: filtroDoNoAr(repo.id, base),
+        orderBy: ORDEM_DO_NO_AR,
+        select: {
+          commit: true,
+          concluidoEm: true,
+          descricao: true,
+          demanda: { select: { titulo: true } },
+          id: true,
+          execucaoUrl: true,
+        },
+      }),
+      db.pedidoDePublicacao.findMany({
+        where: {
+          repositorioId: repo.id,
+          estado: { in: ['NA_FILA', 'VERIFICANDO', 'PUBLICANDO'] },
+          atendidoPorId: null,
+        },
+        orderBy: [{ criadoEm: 'asc' }, { id: 'asc' }],
+      }),
+      db.pedidoDeConserto.findFirst({
+        where: { repositorioId: repo.id },
+        orderBy: { abertoEm: 'desc' },
+      }),
+      db.pedidoDePublicacao.findFirst({
+        where: { repositorioId: repo.id, estado: 'FALHOU', atendidoPorId: null },
+        orderBy: [{ concluidoEm: { sort: 'desc', nulls: 'last' } }, { criadoEm: 'desc' }],
+        select: { commit: true, execucaoUrl: true, motivo: true },
+      }),
+      db.pedidoDePublicacao.findFirst({
+        where: {
+          repositorioId: repo.id,
+          estado: 'RECUSADO',
+          concluidoEm: base ? { gt: base } : { not: null },
+        },
+        orderBy: { concluidoEm: 'desc' },
+        select: { motivo: true, concluidoEm: true },
+      }),
+      db.pedidoDePublicacao.findMany({
+        where: {
+          repositorioId: repo.id,
+          estado: 'PUBLICADO',
+          atendidoPorId: null,
+          iniciadoEm: { not: null },
+          concluidoEm: { not: null },
+          ...depoisDaBase,
+        },
+        orderBy: { concluidoEm: 'desc' },
+        take: AMOSTRAS_DA_DURACAO,
+        select: { iniciadoEm: true, concluidoEm: true },
+      }),
+      db.pedidoDePublicacao.findFirst({
+        where: {
+          repositorioId: repo.id,
+          estado: 'DISPENSADO',
+          atendidoPorId: null,
+          concluidoEm: { not: null },
+        },
+        orderBy: { concluidoEm: 'desc' },
+        select: {
+          commit: true,
+          descricao: true,
+          motivo: true,
+          concluidoEm: true,
+          demanda: { select: { titulo: true } },
+        },
+      }),
+    ])
   // os pedidos mais antigos que a publicação no ar atendeu: subiram junto com ela
   const subiramJunto = noAr
     ? await db.pedidoDePublicacao.count({ where: { atendidoPorId: noAr.id, estado: 'PUBLICADO' } })
@@ -158,6 +182,7 @@ async function montarLinha(
     repositorioId: repo.id,
     projetoId: repo.projeto.id,
     projeto: repo.projeto.nome,
+    repositorio: repo.nomeCompleto,
     rotulo: rotuloDaLinha(repo.projeto.nome, repo.nomeCompleto, repositoriosDoProjeto),
     configuracao: config && {
       pausado: config.pausado,
@@ -173,8 +198,22 @@ async function montarLinha(
             desde: noAr.concluidoEm,
             titulo: noAr.demanda?.titulo || noAr.descricao,
             junto: subiramJunto,
+            execucaoUrl: noAr.execucaoUrl,
           }
         : null,
+    conferencia: Boolean(config?.urlDaVersao),
+    versaoConferida:
+      config?.urlDaVersao && config.versaoNoAr && config.versaoConferidaEm
+        ? { commit: config.versaoNoAr, em: config.versaoConferidaEm }
+        : null,
+    ultimoDispensado: ultimoDispensado?.concluidoEm
+      ? {
+          commit: ultimoDispensado.commit,
+          titulo: ultimoDispensado.demanda?.titulo || ultimoDispensado.descricao,
+          motivo: ultimoDispensado.motivo,
+          concluidoEm: ultimoDispensado.concluidoEm,
+        }
+      : null,
     // O motivo de um pedido publicando é provisório (disparo não confirmado): não vai para a tela.
     publicando: publicando ? pedidoDaLinha(publicando) : null,
     aguardando: pendentes.filter((p) => p.estado !== 'PUBLICANDO').map(pedidoDaLinha),
@@ -260,6 +299,9 @@ async function lerLinhas(): Promise<LinhaDaFila[]> {
           situacaoDesde: true,
           situacaoMotivo: true,
           baseRedefinidaEm: true,
+          urlDaVersao: true,
+          versaoNoAr: true,
+          versaoConferidaEm: true,
         },
       },
     },
@@ -308,6 +350,30 @@ export async function esperasDePublicacao(sujeito: Sujeito, agora: Date): Promis
   return esperasDaPublicacao(avisosDaPublicacao(await lerLinhas(), agora))
 }
 
+/**
+ * Os mesmos avisos para a pilha do Decidir, com o projeto e o repositório de cada um. Sem
+ * permissão própria: quem chama (a pilha, o arquivamento das conversas) já conferiu a leitura.
+ */
+export async function avisosParaODecidir(agora: Date): Promise<AvisoDaPublicacaoNaPilha[]> {
+  const linhas = await lerLinhas()
+  const porRepositorio = new Map(linhas.map((l) => [l.repositorioId, l]))
+  return avisosDaPublicacao(linhas, agora).map((a) => {
+    const linha = porRepositorio.get(a.repositorioId)
+    return {
+      id: a.id,
+      repositorioId: a.repositorioId,
+      titulo: a.titulo,
+      contexto: a.contexto,
+      href: a.href,
+      externo: a.externo,
+      tom: a.tom,
+      desde: a.desde,
+      projeto: linha?.projeto ?? '',
+      repositorio: linha?.repositorio ?? linha?.rotulo ?? '',
+    }
+  })
+}
+
 export interface ConfiguracaoDePublicacao {
   workflow: string
   entradaDoCommit: string
@@ -315,6 +381,7 @@ export interface ConfiguracaoDePublicacao {
   modoPadrao: ModoDePublicacao
   automatico: boolean
   pausado: boolean
+  urlDaVersao: string | null
 }
 
 export interface PublicacaoDoProjeto {
@@ -349,6 +416,7 @@ export async function obterPublicacaoDoProjeto(
           modoPadrao: true,
           automatico: true,
           pausado: true,
+          urlDaVersao: true,
         },
       },
     },

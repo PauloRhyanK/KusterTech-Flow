@@ -15,6 +15,7 @@ const NOME: Record<ReturnType<typeof iconeDoTipo>['letra'], string> = {
   A: 'Ajuste',
   F: 'Função nova',
   '?': 'Sem tipo ainda',
+  P: 'Publicação',
 }
 
 /** `nome` troca a dica padrão da letra (o "F" da Fábrica no Decidir não é "Função nova"). */

@@ -190,5 +190,6 @@ Este documento prevalece sobre os demais, então a mudança fica registrada aqui
 - **D73 — Avisos locais, não fila de alertas.** Os avisos da máquina local vêm de arquivo gravado pelos scripts da oficina.
 - **D74 — Tela desenhada antes, conferida depois.** Toda tela nova tem desenho aprovado pelo Paulo antes do desenvolvimento e é conferida no navegador, com capturas, antes da entrega.
 - **D75 — Etapas de demanda são modelo, não regra fixa.** Vale a partir do produto 3.
+- **D76 — A publicação confere o site no ar (exceção à D70).** Aprovada pelo Paulo em 25/11/2026. Depois de um deploy verde, o Flow lê a `urlDaVersao` do repositório (só GET, só https, sem credencial, URL definida por quem tem `configuracoes.gerenciar`) e só marca a publicação como publicada quando o site mostra o commit. Motivo: em 25/11 um deploy verde foi ao servidor antigo e o Flow marcou "Publicado" sem nada ter mudado no ar.
 
 **Invariantes:** 1, 4, 8, 9 e 10 seguem valendo para tudo. 2, 3, 5, 6 e 7 seguem valendo para os módulos congelados e voltam a ser exercitados quando eles forem religados.

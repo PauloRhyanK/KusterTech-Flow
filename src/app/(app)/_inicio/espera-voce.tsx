@@ -66,7 +66,19 @@ export function EsperaVoce({ espera, agora }: EsperaVoceProps) {
                     {item.desde && ` · ${formatarIdade(item.desde, agora)}`}
                   </p>
                 </div>
-                <LinkDoItem item={item} />
+                <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
+                  <LinkDoItem item={item} />
+                  {item.linkDoRun && (
+                    <a
+                      href={item.linkDoRun}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={CLASSE_DO_LINK}
+                    >
+                      Ver o run no GitHub <span aria-hidden="true">↗</span>
+                    </a>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

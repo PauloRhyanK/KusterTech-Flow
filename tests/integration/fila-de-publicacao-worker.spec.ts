@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { db } from '@/lib/db'
-import { MOTIVOS, verificacaoAtrasada } from '@/modules/fila-de-publicacao/model'
+import {
+  LIMITE_DA_CONFERENCIA_MS,
+  MOTIVOS,
+  verificacaoAtrasada,
+  type LeituraDaVersao,
+} from '@/modules/fila-de-publicacao/model'
+import { registrarChegada } from '@/modules/fila-de-publicacao/recepcao'
 import { commitNoAr, processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import type { ExecucaoDaFonte, FonteGitHub, RefRepositorio } from '@/modules/github/fonte'
@@ -244,9 +250,16 @@ async function pedir(
 const pedido = (id: string) => db.pedidoDePublicacao.findUniqueOrThrow({ where: { id } })
 const config = (repositorioId: string) =>
   db.configuracaoDePublicacao.findUniqueOrThrow({ where: { repositorioId } })
+// O que o site responde em versao.json; cada leitura fica registrada.
+let noSite: LeituraDaVersao = { tipo: 'fora_do_ar', detalhe: 'sem resposta' }
+let leiturasDoSite: string[] = []
+const lerVersao = async (url: string) => {
+  leiturasDoSite.push(url)
+  return noSite
+}
 const ciclo = (agora: Date = AGORA) => {
   f.relogio = agora
-  return processarFilaDePublicacao(f.fonte, agora)
+  return processarFilaDePublicacao(f.fonte, agora, lerVersao)
 }
 
 /** Publica `commit` no portal do começo ao fim e devolve o id do pedido. */
@@ -262,6 +275,8 @@ async function publicar(repositorioId: string, repositorio: string, commit: stri
 beforeEach(async () => {
   await limparBanco()
   sequencia = 0
+  noSite = { tipo: 'fora_do_ar', detalhe: 'sem resposta' }
+  leiturasDoSite = []
   f = criarFonteFalsa()
   portalId = await criarRepositorio(PORTAL, 5001)
   siteId = await criarRepositorio(SITE, 5002)
@@ -763,5 +778,160 @@ describe('processarFilaDePublicacao', () => {
     const r = await processarFilaDePublicacao(null, AGORA)
     expect(r.disparados).toBe(0)
     expect((await pedido(id)).estado).toBe('NA_FILA')
+  })
+})
+
+describe('versão no ar conferida', () => {
+  const URL_DA_VERSAO = 'https://portal.exemplo.test/versao.json'
+  const curto = (c: string) => c.slice(0, 7)
+  const comVersao = () =>
+    db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { urlDaVersao: URL_DA_VERSAO },
+    })
+
+  test('sem urlDaVersao o site não é lido e o verde publica como antes', async () => {
+    await publicar(portalId, PORTAL, M2, AGORA)
+    expect(leiturasDoSite).toEqual([])
+    expect((await config(portalId)).versaoNoAr).toBeNull()
+  })
+
+  test('workflow verde e o site mostra o commit → PUBLICADO; a versão conferida vira o no ar', async () => {
+    await comVersao()
+    const id = await pedir(portalId, M2)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'lida', commit: M2 }
+    const r = await ciclo(minutos(2))
+    expect(r.publicados).toBe(1)
+    expect(leiturasDoSite).toEqual([URL_DA_VERSAO])
+    const p = await pedido(id)
+    expect(p.estado).toBe('PUBLICADO')
+    expect(p.conferindoDesde).toEqual(minutos(2))
+    const cfg = await config(portalId)
+    expect(cfg.versaoNoAr).toBe(M2)
+    expect(cfg.versaoConferidaEm).toEqual(minutos(2))
+    expect(await commitNoAr(portalId)).toBe(M2)
+  })
+
+  test('o site mostra um commit que contém o pedido → PUBLICADO, e o no ar é o do site', async () => {
+    await comVersao()
+    const id = await pedir(portalId, M2)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'lida', commit: M3 }
+    await ciclo(minutos(2))
+    expect((await pedido(id)).estado).toBe('PUBLICADO')
+    expect((await config(portalId)).versaoNoAr).toBe(M3)
+  })
+
+  test('o site demora: fora do ar no primeiro ciclo, certo no seguinte → PUBLICADO', async () => {
+    await comVersao()
+    const id = await pedir(portalId, M2)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    await ciclo(minutos(2))
+    expect((await pedido(id)).estado).toBe('PUBLICANDO')
+    noSite = { tipo: 'lida', commit: M2 }
+    await ciclo(minutos(3))
+    const p = await pedido(id)
+    expect(p.estado).toBe('PUBLICADO')
+    expect(p.conferindoDesde).toEqual(minutos(2))
+  })
+
+  test('o site segue no build antigo por 3 min → FALHOU com os dois sha, fila PARADO, sem conserto e sem novo disparo', async () => {
+    await comVersao()
+    const id = await pedir(portalId, M2)
+    const lote = await pedir(portalId, M3, { modo: 'LOTE', criadoEm: minutos(-2) })
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'lida', commit: M1 }
+    await ciclo(minutos(2))
+    expect((await pedido(id)).estado).toBe('PUBLICANDO')
+    await ciclo(new Date(minutos(2).getTime() + LIMITE_DA_CONFERENCIA_MS - 1000))
+    expect((await pedido(id)).estado).toBe('PUBLICANDO')
+
+    const r = await ciclo(new Date(minutos(2).getTime() + LIMITE_DA_CONFERENCIA_MS))
+    expect(r.falhas).toBe(1)
+    expect(r.parados).toBe(1)
+    const motivo = `o deploy terminou, mas o site no ar mostra a versão ${curto(M1)}, não ${curto(M2)}`
+    const p = await pedido(id)
+    expect(p.estado).toBe('FALHOU')
+    expect(p.motivo).toBe(motivo)
+    expect(p.execucaoUrl).toBe(f.execucaoDe(PORTAL, M2)!.urlHtml)
+    const cfg = await config(portalId)
+    expect(cfg.situacao).toBe('PARADO')
+    expect(cfg.situacaoMotivo).toBe(motivo)
+    expect(cfg.versaoNoAr).toBeNull()
+    expect(await db.pedidoDeConserto.count()).toBe(0)
+    // O pedido do lote não é dispensado pelo "publicado" que não se confirmou.
+    expect((await pedido(lote)).estado).toBe('NA_FILA')
+    await ciclo(minutos(10))
+    expect(f.disparos).toHaveLength(1)
+  })
+
+  test('o site fora do ar por 3 min → FALHOU "a versão no ar não respondeu"', async () => {
+    await comVersao()
+    const id = await pedir(portalId, M2)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'fora_do_ar', detalhe: 'HTTP 502' }
+    await ciclo(minutos(2))
+    await ciclo(new Date(minutos(2).getTime() + LIMITE_DA_CONFERENCIA_MS))
+    expect((await pedido(id)).motivo).toBe(
+      'o deploy terminou, mas a versão no ar não respondeu (HTTP 502)',
+    )
+  })
+
+  test('"já está no ar" só com a versão conferida: publicado sem conferência não dispensa; conferido dispensa', async () => {
+    // M3 publicado antes de a conferência existir: não vale como no ar quando ela é ligada.
+    await publicar(portalId, PORTAL, M3, AGORA)
+    await comVersao()
+    expect(await commitNoAr(portalId)).toBeNull()
+    const loteM2 = await pedir(portalId, M2, { modo: 'LOTE', criadoEm: minutos(4) })
+    const chegada = await registrarChegada(
+      portalId,
+      { usuarioId },
+      { commit: M3, modo: 'lote' },
+      null,
+      { modoPadrao: 'IMEDIATO', baseRedefinidaEm: null },
+      minutos(4),
+    )
+    expect(chegada.tipo).toBe('criado')
+    // Sem conferência nada sai como "já está no ar": M3 sobe de novo e leva M2 junto.
+    await ciclo(minutos(5))
+    const m2 = await pedido(loteM2)
+    expect(m2.estado).toBe('PUBLICANDO')
+    expect(m2.atendidoPorId).toBe(chegada.id)
+
+    f.concluir(PORTAL, M3, 'success')
+    noSite = { tipo: 'lida', commit: M3 }
+    await ciclo(minutos(6))
+    expect((await pedido(loteM2)).estado).toBe('PUBLICADO')
+    expect((await config(portalId)).versaoNoAr).toBe(M3)
+
+    // Conferido M3: um pedido de M2 (contido nele) sai como "já está no ar".
+    const depois = await pedir(portalId, M2, { modo: 'LOTE', criadoEm: minutos(7) })
+    await ciclo(minutos(8))
+    const p = await pedido(depois)
+    expect(p.estado).toBe('DISPENSADO')
+    expect(p.motivo).toBe(MOTIVOS.jaNoAr)
+  })
+
+  test('chegada igual ao commit conferido → DISPENSADO na hora', async () => {
+    await comVersao()
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { versaoNoAr: M2, versaoConferidaEm: AGORA },
+    })
+    const chegada = await registrarChegada(
+      portalId,
+      { usuarioId },
+      { commit: M2, modo: 'imediato' },
+      null,
+      { modoPadrao: 'IMEDIATO', baseRedefinidaEm: null },
+      AGORA,
+    )
+    expect(chegada).toMatchObject({ tipo: 'dispensado', motivo: MOTIVOS.jaNoAr })
   })
 })

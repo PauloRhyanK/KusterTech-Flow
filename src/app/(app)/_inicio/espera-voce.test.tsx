@@ -46,6 +46,37 @@ describe('EsperaVoce', () => {
     )
   })
 
+  it('aviso da publicação com o run: leva à Publicação e ao run no GitHub', () => {
+    render(
+      <EsperaVoce
+        espera={espera({
+          itens: [
+            item({
+              tipo: 'publicacao',
+              titulo:
+                'CAIS parou: o deploy terminou, mas o site no ar mostra a versão 1111111, não 2222222',
+              contexto: 'o workflow ficou verde, mas o site não trocou de versão',
+              href: '/publicacao',
+              rotuloDoLink: 'Ver a publicação',
+              linkDoRun: 'https://github.com/o/cais/actions/runs/88',
+            }),
+          ],
+          total: 1,
+        })}
+        agora={AGORA}
+      />,
+    )
+    const linha = within(screen.getByRole('list', { name: 'Espera você' })).getByRole('listitem')
+    expect(within(linha).getByText(/o site no ar mostra a versão 1111111/)).toBeVisible()
+    expect(within(linha).getByRole('link', { name: 'Ver a publicação' })).toHaveAttribute(
+      'href',
+      '/publicacao',
+    )
+    const run = within(linha).getByRole('link', { name: /Ver o run no GitHub/ })
+    expect(run).toHaveAttribute('href', 'https://github.com/o/cais/actions/runs/88')
+    expect(run).toHaveAttribute('target', '_blank')
+  })
+
   it('link externo tem target="_blank" e rel="noreferrer"', () => {
     render(
       <EsperaVoce

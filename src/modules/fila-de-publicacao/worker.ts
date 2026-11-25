@@ -14,11 +14,13 @@ import {
   aposFalha,
   avaliarPedido,
   contarPublicacoesAusentes,
+  decidirConferencia,
   decidirConserto,
   escolherCandidato,
   escolherProximo,
   ESPERA_PELA_EXECUCAO_MS,
   MOTIVOS,
+  noArParaAvaliar,
   procurarExecucaoDoCommit,
   relacaoDoCompare,
   resultadoDaExecucao,
@@ -31,6 +33,7 @@ import {
   type SituacaoDaFila,
 } from './model'
 import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
+import { lerVersaoNoAr, type LerVersaoNoAr } from './versao-no-ar'
 
 export interface ResumoDaFila {
   repositorios: number
@@ -66,18 +69,28 @@ function comTrava<T>(repositorioId: string, fn: (tx: Tx) => Promise<T>): Promise
   })
 }
 
-/** O commit do último publicado depois da redefinição (ou de sempre, sem redefinição). */
+/**
+ * O commit no ar para avaliar pedidos: com a versão no ar configurada, o último conferido no site;
+ * sem ela, o do último publicado depois da redefinição (ou de sempre, sem redefinição).
+ */
 export async function commitNoAr(repositorioId: string): Promise<string | null> {
   const config = await db.configuracaoDePublicacao.findUnique({
     where: { repositorioId },
-    select: { baseRedefinidaEm: true },
+    select: { baseRedefinidaEm: true, urlDaVersao: true, versaoNoAr: true },
   })
-  const ultimo = await db.pedidoDePublicacao.findFirst({
-    where: filtroDoNoAr(repositorioId, config?.baseRedefinidaEm ?? null),
-    orderBy: ORDEM_DO_NO_AR,
-    select: { commit: true },
+  const urlDaVersao = config?.urlDaVersao ?? null
+  const ultimo = urlDaVersao
+    ? null
+    : await db.pedidoDePublicacao.findFirst({
+        where: filtroDoNoAr(repositorioId, config?.baseRedefinidaEm ?? null),
+        orderBy: ORDEM_DO_NO_AR,
+        select: { commit: true },
+      })
+  return noArParaAvaliar({
+    urlDaVersao,
+    versaoNoAr: config?.versaoNoAr ?? null,
+    ultimoPublicado: ultimo?.commit ?? null,
   })
-  return ultimo?.commit ?? null
 }
 
 async function publicadosRecentes(
@@ -130,6 +143,7 @@ class CicloDoRepositorio {
     private readonly agora: Date,
     private readonly resumo: ResumoDaFila,
     private config: Configuracao,
+    private readonly lerVersao: LerVersaoNoAr,
   ) {}
 
   async executar(): Promise<void> {
@@ -327,6 +341,7 @@ class CicloDoRepositorio {
     iniciadoEm: Date | null
     consertoId: string | null
     motivo: string | null
+    conferindoDesde: Date | null
   }): Promise<boolean> {
     const commit = candidato.commit!
     let execucao: ExecucaoDaFonte | null
@@ -345,23 +360,102 @@ class CicloDoRepositorio {
     const resultado = resultadoDaExecucao(execucao)
     if (resultado === 'andando') return false
     if (resultado === 'sucesso') {
-      await comTrava(this.repo.id, async (tx) => {
-        const { count } = await tx.pedidoDePublicacao.updateMany({
-          where: { id: candidato.id, estado: 'PUBLICANDO' },
-          data: { estado: 'PUBLICADO', concluidoEm: this.agora },
-        })
-        if (count === 0) return
-        await tx.pedidoDePublicacao.updateMany({
-          where: { atendidoPorId: candidato.id, estado: 'PUBLICANDO' },
-          data: { estado: 'PUBLICADO', concluidoEm: this.agora },
-        })
-        this.resumo.publicados += 1
-      })
-      return true
+      if (this.config.urlDaVersao === null) {
+        await this.publicado(candidato.id, null)
+        return true
+      }
+      return this.conferir(candidato, this.config.urlDaVersao, execucao)
     }
     const sumiu = execucao === null || execucao.conclusao === 'cancelled'
     await this.falhar(candidato, sumiu ? MOTIVOS.execucaoSumiu : null, execucao)
     return true
+  }
+
+  /** PUBLICADO para o candidato e os atendidos; com a versão conferida, ela vira o no ar. */
+  private async publicado(candidatoId: string, noArConferido: string | null) {
+    await comTrava(this.repo.id, async (tx) => {
+      const { count } = await tx.pedidoDePublicacao.updateMany({
+        where: { id: candidatoId, estado: 'PUBLICANDO' },
+        data: { estado: 'PUBLICADO', concluidoEm: this.agora },
+      })
+      if (count === 0) return
+      await tx.pedidoDePublicacao.updateMany({
+        where: { atendidoPorId: candidatoId, estado: 'PUBLICANDO' },
+        data: { estado: 'PUBLICADO', concluidoEm: this.agora },
+      })
+      if (noArConferido !== null) {
+        await tx.configuracaoDePublicacao.update({
+          where: { repositorioId: this.repo.id },
+          data: { versaoNoAr: noArConferido, versaoConferidaEm: this.agora },
+        })
+      }
+      this.resumo.publicados += 1
+    })
+  }
+
+  /**
+   * Workflow verde com a versão no ar configurada: lê o site a cada ciclo, por até
+   * `LIMITE_DA_CONFERENCIA_MS`. Devolve `true` quando a publicação terminou.
+   */
+  private async conferir(
+    candidato: {
+      id: string
+      commit: string | null
+      execucaoUrl: string | null
+      consertoId: string | null
+      motivo: string | null
+      conferindoDesde: Date | null
+    },
+    url: string,
+    execucao: ExecucaoDaFonte | null,
+  ): Promise<boolean> {
+    const commit = candidato.commit!
+    const desde = candidato.conferindoDesde ?? this.agora
+    if (candidato.conferindoDesde === null) {
+      await db.pedidoDePublicacao.updateMany({
+        where: { id: candidato.id, estado: 'PUBLICANDO', conferindoDesde: null },
+        data: { conferindoDesde: desde, execucaoUrl: execucao?.urlHtml ?? candidato.execucaoUrl },
+      })
+    }
+    const leitura = await this.lerVersao(url)
+    // Base = commit pedido, cabeça = o commit no site: a_frente ou identico quer dizer que o site o contém.
+    const relacao =
+      leitura.tipo === 'lida' && leitura.commit !== commit
+        ? await this.relacao(commit, leitura.commit)
+        : null
+    const decisao = decidirConferencia({ commit, leitura, relacao, desde, agora: this.agora })
+    if (decisao.acao === 'esperar') return false
+    if (decisao.acao === 'publicado') {
+      await this.publicado(candidato.id, decisao.noAr)
+      return true
+    }
+    await this.falharNaConferencia(candidato.id, decisao.motivo)
+    return true
+  }
+
+  /**
+   * O site não mostra o que foi publicado: o código não é o problema (servidor errado, cache,
+   * deploy que não trocou o build), então não há conserto para a Fábrica. A fila para e espera o
+   * Paulo; sem isso a próxima publicação cairia no mesmo lugar.
+   */
+  private async falharNaConferencia(candidatoId: string, motivo: string) {
+    await comTrava(this.repo.id, async (tx) => {
+      const { count } = await tx.pedidoDePublicacao.updateMany({
+        where: { id: candidatoId, estado: 'PUBLICANDO' },
+        data: { estado: 'FALHOU', motivo, concluidoEm: this.agora },
+      })
+      if (count === 0) return
+      await tx.pedidoDePublicacao.updateMany({
+        where: { atendidoPorId: candidatoId, estado: 'PUBLICANDO' },
+        data: { estado: 'FALHOU', motivo, concluidoEm: this.agora },
+      })
+      await tx.configuracaoDePublicacao.update({
+        where: { repositorioId: this.repo.id },
+        data: { situacao: 'PARADO', situacaoDesde: this.agora, situacaoMotivo: motivo },
+      })
+      this.resumo.falhas += 1
+      this.resumo.parados += 1
+    })
   }
 
   /** Procura a execução disparada pelo commit no título e grava o id. */
@@ -732,6 +826,7 @@ async function vigiarConsertos(repositorioId: string, agora: Date, resumo: Resum
 export async function processarFilaDePublicacao(
   fonte: FonteGitHub | null,
   agora: Date,
+  lerVersao: LerVersaoNoAr = lerVersaoNoAr,
 ): Promise<ResumoDaFila> {
   const resumo: ResumoDaFila = {
     repositorios: 0,
@@ -771,7 +866,7 @@ export async function processarFilaDePublicacao(
       if (fonte !== null) {
         // A configuração relida: o passo do conserto pode ter mudado a situação da fila.
         const atual = await lerConfiguracao(repositorio.id)
-        await new CicloDoRepositorio(fonte, repositorio, agora, resumo, atual).executar()
+        await new CicloDoRepositorio(fonte, repositorio, agora, resumo, atual, lerVersao).executar()
         resumo.parados += await avancarConsertosComPr(repositorio.id, agora)
       }
       await vigiarConsertos(repositorio.id, agora, resumo)

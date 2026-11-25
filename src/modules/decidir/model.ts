@@ -9,9 +9,11 @@ export type TipoDeItem =
   | 'nao_classificada'
   | 'pedido'
   | 'concluir_etapa'
+  | 'publicacao'
 
 export const ORDEM_DOS_ITENS: readonly TipoDeItem[] = [
   'trava',
+  'publicacao',
   'fim_de_fase',
   'decisao_da_fabrica',
   'desenho',
@@ -51,6 +53,20 @@ export interface DecisaoDoRetrato {
   raias: { concluidas: number; total: number }
 }
 
+/** Um aviso da fila de publicação (falhou, parou, dispensou), com o projeto e o repositório. */
+export interface AvisoDaPublicacaoNaPilha {
+  id: string
+  repositorioId: string
+  titulo: string
+  contexto: string
+  href: string
+  externo: boolean
+  tom: 'erro' | 'atencao'
+  desde: Date
+  projeto: string
+  repositorio: string
+}
+
 export interface MarcaDaConversa {
   chave: string
   encerrada: boolean
@@ -80,6 +96,12 @@ export type RefDoItem =
       planoId: string
       feature: string
     }
+  | {
+      tipo: 'publicacao'
+      repositorioId: string
+      avisoId: string
+      tom: 'erro' | 'atencao'
+    }
 
 export interface ItemDaPilha {
   chave: string
@@ -103,6 +125,7 @@ export const PERGUNTAS: Record<TipoDeItem, string> = {
   nao_classificada: 'Que tipo de demanda é esta, e para onde vai?',
   pedido: 'Fazemos isso agora, depois, ou não fazemos?',
   concluir_etapa: 'Posso marcar esta etapa como concluída?',
+  publicacao: 'Confira o que aconteceu na tela Publicação.',
 }
 
 const RESPOSTAS_DE_PEDIDO = [
@@ -131,6 +154,8 @@ export const RESPOSTAS_DO_FLOW: Record<TipoDeItem, readonly { chave: string; rot
   ],
   concluir_etapa: [{ chave: 'concluir', rotulo: 'Concluir' }],
   decisao_da_fabrica: [],
+  // O aviso da publicação não fecha por aqui: some quando a fila volta a andar (ou em 24 h).
+  publicacao: [],
 }
 
 /** As respostas que só valem no teste que falhou (a trava comum não as mostra). */
@@ -184,12 +209,19 @@ export function chaveDaIssue(url: string): string {
   return `issue:${url}`
 }
 
+export function chaveDaPublicacao(avisoId: string, desde: Date): string {
+  return `publicacao:${avisoId}:${desde.getTime()}`
+}
+
+const CHAVE_DA_PUBLICACAO = /^publicacao:[A-Za-z0-9-]+:\d+$/
+
 const URL_DE_ISSUE = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/issues\/([1-9][0-9]*)$/
 const CHAVE_DE_DEMANDA =
   /^demanda:[^:\s]+:(decidir_destino|planejar_comigo|aprovar_desenho|concluir_etapa|travada|teste_falhou):\d+$/
 
 export function chaveValida(chave: string): boolean {
   if (chave.startsWith('issue:')) return URL_DE_ISSUE.test(chave.slice('issue:'.length))
+  if (chave.startsWith('publicacao:')) return CHAVE_DA_PUBLICACAO.test(chave)
   return CHAVE_DE_DEMANDA.test(chave)
 }
 
@@ -383,9 +415,48 @@ function itemDaDecisao(
   }
 }
 
+/** O que cada aviso pede do Paulo, pelo caso (o prefixo do id do aviso). */
+function perguntaDaPublicacao(avisoId: string): string {
+  if (avisoId.startsWith('parado-')) return 'Confira o servidor e retome a fila na tela Publicação.'
+  if (avisoId.startsWith('falhou-')) {
+    return 'Um agente está consertando. Confira o run se quiser saber o que quebrou.'
+  }
+  if (avisoId.startsWith('dispensado-')) {
+    return 'Confira se o site mostra mesmo a versão que você espera.'
+  }
+  return PERGUNTAS.publicacao
+}
+
+function itemDaPublicacao(a: AvisoDaPublicacaoNaPilha, agora: Date): ItemDaPilha {
+  return {
+    chave: chaveDaPublicacao(a.id, a.desde),
+    tipo: 'publicacao',
+    titulo: a.titulo,
+    pergunta: perguntaDaPublicacao(a.id),
+    projeto: a.projeto,
+    repositorio: a.repositorio,
+    linha: `Publicação · ${formatarIdade(a.desde, agora)}`,
+    desde: a.desde,
+    fatos: [],
+    // O run do GitHub quando há; sem ele, a linha do repositório na tela Publicação.
+    relato: {
+      resumo: a.contexto,
+      href: a.externo ? a.href : `/publicacao${a.href.startsWith('#') ? a.href : ''}`,
+      externo: a.externo,
+    },
+    ref: { tipo: 'publicacao', repositorioId: a.repositorioId, avisoId: a.id, tom: a.tom },
+  }
+}
+
+function pesoDoTom(item: ItemDaPilha): number {
+  return item.ref.tipo === 'publicacao' && item.ref.tom === 'atencao' ? 1 : 0
+}
+
 export function montarPilha(e: {
   demandas: readonly DemandaEsperando[]
   decisoes: readonly DecisaoDoRetrato[]
+  /** Os avisos da fila de publicação; sem o módulo, nenhum. */
+  publicacoes?: readonly AvisoDaPublicacaoNaPilha[]
   marcas: readonly MarcaDaConversa[]
   agora: Date
   nomeDoProjeto: (repo: string) => string | null
@@ -402,6 +473,7 @@ export function montarPilha(e: {
     vistas.add(d.url)
     todos.push(itemDaDecisao(d, Number(m[3]), e.nomeDoProjeto))
   }
+  for (const a of e.publicacoes ?? []) todos.push(itemDaPublicacao(a, e.agora))
 
   const marcas = new Map(e.marcas.map((m) => [m.chave, m]))
   const itens: ItemDaPilha[] = []
@@ -422,6 +494,9 @@ export function montarPilha(e: {
     if (pa !== null && pb !== null && pa !== pb) return pa - pb
     const porTipo = ORDEM_DOS_ITENS.indexOf(a.tipo) - ORDEM_DOS_ITENS.indexOf(b.tipo)
     if (porTipo !== 0) return porTipo
+    // Entre os avisos da publicação, o que parou a fila vem antes do que só avisa.
+    const porTom = pesoDoTom(a) - pesoDoTom(b)
+    if (porTom !== 0) return porTom
     const da = a.desde?.getTime() ?? null
     const db = b.desde?.getTime() ?? null
     if (da !== db) {

@@ -239,6 +239,23 @@ describe('tipo publicacao', () => {
     expect(ROTULO_DO_TIPO.publicacao).toBe('Publicação')
   })
 
+  it('esperasDaPublicacao: sem link do run, só a tela Publicação', () => {
+    const [item] = esperasDaPublicacao([
+      {
+        id: 'verificacao-r1',
+        repositorioId: 'r1',
+        titulo: 'Projeto Alfa: o GitHub não responde há 31 min',
+        contexto: 'pedido aaaaaaa esperando a verificação',
+        href: '#r1',
+        externo: false,
+        tom: 'atencao',
+        desde: AGORA,
+      },
+    ])
+    expect(item).toMatchObject({ href: '/publicacao', rotuloDoLink: 'Ver a publicação' })
+    expect(item).not.toHaveProperty('linkDoRun')
+  })
+
   it('esperasDaPublicacao: aviso vira item que leva à tela Publicação; o do PR leva ao PR', () => {
     const desde = new Date('2026-11-19T14:00:00Z')
     const base = {
@@ -271,6 +288,7 @@ describe('tipo publicacao', () => {
         href: '/publicacao',
         externo: false,
         rotuloDoLink: 'Ver a publicação',
+        linkDoRun: 'https://github.com/kustertech-exemplo/beta/actions/runs/7',
         tom: 'erro',
         desde,
       },
@@ -290,6 +308,16 @@ describe('tipo publicacao', () => {
 })
 
 describe('montarEsperaVoce', () => {
+  it('na publicação, o erro vem antes da atenção mesmo sendo mais novo', () => {
+    const atencao = {
+      ...item('publicacao', 'p-atencao', minutosAntes(30)),
+      tom: 'atencao' as const,
+    }
+    const erro = { ...item('publicacao', 'p-erro', minutosAntes(5)), tom: 'erro' as const }
+    const r = montarEsperaVoce([{ tipo: 'publicacao', itens: [atencao, erro] }])
+    expect(r.itens.map((i) => i.id)).toEqual(['p-erro', 'p-atencao'])
+  })
+
   it('ordena por tipo e, dentro do tipo, do mais antigo ao mais novo, com sem-data por último', () => {
     const r = montarEsperaVoce([
       { tipo: 'integracao', itens: [item('integracao', 'i1', minutosAntes(90))] },

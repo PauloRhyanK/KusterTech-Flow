@@ -4,7 +4,12 @@ import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { MOTIVOS } from '@/modules/fila-de-publicacao/model'
 import { obterPublicacaoDoProjeto } from '@/modules/fila-de-publicacao/queries'
-import { publicarAgora, salvarConfiguracaoDePublicacao } from '@/modules/fila-de-publicacao/service'
+import {
+  definirUrlDaVersao,
+  publicarAgora,
+  redefinirNoAr,
+  salvarConfiguracaoDePublicacao,
+} from '@/modules/fila-de-publicacao/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
 
@@ -108,6 +113,7 @@ describe('salvarConfiguracaoDePublicacao', () => {
           modoPadrao: 'lote',
           automatico: false,
           pausado: true,
+          urlDaVersao: null,
         },
       },
     ])
@@ -185,5 +191,88 @@ describe('publicarAgora', () => {
     await db.projeto.update({ where: { id: projetoId }, data: { arquivadoEm: new Date() } })
     await expect(publicarAgora(admin, portal)).rejects.toBeInstanceOf(ErroDeDominio)
     expect(await db.pedidoDePublicacao.count()).toBe(0)
+  })
+})
+
+describe('definirUrlDaVersao', () => {
+  const URL_DA_VERSAO = 'https://cais.caisinvestimentos.com.br/versao.json'
+  const lerConfig = () =>
+    db.configuracaoDePublicacao.findUniqueOrThrow({ where: { repositorioId: portal } })
+
+  test('grava a URL https; trocar ou apagar descarta a versão conferida; inválida → ErroDeDominio', async () => {
+    await salvarConfiguracaoDePublicacao(admin, entrada())
+    await definirUrlDaVersao(admin, {
+      projetoId,
+      repositorioId: portal,
+      urlDaVersao: URL_DA_VERSAO,
+    })
+    expect((await lerConfig()).urlDaVersao).toBe(URL_DA_VERSAO)
+    expect(
+      (await obterPublicacaoDoProjeto(admin, projetoId)).repositorios[0]?.configuracao?.urlDaVersao,
+    ).toBe(URL_DA_VERSAO)
+
+    const conferida = { versaoNoAr: 'a'.repeat(40), versaoConferidaEm: new Date() }
+    await db.configuracaoDePublicacao.update({ where: { repositorioId: portal }, data: conferida })
+    // A mesma URL não mexe na versão conferida.
+    await definirUrlDaVersao(admin, {
+      projetoId,
+      repositorioId: portal,
+      urlDaVersao: URL_DA_VERSAO,
+    })
+    expect((await lerConfig()).versaoNoAr).toBe('a'.repeat(40))
+
+    await definirUrlDaVersao(admin, {
+      projetoId,
+      repositorioId: portal,
+      urlDaVersao: 'https://novo.exemplo.test/versao.json',
+    })
+    expect(await lerConfig()).toMatchObject({ versaoNoAr: null, versaoConferidaEm: null })
+
+    await definirUrlDaVersao(admin, { projetoId, repositorioId: portal, urlDaVersao: ' ' })
+    expect((await lerConfig()).urlDaVersao).toBeNull()
+
+    for (const ruim of [
+      { projetoId, repositorioId: portal, urlDaVersao: 'http://site.test/versao.json' },
+      { projetoId: outroProjetoId, repositorioId: portal, urlDaVersao: URL_DA_VERSAO },
+      { projetoId, repositorioId: outro, urlDaVersao: URL_DA_VERSAO },
+    ]) {
+      await expect(definirUrlDaVersao(admin, ruim)).rejects.toBeInstanceOf(ErroDeDominio)
+    }
+  })
+
+  test('sem configuracoes.gerenciar → ErroDeAutorizacao, sem tocar no banco', async () => {
+    await salvarConfiguracaoDePublicacao(admin, entrada())
+    await expect(
+      definirUrlDaVersao(semPermissao, {
+        projetoId,
+        repositorioId: portal,
+        urlDaVersao: URL_DA_VERSAO,
+      }),
+    ).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    expect((await lerConfig()).urlDaVersao).toBeNull()
+  })
+
+  test('redefinir o no ar também descarta a versão conferida', async () => {
+    await salvarConfiguracaoDePublicacao(admin, entrada())
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portal },
+      data: {
+        urlDaVersao: URL_DA_VERSAO,
+        versaoNoAr: 'a'.repeat(40),
+        versaoConferidaEm: new Date(),
+      },
+    })
+    await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId: portal,
+        commit: 'b'.repeat(40),
+        modo: 'IMEDIATO',
+        estado: 'RECUSADO',
+        motivo: MOTIVOS.historicoReescrito,
+        concluidoEm: new Date(),
+      },
+    })
+    await redefinirNoAr(admin, portal)
+    expect(await lerConfig()).toMatchObject({ versaoNoAr: null, versaoConferidaEm: null })
   })
 })

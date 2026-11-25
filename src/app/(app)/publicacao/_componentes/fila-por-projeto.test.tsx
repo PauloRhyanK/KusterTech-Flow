@@ -147,6 +147,27 @@ describe('FilaPorProjeto', () => {
     expect(screen.queryByRole('button', { name: 'Redefinir o que está no ar' })).toBeNull()
   })
 
+  test('com a versão no ar configurada, mostra o commit conferido no site e quando', () => {
+    render(
+      <FilaPorProjeto
+        {...props}
+        linhas={[
+          linha({
+            noAr: { commit: 'c'.repeat(40), desde: minutos(-10) },
+            conferencia: true,
+            versaoConferida: { commit: 'c'.repeat(40), em: minutos(-9) },
+          }),
+          linha({ repositorioId: 'r2', rotulo: 'Projeto Beta', conferencia: true }),
+          linha({ repositorioId: 'r3', rotulo: 'Projeto Gama' }),
+        ]}
+      />,
+    )
+    const [alfa, beta, gama] = screen.getAllByRole('listitem')
+    expect(within(alfa!).getByText('no site: ccccccc · conferida há 9 min')).toBeVisible()
+    expect(within(beta!).getByText('no site: ainda não conferida')).toBeVisible()
+    expect(within(gama!).queryByText(/no site:/)).toBeNull()
+  })
+
   test('sem repositório vinculado mostra o estado vazio', () => {
     render(<FilaPorProjeto {...props} linhas={[]} />)
     expect(screen.getByText('Nenhum repositório vinculado a projeto ativo.')).toBeVisible()

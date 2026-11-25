@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from 'vitest'
 vi.mock('@/app/(app)/projetos/[p]/(detalhe)/configuracao/publicacao-actions', () => ({
   salvarConfiguracaoDePublicacaoAction: vi.fn(async () => ({})),
   publicarAgoraAction: vi.fn(async () => ({})),
+  salvarUrlDaVersaoAction: vi.fn(async () => ({})),
 }))
 
 import { PublicacaoNoProjeto } from './publicacao-no-projeto'
@@ -44,6 +45,7 @@ describe('PublicacaoNoProjeto', () => {
               modoPadrao: 'lote',
               automatico: false,
               pausado: true,
+              urlDaVersao: null,
             },
           },
         ]}
@@ -58,6 +60,46 @@ describe('PublicacaoNoProjeto', () => {
     expect(within(secao).getByLabelText('Publicar ao entrar na fila')).not.toBeChecked()
     expect(within(secao).getByLabelText('Pausar a fila')).toBeChecked()
     expect(within(secao).getByRole('button', { name: 'Publicar agora' })).toBeInTheDocument()
+  })
+
+  const CONFIGURADO = {
+    ...REPO,
+    configuracao: {
+      workflow: 'deploy.yml',
+      entradaDoCommit: 'commit',
+      horaDoLote: '22:00',
+      modoPadrao: 'imediato' as const,
+      automatico: true,
+      pausado: false,
+      urlDaVersao: 'https://cais.caisinvestimentos.com.br/versao.json',
+    },
+  }
+
+  test('com configurações.gerenciar mostra a versão no ar preenchida, com o formato esperado', () => {
+    render(
+      <PublicacaoNoProjeto projetoId="p-1" repositorios={[CONFIGURADO]} podeConfigurarVersao />,
+    )
+    const secao = screen.getByRole('region', { name: 'kustertech-exemplo/portal' })
+    const campo = within(secao).getByLabelText('Versão no ar')
+    expect(campo).toHaveValue('https://cais.caisinvestimentos.com.br/versao.json')
+    expect(campo).toHaveAttribute('type', 'url')
+    expect(within(secao).getByText(/\{"commit": "<sha>"\}/)).toBeInTheDocument()
+    expect(within(secao).getByRole('button', { name: 'Salvar a versão no ar' })).toBeInTheDocument()
+  })
+
+  test('sem configurações.gerenciar ou sem configuração, a versão no ar não aparece', () => {
+    const { rerender } = render(
+      <PublicacaoNoProjeto projetoId="p-1" repositorios={[CONFIGURADO]} />,
+    )
+    expect(screen.queryByLabelText('Versão no ar')).toBeNull()
+    rerender(
+      <PublicacaoNoProjeto
+        projetoId="p-1"
+        repositorios={[{ ...REPO, configuracao: null }]}
+        podeConfigurarVersao
+      />,
+    )
+    expect(screen.queryByLabelText('Versão no ar')).toBeNull()
   })
 
   test('sem repositório vinculado leva à seção GitHub', () => {

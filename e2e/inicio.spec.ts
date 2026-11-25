@@ -94,7 +94,9 @@ test('com um retrato com plano ativo e decisão, o admin vê a decisão resumida
     espera.getByRole('listitem').filter({ hasText: 'Homologar o painel da Fábrica' }),
   ).toHaveCount(0)
   const decidir = espera.getByRole('listitem').filter({ hasText: /esperam? sua resposta/ })
-  await expect(decidir).toContainText('Decisões da Fábrica e pedidos das demandas')
+  await expect(decidir).toContainText(
+    'Decisões da Fábrica, pedidos das demandas e avisos da publicação',
+  )
   await expect(decidir.getByRole('link', { name: /Abrir Decidir/ })).toHaveAttribute(
     'href',
     '/decidir',

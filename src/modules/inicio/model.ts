@@ -76,6 +76,8 @@ export interface ItemDeEspera {
   href: string
   externo: boolean
   rotuloDoLink: string
+  /** O run do GitHub do aviso da publicação, ao lado do link principal. */
+  linkDoRun?: string
   tom: TomDeEspera
   desde: Date | null
 }
@@ -93,6 +95,8 @@ export interface EsperaVoce {
 function compararItens(a: ItemDeEspera, b: ItemDeEspera): number {
   const porTipo = ORDEM_DOS_TIPOS.indexOf(a.tipo) - ORDEM_DOS_TIPOS.indexOf(b.tipo)
   if (porTipo !== 0) return porTipo
+  // Na publicação, o erro (fila parada) vem antes da atenção, como na faixa da tela.
+  if (a.tipo === 'publicacao' && a.tom !== b.tom) return a.tom === 'erro' ? -1 : 1
   if (a.desde && b.desde) {
     const porData = a.desde.getTime() - b.desde.getTime()
     if (porData !== 0) return porData
@@ -120,8 +124,8 @@ export function montarEsperaVoce(fontes: readonly FonteDeEspera[]): EsperaVoce {
 
 const MINUTO_MS = 60_000
 
-// Os avisos da fila de publicação levam à tela Publicação; o que traz link próprio (o PR do
-// conserto) leva a ele.
+// Os avisos da fila de publicação levam à tela Publicação, e ao run do GitHub quando há um; o que
+// traz link próprio (o PR do conserto) leva a ele.
 export function esperasDaPublicacao(avisos: readonly AvisoDePublicacao[]): ItemDeEspera[] {
   return avisos.map((aviso) => ({
     id: `publicacao:${aviso.id}`,
@@ -130,7 +134,12 @@ export function esperasDaPublicacao(avisos: readonly AvisoDePublicacao[]): ItemD
     contexto: aviso.contexto,
     ...(aviso.rotuloDoLink
       ? { href: aviso.href, externo: aviso.externo, rotuloDoLink: aviso.rotuloDoLink }
-      : { href: '/publicacao', externo: false, rotuloDoLink: 'Ver a publicação' }),
+      : {
+          href: '/publicacao',
+          externo: false,
+          rotuloDoLink: 'Ver a publicação',
+          ...(aviso.externo ? { linkDoRun: aviso.href } : {}),
+        }),
     tom: aviso.tom,
     desde: aviso.desde,
   }))
@@ -560,7 +569,7 @@ export function esperasComDecidir(
       tipo: 'decidir',
       titulo:
         naPilha === 1 ? '1 item espera sua resposta' : `${naPilha} itens esperam sua resposta`,
-      contexto: 'Decisões da Fábrica e pedidos das demandas',
+      contexto: 'Decisões da Fábrica, pedidos das demandas e avisos da publicação',
       href: '/decidir',
       externo: false,
       rotuloDoLink: 'Abrir Decidir',

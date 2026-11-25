@@ -18,6 +18,9 @@ export function iconeDoItem(item: ItemDaPilha): {
   nome?: string
 } {
   if (item.ref.tipo === 'issue') return { icone: { letra: 'F', tom: 'execucao' }, nome: 'Fábrica' }
+  if (item.ref.tipo === 'publicacao') {
+    return { icone: { letra: 'P', tom: item.ref.tom }, nome: 'Publicação' }
+  }
   return { icone: iconeDoTipo(item.ref.tipoDeDemanda) }
 }
 

@@ -8,7 +8,11 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { exigirModulo } from '@/lib/modulos-rota'
-import { publicarAgora, salvarConfiguracaoDePublicacao } from '@/modules/fila-de-publicacao/service'
+import {
+  definirUrlDaVersao,
+  publicarAgora,
+  salvarConfiguracaoDePublicacao,
+} from '@/modules/fila-de-publicacao/service'
 import { resumirErroParaLog } from '@/modules/github/model'
 
 export interface EstadoDaPublicacaoNoProjeto {
@@ -30,6 +34,12 @@ const salvarSchema = z.object({
   entradaDoCommit: texto,
   horaDoLote: texto,
   modoPadrao: z.enum(['imediato', 'lote'], { error: 'Escolha o modo padrão.' }),
+})
+
+const versaoSchema = z.object({
+  projetoId: z.uuid({ error: 'Projeto inválido.' }),
+  repositorioId: z.uuid({ error: 'Repositório inválido.' }),
+  urlDaVersao: z.string({ error: DADOS_INVALIDOS }).max(600, { error: DADOS_INVALIDOS }),
 })
 
 const publicarSchema = z.object({
@@ -102,5 +112,32 @@ export async function publicarAgoraAction(
     return { sucesso: 'Pedido na fila: o Flow publica a ponta de main.' }
   } catch (erro) {
     return traduzirErro(erro, 'pedir a publicação')
+  }
+}
+
+export async function salvarUrlDaVersaoAction(
+  _estado: EstadoDaPublicacaoNoProjeto,
+  form: FormData,
+): Promise<EstadoDaPublicacaoNoProjeto> {
+  const sessao = await exigirSessao()
+  const parse = versaoSchema.safeParse({
+    projetoId: form.get('projetoId'),
+    repositorioId: form.get('repositorioId'),
+    urlDaVersao: form.get('urlDaVersao') ?? '',
+  })
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? DADOS_INVALIDOS }
+  try {
+    await definirUrlDaVersao(sessao.sujeito, parse.data)
+    revalidar(parse.data.projetoId)
+    return {
+      sucesso: parse.data.urlDaVersao.trim()
+        ? 'Versão no ar salva: o Flow confere o site depois de cada deploy.'
+        : 'Conferência da versão no ar desligada.',
+    }
+  } catch (erro) {
+    if (erro instanceof ErroDeAutorizacao) {
+      return { erro: 'Sem permissão para configurar a versão no ar.' }
+    }
+    return traduzirErro(erro, 'salvar a versão no ar')
   }
 }

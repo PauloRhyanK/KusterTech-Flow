@@ -5,7 +5,13 @@ import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { PREFIXO_DO_TOKEN_DE_PUBLICACAO } from './contrato'
-import { MOTIVOS, validarHoraDoLote, type EstadoDoPedido, type ModoDePublicacao } from './model'
+import {
+  MOTIVOS,
+  validarHoraDoLote,
+  validarUrlDaVersao,
+  type EstadoDoPedido,
+  type ModoDePublicacao,
+} from './model'
 import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
 import { registrarChegada } from './recepcao'
 
@@ -148,9 +154,10 @@ export async function redefinirNoAr(sujeito: Sujeito, repositorioId: string): Pr
         'O histórico de main não foi reescrito: não há o que redefinir neste repositório.',
       )
     }
+    // A versão conferida no site também deixa de valer: ela saiu do histórico de main.
     await tx.configuracaoDePublicacao.update({
       where: { repositorioId },
-      data: { baseRedefinidaEm: new Date() },
+      data: { baseRedefinidaEm: new Date(), versaoNoAr: null, versaoConferidaEm: null },
     })
   })
 }
@@ -223,6 +230,41 @@ export async function salvarConfiguracaoDePublicacao(
       where: { repositorioId: repositorio.id },
       create: { repositorioId: repositorio.id, ...dados },
       update: dados,
+    })
+  })
+}
+
+/**
+ * O endereço da versão no ar (`{"commit": "<sha>"}`) que o Flow confere depois de cada deploy.
+ * Vazio desliga a conferência. Trocar o endereço descarta a versão conferida no antigo: até a
+ * próxima conferência, nada é dispensado como "já está no ar".
+ */
+export async function definirUrlDaVersao(
+  sujeito: Sujeito,
+  entrada: { projetoId: string; repositorioId: string; urlDaVersao: string },
+): Promise<void> {
+  exigirPermissao(sujeito, 'configuracoes.gerenciar')
+
+  const validada = validarUrlDaVersao(entrada.urlDaVersao)
+  if (!validada.ok) throw new ErroDeDominio(validada.erro)
+
+  await comTrava(entrada.repositorioId, async (tx) => {
+    const config = await tx.configuracaoDePublicacao.findFirst({
+      where: {
+        repositorioId: entrada.repositorioId,
+        repositorio: {
+          projetoId: entrada.projetoId,
+          removidoDaInstalacaoEm: null,
+          projeto: { is: { arquivadoEm: null } },
+        },
+      },
+      select: { urlDaVersao: true },
+    })
+    if (!config) throw new ErroDeDominio(SEM_CONFIGURACAO)
+    if (config.urlDaVersao === validada.url) return
+    await tx.configuracaoDePublicacao.update({
+      where: { repositorioId: entrada.repositorioId },
+      data: { urlDaVersao: validada.url, versaoNoAr: null, versaoConferidaEm: null },
     })
   })
 }

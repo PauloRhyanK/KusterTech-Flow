@@ -3,7 +3,8 @@ import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { MOTIVOS } from '@/modules/fila-de-publicacao/model'
-import { obterTelaDePublicacao } from '@/modules/fila-de-publicacao/queries'
+import { obterPilha } from '@/modules/decidir/queries'
+import { esperasDePublicacao, obterTelaDePublicacao } from '@/modules/fila-de-publicacao/queries'
 import { definirPausaGeral, redefinirNoAr, retomarFila } from '@/modules/fila-de-publicacao/service'
 import { commitNoAr } from '@/modules/fila-de-publicacao/worker'
 import { criarUsuario } from '@/modules/usuarios/service'
@@ -192,7 +193,9 @@ describe('obterTelaDePublicacao', () => {
     ])
 
     const [a, b, g] = tela.linhas
-    expect(a?.noAr).toEqual({ commit: sha('1'), desde: minutos(-180) })
+    expect(a?.noAr).toMatchObject({ commit: sha('1'), desde: minutos(-180) })
+    expect(a?.conferencia).toBe(false)
+    expect(a?.versaoConferida).toBeNull()
     expect(a?.publicando).toMatchObject({ descricao: 'Corrige PDF cortado', checks: 'sucesso' })
     expect(a?.aguardando.map((p) => [p.descricao, p.modo])).toEqual([
       ['Exportar CSV', 'imediato'],
@@ -312,5 +315,123 @@ describe('ações da tela', () => {
     expect(config.situacao).toBe('NORMAL')
     expect(config.situacaoMotivo).toBeNull()
     await expect(retomarFila(admin, alfa)).rejects.toBeInstanceOf(ErroDeDominio)
+  })
+})
+
+describe('versão no ar: tela, Início e Decidir', () => {
+  const RUN = 'https://github.com/kustertech-exemplo/cais/actions/runs/88'
+  const MOTIVO = `o deploy terminou, mas o site no ar mostra a versão ${'7'.repeat(7)}, não ${'8'.repeat(7)}`
+
+  test('publicação que não conferiu: a linha mostra a versão conferida e o aviso chega à tela, ao Início e ao Decidir', async () => {
+    const cais = await repositorio('cais', await projeto('CAIS'))
+    await db.configuracaoDePublicacao.create({
+      data: {
+        repositorioId: cais,
+        workflow: 'deploy.yml',
+        urlDaVersao: 'https://cais.exemplo.test/versao.json',
+        versaoNoAr: sha('7'),
+        versaoConferidaEm: minutos(-60),
+        situacao: 'PARADO',
+        situacaoDesde: minutos(-3),
+        situacaoMotivo: MOTIVO,
+      },
+    })
+    await db.pedidoDePublicacao.createMany({
+      data: [
+        {
+          repositorioId: cais,
+          commit: sha('7'),
+          modo: 'IMEDIATO',
+          estado: 'PUBLICADO',
+          execucaoUrl: 'https://github.com/kustertech-exemplo/cais/actions/runs/80',
+          iniciadoEm: minutos(-66),
+          concluidoEm: minutos(-60),
+        },
+        {
+          repositorioId: cais,
+          commit: sha('8'),
+          modo: 'IMEDIATO',
+          estado: 'FALHOU',
+          motivo: MOTIVO,
+          execucaoUrl: RUN,
+          conferindoDesde: minutos(-6),
+          concluidoEm: minutos(-3),
+        },
+      ],
+    })
+
+    const tela = await obterTelaDePublicacao(admin, AGORA)
+    const linha = tela.linhas.find((l) => l.repositorioId === cais)!
+    expect(linha.conferencia).toBe(true)
+    expect(linha.versaoConferida).toEqual({ commit: sha('7'), em: minutos(-60) })
+    const aviso = tela.avisos.find((a) => a.id === `parado-${cais}`)
+    expect(aviso).toMatchObject({ titulo: `CAIS parou: ${MOTIVO}`, href: RUN, tom: 'erro' })
+
+    const inicio = await esperasDePublicacao(admin, AGORA)
+    expect(inicio.find((i) => i.id === `publicacao:parado-${cais}`)).toMatchObject({
+      titulo: `CAIS parou: ${MOTIVO}`,
+      href: '/publicacao',
+      linkDoRun: RUN,
+    })
+
+    const pilha = await obterPilha(admin, AGORA)
+    const item = pilha.itens.find(
+      (i) => i.ref.tipo === 'publicacao' && i.ref.repositorioId === cais,
+    )
+    expect(item).toMatchObject({
+      tipo: 'publicacao',
+      titulo: `CAIS parou: ${MOTIVO}`,
+      projeto: 'CAIS',
+      repositorio: 'kustertech-exemplo/cais',
+      relato: { href: RUN, externo: true },
+    })
+    // Retomada a fila, o aviso sai da pilha.
+    await retomarFila(admin, cais)
+    const depois = await obterPilha(admin, AGORA)
+    expect(depois.itens.some((i) => i.chave === item!.chave)).toBe(false)
+  })
+
+  test('pedido dispensado por "já está no ar" aparece com a versão conferida', async () => {
+    const cais = await repositorio('cais', await projeto('CAIS'))
+    await db.configuracaoDePublicacao.create({
+      data: {
+        repositorioId: cais,
+        workflow: 'deploy.yml',
+        urlDaVersao: 'https://cais.exemplo.test/versao.json',
+        versaoNoAr: sha('7'),
+        versaoConferidaEm: minutos(-60),
+      },
+    })
+    await db.pedidoDePublicacao.createMany({
+      data: [
+        {
+          repositorioId: cais,
+          commit: sha('7'),
+          modo: 'IMEDIATO',
+          estado: 'PUBLICADO',
+          execucaoUrl: 'https://github.com/kustertech-exemplo/cais/actions/runs/80',
+          concluidoEm: minutos(-60),
+        },
+        {
+          repositorioId: cais,
+          commit: sha('7'),
+          modo: 'LOTE',
+          descricao: 'Modo editor',
+          estado: 'DISPENSADO',
+          motivo: MOTIVOS.jaNoAr,
+          concluidoEm: minutos(-10),
+        },
+      ],
+    })
+    const pilha = await obterPilha(admin, AGORA)
+    expect(
+      pilha.itens.find((i) => i.chave.startsWith(`publicacao:dispensado-${cais}`)),
+    ).toMatchObject({
+      titulo: 'CAIS: Modo editor não subiu de novo',
+      relato: {
+        resumo: `já está no ar: o site mostra ${'7'.repeat(7)}, que contém ${'7'.repeat(7)}`,
+        href: 'https://github.com/kustertech-exemplo/cais/actions/runs/80',
+      },
+    })
   })
 })
