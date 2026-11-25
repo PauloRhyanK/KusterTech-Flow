@@ -128,6 +128,18 @@ describe('planoDaMigracao', () => {
     expect(plano.acao).toBe('reaberta')
   })
 
+  test('commitAlvo é o do pedido mais recente mesmo quando o PUBLICADO é mais antigo', () => {
+    const plano = planoDaMigracao(
+      base({
+        pedidos: [
+          pedido({ estado: 'PUBLICADO', commit: C1, criadoEm: new Date('2026-11-10T10:00:00Z') }),
+          pedido({ estado: 'FALHOU', commit: C2, criadoEm: new Date('2026-11-10T11:00:00Z') }),
+        ],
+      }),
+    )!
+    expect(plano.partes[0]).toMatchObject({ estado: 'no_ar', commitAlvo: C2 })
+  })
+
   test('pedido ainda andando deixa a parte publicando', () => {
     const plano = planoDaMigracao(base({ pedidos: [pedido({ estado: 'NA_FILA' })] }))!
     expect(plano.partes[0]).toMatchObject({ estado: 'publicando', motivo: null })

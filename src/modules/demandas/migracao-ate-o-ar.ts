@@ -100,7 +100,9 @@ function estadoDaParteEntregue(
       antesDaConferencia: false,
     }
   }
-  const comum = { commitAlvo: pedido.commit, pedidoId: pedido.id ?? null }
+  // spec 12.2: o commit alvo é o do pedido mais recente do repositório, seja qual for o estado.
+  const maisRecenteComCommit = recentes.find((p) => p.commit !== null)
+  const comum = { commitAlvo: maisRecenteComCommit?.commit ?? null, pedidoId: pedido.id ?? null }
   if (ANDANDO.includes(pedido.estado)) {
     return {
       ...comum,

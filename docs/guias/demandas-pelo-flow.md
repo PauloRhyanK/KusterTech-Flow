@@ -212,7 +212,7 @@ Por isso, **a sessão não pede de novo pela fila a publicação de uma demanda*
 
 ## Atualização do Flow
 
-Depois do deploy que traz a regra "até o ar", rode `pnpm migrar:ate-o-ar` **uma vez** (na imagem de produção: `node scripts/migrar-demandas-ate-o-ar.mjs`, como em `docs/infra/oficina.md`). Ele dá a parte de entrada às demandas antigas, leva ao no ar as entregues e publicadas e reabre, esperando o Paulo, as que nunca chegaram ao ar. Rodar de novo não duplica nada.
+Depois do deploy que traz a regra "até o ar", pare o worker, rode `pnpm migrar:ate-o-ar` **uma vez** e suba o worker de novo (a migração não trava os pedidos de publicação) (na imagem de produção: `node scripts/migrar-demandas-ate-o-ar.mjs`, como em `docs/infra/oficina.md`). Ele dá a parte de entrada às demandas antigas, leva ao no ar as entregues e publicadas e reabre, esperando o Paulo, as que nunca chegaram ao ar. Rodar de novo não duplica nada.
 
 ## O que você nunca deve fazer
 

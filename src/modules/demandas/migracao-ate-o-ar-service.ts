@@ -3,6 +3,7 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { MODELO_PADRAO, type EtapaDefinida } from './model'
+import { TRAVA_DOS_EVENTOS_SQL } from './service'
 import { etapasComNoAr, planoDaMigracao } from './migracao-ate-o-ar'
 
 type Tx = Prisma.TransactionClient
@@ -148,6 +149,7 @@ async function migrarUma(
         antesDaTrava: noAr ? undefined : { espera: null, motivo: null },
       },
     })
+    await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
     await tx.eventoDaDemanda.create({
       data: {
         idExterno: `flow:migrada:${id}`,
