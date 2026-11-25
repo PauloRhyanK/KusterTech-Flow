@@ -3,7 +3,7 @@ import { limparParciais } from '@/modules/demandas/worker'
 import { lerRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { encerrarConversa } from './confirmacao'
 import { montarPilha } from './model'
-import { decisoesDoRetrato, demandasEsperando } from './queries'
+import { decisoesDoRetrato, demandasEsperando, publicacoesNaPilha } from './queries'
 
 const RESOLVIDO_FORA = 'Resolvido por outro caminho.'
 const LOTE = 200
@@ -15,10 +15,15 @@ const LOTE = 200
  * conclui nada sobre as issues da Fábrica; só as demandas são conferidas.
  */
 export async function arquivarConversasResolvidas(agora: Date): Promise<number> {
-  const [demandas, recebido] = await Promise.all([demandasEsperando(), lerRetratoMaisRecente()])
+  const [demandas, recebido, publicacoes] = await Promise.all([
+    demandasEsperando(),
+    lerRetratoMaisRecente(),
+    publicacoesNaPilha(agora),
+  ])
   const { itens, guardados } = montarPilha({
     demandas,
     decisoes: decisoesDoRetrato(recebido?.retrato ?? null),
+    publicacoes: publicacoes ?? [],
     marcas: [],
     agora,
     nomeDoProjeto: () => null,
@@ -39,6 +44,7 @@ export async function arquivarConversasResolvidas(agora: Date): Promise<number> 
     for (const { id, chave } of abertas) {
       if (naPilha.has(chave)) continue
       if (recebido === null && chave.startsWith('issue:')) continue
+      if (publicacoes === null && chave.startsWith('publicacao:')) continue
       const encerrou = await db.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT 1 FROM "Conversa" WHERE id = ${id} FOR UPDATE`
         const c = await tx.conversa.findUnique({ where: { id }, select: { encerradaEm: true } })

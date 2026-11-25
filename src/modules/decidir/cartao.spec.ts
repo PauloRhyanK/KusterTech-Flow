@@ -90,6 +90,8 @@ describe('ACOES_POR_TIPO', () => {
       fim_de_fase: ['aprovar_e_mergear', 'pedir_mudanca'],
       trava: ['retomar', 'entregar_parcial', 'encerrar', 'aprovar_e_mergear'],
       concluir_etapa: ['concluir'],
+      // O aviso da publicação não fecha por cartão: resolve-se na tela Publicação.
+      publicacao: [],
     })
   })
 })

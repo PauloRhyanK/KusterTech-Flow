@@ -872,20 +872,24 @@ enum EstadoDoPedidoDeConserto {
 }
 
 model ConfiguracaoDePublicacao {
-  repositorioId    String                     @id
-  workflow         String
-  entradaDoCommit  String                     @default("commit")
-  horaDoLote       String                     @default("22:00")
-  modoPadrao       ModoDePublicacao           @default(IMEDIATO)
-  automatico       Boolean                    @default(true)
-  pausado          Boolean                    @default(false)
-  situacao         SituacaoDaFilaDePublicacao @default(NORMAL)
-  situacaoDesde    DateTime?
-  situacaoMotivo   String?
-  ultimoLoteEm     DateTime?
-  baseRedefinidaEm DateTime?
-  atualizadoEm     DateTime                   @updatedAt
-  repositorio      RepositorioGitHub          @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
+  repositorioId     String                     @id
+  workflow          String
+  entradaDoCommit   String                     @default("commit")
+  horaDoLote        String                     @default("22:00")
+  modoPadrao        ModoDePublicacao           @default(IMEDIATO)
+  automatico        Boolean                    @default(true)
+  pausado           Boolean                    @default(false)
+  situacao          SituacaoDaFilaDePublicacao @default(NORMAL)
+  situacaoDesde     DateTime?
+  situacaoMotivo    String?
+  ultimoLoteEm      DateTime?
+  baseRedefinidaEm  DateTime?
+  // A versão no ar: o site publica {"commit": "<sha>"} nesta URL e o Flow confere depois do deploy.
+  urlDaVersao       String?
+  versaoNoAr        String?
+  versaoConferidaEm DateTime?
+  atualizadoEm      DateTime                   @updatedAt
+  repositorio       RepositorioGitHub          @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
 }
 
 // Linha única (id = 1).
@@ -930,6 +934,8 @@ model PedidoDePublicacao {
   criadoEm         DateTime                   @default(now())
   verificandoDesde DateTime?
   iniciadoEm       DateTime?
+  // O workflow terminou verde e o Flow está conferindo a versão no ar.
+  conferindoDesde  DateTime?
   concluidoEm      DateTime?
   repositorio      RepositorioGitHub          @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
   fonte            FonteDePublicacao?         @relation(fields: [fonteId], references: [id], onDelete: SetNull)

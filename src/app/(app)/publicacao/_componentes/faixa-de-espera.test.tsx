@@ -42,6 +42,14 @@ describe('FaixaDeEspera', () => {
     expect(link).toHaveAttribute('target', '_blank')
   })
 
+  test('aviso com rótulo próprio (pedido dispensado) usa o rótulo no botão', () => {
+    render(
+      <FaixaDeEspera avisos={[aviso({ tom: 'atencao', rotuloDaFaixa: 'Ver o run no GitHub' })]} />,
+    )
+    expect(screen.getByRole('link', { name: /Ver o run no GitHub/ })).toBeVisible()
+    expect(screen.queryByRole('link', { name: /Ver o que falhou/ })).toBeNull()
+  })
+
   test('sem link da execução, aponta para a linha do repositório na mesma aba', () => {
     render(<FaixaDeEspera avisos={[aviso({ href: '#rb', externo: false, tom: 'atencao' })]} />)
     const link = screen.getByRole('link', { name: 'Ver o que falhou' })

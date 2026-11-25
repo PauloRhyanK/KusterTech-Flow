@@ -76,6 +76,8 @@ export interface ItemDeEspera {
   href: string
   externo: boolean
   rotuloDoLink: string
+  /** O run do GitHub do aviso da publicação, ao lado do link principal. */
+  linkDoRun?: string
   tom: TomDeEspera
   desde: Date | null
 }
@@ -120,8 +122,8 @@ export function montarEsperaVoce(fontes: readonly FonteDeEspera[]): EsperaVoce {
 
 const MINUTO_MS = 60_000
 
-// Os avisos da fila de publicação levam à tela Publicação; o que traz link próprio (o PR do
-// conserto) leva a ele.
+// Os avisos da fila de publicação levam à tela Publicação, e ao run do GitHub quando há um; o que
+// traz link próprio (o PR do conserto) leva a ele.
 export function esperasDaPublicacao(avisos: readonly AvisoDePublicacao[]): ItemDeEspera[] {
   return avisos.map((aviso) => ({
     id: `publicacao:${aviso.id}`,
@@ -130,7 +132,12 @@ export function esperasDaPublicacao(avisos: readonly AvisoDePublicacao[]): ItemD
     contexto: aviso.contexto,
     ...(aviso.rotuloDoLink
       ? { href: aviso.href, externo: aviso.externo, rotuloDoLink: aviso.rotuloDoLink }
-      : { href: '/publicacao', externo: false, rotuloDoLink: 'Ver a publicação' }),
+      : {
+          href: '/publicacao',
+          externo: false,
+          rotuloDoLink: 'Ver a publicação',
+          ...(aviso.externo ? { linkDoRun: aviso.href } : {}),
+        }),
     tom: aviso.tom,
     desde: aviso.desde,
   }))

@@ -281,6 +281,58 @@ describe('TelaDecidir', () => {
     fetchMock.mockImplementation(async () => new Response(JSON.stringify(corpo()), { status: 200 }))
   })
 
+  test('aviso da publicação que não conferiu: título, o que fazer, run e Publicação; sem conversa nem compositor', async () => {
+    const RUN = 'https://github.com/kustertech-exemplo/cais/actions/runs/88'
+    const aviso: ItemDaPilha = {
+      chave: 'publicacao:parado-r1:1795600000000',
+      tipo: 'publicacao',
+      titulo:
+        'CAIS parou: o deploy terminou, mas o site no ar mostra a versão 1111111, não 2222222',
+      pergunta: 'Confira o servidor e retome a fila na tela Publicação.',
+      projeto: 'CAIS',
+      repositorio: 'kustertech-exemplo/cais',
+      linha: 'Publicação · há 3 min',
+      desde: new Date('2026-11-21T14:57:00Z'),
+      fatos: [],
+      relato: {
+        resumo:
+          'o workflow ficou verde, mas o site não trocou de versão; confira o servidor e retome a fila',
+        href: RUN,
+        externo: true,
+      },
+      ref: { tipo: 'publicacao', repositorioId: 'r1', avisoId: 'parado-r1', tom: 'erro' },
+    }
+    vi.mocked(abrirItemAcao).mockClear()
+    render(
+      <TelaDecidir
+        itens={[aviso, item(1)]}
+        guardados={[]}
+        conversas={{}}
+        inicial={null}
+        podeAgir
+      />,
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500)
+    })
+
+    expect(
+      screen.getByRole('heading', { level: 2, name: /o site no ar mostra a versão 1111111/ }),
+    ).toBeVisible()
+    expect(screen.getByText('Confira o servidor e retome a fila na tela Publicação.')).toBeVisible()
+    const run = screen.getByRole('link', { name: /Ver o run no GitHub/ })
+    expect(run).toHaveAttribute('href', RUN)
+    expect(run).toHaveAttribute('target', '_blank')
+    expect(screen.getByRole('link', { name: 'Abrir a Publicação' })).toHaveAttribute(
+      'href',
+      '/publicacao#r1',
+    )
+    expect(screen.getByRole('button', { name: 'Pular esta' })).toBeEnabled()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(abrirItemAcao).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   test('pilha vazia mostra "Nada esperando por você." com "Voltar ao Início"', () => {
     render(<TelaDecidir itens={[]} guardados={[]} conversas={{}} inicial={null} podeAgir />)
     expect(screen.getByText('Nada esperando por você.')).toBeInTheDocument()

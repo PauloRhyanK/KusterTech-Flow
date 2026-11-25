@@ -10,6 +10,7 @@ import {
   type LinhaDaFila,
   type Pilula,
   type TomDaPilula,
+  versaoNoSite,
 } from '@/modules/fila-de-publicacao/apresentacao'
 import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 import { cn } from '@/lib/utils'
@@ -141,6 +142,16 @@ function LinhaDoProjeto({
         >
           {noArDaLinha(linha, agora)}
         </p>
+        {versaoNoSite(linha, agora) && (
+          <p
+            className={cn(
+              'whitespace-nowrap text-xs',
+              linha.versaoConferida ? 'text-text-secondary' : 'text-text-tertiary',
+            )}
+          >
+            {versaoNoSite(linha, agora)}
+          </p>
+        )}
       </div>
       <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-[5px] md:col-span-1">
         {pilulasDaLinha(linha, agora).map((p) => (

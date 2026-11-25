@@ -365,6 +365,115 @@ export function verificacaoAtrasada(desde: Date, agora: Date): boolean {
   return agora.getTime() - desde.getTime() > LIMITE_VERIFICANDO_MS
 }
 
+// ---------------------------------------------------------------------------------------------
+// A versão no ar: o site diz qual commit está publicado (`versao.json`), e o Flow confere.
+
+/** Quanto tempo, depois do workflow verde, o site tem para mostrar o commit publicado. */
+export const LIMITE_DA_CONFERENCIA_MS = 3 * 60_000
+const LIMITE_DA_URL_DA_VERSAO = 500
+const COMMIT_COMPLETO = /^[0-9a-f]{40}$/
+
+export type LeituraDaVersao =
+  { tipo: 'lida'; commit: string } | { tipo: 'fora_do_ar'; detalhe: string } | { tipo: 'invalida' }
+
+/** O corpo de `versao.json`: `{"commit": "<sha de 40 hex>"}`; o resto do objeto é ignorado. */
+export function interpretarVersao(corpo: string): LeituraDaVersao {
+  let json: unknown
+  try {
+    json = JSON.parse(corpo)
+  } catch {
+    return { tipo: 'invalida' }
+  }
+  const commit =
+    json !== null && typeof json === 'object' ? (json as { commit?: unknown }).commit : null
+  if (typeof commit !== 'string') return { tipo: 'invalida' }
+  const normalizado = commit.trim().toLowerCase()
+  return COMMIT_COMPLETO.test(normalizado)
+    ? { tipo: 'lida', commit: normalizado }
+    : { tipo: 'invalida' }
+}
+
+/** A URL com `nc=<aleatório>`: nenhum cache no caminho devolve a versão de ontem. */
+export function urlSemCache(url: string, aleatorio: string): string {
+  const alvo = new URL(url)
+  alvo.searchParams.set('nc', aleatorio)
+  return alvo.toString()
+}
+
+export function validarUrlDaVersao(
+  texto: string,
+): { ok: true; url: string | null } | { ok: false; erro: string } {
+  const url = texto.trim()
+  if (url === '') return { ok: true, url: null }
+  const erro = {
+    ok: false as const,
+    erro: 'Informe o endereço completo da versão no ar, começando por https://, sem usuário nem senha.',
+  }
+  if (url.length > LIMITE_DA_URL_DA_VERSAO) return erro
+  let alvo: URL
+  try {
+    alvo = new URL(url)
+  } catch {
+    return erro
+  }
+  if (alvo.protocol !== 'https:' || alvo.username !== '' || alvo.password !== '') return erro
+  return { ok: true, url }
+}
+
+/**
+ * O commit contra o qual um pedido é avaliado ("já está no ar", base antiga). Com a versão no ar
+ * configurada, só vale o commit conferido no site: sem conferência, nada é dispensado.
+ */
+export function noArParaAvaliar(e: {
+  urlDaVersao: string | null
+  versaoNoAr: string | null
+  ultimoPublicado: string | null
+}): string | null {
+  return e.urlDaVersao ? e.versaoNoAr : e.ultimoPublicado
+}
+
+const INICIO_DA_CONFERENCIA = 'o deploy terminou, mas'
+
+/** O motivo é de uma publicação que terminou verde e não apareceu no site. */
+export function falhouNaConferencia(motivo: string | null | undefined): boolean {
+  return motivo?.startsWith(INICIO_DA_CONFERENCIA) ?? false
+}
+
+function motivoDaConferencia(commit: string, leitura: LeituraDaVersao): string {
+  const inicio = INICIO_DA_CONFERENCIA
+  switch (leitura.tipo) {
+    case 'lida':
+      return `${inicio} o site no ar mostra a versão ${leitura.commit.slice(0, 7)}, não ${commit.slice(0, 7)}`
+    case 'fora_do_ar':
+      return `${inicio} a versão no ar não respondeu (${leitura.detalhe})`
+    case 'invalida':
+      return `${inicio} a versão no ar não traz um commit válido`
+  }
+}
+
+/**
+ * Depois do workflow verde: o pedido só fica publicado quando o site mostra o commit dele, ou um
+ * commit que o contém (`relacao`: do commit no site em relação ao pedido, como o `compare`). Até
+ * `LIMITE_DA_CONFERENCIA_MS` o Flow lê de novo a cada ciclo; passado o prazo, a publicação falha
+ * com o que o site mostrou por último.
+ */
+export function decidirConferencia(e: {
+  commit: string
+  leitura: LeituraDaVersao
+  relacao: Relacao | 'desconhecido' | null
+  desde: Date
+  agora: Date
+}): { acao: 'publicado'; noAr: string } | { acao: 'esperar' } | { acao: 'falhou'; motivo: string } {
+  if (
+    e.leitura.tipo === 'lida' &&
+    (e.leitura.commit === e.commit || e.relacao === 'a_frente' || e.relacao === 'identico')
+  ) {
+    return { acao: 'publicado', noAr: e.leitura.commit }
+  }
+  if (e.agora.getTime() - e.desde.getTime() < LIMITE_DA_CONFERENCIA_MS) return { acao: 'esperar' }
+  return { acao: 'falhou', motivo: motivoDaConferencia(e.commit, e.leitura) }
+}
+
 /** Mediana das últimas 5 durações (em ms, da mais antiga para a mais nova), em minutos arredondados. */
 export function duracaoTipicaEmMin(duracoesMs: readonly number[]): number | null {
   const ultimas = duracoesMs.slice(-5).sort((a, b) => a - b)

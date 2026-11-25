@@ -3,7 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
 import Link from 'next/link'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
+import { autorizar, ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { moduloAtivo } from '@/lib/modulos'
@@ -170,7 +170,11 @@ export default async function PaginaConfiguracaoProjeto({
           <p className="text-sm text-text-secondary">
             A fila publica um pedido por vez, disparando o workflow de deploy do repositório.
           </p>
-          <PublicacaoNoProjeto projetoId={projeto.id} repositorios={publicacao.repositorios} />
+          <PublicacaoNoProjeto
+            projetoId={projeto.id}
+            repositorios={publicacao.repositorios}
+            podeConfigurarVersao={autorizar(sessao.sujeito, 'configuracoes.gerenciar')}
+          />
         </section>
       ) : null}
 

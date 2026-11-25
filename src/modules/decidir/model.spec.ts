@@ -3,6 +3,7 @@ import {
   amanhaAsSeis,
   chaveDaDemanda,
   chaveDaIssue,
+  chaveDaPublicacao,
   chaveValida,
   montarPilha,
   numeroDoPrDaTrava,
@@ -14,6 +15,7 @@ import {
   tipoDaDecisao,
   tipoDaDemanda,
   type DecisaoDoRetrato,
+  type AvisoDaPublicacaoNaPilha,
   type DemandaEsperando,
   type MarcaDaConversa,
 } from './model'
@@ -232,6 +234,100 @@ describe('chaves', () => {
     expect(chaveValida(chaveDaIssue('https://github.com/a/b/issues/3'))).toBe(true)
     expect(chaveValida('issue:https://github.com/a/b/pull/1')).toBe(false)
     expect(chaveValida('demanda:x')).toBe(false)
+    expect(
+      chaveValida(chaveDaPublicacao('parado-0b7f6c1e-1111-4111-8111-111111111111', new Date(5))),
+    ).toBe(true)
+    expect(chaveValida('publicacao:parado r1:5')).toBe(false)
+    expect(chaveValida('publicacao:parado-r1')).toBe(false)
+  })
+})
+
+describe('avisos da publicação na pilha', () => {
+  const RUN = 'https://github.com/kustertech-exemplo/cais/actions/runs/88'
+  function aviso(o: Partial<AvisoDaPublicacaoNaPilha> = {}): AvisoDaPublicacaoNaPilha {
+    return {
+      id: 'parado-r1',
+      repositorioId: 'r1',
+      titulo:
+        'CAIS parou: o deploy terminou, mas o site no ar mostra a versão 1111111, não 2222222',
+      contexto:
+        'o workflow ficou verde, mas o site não trocou de versão; confira o servidor e retome a fila',
+      href: RUN,
+      externo: true,
+      tom: 'erro',
+      desde: new Date('2026-11-21T14:50:00Z'),
+      projeto: 'CAIS',
+      repositorio: 'kustertech-exemplo/cais',
+      ...o,
+    }
+  }
+
+  it('cada aviso vira um item "publicacao" com o run como relato e sem respostas rápidas', () => {
+    const { itens } = pilha({ publicacoes: [aviso()] })
+    expect(itens).toEqual([
+      {
+        chave: chaveDaPublicacao('parado-r1', new Date('2026-11-21T14:50:00Z')),
+        tipo: 'publicacao',
+        titulo:
+          'CAIS parou: o deploy terminou, mas o site no ar mostra a versão 1111111, não 2222222',
+        pergunta: 'Confira o servidor e retome a fila na tela Publicação.',
+        projeto: 'CAIS',
+        repositorio: 'kustertech-exemplo/cais',
+        linha: 'Publicação · há 10 min',
+        desde: new Date('2026-11-21T14:50:00Z'),
+        fatos: [],
+        relato: {
+          resumo:
+            'o workflow ficou verde, mas o site não trocou de versão; confira o servidor e retome a fila',
+          href: RUN,
+          externo: true,
+        },
+        ref: { tipo: 'publicacao', repositorioId: 'r1', avisoId: 'parado-r1', tom: 'erro' },
+      },
+    ])
+    expect(respostasDoItem(itens[0]!)).toEqual([])
+  })
+
+  it('a pergunta segue o caso: falhou, dispensado; sem run, o relato leva à tela Publicação', () => {
+    const { itens } = pilha({
+      publicacoes: [
+        aviso({ id: 'falhou-r1', tom: 'atencao' }),
+        aviso({
+          id: 'dispensado-r2',
+          repositorioId: 'r2',
+          tom: 'atencao',
+          href: '#r2',
+          externo: false,
+        }),
+      ],
+    })
+    expect(itens.map((i) => i.pergunta)).toEqual([
+      'Confira se o site mostra mesmo a versão que você espera.',
+      'Um agente está consertando. Confira o run se quiser saber o que quebrou.',
+    ])
+    expect(itens[0]!.relato).toEqual({
+      resumo: aviso().contexto,
+      href: '/publicacao#r2',
+      externo: false,
+    })
+  })
+
+  it('a publicação vem depois das travas e antes do fim de fase; pular e adiar valem para ela', () => {
+    const trava = demanda({
+      id: 'd9',
+      espera: 'travada',
+      esperaDesde: new Date('2026-11-21T10:00:00Z'),
+    })
+    const fimDeFase = decisao({ titulo: '[fábrica] orquestrador: aprovar fase' })
+    const { itens } = pilha({ demandas: [trava], decisoes: [fimDeFase], publicacoes: [aviso()] })
+    expect(itens.map((i) => i.tipo)).toEqual(['trava', 'publicacao', 'fim_de_fase'])
+
+    const chave = chaveDaPublicacao('parado-r1', new Date('2026-11-21T14:50:00Z'))
+    const adiado = pilha({
+      publicacoes: [aviso()],
+      marcas: [marca(chave, { adiadaAte: new Date('2026-11-22T09:00:00Z') })],
+    })
+    expect(adiado.itens).toEqual([])
   })
 })
 

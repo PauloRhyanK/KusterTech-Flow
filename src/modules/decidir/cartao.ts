@@ -28,6 +28,7 @@ export const ACOES_POR_TIPO: Record<TipoDeItem, readonly Acao[]> = {
   fim_de_fase: ['aprovar_e_mergear', 'pedir_mudanca'],
   trava: ['retomar', 'entregar_parcial', 'encerrar', 'aprovar_e_mergear'],
   concluir_etapa: ['concluir'],
+  publicacao: [],
 }
 
 /** A ação cabe na espera da demanda: entregar o que funciona só no teste que falhou. */
@@ -369,7 +370,7 @@ export function efeitoDoCartao(item: ItemDaPilha, cartao: Cartao): Efeito {
           protegidos: [...cartao.protegidos],
         }
     }
-  } else {
+  } else if (ref.tipo === 'issue') {
     switch (cartao.acao) {
       // O despachante lê o fechamento com comentário como a resposta; no fim de fase, fecha o PR
       // e acorda o orquestrador.

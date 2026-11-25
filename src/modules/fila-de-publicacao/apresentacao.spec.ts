@@ -9,6 +9,7 @@ import {
   pilulasDaLinha,
   rodapeDoLote,
   rotuloDaLinha,
+  versaoNoSite,
   type ItemDoLote,
   type LinhaDaFila,
   type PedidoDaLinha,
@@ -551,5 +552,178 @@ describe('avisosDaPublicacao', () => {
       ).toEqual([])
       expect(avisosDaPublicacao([comPr({ estado: 'em_curso', prUrl: null })], AGORA)).toEqual([])
     })
+  })
+})
+
+describe('avisos da publicação que não conferiu, falhou ou foi dispensada', () => {
+  const RUN = 'https://github.com/kustertech-exemplo/cais/actions/runs/88'
+  const CONFERENCIA = `o deploy terminou, mas o site no ar mostra a versão ${'1'.repeat(7)}, não ${'2'.repeat(7)}`
+
+  test('parada pela conferência → diz que o site não mudou, com o link do run', () => {
+    const l = linha({
+      repositorioId: 'rc',
+      rotulo: 'CAIS',
+      configuracao: {
+        pausado: false,
+        horaDoLote: '22:00',
+        situacao: 'parado',
+        situacaoDesde: minutos(-3),
+        situacaoMotivo: CONFERENCIA,
+      },
+      ultimaFalha: { commit: sha('2'), execucaoUrl: RUN, motivo: CONFERENCIA },
+    })
+    expect(avisosDaPublicacao([l], AGORA)).toEqual([
+      {
+        id: 'parado-rc',
+        repositorioId: 'rc',
+        titulo: `CAIS parou: ${CONFERENCIA}`,
+        contexto:
+          'o workflow ficou verde, mas o site não trocou de versão; confira o servidor e retome a fila',
+        href: RUN,
+        externo: true,
+        tom: 'erro',
+        desde: minutos(-3),
+      },
+    ])
+  })
+
+  test('falhou e a Fábrica está consertando → aviso de atenção com o link do run', () => {
+    const l = linha({
+      configuracao: {
+        pausado: false,
+        horaDoLote: '22:00',
+        situacao: 'consertando',
+        situacaoDesde: minutos(-4),
+        situacaoMotivo: null,
+      },
+      ultimaFalha: { commit: sha('d'), execucaoUrl: RUN, motivo: null },
+    })
+    expect(avisosDaPublicacao([l], AGORA)).toEqual([
+      {
+        id: 'falhou-r1',
+        repositorioId: 'r1',
+        titulo: 'Projeto Alfa: a publicação de ddddddd falhou',
+        contexto: 'um agente da Fábrica está consertando; nada mais sobe até lá',
+        href: RUN,
+        externo: true,
+        tom: 'atencao',
+        desde: minutos(-4),
+      },
+    ])
+  })
+
+  test('falhou com o conserto já no PR → só o aviso do PR, quando vencer', () => {
+    const l = linha({
+      configuracao: {
+        pausado: false,
+        horaDoLote: '22:00',
+        situacao: 'consertando',
+        situacaoDesde: minutos(-4),
+        situacaoMotivo: null,
+      },
+      ultimaFalha: { commit: sha('d'), execucaoUrl: RUN, motivo: null },
+      conserto: {
+        estado: 'com_pr',
+        prUrl: 'https://github.com/kustertech-exemplo/cais/pull/9',
+        abertoEm: minutos(-4),
+        pegoEm: minutos(-3),
+        encerradoEm: null,
+        correcaoPedida: false,
+        pr: null,
+      },
+    })
+    expect(avisosDaPublicacao([l], AGORA)).toEqual([])
+  })
+
+  test('dispensado por "já está no ar" nas últimas 24 h → aviso com a versão conferida e o run dela', () => {
+    const l = linha({
+      noAr: { commit: sha('e'), desde: minutos(-60), execucaoUrl: RUN },
+      conferencia: true,
+      versaoConferida: { commit: sha('e'), em: minutos(-58) },
+      ultimoDispensado: {
+        commit: sha('b'),
+        titulo: 'Modo editor',
+        motivo: MOTIVOS.jaNoAr,
+        concluidoEm: minutos(-10),
+      },
+    })
+    expect(avisosDaPublicacao([l], AGORA)).toEqual([
+      {
+        id: 'dispensado-r1',
+        repositorioId: 'r1',
+        titulo: 'Projeto Alfa: Modo editor não subiu de novo',
+        contexto: 'já está no ar: o site mostra eeeeeee, que contém bbbbbbb',
+        href: RUN,
+        externo: true,
+        rotuloDaFaixa: 'Ver o run no GitHub',
+        tom: 'atencao',
+        desde: minutos(-10),
+      },
+    ])
+  })
+
+  test('dispensado sem conferência, sem título ou sem run → texto do último publicado e âncora', () => {
+    const l = linha({
+      noAr: { commit: sha('e'), desde: minutos(-60) },
+      ultimoDispensado: {
+        commit: sha('b'),
+        titulo: null,
+        motivo: MOTIVOS.jaNoAr,
+        concluidoEm: minutos(-10),
+      },
+    })
+    expect(avisosDaPublicacao([l], AGORA)[0]).toMatchObject({
+      titulo: 'Projeto Alfa: o pedido bbbbbbb não subiu de novo',
+      contexto: 'já está no ar: o último publicado (eeeeeee) contém bbbbbbb',
+      href: '#r1',
+      externo: false,
+      rotuloDaFaixa: 'Ver a fila',
+    })
+  })
+
+  test('dispensado há mais de 24 h ou por outro motivo → sem aviso', () => {
+    const velho = linha({
+      ultimoDispensado: {
+        commit: sha('b'),
+        titulo: null,
+        motivo: MOTIVOS.jaNoAr,
+        concluidoEm: minutos(-24 * 60 - 1),
+      },
+    })
+    const repetido = linha({
+      ultimoDispensado: {
+        commit: sha('b'),
+        titulo: null,
+        motivo: MOTIVOS.repetido,
+        concluidoEm: minutos(-1),
+      },
+    })
+    expect(avisosDaPublicacao([velho, repetido], AGORA)).toEqual([])
+  })
+})
+
+describe('versaoNoSite', () => {
+  test('sem a conferência configurada → null', () => {
+    expect(versaoNoSite(linha(), AGORA)).toBeNull()
+  })
+  test('configurada e ainda sem leitura → "ainda não conferida"', () => {
+    expect(versaoNoSite(linha({ conferencia: true }), AGORA)).toBe('no site: ainda não conferida')
+  })
+  test('conferida → sha curto e quando', () => {
+    expect(
+      versaoNoSite(
+        linha({ conferencia: true, versaoConferida: { commit: sha('c'), em: minutos(-3) } }),
+        AGORA,
+      ),
+    ).toBe('no site: ccccccc · conferida há 3 min')
+  })
+})
+
+test('colunaDeEstado: workflow verde e o site sendo conferido → "Conferindo o site"', () => {
+  const l = linha({ publicando: subindo({ conferindoDesde: minutos(-1) }) })
+  expect(colunaDeEstado(l, AGORA, false)).toEqual({
+    tipo: 'texto',
+    texto: 'Conferindo o site',
+    tom: 'secundario',
   })
 })

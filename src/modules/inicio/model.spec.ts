@@ -239,6 +239,23 @@ describe('tipo publicacao', () => {
     expect(ROTULO_DO_TIPO.publicacao).toBe('Publicação')
   })
 
+  it('esperasDaPublicacao: sem link do run, só a tela Publicação', () => {
+    const [item] = esperasDaPublicacao([
+      {
+        id: 'verificacao-r1',
+        repositorioId: 'r1',
+        titulo: 'Projeto Alfa: o GitHub não responde há 31 min',
+        contexto: 'pedido aaaaaaa esperando a verificação',
+        href: '#r1',
+        externo: false,
+        tom: 'atencao',
+        desde: AGORA,
+      },
+    ])
+    expect(item).toMatchObject({ href: '/publicacao', rotuloDoLink: 'Ver a publicação' })
+    expect(item).not.toHaveProperty('linkDoRun')
+  })
+
   it('esperasDaPublicacao: aviso vira item que leva à tela Publicação; o do PR leva ao PR', () => {
     const desde = new Date('2026-11-19T14:00:00Z')
     const base = {
@@ -271,6 +288,7 @@ describe('tipo publicacao', () => {
         href: '/publicacao',
         externo: false,
         rotuloDoLink: 'Ver a publicação',
+        linkDoRun: 'https://github.com/kustertech-exemplo/beta/actions/runs/7',
         tom: 'erro',
         desde,
       },

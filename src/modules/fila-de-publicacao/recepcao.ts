@@ -11,7 +11,7 @@ import {
   pedidoSchema,
   type PedidoRecebido,
 } from './contrato'
-import { classificarChegada } from './model'
+import { classificarChegada, noArParaAvaliar } from './model'
 import { filtroDoNoAr, ORDEM_DO_NO_AR } from './no-ar'
 
 type SaidaDoPost = {
@@ -91,11 +91,24 @@ export async function registrarChegada(
   return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${repositorioId}))`
     const commit = pedido.commit ?? null
-    // O mesmo "no ar" do worker: depois de redefinido, o publicado antes não conta.
-    const noAr = await tx.pedidoDePublicacao.findFirst({
-      where: filtroDoNoAr(repositorioId, configuracao?.baseRedefinidaEm ?? null),
-      orderBy: ORDEM_DO_NO_AR,
-      select: { commit: true },
+    // O mesmo "no ar" do worker: depois de redefinido, o publicado antes não conta; com a versão
+    // no ar configurada, só o commit conferido no site (lido sob a trava).
+    const versao = await tx.configuracaoDePublicacao.findUnique({
+      where: { repositorioId },
+      select: { urlDaVersao: true, versaoNoAr: true },
+    })
+    const urlDaVersao = versao?.urlDaVersao ?? null
+    const ultimo = urlDaVersao
+      ? null
+      : await tx.pedidoDePublicacao.findFirst({
+          where: filtroDoNoAr(repositorioId, configuracao?.baseRedefinidaEm ?? null),
+          orderBy: ORDEM_DO_NO_AR,
+          select: { commit: true },
+        })
+    const commitNoAr = noArParaAvaliar({
+      urlDaVersao,
+      versaoNoAr: versao?.versaoNoAr ?? null,
+      ultimoPublicado: ultimo?.commit ?? null,
     })
     const pendentes = await tx.pedidoDePublicacao.findMany({
       where: { repositorioId, estado: { in: [...PENDENTES] }, atendidoPorId: null },
@@ -104,7 +117,7 @@ export async function registrarChegada(
     const decisao = classificarChegada({
       configurada: modoPadrao !== undefined,
       commit,
-      commitNoAr: noAr?.commit ?? null,
+      commitNoAr,
       pendentes,
     })
     const modo: 'IMEDIATO' | 'LOTE' = pedido.modo

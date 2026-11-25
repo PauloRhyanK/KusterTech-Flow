@@ -1,5 +1,6 @@
 import { formatarIdade } from '@/modules/inicio/model'
 import {
+  falhouNaConferencia,
   MOTIVOS,
   verificacaoAtrasada,
   type EstadoDoConserto,
@@ -29,6 +30,8 @@ export interface PedidoDaLinha {
   checks: ChecksDoPedido
   iniciadoEm: Date | null
   verificandoDesde: Date | null
+  /** O workflow terminou verde e o Flow está conferindo o site. */
+  conferindoDesde?: Date | null
 }
 
 export interface LinhaDaFila {
@@ -36,6 +39,8 @@ export interface LinhaDaFila {
   projetoId: string
   projeto: string
   rotulo: string
+  /** O nome completo do repositório no GitHub. */
+  repositorio?: string
   /** `null`: publicação não configurada. */
   configuracao: {
     pausado: boolean
@@ -45,7 +50,17 @@ export interface LinhaDaFila {
     situacaoMotivo: string | null
   } | null
   /** O commit no ar respeita `baseRedefinidaEm`; `titulo` é o da demanda, ou a descrição do pedido. */
-  noAr: { commit: string; desde: Date; titulo?: string | null; junto?: number } | null
+  noAr: {
+    commit: string
+    desde: Date
+    titulo?: string | null
+    junto?: number
+    execucaoUrl?: string | null
+  } | null
+  /** O repositório tem a versão no ar configurada (`urlDaVersao`). */
+  conferencia?: boolean
+  /** O último commit conferido no site e quando. */
+  versaoConferida?: { commit: string; em: Date } | null
   publicando: PedidoDaLinha | null
   /** NA_FILA e VERIFICANDO sem atendente, do mais antigo para o mais novo. */
   aguardando: PedidoDaLinha[]
@@ -65,7 +80,14 @@ export interface LinhaDaFila {
       criadoEm: Date | null
     } | null
   } | null
-  ultimaFalha: { commit: string | null; execucaoUrl: string | null } | null
+  ultimaFalha: { commit: string | null; execucaoUrl: string | null; motivo?: string | null } | null
+  /** O último dispensado sem atendente (não foi junto com outro pedido). */
+  ultimoDispensado?: {
+    commit: string | null
+    titulo: string | null
+    motivo: string | null
+    concluidoEm: Date
+  } | null
   /** O último recusado depois de `baseRedefinidaEm`. */
   ultimoRecusado: { motivo: string; concluidoEm: Date } | null
   /** A última publicação depois de `baseRedefinidaEm`. */
@@ -99,6 +121,8 @@ export interface AvisoDePublicacao {
   desde: Date
   /** Presente: o link é o do próprio aviso (o PR do conserto), também no Início. */
   rotuloDoLink?: string
+  /** O texto do botão da faixa, quando não é "Ver o que falhou". */
+  rotuloDaFaixa?: string
 }
 
 export interface ItemDoLote {
@@ -179,6 +203,14 @@ export function noArDaLinha(linha: LinhaDaFila, agora: Date): string {
   // Compacta para caber na coluna "No ar": "há 3 h" → "3 h"; "há menos de 1 min" → "agora".
   const idade = formatarIdade(linha.noAr.desde, agora).replace(/^há /, '')
   return `${sha7(linha.noAr.commit)} · ${idade === 'menos de 1 min' ? 'agora' : idade}`
+}
+
+/** A versão conferida no site, quando o repositório tem a versão no ar configurada. */
+export function versaoNoSite(linha: LinhaDaFila, agora: Date): string | null {
+  if (!linha.conferencia) return null
+  const v = linha.versaoConferida
+  if (!v) return 'no site: ainda não conferida'
+  return `no site: ${sha7(v.commit)} · conferida ${formatarIdade(v.em, agora)}`
 }
 
 /** O que está no ar, em palavras: o título da demanda ou a descrição do pedido que subiu. */
@@ -279,6 +311,7 @@ export function colunaDeEstado(
   const texto = (t: string, tom: 'secundario' | 'atencao' | 'erro' = 'secundario') =>
     ({ tipo: 'texto', texto: t, tom }) as const
   if (c.situacao === 'parado') return texto('Espera você', 'erro')
+  if (linha.publicando?.conferindoDesde) return texto('Conferindo o site')
   if (linha.publicando) return texto('Publicando')
   if (c.situacao === 'consertando') {
     const desde = linha.conserto?.abertoEm ?? c.situacaoDesde ?? agora
@@ -407,17 +440,38 @@ function avisosDaLinha(linha: LinhaDaFila, agora: Date): AvisoDePublicacao[] {
       c.situacaoMotivo === MOTIVOS.desistiu && conserto?.encerradoEm
         ? minutosDesde(conserto.abertoEm, conserto.encerradoEm)
         : null
+    const contexto = falhouNaConferencia(c.situacaoMotivo)
+      ? 'o workflow ficou verde, mas o site não trocou de versão; confira o servidor e retome a fila'
+      : desistiu === null
+        ? falhou
+        : `${falhou} · conserto desistiu em ${desistiu} min`
     avisos.push({
       id: `parado-${linha.repositorioId}`,
       repositorioId: linha.repositorioId,
       titulo: `${linha.rotulo} parou: ${c.situacaoMotivo ?? 'a publicação falhou'}`,
-      contexto: desistiu === null ? falhou : `${falhou} · conserto desistiu em ${desistiu} min`,
+      contexto,
       href: url ?? ancora,
       externo: url !== null,
       tom: 'erro',
       desde: c.situacaoDesde ?? agora,
     })
   }
+  // Com o PR do conserto aberto, o aviso do PR (depois de 1 h) toma o lugar deste.
+  if (c?.situacao === 'consertando' && linha.ultimaFalha && linha.conserto?.estado !== 'com_pr') {
+    const url = linha.ultimaFalha.execucaoUrl
+    avisos.push({
+      id: `falhou-${linha.repositorioId}`,
+      repositorioId: linha.repositorioId,
+      titulo: `${linha.rotulo}: a publicação de ${sha7(linha.ultimaFalha.commit)} falhou`,
+      contexto: 'um agente da Fábrica está consertando; nada mais sobe até lá',
+      href: url ?? ancora,
+      externo: url !== null,
+      tom: 'atencao',
+      desde: c.situacaoDesde ?? agora,
+    })
+  }
+  const dispensado = avisoDoDispensado(linha, agora)
+  if (dispensado) avisos.push(dispensado)
   if (historicoReescrito(linha, agora)) {
     avisos.push({
       id: `historico-${linha.repositorioId}`,
@@ -451,6 +505,33 @@ function avisosDaLinha(linha: LinhaDaFila, agora: Date): AvisoDePublicacao[] {
   const pr = avisoDoPrDoConserto(linha, agora)
   if (pr) avisos.push(pr)
   return avisos
+}
+
+/**
+ * Um pedido dispensado como "já está no ar" nas últimas 24 h: o Paulo confere que a versão que o
+ * dispensou é mesmo a do site. Os repetidos sobem junto com o pedido igual e não avisam.
+ */
+function avisoDoDispensado(linha: LinhaDaFila, agora: Date): AvisoDePublicacao | null {
+  const d = linha.ultimoDispensado
+  if (!d || d.motivo !== MOTIVOS.jaNoAr) return null
+  if (agora.getTime() - d.concluidoEm.getTime() > JANELA_DO_RECUSADO_MS) return null
+  const pedido = sha7(d.commit)
+  const titulo = d.titulo?.trim()
+  const conferida = linha.conferencia ? (linha.versaoConferida ?? null) : null
+  const url = linha.noAr?.execucaoUrl ?? null
+  return {
+    id: `dispensado-${linha.repositorioId}`,
+    repositorioId: linha.repositorioId,
+    titulo: `${linha.rotulo}: ${titulo || `o pedido ${pedido}`} não subiu de novo`,
+    contexto: conferida
+      ? `já está no ar: o site mostra ${sha7(conferida.commit)}, que contém ${pedido}`
+      : `já está no ar: o último publicado (${sha7(linha.noAr?.commit ?? null)}) contém ${pedido}`,
+    href: url ?? `#${linha.repositorioId}`,
+    externo: url !== null,
+    rotuloDaFaixa: url !== null ? 'Ver o run no GitHub' : 'Ver a fila',
+    tom: 'atencao',
+    desde: d.concluidoEm,
+  }
 }
 
 /**

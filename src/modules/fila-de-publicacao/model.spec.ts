@@ -6,18 +6,24 @@ import {
   avaliarPedido,
   classificarChegada,
   contarPublicacoesAusentes,
+  decidirConferencia,
   decidirConserto,
   duracaoTipicaEmMin,
   escolherCandidato,
   escolherProximo,
   instanteDoLote,
+  interpretarVersao,
+  LIMITE_DA_CONFERENCIA_MS,
   loteVencido,
   motivoDeBaseAntiga,
+  noArParaAvaliar,
   procurarExecucaoDoCommit,
   podeTransicionar,
   relacaoDoCompare,
   resultadoDaExecucao,
+  urlSemCache,
   validarHoraDoLote,
+  validarUrlDaVersao,
   verificacaoAtrasada,
   type EntradaDaEscolha,
   type EstadoDoPedido,
@@ -466,4 +472,153 @@ test('procurarExecucaoDoCommit: casa o commit inteiro no titulo; prefixo de 7 n�
   expect(procurarExecucaoDoCommit([ex(4, `publicar ${c.slice(0, 7)}`)], c)).toBeNull()
   expect(procurarExecucaoDoCommit([ex(5, `publicar ${c}0`)], c)).toBeNull()
   expect(procurarExecucaoDoCommit([], c)).toBeNull()
+})
+
+describe('interpretarVersao', () => {
+  test('lê o commit de 40 hex (em minúsculas)', () => {
+    expect(interpretarVersao(JSON.stringify({ commit: sha('a') }))).toEqual({
+      tipo: 'lida',
+      commit: sha('a'),
+    })
+    expect(interpretarVersao(JSON.stringify({ commit: 'AB'.repeat(20), outro: 1 }))).toEqual({
+      tipo: 'lida',
+      commit: 'ab'.repeat(20),
+    })
+  })
+  test('JSON inválido, sem commit ou commit curto → inválida', () => {
+    expect(interpretarVersao('<html>')).toEqual({ tipo: 'invalida' })
+    expect(interpretarVersao('null')).toEqual({ tipo: 'invalida' })
+    expect(interpretarVersao(JSON.stringify({ versao: sha('a') }))).toEqual({ tipo: 'invalida' })
+    expect(interpretarVersao(JSON.stringify({ commit: 'abc1234' }))).toEqual({ tipo: 'invalida' })
+    expect(interpretarVersao(JSON.stringify({ commit: 'g'.repeat(40) }))).toEqual({
+      tipo: 'invalida',
+    })
+  })
+})
+
+test('urlSemCache acrescenta ?nc= sem perder a query', () => {
+  expect(urlSemCache('https://site.test/versao.json', 'x1')).toBe(
+    'https://site.test/versao.json?nc=x1',
+  )
+  expect(urlSemCache('https://site.test/versao.json?a=1', 'x2')).toBe(
+    'https://site.test/versao.json?a=1&nc=x2',
+  )
+})
+
+describe('validarUrlDaVersao', () => {
+  test('vazio remove a conferência', () => {
+    expect(validarUrlDaVersao('  ')).toEqual({ ok: true, url: null })
+  })
+  test('https sem credenciais é aceito', () => {
+    expect(validarUrlDaVersao(' https://cais.caisinvestimentos.com.br/versao.json ')).toEqual({
+      ok: true,
+      url: 'https://cais.caisinvestimentos.com.br/versao.json',
+    })
+  })
+  test('http, credenciais, texto solto ou longa demais são recusados', () => {
+    for (const url of [
+      'http://site.test/versao.json',
+      'https://eu:senha@site.test/versao.json',
+      'site.test/versao.json',
+      `https://site.test/${'a'.repeat(500)}`,
+    ]) {
+      expect(validarUrlDaVersao(url).ok).toBe(false)
+    }
+  })
+})
+
+describe('noArParaAvaliar', () => {
+  test('sem urlDaVersao, o último publicado; com ela, só a versão conferida', () => {
+    const e = { urlDaVersao: null, versaoNoAr: sha('b'), ultimoPublicado: sha('a') }
+    expect(noArParaAvaliar(e)).toBe(sha('a'))
+    expect(noArParaAvaliar({ ...e, urlDaVersao: 'https://site.test/v.json' })).toBe(sha('b'))
+    expect(
+      noArParaAvaliar({ ...e, urlDaVersao: 'https://site.test/v.json', versaoNoAr: null }),
+    ).toBeNull()
+  })
+})
+
+describe('decidirConferencia', () => {
+  const desde = new Date('2026-11-25T12:00:00Z')
+  const base = {
+    commit: sha('a'),
+    leitura: { tipo: 'lida', commit: sha('a') } as const,
+    relacao: 'identico' as const,
+    desde,
+    agora: desde,
+  }
+  const depois = (ms: number) => new Date(desde.getTime() + ms)
+
+  test('o site mostra o mesmo commit → publicado', () => {
+    expect(decidirConferencia(base)).toEqual({ acao: 'publicado', noAr: sha('a') })
+  })
+  test('o site mostra um commit que contém o pedido → publicado com o commit do site', () => {
+    expect(
+      decidirConferencia({
+        ...base,
+        leitura: { tipo: 'lida', commit: sha('b') },
+        relacao: 'a_frente',
+      }),
+    ).toEqual({ acao: 'publicado', noAr: sha('b') })
+  })
+  test('outro commit, fora do ar ou inválida antes de 3 min → esperar', () => {
+    const outro = { ...base, leitura: { tipo: 'lida', commit: sha('c') } as const }
+    expect(decidirConferencia({ ...outro, relacao: 'atras', agora: depois(2 * MIN) })).toEqual({
+      acao: 'esperar',
+    })
+    expect(
+      decidirConferencia({
+        ...base,
+        leitura: { tipo: 'fora_do_ar', detalhe: 'HTTP 502' },
+        relacao: null,
+        agora: depois(LIMITE_DA_CONFERENCIA_MS - 1),
+      }),
+    ).toEqual({ acao: 'esperar' })
+  })
+  test('depois de 3 min, outro commit → falhou com os dois sha curtos', () => {
+    expect(
+      decidirConferencia({
+        ...base,
+        leitura: { tipo: 'lida', commit: sha('c') },
+        relacao: 'divergente',
+        agora: depois(LIMITE_DA_CONFERENCIA_MS),
+      }),
+    ).toEqual({
+      acao: 'falhou',
+      motivo: `o deploy terminou, mas o site no ar mostra a versão ${'c'.repeat(7)}, não ${'a'.repeat(7)}`,
+    })
+  })
+  test('depois de 3 min, commit que o GitHub não conhece → falhou', () => {
+    const r = decidirConferencia({
+      ...base,
+      leitura: { tipo: 'lida', commit: sha('d') },
+      relacao: 'desconhecido',
+      agora: depois(LIMITE_DA_CONFERENCIA_MS),
+    })
+    expect(r.acao).toBe('falhou')
+  })
+  test('depois de 3 min, fora do ar ou inválida → falhou com motivo próprio', () => {
+    expect(
+      decidirConferencia({
+        ...base,
+        leitura: { tipo: 'fora_do_ar', detalhe: 'HTTP 502' },
+        relacao: null,
+        agora: depois(LIMITE_DA_CONFERENCIA_MS),
+      }),
+    ).toEqual({
+      acao: 'falhou',
+      motivo: 'o deploy terminou, mas a versão no ar não respondeu (HTTP 502)',
+    })
+    expect(
+      decidirConferencia({
+        ...base,
+        leitura: { tipo: 'invalida' },
+        relacao: null,
+        agora: depois(LIMITE_DA_CONFERENCIA_MS),
+      }),
+    ).toEqual({
+      acao: 'falhou',
+      motivo: 'o deploy terminou, mas a versão no ar não traz um commit válido',
+    })
+  })
 })

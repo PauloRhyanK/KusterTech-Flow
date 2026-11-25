@@ -86,7 +86,8 @@ const ICONE: Record<TipoDeDemanda, { letra: 'B' | 'I' | 'A' | 'F'; tom: TomDaDem
 }
 
 export function iconeDoTipo(tipo: TipoDeDemanda | null): {
-  letra: 'B' | 'I' | 'A' | 'F' | '?'
+  /** `P` só no Decidir, para os avisos da publicação. */
+  letra: 'B' | 'I' | 'A' | 'F' | '?' | 'P'
   tom: TomDaDemanda
 } {
   return tipo ? ICONE[tipo] : { letra: '?', tom: 'neutro' }

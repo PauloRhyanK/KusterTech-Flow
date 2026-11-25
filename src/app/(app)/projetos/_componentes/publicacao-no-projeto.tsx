@@ -4,6 +4,7 @@ import { useActionState } from 'react'
 import {
   publicarAgoraAction,
   salvarConfiguracaoDePublicacaoAction,
+  salvarUrlDaVersaoAction,
 } from '@/app/(app)/projetos/[p]/(detalhe)/configuracao/publicacao-actions'
 import { Button } from '@/components/ui/button'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
@@ -17,6 +18,8 @@ type RepositorioDaPublicacao = PublicacaoDoProjeto['repositorios'][number]
 export interface PublicacaoNoProjetoProps {
   projetoId: string
   repositorios: readonly RepositorioDaPublicacao[]
+  /** `configuracoes.gerenciar`: só quem configura o Flow define o endereço que ele lê. */
+  podeConfigurarVersao?: boolean
 }
 
 const CLASSE_CAMPO =
@@ -42,12 +45,56 @@ function PublicarAgora({ projetoId, repositorioId }: { projetoId: string; reposi
   )
 }
 
+function VersaoNoAr({
+  projetoId,
+  repositorioId,
+  urlDaVersao,
+}: {
+  projetoId: string
+  repositorioId: string
+  urlDaVersao: string | null
+}) {
+  const [estado, salvar, salvando] = useActionState(salvarUrlDaVersaoAction, {})
+  const id = (campo: string) => `publicacao-${repositorioId}-${campo}`
+  return (
+    <form action={salvar} className="max-w-md space-y-3 border-t border-border pt-4">
+      <MensagensDeEstado estado={estado} />
+      <input type="hidden" name="projetoId" value={projetoId} />
+      <input type="hidden" name="repositorioId" value={repositorioId} />
+      <div className="space-y-1">
+        <label htmlFor={id('versao')} className={CLASSE_ROTULO}>
+          Versão no ar
+        </label>
+        <input
+          id={id('versao')}
+          name="urlDaVersao"
+          type="url"
+          maxLength={500}
+          placeholder="https://site.com.br/versao.json"
+          defaultValue={urlDaVersao ?? ''}
+          aria-describedby={id('versao-ajuda')}
+          className={CLASSE_CAMPO}
+        />
+        <p id={id('versao-ajuda')} className={CLASSE_AJUDA}>
+          Endereço que o site publica com {'{"commit": "<sha>"}'}. Depois de cada deploy, o Flow só
+          marca como publicado quando o site mostra o commit. Em branco, não confere.
+        </p>
+      </div>
+      <Button type="submit" variant="outline" aria-busy={salvando} disabled={salvando}>
+        Salvar a versão no ar
+      </Button>
+    </form>
+  )
+}
+
 function ConfiguracaoDoRepositorio({
   projetoId,
   repositorio,
+  podeConfigurarVersao,
 }: {
   projetoId: string
   repositorio: RepositorioDaPublicacao
+  podeConfigurarVersao: boolean
 }) {
   const [estado, salvar, salvando] = useActionState(salvarConfiguracaoDePublicacaoAction, {})
   const c = repositorio.configuracao
@@ -184,12 +231,24 @@ function ConfiguracaoDoRepositorio({
         </Button>
       </form>
 
+      {c !== null && podeConfigurarVersao && (
+        <VersaoNoAr
+          projetoId={projetoId}
+          repositorioId={repositorio.id}
+          urlDaVersao={c.urlDaVersao}
+        />
+      )}
+
       {c !== null && <PublicarAgora projetoId={projetoId} repositorioId={repositorio.id} />}
     </section>
   )
 }
 
-export function PublicacaoNoProjeto({ projetoId, repositorios }: PublicacaoNoProjetoProps) {
+export function PublicacaoNoProjeto({
+  projetoId,
+  repositorios,
+  podeConfigurarVersao = false,
+}: PublicacaoNoProjetoProps) {
   if (repositorios.length === 0) {
     return (
       <EstadoVazio
@@ -202,7 +261,12 @@ export function PublicacaoNoProjeto({ projetoId, repositorios }: PublicacaoNoPro
   return (
     <div className="space-y-4">
       {repositorios.map((r) => (
-        <ConfiguracaoDoRepositorio key={r.id} projetoId={projetoId} repositorio={r} />
+        <ConfiguracaoDoRepositorio
+          key={r.id}
+          projetoId={projetoId}
+          repositorio={r}
+          podeConfigurarVersao={podeConfigurarVersao}
+        />
       ))}
     </div>
   )

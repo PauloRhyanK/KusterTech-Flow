@@ -197,13 +197,23 @@ export function TelaDecidir({ itens, guardados, conversas, inicial, podeAgir }: 
           onTrazerDeVolta={trazerDeVolta}
           pendente={pendente}
         />
-        <ItemAberto
-          key={item.chave}
-          item={item}
-          conversaInicial={conversas[item.chave] ?? null}
-          podeAgir={podeAgir}
-          aposSair={aposSair}
-        />
+        {item.ref.tipo === 'publicacao' ? (
+          <AvisoDaPublicacao
+            key={item.chave}
+            item={item}
+            repositorioId={item.ref.repositorioId}
+            podeAgir={podeAgir}
+            aposSair={aposSair}
+          />
+        ) : (
+          <ItemAberto
+            key={item.chave}
+            item={item}
+            conversaInicial={conversas[item.chave] ?? null}
+            podeAgir={podeAgir}
+            aposSair={aposSair}
+          />
+        )}
       </div>
       <div className="md:hidden">
         <Guardados guardados={guardados} onTrazerDeVolta={trazerDeVolta} pendente={pendente} />
@@ -215,6 +225,51 @@ export function TelaDecidir({ itens, guardados, conversas, inicial, podeAgir }: 
 interface Ajuste {
   inicial: InicialDoCartao
   foco?: string
+}
+
+/**
+ * O aviso da fila de publicação: não há conversa nem cartão, porque o que resolve está na tela
+ * Publicação (retomar a fila, conferir o servidor). Ele sai da pilha sozinho quando a fila volta
+ * a andar; "Pular" e "Deixar para amanhã" tiram da vista como nos outros itens.
+ */
+function AvisoDaPublicacao({
+  item,
+  repositorioId,
+  podeAgir,
+  aposSair,
+}: {
+  item: ItemDaPilha
+  repositorioId: string
+  podeAgir: boolean
+  aposSair: (proxima: string | null) => void
+}) {
+  const [erro, setErro] = useState<string | null>(null)
+  return (
+    <article className="min-w-0 overflow-hidden rounded-amplo border border-border bg-surface">
+      <CabecalhoDoItem item={item} />
+      <div className="space-y-3 bg-background p-4 md:p-6">
+        <p className="text-sm text-text-secondary">
+          Este aviso fica aqui até a fila voltar a andar. O que resolve está na tela Publicação.
+        </p>
+        <Link href={`/publicacao#${repositorioId}`} className={buttonVariants({ size: 'lg' })}>
+          Abrir a Publicação
+        </Link>
+        {erro && (
+          <p role="alert" className="break-words text-sm font-[550] text-erro">
+            {erro}
+          </p>
+        )}
+      </div>
+      {podeAgir && (
+        <div className="border-t border-border bg-surface p-4 md:px-6">
+          <Rodape
+            chave={item.chave}
+            aoTerminar={(r) => (r.erro ? setErro(r.erro) : aposSair(null))}
+          />
+        </div>
+      )}
+    </article>
+  )
 }
 
 /** Um item aberto: a conversa, a consulta a cada 2 s, o cartão e o compositor. */

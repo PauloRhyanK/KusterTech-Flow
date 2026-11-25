@@ -47,7 +47,7 @@ export function FaixaDeEspera({ avisos }: { avisos: readonly AvisoDePublicacao[]
         {...(primeiro.externo ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         className={cn(buttonVariants({ size: 'lg' }), 'px-3.5')}
       >
-        Ver o que falhou
+        {primeiro.rotuloDaFaixa ?? 'Ver o que falhou'}
         {primeiro.externo && <span aria-hidden="true">↗</span>}
       </a>
     </section>

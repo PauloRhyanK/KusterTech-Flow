@@ -8,6 +8,7 @@ const LINK =
 
 /** O que é e o que preciso de você: linha pequena, título, pergunta, fatos e o relato recolhido. */
 export function CabecalhoDoItem({ item }: { item: ItemDaPilha }) {
+  const publicacao = item.ref.tipo === 'publicacao'
   return (
     <header className="space-y-3.5 border-b border-border bg-surface p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-secondary">
@@ -61,11 +62,11 @@ export function CabecalhoDoItem({ item }: { item: ItemDaPilha }) {
           </span>
           {item.relato.externo ? (
             <a href={item.relato.href} target="_blank" rel="noopener noreferrer" className={LINK}>
-              Abrir no GitHub ↗
+              {publicacao ? 'Ver o run no GitHub ↗' : 'Abrir no GitHub ↗'}
             </a>
           ) : (
             <Link href={item.relato.href} className={LINK}>
-              Ver o relato
+              {publicacao ? 'Ver a fila' : 'Ver o relato'}
             </Link>
           )}
         </div>
