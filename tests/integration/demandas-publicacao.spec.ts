@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { publicacaoDaDemanda } from '@/modules/demandas/queries'
+import { marcarPartesSemPublicacao } from '@/modules/demandas/worker'
 import { receberPedidoDePublicacao } from '@/modules/fila-de-publicacao/recepcao'
 import { criarFonteDePublicacao } from '@/modules/fila-de-publicacao/service'
 import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
@@ -11,6 +12,7 @@ import { limparBanco } from './banco-de-teste'
 
 const AGORA = new Date('2026-11-19T15:00:00.000Z')
 const C1 = '1'.repeat(40)
+const C2 = '2'.repeat(40)
 
 let token: string
 let projetoId: string
@@ -131,5 +133,227 @@ describe('publicação ligada à demanda', () => {
       where: { id: (r.corpo as { id: string }).id },
     })
     expect(linha.demandaId).toBeNull()
+  })
+})
+
+describe('pedido ligado à parte da demanda', () => {
+  let ordem = 0
+  const parte = (
+    demandaId: string,
+    repoId: string,
+    extra: Partial<{
+      chave: string
+      estado: 'FEITA' | 'PUBLICANDO' | 'NAO_CHEGOU' | 'EM_CURSO'
+      commitAlvo: string | null
+    }> = {},
+  ) =>
+    db.parteDaDemanda.create({
+      data: {
+        demandaId,
+        repositorioId: repoId,
+        chave: extra.chave ?? `p${ordem++}`,
+        ordem: ordem++,
+        estado: extra.estado ?? 'FEITA',
+        commitAlvo: extra.commitAlvo ?? null,
+        feitaEm: AGORA,
+      },
+    })
+
+  test('demanda de outro repositório com parte neste: 201, grava parteId, parte vira publicando com pedidoId e commitAlvo', async () => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(outroRepositorioId) })
+    const p = await parte(d.id, repositorioId, { chave: 'back' })
+    await parte(d.id, outroRepositorioId, { chave: 'front' })
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: d.id })
+    expect(r.status).toBe(201)
+    const id = (r.corpo as { id: string }).id
+    const linha = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id } })
+    expect(linha).toMatchObject({ demandaId: d.id, parteId: p.id })
+    const depois = await db.parteDaDemanda.findUniqueOrThrow({ where: { id: p.id } })
+    expect(depois).toMatchObject({
+      estado: 'PUBLICANDO',
+      pedidoId: id,
+      commitAlvo: C1,
+      motivo: null,
+    })
+  })
+
+  test('com parte informada vale a parte; commitAlvo já definido não muda', async () => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    await parte(d.id, repositorioId, { chave: 'a' })
+    const b = await parte(d.id, repositorioId, { chave: 'b', commitAlvo: C2 })
+    const r = await enviar({
+      repositorio: 'kustertech-exemplo/portal',
+      commit: C1,
+      demanda: d.id,
+      parte: 'b',
+    })
+    expect(r.status).toBe(201)
+    const depois = await db.parteDaDemanda.findUniqueOrThrow({ where: { id: b.id } })
+    expect(depois).toMatchObject({ estado: 'PUBLICANDO', commitAlvo: C2 })
+  })
+
+  test('parte de outro repositório → 422; duas partes no repositório sem parte → 422; nada gravado', async () => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    await parte(d.id, repositorioId, { chave: 'a' })
+    await parte(d.id, repositorioId, { chave: 'b' })
+    await parte(d.id, outroRepositorioId, { chave: 'c' })
+    const base = { repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: d.id }
+    expect(await enviar({ ...base, parte: 'c' })).toEqual({
+      status: 422,
+      corpo: { erro: 'A parte não é deste repositório.' },
+    })
+    expect(await enviar({ ...base, parte: 'inexistente' })).toEqual({
+      status: 422,
+      corpo: { erro: 'A parte não é deste repositório.' },
+    })
+    expect(await enviar(base)).toEqual({ status: 422, corpo: { erro: 'Informe a parte.' } })
+    expect(await db.pedidoDePublicacao.count()).toBe(0)
+  })
+
+  test('parte sem demanda é corpo inválido', async () => {
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, parte: 'a' })
+    expect(r).toEqual({ status: 422, corpo: { erro: 'Corpo inválido.' } })
+  })
+
+  test('uma só parte no repositório dispensa informar a chave', async () => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await parte(d.id, repositorioId, { chave: 'a' })
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: d.id })
+    expect(r.status).toBe(201)
+    const linha = await db.pedidoDePublicacao.findUniqueOrThrow({
+      where: { id: (r.corpo as { id: string }).id },
+    })
+    expect(linha.parteId).toBe(p.id)
+  })
+
+  test('pedido recusado na chegada marca a parte como nao_chegou com o motivo da fila', async () => {
+    await db.configuracaoDePublicacao.delete({ where: { repositorioId } })
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await parte(d.id, repositorioId, { chave: 'a' })
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: d.id })
+    expect(r.status).toBe(409)
+    const depois = await db.parteDaDemanda.findUniqueOrThrow({ where: { id: p.id } })
+    expect(depois).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      pedidoId: (r.corpo as { id: string }).id,
+      motivo: 'publicação não configurada',
+    })
+    const demanda = await db.demanda.findUniqueOrThrow({ where: { id: d.id } })
+    expect(demanda.naoChegouDesde).toEqual(AGORA)
+  })
+
+  test('pedido dispensado porque o commit já está no ar, sem versão conferida → nao_chegou "Publicação dispensada"', async () => {
+    await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: C1,
+        modo: 'IMEDIATO',
+        estado: 'PUBLICADO',
+        concluidoEm: AGORA,
+      },
+    })
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await parte(d.id, repositorioId, { chave: 'a' })
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: d.id })
+    expect(r.status).toBe(200)
+    const depois = await db.parteDaDemanda.findUniqueOrThrow({ where: { id: p.id } })
+    expect(depois).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'Publicação dispensada' })
+  })
+
+  test('pedido repetido (atendido por pendente) vira a parte ao pedido que vai publicar', async () => {
+    const atendente = await db.pedidoDePublicacao.create({
+      data: { repositorioId, commit: C1, modo: 'IMEDIATO' },
+    })
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await parte(d.id, repositorioId, { chave: 'a' })
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: d.id })
+    expect(r.status).toBe(200)
+    const depois = await db.parteDaDemanda.findUniqueOrThrow({ where: { id: p.id } })
+    expect(depois).toMatchObject({ estado: 'PUBLICANDO', pedidoId: atendente.id })
+    const adotado = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id: atendente.id } })
+    expect(adotado.parteId).toBe(p.id)
+  })
+})
+
+describe('marcarPartesSemPublicacao', () => {
+  const HORA = 60 * 60_000
+  let ordem = 0
+  const demandaComParte = async (
+    feitaHa: number,
+    extra: { prs?: object[]; pedidoId?: string } = {},
+  ) => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await db.parteDaDemanda.create({
+      data: {
+        demandaId: d.id,
+        repositorioId,
+        chave: `p${ordem++}`,
+        ordem,
+        estado: 'FEITA',
+        feitaEm: new Date(AGORA.getTime() - feitaHa),
+        ...(extra.prs ? { prs: extra.prs } : {}),
+        pedidoId: extra.pedidoId ?? null,
+      },
+    })
+    return { d, p }
+  }
+  const ler = (id: string) => db.parteDaDemanda.findUniqueOrThrow({ where: { id } })
+
+  test('feita há mais de 2 h sem pedido → nao_chegou "Nunca foi publicada" e naoChegouDesde da demanda', async () => {
+    const { d, p } = await demandaComParte(3 * HORA)
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(1)
+    expect(await ler(p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Nunca foi publicada',
+      naoChegouEm: AGORA,
+    })
+    expect((await db.demanda.findUniqueOrThrow({ where: { id: d.id } })).naoChegouDesde).toEqual(
+      AGORA,
+    )
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(0)
+  })
+
+  test('feita há menos de 2 h, ou com pedido, não muda', async () => {
+    const a = await demandaComParte(HORA)
+    const pedido = await db.pedidoDePublicacao.create({
+      data: { repositorioId, commit: C1, modo: 'IMEDIATO' },
+    })
+    const b = await demandaComParte(5 * HORA, { pedidoId: pedido.id })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(0)
+    expect((await ler(a.p.id)).estado).toBe('FEITA')
+    expect((await ler(b.p.id)).estado).toBe('FEITA')
+  })
+
+  test('feita com PR ainda aberto no GitHub → nao_chegou "PR aberto há N d"', async () => {
+    const url = 'https://github.com/kustertech-exemplo/portal/pull/9'
+    await db.pullRequestGitHub.create({
+      data: {
+        githubId: BigInt(9),
+        repositorioId,
+        numero: 9,
+        titulo: 'PR de exemplo',
+        estado: 'ABERTO',
+        rascunho: false,
+        urlHtml: url,
+        branch: 'x',
+        shaHead: 'c'.repeat(40),
+        issuesReferenciadas: [],
+        atualizadoNoGitHub: AGORA,
+        sincronizadoEm: AGORA,
+      },
+    })
+    const pr = {
+      url,
+      repositorio: 'kustertech-exemplo/portal',
+      numero: 9,
+      estado: 'mergeado',
+      mergeCommit: C1,
+    }
+    const pedido = await db.pedidoDePublicacao.create({
+      data: { repositorioId, commit: C1, modo: 'IMEDIATO' },
+    })
+    const { p } = await demandaComParte(3 * 24 * HORA, { prs: [pr], pedidoId: pedido.id })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(1)
+    expect(await ler(p.id)).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'PR aberto há 3 d' })
   })
 })

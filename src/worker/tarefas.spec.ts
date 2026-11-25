@@ -4,6 +4,7 @@ vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
 vi.mock('@/modules/demandas/worker', () => ({
   limparArquivosDeDemandas: vi.fn(async () => ({ capturas: 0, parciais: 0 })),
+  marcarPartesSemPublicacao: vi.fn(async () => 0),
 }))
 
 vi.mock('@/modules/decidir/worker', () => ({
@@ -19,7 +20,7 @@ import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem seis tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem sete tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -29,6 +30,7 @@ describe('tarefas do worker', () => {
       'sincronizar-execucoes-warren',
       'processar-fila-de-publicacao',
       'limpar-arquivos-de-demandas',
+      'marcar-partes-sem-publicacao',
       'decidir:arquivar',
     ])
   })
@@ -42,6 +44,15 @@ describe('tarefas do worker', () => {
     expect(comDemandas.find((t) => t.nome === 'limpar-arquivos-de-demandas')?.modulo).toBe(
       'demandas',
     )
+  })
+
+  test('a tarefa marcar-partes-sem-publicacao é do módulo demandas e some sem ele', () => {
+    const semDemandas = new Set(resolverModulosAtivos(undefined))
+    semDemandas.delete('demandas')
+    const nomes = criarTarefasDoCiclo({ ...fonte, ativos: semDemandas }).map((t) => t.nome)
+    expect(nomes).not.toContain('marcar-partes-sem-publicacao')
+    const com = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) })
+    expect(com.find((t) => t.nome === 'marcar-partes-sem-publicacao')?.modulo).toBe('demandas')
   })
 
   test('limpar-arquivos-de-demandas roda no máximo uma vez por hora; depois de falhar, tenta no ciclo seguinte', async () => {
@@ -79,7 +90,7 @@ describe('tarefas do worker', () => {
     )
   })
 
-  test('com todos os módulos ligados o ciclo tem as treze tarefas na ordem original', () => {
+  test('com todos os módulos ligados o ciclo tem as catorze tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
@@ -94,6 +105,7 @@ describe('tarefas do worker', () => {
       'calcular-composicoes',
       'detectar-divergencias',
       'limpar-arquivos-de-demandas',
+      'marcar-partes-sem-publicacao',
       'decidir:arquivar',
     ])
   })

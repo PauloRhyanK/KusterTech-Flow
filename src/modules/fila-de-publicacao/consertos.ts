@@ -13,6 +13,10 @@ export interface ConsertoParaAFabrica {
   trechoDoLog: string
   /** `AAAA-MM-DDTHH:MM:SSZ` */
   abertoEm: string
+  /** O id da demanda e a chave e o objetivo da parte, quando o pedido que falhou era de uma parte. */
+  demanda: string | null
+  parte: string | null
+  objetivo: string | null
 }
 
 export type ConsertoReportado = NonNullable<RetratoV1['consertos']>[number]
@@ -43,7 +47,10 @@ export async function consertosParaAFabrica(): Promise<ConsertoParaAFabrica[]> {
     where: { estado: { in: [...PARA_A_FABRICA] } },
     orderBy: [{ abertoEm: 'asc' }, { id: 'asc' }],
     take: LIMITE_NA_RESPOSTA,
-    include: { repositorio: { select: { nomeCompleto: true } } },
+    include: {
+      repositorio: { select: { nomeCompleto: true } },
+      parte: { select: { chave: true, objetivo: true } },
+    },
   })
   return linhas.map((c) => ({
     id: c.id,
@@ -52,6 +59,9 @@ export async function consertosParaAFabrica(): Promise<ConsertoParaAFabrica[]> {
     execucaoUrl: c.execucaoUrl,
     trechoDoLog: c.trechoDoLog,
     abertoEm: noContrato(c.abertoEm),
+    demanda: c.demandaId,
+    parte: c.parte?.chave ?? null,
+    objetivo: c.parte?.objetivo ?? null,
   }))
 }
 

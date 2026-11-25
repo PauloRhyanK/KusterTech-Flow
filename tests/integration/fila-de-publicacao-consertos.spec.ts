@@ -161,12 +161,55 @@ describe('consertos pela resposta do retrato', () => {
             execucaoUrl: EXECUCAO_URL,
             trechoDoLog: 'Error: build quebrou',
             abertoEm: '2026-11-19T15:00:00Z',
+            demanda: null,
+            parte: null,
+            objetivo: null,
           },
         ],
       },
     })
     // O id é o UUID canônico minúsculo que o kit aceita (`retrato.ID_DO_CONSERTO`).
     expect(consertoId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  })
+
+  test('conserto ligado à parte leva demanda, chave da parte e objetivo na resposta', async () => {
+    const projeto = await db.projeto.findFirstOrThrow()
+    const demanda = await db.demanda.create({
+      data: {
+        projetoId: projeto.id,
+        repositorioId,
+        titulo: 'Demanda do Projeto Alfa',
+        nivel: 'APROVAR_DESENHO',
+        temTela: false,
+        origem: 'FLOW',
+        etapas: [],
+        etapaAtual: 'entregue',
+      },
+    })
+    const parte = await db.parteDaDemanda.create({
+      data: {
+        demandaId: demanda.id,
+        repositorioId,
+        chave: 'back',
+        ordem: 1,
+        objetivo: 'Expor o endpoint de cadastro',
+      },
+    })
+    await db.pedidoDeConserto.update({
+      where: { id: consertoId },
+      data: { demandaId: demanda.id, parteId: parte.id },
+    })
+    const r = await enviar(AGORA)
+    expect(r.corpo).toMatchObject({
+      consertos: [
+        {
+          id: consertoId,
+          demanda: demanda.id,
+          parte: 'back',
+          objetivo: 'Expor o endpoint de cadastro',
+        },
+      ],
+    })
   })
 
   test('retrato com em_curso → EM_CURSO com pegoEm; depois com_pr → COM_PR com prUrl; a resposta seguinte não lista mais o conserto', async () => {

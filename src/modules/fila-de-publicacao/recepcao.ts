@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { moduloAtivo } from '@/lib/modulos'
+import { marcarResultadoNaParte, travarDemandas } from '@/modules/demandas/partes-no-ar'
 import type { EntradaDaRecepcao } from '@/modules/fabrica/recepcao'
 import { extrairTokenDaFabrica, hashDoTokenDaFabrica } from '@/modules/fabrica/model'
 import { resumirErroParaLog } from '@/modules/github/model'
@@ -86,6 +87,7 @@ export async function registrarChegada(
   demandaId: string | null,
   configuracao: { modoPadrao: 'IMEDIATO' | 'LOTE'; baseRedefinidaEm: Date | null } | null,
   agora: Date,
+  parteId: string | null = null,
 ): Promise<Chegada> {
   const modoPadrao = configuracao?.modoPadrao
   return db.$transaction(async (tx) => {
@@ -131,11 +133,15 @@ export async function registrarChegada(
       modo,
       descricao: pedido.descricao ?? null,
       demandaId,
+      parteId,
       ...origem,
     } satisfies Partial<Prisma.PedidoDePublicacaoUncheckedCreateInput>
 
     if (decisao.resultado === 'aceito') {
       const criado = await tx.pedidoDePublicacao.create({ data: base, select: { id: true } })
+      if (parteId) {
+        await ligarParte(tx, parteId, { id: criado.id, commit, atendidoPorId: null })
+      }
       return { tipo: 'criado', id: criado.id }
     }
     const estado = decisao.resultado === 'recusado' ? 'RECUSADO' : 'DISPENSADO'
@@ -144,10 +150,78 @@ export async function registrarChegada(
       data: { ...base, estado, motivo: decisao.motivo, atendidoPorId, concluidoEm: agora },
       select: { id: true },
     })
+    if (parteId) {
+      await ligarParte(tx, parteId, { id: criado.id, commit, atendidoPorId })
+      if (decisao.resultado === 'recusado') {
+        await marcarResultadoNaParte(
+          tx,
+          criado.id,
+          { estado: 'RECUSADO', motivo: decisao.motivo, conserto: null, conferidoContendo: false },
+          agora,
+        )
+      } else if (atendidoPorId === null) {
+        // Já está no ar. Só a versão conferida igual ao commit da parte a fecha (o worker faz isso);
+        // sem ela, a parte vai a "Publicação dispensada".
+        const conferida = urlDaVersao !== null && commit !== null && versao?.versaoNoAr === commit
+        if (!conferida) {
+          await marcarResultadoNaParte(
+            tx,
+            criado.id,
+            {
+              estado: 'DISPENSADO',
+              motivo: decisao.motivo,
+              conserto: null,
+              conferidoContendo: false,
+            },
+            agora,
+          )
+        }
+      }
+    }
     return decisao.resultado === 'recusado'
       ? { tipo: 'recusado', id: criado.id, motivo: decisao.motivo }
       : { tipo: 'dispensado', id: criado.id, motivo: decisao.motivo, atendidoPor: atendidoPorId }
   })
+}
+
+/**
+ * Liga o pedido à parte, sob a trava do repositório (ordem: repositório → demanda → partes). A parte
+ * passa a `publicando` e herda o commit do pedido quando ainda não tinha `commitAlvo` (caminho v1).
+ * Pedido repetido (atendido por outro) aponta a parte para o atendente, que é quem vai publicar.
+ */
+async function ligarParte(
+  tx: Prisma.TransactionClient,
+  parteId: string,
+  pedido: { id: string; commit: string | null; atendidoPorId: string | null },
+): Promise<void> {
+  const parte = await tx.parteDaDemanda.findUnique({
+    where: { id: parteId },
+    select: { demandaId: true },
+  })
+  if (!parte) return
+  await travarDemandas(tx, [parte.demandaId])
+  const atual = await tx.parteDaDemanda.findUnique({
+    where: { id: parteId },
+    select: { estado: true, commitAlvo: true },
+  })
+  if (!atual || !['FEITA', 'PUBLICANDO', 'NAO_CHEGOU'].includes(atual.estado)) return
+  const corrente = pedido.atendidoPorId ?? pedido.id
+  await tx.parteDaDemanda.update({
+    where: { id: parteId },
+    data: {
+      estado: 'PUBLICANDO',
+      motivo: null,
+      pedidoId: corrente,
+      ...(atual.commitAlvo === null && pedido.commit ? { commitAlvo: pedido.commit } : {}),
+    },
+  })
+  if (pedido.atendidoPorId) {
+    // O atendente devolve o resultado à parte pelo seu `parteId`.
+    await tx.pedidoDePublicacao.updateMany({
+      where: { id: pedido.atendidoPorId, parteId: null },
+      data: { parteId, demandaId: parte.demandaId },
+    })
+  }
 }
 
 // Sem sessão: o token da fonte é a autorização. Nenhuma escrita antes de autenticar e validar.
@@ -184,14 +258,33 @@ export async function receberPedidoDePublicacao(
 
     // Leitura sem trava: o pedido só grava o id; o estado da demanda não é tocado aqui.
     let demandaId: string | null = null
+    let parteId: string | null = null
     if (lido.data.demanda !== undefined && moduloAtivo('demandas')) {
       const demanda = await db.demanda.findUnique({
         where: { id: lido.data.demanda },
         select: { id: true, repositorioId: true },
       })
       if (!demanda) return { status: 422, corpo: { erro: 'Demanda não encontrada.' } }
-      if (demanda.repositorioId !== repositorio.id) {
+      const partes = await db.parteDaDemanda.findMany({
+        where: {
+          demandaId: demanda.id,
+          repositorioId: repositorio.id,
+          estado: { not: 'DESCARTADA' },
+        },
+        select: { id: true, chave: true },
+        orderBy: { ordem: 'asc' },
+      })
+      if (demanda.repositorioId !== repositorio.id && partes.length === 0) {
         return { status: 422, corpo: { erro: 'A demanda não é deste repositório.' } }
+      }
+      if (lido.data.parte !== undefined) {
+        const escolhida = partes.find((p) => p.chave === lido.data.parte)
+        if (!escolhida) return { status: 422, corpo: { erro: 'A parte não é deste repositório.' } }
+        parteId = escolhida.id
+      } else if (partes.length > 1) {
+        return { status: 422, corpo: { erro: 'Informe a parte.' } }
+      } else if (partes.length === 1) {
+        parteId = partes[0]!.id
       }
       demandaId = demanda.id
     }
@@ -205,6 +298,7 @@ export async function receberPedidoDePublicacao(
       demandaId,
       repositorio.configuracaoDePublicacao,
       agora,
+      parteId,
     )
     switch (chegada.tipo) {
       case 'criado':
