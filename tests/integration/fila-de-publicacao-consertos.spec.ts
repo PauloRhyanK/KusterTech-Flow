@@ -375,3 +375,109 @@ describe('PR do conserto no worker', () => {
     expect(await correcoes()).toHaveLength(0)
   })
 })
+
+describe('conserto ligado à parte da demanda', () => {
+  let parteId: string
+  let demandaId: string
+  let falhoId: string
+
+  beforeEach(async () => {
+    const projeto = await db.projeto.findFirstOrThrow()
+    const demanda = await db.demanda.create({
+      data: {
+        projetoId: projeto.id,
+        repositorioId,
+        titulo: 'Demanda do Projeto Alfa',
+        nivel: 'APROVAR_DESENHO',
+        temTela: false,
+        origem: 'FLOW',
+        etapas: [],
+        etapaAtual: 'no_ar',
+      },
+    })
+    demandaId = demanda.id
+    falhoId = (await conserto()).pedidoId
+    await db.pedidoDePublicacao.update({
+      where: { id: falhoId },
+      data: { demandaId },
+    })
+    const parte = await db.parteDaDemanda.create({
+      data: {
+        demandaId,
+        repositorioId,
+        chave: 'back',
+        ordem: 1,
+        estado: 'PUBLICANDO',
+        motivo: 'Consertando a publicação',
+        commitAlvo: COMMIT,
+        pedidoId: falhoId,
+      },
+    })
+    parteId = parte.id
+    await db.pedidoDePublicacao.update({ where: { id: falhoId }, data: { parteId } })
+    await db.pedidoDeConserto.update({ where: { id: consertoId }, data: { demandaId, parteId } })
+  })
+
+  const parte = () => db.parteDaDemanda.findUniqueOrThrow({ where: { id: parteId } })
+  const naoChegou = async (quando: Date) => {
+    expect(await parte()).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicação falhou',
+      naoChegouEm: quando,
+    })
+    expect(
+      (await db.demanda.findUniqueOrThrow({ where: { id: demandaId } })).naoChegouDesde,
+    ).toEqual(quando)
+  }
+
+  test('retrato com desistiu → a parte não chegou: "Publicação falhou"', async () => {
+    await enviar(minutos(1), [reportado({ estado: 'desistiu', motivo: 'sem PR' })])
+    await naoChegou(minutos(1))
+  })
+
+  test('a Fábrica não pegou o conserto a tempo → a parte não chegou', async () => {
+    await processarFilaDePublicacao(null, minutos(45))
+    expect((await conserto()).estado).toBe('DESISTIU')
+    await naoChegou(minutos(45))
+  })
+
+  test('PR do conserto fechado sem merge → a parte não chegou', async () => {
+    await comPr()
+    await criarPr('FECHADO')
+    await processarFilaDePublicacao(null, minutos(6))
+    await naoChegou(minutos(6))
+  })
+
+  test('a correção mergeada vira o pedido da parte; se ela falha, o conserto desiste e a parte não chegou', async () => {
+    await comPr()
+    await criarPr('MERGEADO')
+    await processarFilaDePublicacao(null, minutos(6))
+    const [correcao] = await correcoes()
+    expect(correcao).toMatchObject({ parteId, demandaId })
+    expect(await parte()).toMatchObject({
+      estado: 'PUBLICANDO',
+      pedidoId: correcao!.id,
+      motivo: 'Consertando a publicação',
+    })
+
+    await db.pedidoDePublicacao.update({
+      where: { id: correcao!.id },
+      data: { estado: 'RECUSADO', motivo: 'base antiga', concluidoEm: minutos(7) },
+    })
+    await processarFilaDePublicacao(null, minutos(8))
+    expect((await conserto()).estado).toBe('DESISTIU')
+    await naoChegou(minutos(8))
+  })
+
+  test('a parte que já tem outro pedido não é movida pelo conserto que desiste', async () => {
+    const novo = await db.pedidoDePublicacao.create({
+      data: { repositorioId, commit: COMMIT, modo: 'IMEDIATO', parteId, demandaId },
+    })
+    await db.parteDaDemanda.update({
+      where: { id: parteId },
+      data: { pedidoId: novo.id, motivo: null },
+    })
+    await enviar(minutos(1), [reportado({ estado: 'desistiu', motivo: 'sem PR' })])
+    expect(await parte()).toMatchObject({ estado: 'PUBLICANDO', pedidoId: novo.id })
+  })
+})

@@ -5,6 +5,7 @@ import { moduloAtivo } from '@/lib/modulos'
 import {
   fecharDemandaSeNoAr,
   fecharPartesNoAr,
+  herdarCommitDosPedidos,
   marcarResultadoNaParte,
   travarDemandas,
 } from '@/modules/demandas/partes-no-ar'
@@ -17,7 +18,7 @@ import type {
   RefRepositorio,
 } from '@/modules/github/fonte'
 import { resumirChecks, resumirErroParaLog } from '@/modules/github/model'
-import { avancarConsertosComPr } from './consertos'
+import { avancarConsertosComPr, desistirNaParte } from './consertos'
 import {
   aposFalha,
   avaliarPedido,
@@ -429,12 +430,27 @@ class CicloDoRepositorio {
     })
     if (semCommit.length === 0) return
     const { sha } = await this.lerCabeca()
-    await comTrava(this.repo.id, (tx) =>
-      tx.pedidoDePublicacao.updateMany({
-        where: { id: { in: semCommit.map((p) => p.id) }, commit: null },
+    await comTrava(this.repo.id, async (tx) => {
+      const ids = semCommit.map((p) => p.id)
+      await tx.pedidoDePublicacao.updateMany({
+        where: { id: { in: ids }, commit: null },
         data: { commit: sha },
-      }),
-    )
+      })
+      // As partes ligadas a esses pedidos (kit v1, que pede sem commit) herdam o commit resolvido,
+      // num SAVEPOINT: a falha do lado das demandas não desfaz o commit do pedido.
+      if (!moduloAtivo('demandas')) return
+      await tx.$executeRaw`SAVEPOINT commit_das_partes`
+      try {
+        await herdarCommitDosPedidos(tx, ids, sha)
+        await tx.$executeRaw`RELEASE SAVEPOINT commit_das_partes`
+      } catch (erro) {
+        await tx.$executeRaw`ROLLBACK TO SAVEPOINT commit_das_partes`
+        log.error(
+          { tarefa: 'processar-fila-de-publicacao', erro: resumirErroParaLog(erro) },
+          'commit do pedido não herdado pela parte',
+        )
+      }
+    })
   }
 
   /** Passo 3: recusa e dispensa já na fila, sem esperar a vez (vale com a fila pausada). */
@@ -1013,6 +1029,7 @@ async function vigiarConsertos(repositorioId: string, agora: Date, resumo: Resum
         where: { repositorioId },
         data: { situacao: 'PARADO', situacaoDesde: agora, situacaoMotivo: decisao.motivo },
       })
+      await desistirNaParte(tx, c.id, agora)
       resumo.parados += 1
     })
   }

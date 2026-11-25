@@ -295,14 +295,11 @@ export function fraseDaDemanda(partes: readonly Parte[]): {
 }
 
 /**
- * O escape do Paulo (seção 4): a parte que não chegou porque o site não foi conferido (ou que
- * sobe por versão) pode ser dada como no ar por ele, com "Conferi no ar".
+ * O escape do Paulo (seção 4, D77): qualquer parte que não chegou ao ar, e a parte por versão
+ * esperando a versão, pode ser dada como no ar por ele com "Conferi no ar" (sempre registrado).
  */
 export function conferivelPeloPaulo(p: Pick<Parte, 'estado' | 'motivo' | 'chegaAoAr'>): boolean {
-  return (
-    p.estado === 'nao_chegou' &&
-    (p.motivo === MOTIVOS.publicadaSemConferir || p.chegaAoAr === 'versao')
-  )
+  return p.estado === 'nao_chegou' || (p.estado === 'publicando' && p.chegaAoAr === 'versao')
 }
 
 /** `exemplo/alfa-crm` → `alfa-crm`, no formato que a Fábrica aceita como chave de parte. */

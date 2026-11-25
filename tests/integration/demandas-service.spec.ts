@@ -1182,4 +1182,151 @@ describe('demandas / eventos de parte e compatibilidade v1 (integração)', () =
     })
     expect(r).toEqual({ resultado: 'recusado', motivo: 'a demanda não tem partes' })
   })
+
+  describe('v1: entregue liga o pedido de publicação mandado antes (seção 7.3)', () => {
+    const entregar = (id: string, prs: string[] = [URL_PR('alfa', 5)]) =>
+      daFabrica(id, { tipo: 'entregue', ator: 'fabrica', dados: { prs } })
+    const pedidoDa = (
+      id: string,
+      repositorioId: string,
+      parteId: string | null,
+      extra: Record<string, unknown> = {},
+    ) =>
+      db.pedidoDePublicacao.create({
+        data: { repositorioId, modo: 'IMEDIATO', demandaId: id, parteId, ...extra } as never,
+      })
+
+    test('pedido na fila sem commit: a parte de entrada fica publicando com o pedido', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      const pedido = await pedidoDa(id, repositorio.id, entrada!.id)
+      expect((await entregar(id)).resultado).toBe('aplicado')
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'PUBLICANDO',
+        pedidoId: pedido.id,
+        commitAlvo: null,
+        motivo: null,
+      })
+    })
+
+    test('pedido com commit: o commitAlvo vem dele', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      const pedido = await pedidoDa(id, repositorio.id, entrada!.id, { commit: sha('d') })
+      await entregar(id)
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'PUBLICANDO',
+        pedidoId: pedido.id,
+        commitAlvo: sha('d'),
+      })
+    })
+
+    test('pedido repetido: a parte aponta para o atendente', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      const atendente = await pedidoDa(id, repositorio.id, null, { commit: sha('d') })
+      await pedidoDa(id, repositorio.id, entrada!.id, {
+        commit: sha('d'),
+        estado: 'DISPENSADO',
+        atendidoPorId: atendente.id,
+        criadoEm: new Date(Date.now() + 1000),
+      })
+      await entregar(id)
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'PUBLICANDO',
+        pedidoId: atendente.id,
+        commitAlvo: sha('d'),
+      })
+    })
+
+    test('pedido já terminado: o resultado vai para a parte (publicado sem conferir → nao_chegou)', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      await pedidoDa(id, repositorio.id, entrada!.id, {
+        commit: sha('d'),
+        estado: 'PUBLICADO',
+        concluidoEm: new Date(),
+      })
+      await entregar(id)
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'NAO_CHEGOU',
+        motivo: 'Publicada sem conferir o site',
+        commitAlvo: sha('d'),
+      })
+      expect((await db.demanda.findUniqueOrThrow({ where: { id } })).naoChegouDesde).not.toBeNull()
+    })
+
+    test('sem pedido: o commitAlvo é o mergeCommit mais novo dos PRs', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      for (const [n, merge, quando] of [
+        [5, sha('e'), new Date('2026-11-20T10:00:00Z')],
+        [6, sha('f'), new Date('2026-11-20T11:00:00Z')],
+      ] as const) {
+        await db.pullRequestGitHub.create({
+          data: {
+            githubId: BigInt(7000 + n),
+            repositorioId: repositorio.id,
+            numero: n,
+            titulo: `PR ${n}`,
+            estado: 'MERGEADO',
+            rascunho: false,
+            urlHtml: URL_PR('alfa', n),
+            branch: `b${n}`,
+            shaHead: sha('c'),
+            shaMerge: merge,
+            issuesReferenciadas: [],
+            atualizadoNoGitHub: quando,
+            mergeadoNoGitHub: quando,
+            sincronizadoEm: quando,
+          },
+        })
+      }
+      await entregar(id, [URL_PR('alfa', 5), URL_PR('alfa', 6)])
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'FEITA',
+        pedidoId: null,
+        commitAlvo: sha('f'),
+      })
+    })
+  })
+
+  test('parte por versão feita fica publicando com "Esperando a versão"', async () => {
+    const { id } = await demanda()
+    await planejar(id, [
+      declarar('alfa', 'alfa'),
+      declarar('alfa-crm', 'alfa-crm', { ordem: 2, chegaAoAr: 'versao' }),
+    ])
+    expect((await feita(id, 'alfa-crm', 'alfa-crm', sha('b'))).resultado).toBe('aplicado')
+    expect((await partesDe(id)).find((p) => p.chave === 'alfa-crm')).toMatchObject({
+      estado: 'PUBLICANDO',
+      motivo: 'Esperando a versão',
+      commitAlvo: sha('b'),
+      feitaEm: expect.any(Date),
+    })
+  })
+
+  test('demanda antiga sem a etapa no ar no snapshot aceita o entregue v1 e vai para o no ar', async () => {
+    const { id } = await demanda()
+    await ateEntregue(id)
+    const semNoAr = MODELO_PADRAO.filter((e) => e.marco !== 'no_ar')
+    await db.demanda.update({
+      where: { id },
+      data: { etapas: semNoAr as unknown as object },
+    })
+    const r = await daFabrica(id, {
+      tipo: 'entregue',
+      ator: 'fabrica',
+      dados: { prs: [URL_PR('alfa', 5)] },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.etapaAtual).toBe('no_ar')
+    expect(d.encerrada).toBeNull()
+    expect((d.etapas as unknown as EtapaDefinida[]).at(-1)?.marco).toBe('no_ar')
+  })
 })

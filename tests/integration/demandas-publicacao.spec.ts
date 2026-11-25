@@ -375,3 +375,151 @@ describe('marcarPartesSemPublicacao', () => {
     expect(await ler(p.id)).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'PR aberto há 1 d' })
   })
 })
+
+describe('pedido e parte: casos do contrato 1 e da versão conferida', () => {
+  let n = 0
+  const novaParte = async (data: Record<string, unknown>) => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await db.parteDaDemanda.create({
+      data: { demandaId: d.id, repositorioId, chave: `q${n++}`, ordem: n, ...data } as never,
+    })
+    return { d, p }
+  }
+  const ler = (id: string) => db.parteDaDemanda.findUniqueOrThrow({ where: { id } })
+
+  test('v1: o pedido sem commit que chega com a parte de entrada em curso fica ligado a ela, sem mudar o estado', async () => {
+    const { d, p } = await novaParte({ estado: 'EM_CURSO' })
+    const r = await enviar({ repositorio: 'kustertech-exemplo/portal', demanda: d.id })
+    expect(r.status).toBe(201)
+    expect(await ler(p.id)).toMatchObject({
+      estado: 'EM_CURSO',
+      pedidoId: (r.corpo as { id: string }).id,
+      commitAlvo: null,
+    })
+  })
+
+  test('"já no ar" com versão conferida compara o commitAlvo da parte, não só o do pedido', async () => {
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId },
+      data: { urlDaVersao: 'https://portal.exemplo.test/versao.json', versaoNoAr: C1 },
+    })
+    const outra = await novaParte({ estado: 'FEITA', feitaEm: AGORA, commitAlvo: C2 })
+    const r = await enviar({
+      repositorio: 'kustertech-exemplo/portal',
+      commit: C1,
+      demanda: outra.d.id,
+    })
+    expect(r.status).toBe(200)
+    expect(await ler(outra.p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicação dispensada',
+    })
+
+    const mesma = await novaParte({ estado: 'FEITA', feitaEm: AGORA, commitAlvo: C1 })
+    await enviar({ repositorio: 'kustertech-exemplo/portal', commit: C1, demanda: mesma.d.id })
+    expect((await ler(mesma.p.id)).estado).toBe('PUBLICANDO')
+  })
+})
+
+describe('marcarPartesSemPublicacao: parte publicando cujo pedido terminou', () => {
+  let n = 0
+  const comPedido = async (
+    pedido: Record<string, unknown>,
+    parte: Record<string, unknown> = {},
+  ) => {
+    const d = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const p = await db.parteDaDemanda.create({
+      data: {
+        demandaId: d.id,
+        repositorioId,
+        chave: `s${n++}`,
+        ordem: n,
+        estado: 'PUBLICANDO',
+        feitaEm: AGORA,
+        commitAlvo: C1,
+        ...parte,
+      } as never,
+    })
+    const ped = await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: C1,
+        modo: 'IMEDIATO',
+        demandaId: d.id,
+        parteId: p.id,
+        ...pedido,
+      } as never,
+    })
+    await db.parteDaDemanda.update({ where: { id: p.id }, data: { pedidoId: ped.id } })
+    return { d, p, pedido: ped }
+  }
+  const ler = (id: string) => db.parteDaDemanda.findUniqueOrThrow({ where: { id } })
+  const conserto = (pedidoId: string, estado: 'EM_CURSO' | 'DESISTIU') =>
+    db.pedidoDeConserto.create({
+      data: { repositorioId, pedidoId, commit: C1, trechoDoLog: '', estado },
+    })
+
+  test('conserto que desistiu → nao_chegou "Publicação falhou" e naoChegouDesde', async () => {
+    const { d, p, pedido } = await comPedido({ estado: 'FALHOU', concluidoEm: AGORA })
+    await db.parteDaDemanda.update({
+      where: { id: p.id },
+      data: { motivo: 'Consertando a publicação' },
+    })
+    await conserto(pedido.id, 'DESISTIU')
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(1)
+    expect(await ler(p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicação falhou',
+      naoChegouEm: AGORA,
+    })
+    expect((await db.demanda.findUniqueOrThrow({ where: { id: d.id } })).naoChegouDesde).toEqual(
+      AGORA,
+    )
+  })
+
+  test('cancelado e publicado sem conferir saem com o motivo do resultado', async () => {
+    const a = await comPedido({ estado: 'CANCELADO', concluidoEm: AGORA })
+    const b = await comPedido({ estado: 'PUBLICADO', concluidoEm: AGORA })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(2)
+    expect(await ler(a.p.id)).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'Publicação falhou' })
+    expect(await ler(b.p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicada sem conferir o site',
+    })
+  })
+
+  test('pedido pendente, conserto em curso, publicado com versão a conferir e parte por versão ficam como estão', async () => {
+    const pendente = await comPedido({ estado: 'PUBLICANDO' })
+    const falhou = await comPedido({ estado: 'FALHOU', concluidoEm: AGORA })
+    await conserto(falhou.pedido.id, 'EM_CURSO')
+    const versao = await db.demanda.create({ data: dadosDaDemanda(repositorioId) })
+    const nucleo = await db.parteDaDemanda.create({
+      data: {
+        demandaId: versao.id,
+        repositorioId,
+        chave: 'nucleo',
+        ordem: 1,
+        estado: 'PUBLICANDO',
+        chegaAoAr: 'VERSAO',
+        motivo: 'Esperando a versão',
+        commitAlvo: C2,
+        feitaEm: new Date(AGORA.getTime() - 5 * 60 * 60_000),
+      },
+    })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(0)
+    expect((await ler(pendente.p.id)).estado).toBe('PUBLICANDO')
+    expect((await ler(falhou.p.id)).estado).toBe('PUBLICANDO')
+    expect(await ler(nucleo.id)).toMatchObject({
+      estado: 'PUBLICANDO',
+      motivo: 'Esperando a versão',
+    })
+
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId },
+      data: { urlDaVersao: 'https://portal.exemplo.test/versao.json' },
+    })
+    const conferido = await comPedido({ estado: 'PUBLICADO', concluidoEm: AGORA })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(0)
+    expect((await ler(conferido.p.id)).estado).toBe('PUBLICANDO')
+  })
+})

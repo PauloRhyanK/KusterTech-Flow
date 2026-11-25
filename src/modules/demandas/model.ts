@@ -340,3 +340,10 @@ export function descricaoDaFilha(resumo: string | null, demandaId: string): stri
   const corpo = (texto && trechoQueNaoFuncionou(texto)) || texto || SEM_RESUMO
   return `${cortar(corpo, LIMITE_DA_DESCRICAO - link.length)}${link}`
 }
+
+/** O snapshot de etapas da demanda ganha a etapa `no_ar` no fim, se ainda não a tem. */
+export function etapasComNoAr(etapas: readonly EtapaDefinida[]): EtapaDefinida[] {
+  if (etapas.some((e) => e.marco === 'no_ar' || e.chave === 'no_ar')) return [...etapas]
+  const noAr = MODELO_PADRAO.find((e) => e.marco === 'no_ar')!
+  return [...etapas, { ...noAr }]
+}

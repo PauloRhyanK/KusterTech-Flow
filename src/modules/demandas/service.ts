@@ -27,6 +27,7 @@ import {
   LIMITE_DO_TITULO,
   descricaoDaFilha,
   estadoInicial,
+  etapasComNoAr,
   tituloDaFilha,
   validarModelo,
   type Ator,
@@ -606,10 +607,14 @@ export async function registrarEventoNa(
     where: { demandaId: e.demandaId, tipo: 'CAPTURA', apagadoEm: null, tela: { not: null } },
     select: { id: true, tela: true },
   })
+  // Demanda aberta antes da regra "até o ar": o snapshot ganha a etapa "No ar" no fim (gravado
+  // junto com o evento), senão o `entregue` do kit v1 seria recusado.
+  const salvas = demanda.etapas as unknown as EtapaDefinida[]
+  const etapas = salvas.length > 0 ? etapasComNoAr(salvas) : salvas
   const r = aplicarEvento(
     estado,
     {
-      etapas: demanda.etapas as unknown as EtapaDefinida[],
+      etapas,
       temTela: demanda.temTela,
       capturas: capturas.map((c) => ({ id: c.id, tela: c.tela as 'desktop' | 'celular' })),
       artefato: demanda.artefatoUrl,
@@ -635,6 +640,9 @@ export async function registrarEventoNa(
       ...colunasDoEstado(r.estado, estado, demanda.esperaDesde, agora),
       ...colunasDoEvento(e.evento, demanda, agora),
       ...(e.tipo ? { tipo: doFio.tipo(e.tipo) } : {}),
+      ...(etapas.length !== salvas.length
+        ? { etapas: etapas as unknown as Prisma.InputJsonValue }
+        : {}),
     },
   })
   await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
@@ -657,7 +665,6 @@ export async function registrarEventoNa(
     })
   }
   // Entrou na etapa "No ar" com todas as partes já no ar: fecha na mesma transação.
-  const etapas = demanda.etapas as unknown as EtapaDefinida[]
   if (
     !r.estado.encerrada &&
     r.estado.etapaAtual !== estado.etapaAtual &&

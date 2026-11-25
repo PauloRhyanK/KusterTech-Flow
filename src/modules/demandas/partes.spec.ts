@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   MOTIVOS,
   acumularPrs,
+  conferivelPeloPaulo,
   fraseDaDemanda,
   grupoAteOAr,
   trilhoAteOAr,
@@ -391,5 +392,38 @@ describe('fraseDaDemanda', () => {
       texto: 'No ar',
       tom: 'sucesso',
     })
+  })
+})
+
+describe('conferivelPeloPaulo', () => {
+  test('qualquer parte que não chegou, com qualquer motivo', () => {
+    for (const motivo of [
+      MOTIVOS.publicadaSemConferir,
+      MOTIVOS.publicacaoDispensada,
+      MOTIVOS.nuncaPublicada,
+      MOTIVOS.publicacaoFalhou,
+      null,
+    ]) {
+      expect(conferivelPeloPaulo(parte('a', { estado: 'nao_chegou', motivo }))).toBe(true)
+    }
+  })
+
+  test('a parte por versão esperando a versão (publicando)', () => {
+    expect(
+      conferivelPeloPaulo(
+        parte('nucleo', {
+          estado: 'publicando',
+          chegaAoAr: 'versao',
+          motivo: MOTIVOS.esperandoVersao,
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('não vale para a parte publicando pela fila nem para as que ainda não foram feitas', () => {
+    expect(conferivelPeloPaulo(parte('a', { estado: 'publicando' }))).toBe(false)
+    for (const estado of ['planejando', 'em_curso', 'feita', 'no_ar', 'descartada'] as const) {
+      expect(conferivelPeloPaulo(parte('a', { estado, chegaAoAr: 'versao' }))).toBe(false)
+    }
   })
 })

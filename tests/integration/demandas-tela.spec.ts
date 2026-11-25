@@ -344,3 +344,53 @@ test('conferirNoArPeloPaulo: sem permissão lança; parte que não espera é rec
   // Repetir não muda nada: a parte já está no ar.
   await expect(conferirNoArPeloPaulo(admin, d.id, 'alfa')).rejects.toThrow()
 })
+
+test('Conferi no ar vale para qualquer parte que não chegou e para a parte por versão esperando a versão, sempre registrado', async () => {
+  const dispensada = await comPartes(
+    'Dispensada',
+    [{ chave: 'alfa', ordem: 1, estado: 'NAO_CHEGOU', motivo: 'Publicação dispensada' }],
+    { naoChegouDesde: minutos(-60) },
+  )
+  expect((await obterPaginaDaDemanda(admin, dispensada.id, AGORA))?.falta?.conferir).toBe('alfa')
+  await conferirNoArPeloPaulo(admin, dispensada.id, 'alfa')
+  expect(
+    await db.parteDaDemanda.findFirstOrThrow({ where: { demandaId: dispensada.id } }),
+  ).toMatchObject({ estado: 'NO_AR', conferidaPorId: admin.usuarioId })
+  expect((await db.demanda.findUniqueOrThrow({ where: { id: dispensada.id } })).encerrada).toBe(
+    'no_ar',
+  )
+
+  const versao = await comPartes('Núcleo', [
+    {
+      chave: 'nucleo',
+      ordem: 1,
+      estado: 'PUBLICANDO',
+      chegaAoAr: 'VERSAO',
+      motivo: 'Esperando a versão',
+      commitAlvo: 'abc1234def',
+    },
+  ])
+  const pagina = await obterPaginaDaDemanda(admin, versao.id, AGORA)
+  expect(pagina?.falta).toEqual({
+    titulo: 'Falta: a parte do nucleo',
+    contexto: 'Esperando a versão.',
+    conferir: 'nucleo',
+  })
+  await conferirNoArPeloPaulo(admin, versao.id, 'nucleo')
+  expect(
+    await db.parteDaDemanda.findFirstOrThrow({ where: { demandaId: versao.id } }),
+  ).toMatchObject({ estado: 'NO_AR', conferidaPorId: admin.usuarioId, commitNoAr: 'abc1234def' })
+  expect(
+    await db.eventoDaDemanda.count({
+      where: { demandaId: versao.id, tipo: 'parte_conferida_pelo_paulo' },
+    }),
+  ).toBe(1)
+
+  // A parte publicando pela fila não espera o Paulo.
+  const fila = await comPartes('Fila', [
+    { chave: 'alfa', ordem: 1, estado: 'PUBLICANDO', motivo: 'Conferindo o site' },
+  ])
+  await expect(conferirNoArPeloPaulo(admin, fila.id, 'alfa')).rejects.toThrow(
+    'Esta parte não espera a sua conferência.',
+  )
+})

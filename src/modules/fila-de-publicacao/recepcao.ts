@@ -160,9 +160,14 @@ export async function registrarChegada(
           agora,
         )
       } else if (atendidoPorId === null) {
-        // Já está no ar. Só a versão conferida igual ao commit da parte a fecha (o worker faz isso);
-        // sem ela, a parte vai a "Publicação dispensada".
-        const conferida = urlDaVersao !== null && commit !== null && versao?.versaoNoAr === commit
+        // Já está no ar. Só a versão conferida igual ao commit da parte (o `commitAlvo` dela, ou o
+        // do pedido) a fecha (o worker faz isso); sem ela, a parte vai a "Publicação dispensada".
+        const daParte = await tx.parteDaDemanda.findUnique({
+          where: { id: parteId },
+          select: { commitAlvo: true },
+        })
+        const alvo = daParte?.commitAlvo ?? commit
+        const conferida = urlDaVersao !== null && alvo !== null && versao?.versaoNoAr === alvo
         if (!conferida) {
           await marcarResultadoNaParte(
             tx,
@@ -188,6 +193,8 @@ export async function registrarChegada(
  * Liga o pedido à parte, sob a trava do repositório (ordem: repositório → demanda → partes). A parte
  * passa a `publicando` e herda o commit do pedido quando ainda não tinha `commitAlvo` (caminho v1).
  * Pedido repetido (atendido por outro) aponta a parte para o atendente, que é quem vai publicar.
+ * A parte ainda em curso (o kit v1 pede antes de mandar `entregue`) só guarda o pedido; o
+ * `entregue` a põe em `publicando`.
  */
 async function ligarParte(
   tx: Prisma.TransactionClient,
@@ -204,17 +211,23 @@ async function ligarParte(
     where: { id: parteId },
     select: { estado: true, commitAlvo: true },
   })
-  if (!atual || !['FEITA', 'PUBLICANDO', 'NAO_CHEGOU'].includes(atual.estado)) return
+  if (!atual) return
   const corrente = pedido.atendidoPorId ?? pedido.id
-  await tx.parteDaDemanda.update({
-    where: { id: parteId },
-    data: {
-      estado: 'PUBLICANDO',
-      motivo: null,
-      pedidoId: corrente,
-      ...(atual.commitAlvo === null && pedido.commit ? { commitAlvo: pedido.commit } : {}),
-    },
-  })
+  if (atual.estado === 'EM_CURSO') {
+    await tx.parteDaDemanda.update({ where: { id: parteId }, data: { pedidoId: corrente } })
+  } else if (['FEITA', 'PUBLICANDO', 'NAO_CHEGOU'].includes(atual.estado)) {
+    await tx.parteDaDemanda.update({
+      where: { id: parteId },
+      data: {
+        estado: 'PUBLICANDO',
+        motivo: null,
+        pedidoId: corrente,
+        ...(atual.commitAlvo === null && pedido.commit ? { commitAlvo: pedido.commit } : {}),
+      },
+    })
+  } else {
+    return
+  }
   if (pedido.atendidoPorId) {
     // O atendente devolve o resultado à parte pelo seu `parteId`.
     await tx.pedidoDePublicacao.updateMany({

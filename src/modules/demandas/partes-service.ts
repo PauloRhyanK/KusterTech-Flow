@@ -6,13 +6,14 @@ import type { Prisma, EstadoDaParte as EstadoNoBanco } from '@prisma/client'
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
-import { fecharDemandaSeNoAr, travarDemandas } from './partes-no-ar'
+import { fecharDemandaSeNoAr, ligarPedidoDaEntrega, travarDemandas } from './partes-no-ar'
 import {
   acumularPrs,
   chaveDoNome,
   chaveLivre,
   nomeDoRepositorio,
   conferivelPeloPaulo,
+  MOTIVOS,
   planejarMudancas,
   validarPartes,
   type EstadoDaParte,
@@ -255,18 +256,27 @@ async function registrarParteFeita(
   const prs = acumularPrs(parte.prs as unknown as PrDaParte[], novos)
   const vira = parte.estado !== 'FEITA' && EDITAVEIS_PELA_ENTREGA.includes(parte.estado)
   const grava = EDITAVEIS_PELA_ENTREGA.includes(parte.estado)
+  // A parte por versão não usa a fila: feita, ela já espera a versão lançada (seção 4).
+  const porVersao = parte.chegaAoAr === 'VERSAO'
+  const novo: EstadoNoBanco = porVersao ? 'PUBLICANDO' : 'FEITA'
   await tx.parteDaDemanda.update({
     where: { id: parte.id },
     data: {
       prs: prs as unknown as Prisma.InputJsonValue,
       ...(grava ? { commitAlvo: d.commit } : {}),
-      ...(vira ? { estado: 'FEITA', feitaEm: agora, motivo: null } : {}),
+      ...(vira || (porVersao && grava)
+        ? {
+            estado: novo,
+            feitaEm: agora,
+            motivo: porVersao ? MOTIVOS.esperandoVersao : null,
+          }
+        : {}),
     },
   })
 
   const depois = linhas
     .filter((p) => p.estado !== 'DESCARTADA')
-    .map((p) => (p.id === parte.id && vira ? 'FEITA' : p.estado))
+    .map((p) => (p.id === parte.id && (vira || (porVersao && grava)) ? novo : p.estado))
   if (depois.every((e) => JA_FEITAS.includes(e))) {
     await tx.demanda.updateMany({
       where: { id: demandaId, entregueEm: null },
@@ -361,6 +371,10 @@ async function registrarEntregaV1(
       data: { estado: 'FEITA', feitaEm: agora, motivo: null },
     })
   }
+  // O pedido que o kit v1 mandou antes do `entregue` (ou o mergeCommit dos PRs) dá o commitAlvo.
+  const feitas = new Set([...porRepositorio.values()].map((a) => a.id))
+  if (entrada) feitas.add(entrada.id)
+  for (const id of feitas) await ligarPedidoDaEntrega(tx, id, agora)
   return ok
 }
 

@@ -700,9 +700,27 @@ describe('faixaDoQueFalta', () => {
     expect(faixaDoQueFalta({ grupo: 'nao_chegou', partes, podeConferir: true })).toEqual({
       titulo: 'Falta: a parte do back (aba, IA e envio)',
       contexto: 'A Fábrica está planejando essa parte. A demanda só fecha com as 2 partes no ar.',
-      conferir: null,
+      conferir: 'front',
     })
     expect(faixaDoQueFalta({ grupo: 'a_caminho', partes, podeConferir: true })).toBeNull()
+  })
+
+  test('parte por versão esperando a versão: a ação "Conferi no ar" também a caminho', () => {
+    const partes = [
+      parte('back', { ordem: 1, estado: 'no_ar' }),
+      parte('nucleo', {
+        ordem: 2,
+        estado: 'publicando',
+        chegaAoAr: 'versao',
+        motivo: 'Esperando a versão',
+      }),
+    ]
+    expect(faixaDoQueFalta({ grupo: 'a_caminho', partes, podeConferir: true })).toEqual({
+      titulo: 'Falta: a parte do nucleo',
+      contexto: 'Esperando a versão. A demanda só fecha com as 2 partes no ar.',
+      conferir: 'nucleo',
+    })
+    expect(faixaDoQueFalta({ grupo: 'a_caminho', partes, podeConferir: false })).toBeNull()
   })
 
   test('parte publicada sem conferir: o motivo e a ação "Conferi no ar" (só uma, e só quem pode)', () => {

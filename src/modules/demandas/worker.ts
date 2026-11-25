@@ -4,8 +4,8 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { instanteDoLote } from '@/modules/fila-de-publicacao/model'
 import { apagarArquivo, diretorioDosArquivos, ehParcial, type Pasta } from './arquivos'
-import { MOTIVOS, nuncaPublicada, type Parte, type PrDaParte } from './partes'
-import { travarDemandas } from './partes-no-ar'
+import { MOTIVOS, nuncaPublicada, resultadoDoPedido, type Parte, type PrDaParte } from './partes'
+import { situacaoDoPedido, travarDemandas } from './partes-no-ar'
 import { capturaVencida, RETENCAO_DAS_CAPTURAS_MS } from './transicoes'
 
 const IDADE_MAXIMA_DO_PARCIAL_MS = 24 * 60 * 60_000
@@ -84,6 +84,10 @@ function proximoLoteDepois(feitaEm: Date, horaDoLote: string): Date {
  * Devolve quantas partes mudaram.
  */
 export async function marcarPartesSemPublicacao(agora: Date): Promise<number> {
+  return (await marcarFeitasSemPedido(agora)) + (await marcarPublicandoSemSaida(agora))
+}
+
+async function marcarFeitasSemPedido(agora: Date): Promise<number> {
   const candidatas = await db.parteDaDemanda.findMany({
     where: {
       estado: 'FEITA',
@@ -172,4 +176,47 @@ async function marcarNaoChegou(
     })
     return true
   })
+}
+
+/**
+ * Parte `publicando` pela fila cujo pedido corrente já terminou sem que o resultado chegasse a ela
+ * (conserto que desistiu, pedido cancelado, resultado perdido): vai a `nao_chegou` com o motivo do
+ * resultado (seção 3.2). Pedido pendente, conserto em curso e publicação à espera da versão conferida
+ * ficam como estão. Mesma ordem de travas: repositório → demanda → partes. Devolve quantas mudaram.
+ */
+async function marcarPublicandoSemSaida(agora: Date): Promise<number> {
+  const candidatas = await db.parteDaDemanda.findMany({
+    where: {
+      estado: 'PUBLICANDO',
+      chegaAoAr: 'PUBLICACAO',
+      pedidoId: { not: null },
+      demanda: { encerrada: null },
+    },
+    select: { id: true, demandaId: true, repositorioId: true, pedidoId: true },
+    orderBy: { id: 'asc' },
+  })
+  let marcadas = 0
+  for (const c of candidatas) {
+    const mudou = await db.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${c.repositorioId}))`
+      await travarDemandas(tx, [c.demandaId])
+      const situacao = await situacaoDoPedido(tx, c.pedidoId!)
+      if (situacao.tipo !== 'resultado') return false
+      const novo = resultadoDoPedido(situacao.resultado)
+      if (novo.estado !== 'nao_chegou') return false
+      // Revalida sob as travas: a parte ainda está publicando com o mesmo pedido.
+      const { count } = await tx.parteDaDemanda.updateMany({
+        where: { id: c.id, estado: 'PUBLICANDO', pedidoId: c.pedidoId },
+        data: { estado: 'NAO_CHEGOU', motivo: novo.motivo, naoChegouEm: agora },
+      })
+      if (count === 0) return false
+      await tx.demanda.updateMany({
+        where: { id: c.demandaId, naoChegouDesde: null },
+        data: { naoChegouDesde: agora },
+      })
+      return true
+    })
+    if (mudou) marcadas += 1
+  }
+  return marcadas
 }

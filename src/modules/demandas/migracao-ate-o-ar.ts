@@ -1,6 +1,5 @@
 // Migração das demandas já encerradas para a regra "até o ar" (spec 12). Funções puras: o que cada
 // demanda ganha (partes, estado, espera) a partir do que ela já tem; a escrita fica no service.
-import { MODELO_PADRAO, type EtapaDefinida } from './model'
 import {
   chaveLivre,
   MOTIVOS,
@@ -250,9 +249,5 @@ export function planoDaMigracao(d: EntradaDaMigracao): PlanoDaMigracao | null {
   }
 }
 
-/** O snapshot de etapas da demanda ganha a etapa `no_ar` no fim, se ainda não a tem. */
-export function etapasComNoAr(etapas: readonly EtapaDefinida[]): EtapaDefinida[] {
-  if (etapas.some((e) => e.marco === 'no_ar' || e.chave === 'no_ar')) return [...etapas]
-  const noAr = MODELO_PADRAO.find((e) => e.marco === 'no_ar')!
-  return [...etapas, { ...noAr }]
-}
+/** O snapshot de etapas ganha a etapa `no_ar` no fim (a mesma regra dos eventos, em `model`). */
+export { etapasComNoAr } from './model'

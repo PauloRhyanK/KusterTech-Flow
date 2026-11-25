@@ -449,12 +449,17 @@ export function faixaDoQueFalta(e: {
   partes: readonly Parte[]
   podeConferir: boolean
 }): FaixaDoQueFalta | null {
-  if (e.grupo !== 'nao_chegou') return null
-  const atrasada = maisAtrasada(e.partes)
+  const conferivel = ordemDePublicacao(ativas(e.partes)).find(conferivelPeloPaulo)
+  // A caminho, a faixa só aparece pela parte por versão que o Paulo pode conferir.
+  const versao =
+    e.grupo === 'a_caminho' && e.podeConferir && conferivel?.estado === 'publicando'
+      ? conferivel
+      : null
+  if (e.grupo !== 'nao_chegou' && !versao) return null
+  const atrasada = versao ?? maisAtrasada(e.partes)
   if (!atrasada) return null
   const n = ativas(e.partes).length
   const objetivo = atrasada.objetivo.trim()
-  const conferivel = ordemDePublicacao(ativas(e.partes)).find(conferivelPeloPaulo)
   return {
     titulo: `Falta: a parte do ${atrasada.chave}${objetivo ? ` (${objetivo})` : ''}`,
     contexto:

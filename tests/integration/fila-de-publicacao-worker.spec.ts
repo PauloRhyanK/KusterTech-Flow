@@ -8,6 +8,7 @@ import {
 } from '@/modules/fila-de-publicacao/model'
 import { registrarChegada } from '@/modules/fila-de-publicacao/recepcao'
 import { MODELO_PADRAO } from '@/modules/demandas/model'
+import { registrarEvento } from '@/modules/demandas/service'
 import { commitNoAr, processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import type { ExecucaoDaFonte, FonteGitHub, RefRepositorio } from '@/modules/github/fonte'
@@ -1275,6 +1276,57 @@ describe('partes da demanda', () => {
       await db.$executeRawUnsafe('DROP TRIGGER IF EXISTS falha_na_parte ON "ParteDaDemanda"')
       await db.$executeRawUnsafe('DROP FUNCTION IF EXISTS falha_na_parte()')
     }
+  })
+
+  test('kit v1: pede a publicação sem commit, depois entrega; o worker publica, confere e a demanda fecha no ar', async () => {
+    await comVersao()
+    const d = await demandaNoAr(portalId, 'entregue')
+    const entrada = await db.parteDaDemanda.create({
+      data: {
+        demandaId: d.id,
+        repositorioId: portalId,
+        chave: 'portal',
+        ordem: 1,
+        estado: 'EM_CURSO',
+      },
+    })
+    const chegada = await registrarChegada(
+      portalId,
+      { usuarioId },
+      { modo: 'imediato' },
+      d.id,
+      { modoPadrao: 'IMEDIATO', baseRedefinidaEm: null },
+      AGORA,
+      entrada.id,
+    )
+    expect(chegada.tipo).toBe('criado')
+    const r = await registrarEvento({
+      demandaId: d.id,
+      idExterno: 'v1-entregue',
+      evento: {
+        tipo: 'entregue',
+        ator: 'fabrica',
+        dados: { prs: [`https://github.com/${PORTAL}/pull/3`] },
+      },
+      origem: 'fabrica',
+      em: AGORA,
+    })
+    expect(r.resultado).toBe('aplicado')
+    expect(await lerParte(entrada.id)).toMatchObject({
+      estado: 'PUBLICANDO',
+      pedidoId: chegada.id,
+      commitAlvo: null,
+    })
+
+    await ciclo()
+    // O worker resolve o commit do pedido (HEAD de main) e a parte o herda.
+    expect((await pedido(chegada.id)).commit).toBe(M4)
+    expect((await lerParte(entrada.id)).commitAlvo).toBe(M4)
+    f.concluir(PORTAL, M4, 'success')
+    noSite = { tipo: 'lida', commit: M4 }
+    await ciclo(minutos(2))
+    expect(await lerParte(entrada.id)).toMatchObject({ estado: 'NO_AR', commitNoAr: M4 })
+    expect(await lerDemanda(d.id)).toMatchObject({ encerrada: 'no_ar', noArEm: minutos(2) })
   })
 
   test('pedido antigo da parte que termina não move a parte do pedido novo', async () => {
