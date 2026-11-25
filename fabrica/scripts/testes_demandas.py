@@ -2119,6 +2119,35 @@ class TestesTesteNoNavegador(BasePasso):
         self.assertEqual(self.despachos()[2]["chave_idempotencia"], demandas.nonce_do_motor(ID, "teste", 2))
         self.assertEqual(self.reservas(), {demandas.chave(ID): ["qa"]})
 
+    def test_rodada_que_falha_fica_no_historico_e_volta_no_teste_seguinte(self):
+        self.falhar_o_teste()
+        self.assertEqual(self.item()["rodadas"], [{"resumo": "o botão salvar não responde", "detalhes": None, "correcao": None}])
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        self.assertNotIn("rodada", self.despachos()[1]["prompt"])  # a primeira correção não tem histórico
+        self.entregar_correcao(self.item()["runId"])
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.item()["rodadas"][-1]["correcao"], PR_C)
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("testada"), cursor="4")))
+        teste = self.despachos()[2]["prompt"]
+        self.assertIn("Confira primeiro", teste)
+        self.assertIn("o botão salvar não responde", teste)
+
+    def test_terceira_rodada_corrige_com_o_modelo_do_orquestrador_e_o_historico(self):
+        self.falhar_o_teste()
+        anteriores = [
+            {"resumo": "o card cobre o chat", "detalhes": None, "correcao": "https://github.com/o/r/pull/7"},
+            {"resumo": "o toque não passa", "detalhes": None, "correcao": "https://github.com/o/r/pull/8"},
+        ]
+        self.item()["rodadas"] = anteriores + self.item()["rodadas"]
+        self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
+        correcao = self.despachos()[1]
+        orq = CONFIG_DO_KIT["modelos"]["orquestrador"]
+        self.assertEqual((correcao["agente"], correcao["modelo"]), (orq["agente"], orq["modelo"]))
+        self.assertIn("3ª rodada", correcao["prompt"])
+        self.assertIn("https://github.com/o/r/pull/8", correcao["prompt"])
+        self.assertEqual(self.reservas(), {demandas.chave(ID): ["frontend"]})
+
     def test_correcao_com_ci_vermelho_trava_com_a_url_do_pr(self):
         self.falhar_o_teste()
         self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))

@@ -57,7 +57,9 @@ seeds, `correcao.revisao`, com a vaga da demanda) e o aprovado mergeia. O reprov
 head novo é revisado de novo, e o conserto sem commit conta como rodada. Reprovado depois dos dois consertos, a demanda
 trava, e a retomada do Paulo fecha o PR e corrige do zero a partir do branch padrão. Com a config padrão, a demanda
 trava para o Paulo revisar e mergear o PR (o merge dele segue sem retomada). Na segunda
-falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Nunca há
+falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Cada rodada que falha entra em `rodadas`
+(resumo, detalhes e o PR da correção): o teste seguinte confere essas falhas primeiro, a correção as recebe e, da
+3ª rodada em diante, roda com o modelo do orquestrador. Nunca há
 dois runs da demanda ao mesmo tempo: o run que passou do teto (ou foi superado) segura a vaga até terminar.
 """
 
@@ -834,6 +836,7 @@ MOTIVO_DESENHO_RECUSADO = "o Flow recusou o desenho enviado pela Fábrica"
 MOTIVO_ERRO_DO_DESENHO = "o desenho parou: o mesmo erro %d ciclos seguidos (%s)"
 PAPEL_DO_TESTE = "qa"
 PAPEL_DA_CORRECAO = "frontend"
+LIMITE_RODADAS = 10  # rodadas do teste guardadas no item
 COMENTARIO_DO_TESTE = "Evidência enviada ao Flow."
 RESULTADOS_DO_TESTE = ("passou", "falhou", "nao_subiu")  # `nao_subiu` é do kit: o qa não subiu o sistema no run
 CAPTURAS_POR_TELA = 10
@@ -2210,7 +2213,7 @@ class _Passo:
         t = it["teste"]
         d = it.get("desenho") if isinstance(it.get("desenho"), dict) else {}
         desenho = prompts.caminho_do_desenho(id_) if d.get("mergeado") is True else None
-        prompt = prompts.prompt_teste_no_navegador(demanda=demanda, desenho=desenho, refazer=bool(t.get("refeito")))
+        prompt = prompts.prompt_teste_no_navegador(demanda=demanda, desenho=desenho, refazer=bool(t.get("refeito")), rodadas=it.get("rodadas"))
         branch = t.get("branch") if t.get("refeito") and isinstance(t.get("branch"), str) and t.get("branch") else None
         run_id = self.motor.despachar_run(
             projeto=it["projeto"],
@@ -2325,6 +2328,8 @@ class _Passo:
             detalhes=resultado.get("detalhes"),
             fecharPr=True,
         )
+        if resultado["resultado"] == "falhou":
+            self.registrar_rodada(it, resultado)
         self.sair_do_teste(id_, it, fase="testando")
         self.eventos.append({"evento": "demanda_teste_enviado", "id": id_, "resultado": resultado["resultado"], "prUrl": t.get("prUrl")})
         self.fechar_pr_do_teste(id_, it)
@@ -2396,6 +2401,19 @@ class _Passo:
             self.sair_do_teste(id_, it, vivo=True, fase="esperando_paulo", inicio=self.agora_texto)
             self.eventos.append({"evento": "demanda_teste_superado", "id": id_})
 
+    def registrar_rodada(self, it: dict, resultado: dict) -> None:
+        """A rodada que falhou entra em `rodadas` (o teste seguinte confere essas falhas primeiro, e a correção sabe o
+        que já foi tentado). Fica só as `LIMITE_RODADAS` mais recentes."""
+        rodadas = [r for r in (it.get("rodadas") or []) if isinstance(r, dict)]
+        rodadas.append(
+            {
+                "resumo": prompts._cortar_utf16(resultado.get("resumo") or "", prompts.LIMITE_TEXTO_DA_RODADA),
+                "detalhes": prompts._cortar_utf16(resultado["detalhes"], prompts.LIMITE_TEXTO_DA_RODADA) if resultado.get("detalhes") else None,
+                "correcao": None,
+            }
+        )
+        it["rodadas"] = rodadas[-LIMITE_RODADAS:]
+
     # ------------------------------------------------------------ correção do teste
 
     def corrigir(self, id_: str, it: dict, demanda: dict) -> None:
@@ -2439,10 +2457,16 @@ class _Passo:
 
     def despachar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         """O POST do run da correção (a partir do branch padrão) ou, com `correcao.conserto`, do conserto no branch do PR."""
-        modelo, c = self.modelo_da_correcao, it["correcao"]
+        c = it["correcao"]
+        rodadas = [r for r in (it.get("rodadas") or []) if isinstance(r, dict)]
+        rodada = max(len(rodadas), 1)
+        modelo = self.modelo_da_correcao
+        if rodada >= prompts.RODADA_QUE_MUDA_DE_ABORDAGEM and self.modelo_do_plano is not None:
+            modelo = self.modelo_do_plano  # o mesmo remendo voltou duas vezes: o modelo do orquestrador procura a causa
         conserto = c.get("conserto") if isinstance(c.get("conserto"), dict) else None
         if conserto is None:
-            prompt, branch = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=c.get("resumo") or ""), None
+            prompt = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=c.get("resumo") or "", historico=rodadas[:-1], rodada=rodada)
+            branch = None
         else:
             prompt = prompts.prompt_conserto_da_correcao(demanda=demanda, resumo=c.get("resumo") or "", achados=conserto.get("achados") or [], pr_url=c["prUrl"])
             branch = conserto["branch"]
@@ -2874,6 +2898,9 @@ class _Passo:
         c = _dados(it, "correcao")
         c["mergeado"] = True
         c.pop("ciPendenteDesde", None)
+        rodadas = it.get("rodadas")
+        if isinstance(rodadas, list) and rodadas and isinstance(rodadas[-1], dict) and c.get("prUrl"):
+            rodadas[-1]["correcao"] = c["prUrl"]
         if _marco(demanda) == "desenvolvida" and not demanda.get("encerrada"):
             enfileirar_evento(self.estado, id_, "etapa_concluida", {"marco": "desenvolvida"}, agora=self.agora_texto)
         self.sair_da_correcao(id_, it)
