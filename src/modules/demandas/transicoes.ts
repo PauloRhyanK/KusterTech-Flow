@@ -34,6 +34,8 @@ export type EventoAplicavel =
   | { tipo: 'retomada'; dados: { resposta?: string } }
   | { tipo: 'etapa_concluida_pelo_paulo'; dados: { chave: string } }
   | { tipo: 'encerrada_pelo_paulo'; dados: Record<string, never> }
+  /** O teste falhou duas vezes e o Paulo entrega o que funciona; `filha` é a demanda do que faltou. */
+  | { tipo: 'entrega_parcial'; dados: { filha: string } }
 
 export interface ContextoDaTransicao {
   etapas: readonly EtapaDefinida[]
@@ -63,6 +65,7 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   retomada: ['paulo'],
   etapa_concluida_pelo_paulo: ['paulo'],
   encerrada_pelo_paulo: ['paulo'],
+  entrega_parcial: ['paulo'],
 }
 
 const SEM_VERSAO = 'O desenho ainda não tem versão para aprovar.'
@@ -283,6 +286,12 @@ export function aplicarEvento(
         return recusa('A demanda não está parada.')
       }
       return aceita(destravar(estado))
+    // O mesmo caminho do teste que passa: a testada é concluída e a Fábrica faz a entrega.
+    case 'entrega_parcial':
+      if (estado.espera !== 'teste_falhou' || atual.marco !== 'testada') {
+        return recusa('A demanda não espera mais a decisão do teste.')
+      }
+      return concluir({ ...estado, espera: null, esperaMotivo: null })
     case 'entregue':
       if (atual.marco !== 'entregue') return naoE('entregue')
       return concluir(estado)

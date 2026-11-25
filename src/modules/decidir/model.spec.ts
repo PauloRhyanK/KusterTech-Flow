@@ -8,7 +8,9 @@ import {
   numeroDoPrDaTrava,
   travaDeCorrecao,
   motivosDaIssue,
+  respostasDoItem,
   textoDaTrava,
+  trechosComLink,
   tipoDaDecisao,
   tipoDaDemanda,
   type DecisaoDoRetrato,
@@ -294,7 +296,9 @@ describe('motivosDaIssue', () => {
 describe('textoDaTrava', () => {
   it('teste que falhou explica o que cada botão faz, depois do resumo do teste', () => {
     expect(textoDaTrava('teste_falhou', 'Quase tudo funciona.\n')).toBe(
-      'Quase tudo funciona.\n\nRetomar: um agente corrige o que falhou e o teste roda de novo.\nEncerrar a demanda: ela fecha como está, sem correção.',
+      'Quase tudo funciona.\n\nRetomar: um agente corrige o que falhou e o teste roda de novo.\n' +
+        'Entregar o que funciona: a demanda segue para a entrega como está, e o que faltou vira uma demanda nova.\n' +
+        'Encerrar a demanda: ela fecha como está, sem correção.',
     )
   })
 
@@ -361,5 +365,59 @@ describe('travaDeCorrecao', () => {
         .ref
     expect(trava('PR de correção sem CI: revise e faça o merge')).toMatchObject({ prDaTrava: 500 })
     expect(trava('o PR do plano foi recusado')).toMatchObject({ prDaTrava: null })
+  })
+})
+
+describe('respostasDoItem', () => {
+  const pilha = (d: DemandaEsperando) =>
+    montarPilha({
+      demandas: [d],
+      decisoes: [],
+      marcas: [],
+      agora: AGORA,
+      nomeDoProjeto: () => null,
+    }).itens[0]!
+  const chaves = (d: DemandaEsperando) => respostasDoItem(pilha(d)).map((r) => r.chave)
+
+  it('"Entregar o que funciona" só aparece no teste que falhou', () => {
+    expect(chaves(demanda({ espera: 'teste_falhou', esperaMotivo: 'r' }))).toEqual([
+      'retomar',
+      'entregar_parcial',
+      'encerrar',
+    ])
+    expect(respostasDoItem(pilha(demanda({ espera: 'teste_falhou' })))[1]!.rotulo).toBe(
+      'Entregar o que funciona',
+    )
+    expect(chaves(demanda({ espera: 'travada', esperaMotivo: 'CI' }))).toEqual([
+      'retomar',
+      'encerrar',
+    ])
+  })
+
+  it('os outros tipos seguem com as respostas de sempre', () => {
+    expect(chaves(demanda())).toEqual([
+      'fila_de_agentes',
+      'urgente',
+      'lote_da_noite',
+      'guardar',
+      'recusar',
+    ])
+  })
+})
+
+describe('trechosComLink', () => {
+  const ID = '11111111-1111-4111-8111-111111111111'
+  it('o caminho de uma demanda vira link; o resto fica texto', () => {
+    expect(trechosComLink(`O que faltou virou uma demanda nova: /demandas/${ID}.`)).toEqual([
+      { texto: 'O que faltou virou uma demanda nova: ' },
+      { texto: `/demandas/${ID}`, href: `/demandas/${ID}` },
+      { texto: '.' },
+    ])
+  })
+  it('sem caminho, um trecho só; caminho que não é de demanda não vira link', () => {
+    expect(trechosComLink('Registrado.')).toEqual([{ texto: 'Registrado.' }])
+    expect(trechosComLink('/demandas/abc e https://x.com/demandas/' + ID)).toEqual([
+      { texto: '/demandas/abc e https://x.com/demandas/' + ID },
+    ])
   })
 })

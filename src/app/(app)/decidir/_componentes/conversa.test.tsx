@@ -120,4 +120,22 @@ describe('Conversa', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/está demorando/)).toBeNull()
   })
+
+  test('Conversa: na mensagem do Flow, o caminho de uma demanda vira link; na do agente, não', () => {
+    const ID = '11111111-1111-4111-8111-111111111111'
+    renderizar({
+      mensagens: [
+        mensagem({
+          id: 'f1',
+          autor: 'flow',
+          texto: `Registrado. O que faltou virou uma demanda nova: /demandas/${ID}`,
+        }),
+        mensagem({ id: 'a1', autor: 'agente', texto: `Veja /demandas/${ID}` }),
+      ],
+    })
+    const links = screen.getAllByRole('link', { name: `/demandas/${ID}` })
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('href', `/demandas/${ID}`)
+    expect(screen.getByText(`Veja /demandas/${ID}`)).toBeInTheDocument()
+  })
 })

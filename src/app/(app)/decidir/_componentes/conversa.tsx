@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
+import { trechosComLink } from '@/modules/decidir/model'
 import { formatarIdade } from '@/modules/inicio/model'
 
 export interface MensagemNaTela {
@@ -117,7 +119,23 @@ export function Conversa({
                     : 'border border-border bg-surface text-text-primary',
                 )}
               >
-                <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+                <p className="whitespace-pre-wrap break-words">
+                  {m.autor === 'flow'
+                    ? trechosComLink(m.texto).map((t, i) =>
+                        t.href ? (
+                          <Link
+                            key={i}
+                            href={t.href}
+                            className="font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                          >
+                            {t.texto}
+                          </Link>
+                        ) : (
+                          t.texto
+                        ),
+                      )
+                    : m.texto}
+                </p>
                 {m.anexos.length > 0 && (
                   <ul className="mt-2 space-y-1">
                     {m.anexos.map((a) => (

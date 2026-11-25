@@ -3,9 +3,10 @@
 import { useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { ACOES_POR_TIPO, type Acao, type Cartao } from '@/modules/decidir/cartao'
+import { ACOES_POR_TIPO, cabeNaEspera, type Acao, type Cartao } from '@/modules/decidir/cartao'
 import { ROTULO_DO_TIPO, type TipoDeItem } from '@/modules/decidir/model'
 import { NIVEIS, TIPOS } from '@/modules/demandas/contrato'
+import type { Espera } from '@/modules/demandas/model'
 import { ROTULO_DO_DESTINO, ROTULO_DO_NIVEL } from '@/modules/demandas/apresentacao'
 
 export interface CartaoNaTela {
@@ -33,6 +34,7 @@ export const ROTULO_DA_ACAO: Record<Acao, string> = {
   aprovar_e_mergear: 'Aprovar e mergear o PR',
   pedir_mudanca: 'Pedir mudança',
   retomar: 'Retomar a demanda',
+  entregar_parcial: 'Entregar o que funciona',
   encerrar: 'Encerrar a demanda',
   concluir: 'Concluir a etapa',
 }
@@ -95,6 +97,11 @@ export function linhasDoCartao(c: Cartao): Linha[] {
       ]
     case 'retomar':
       return [{ rotulo: 'Ação', valor: 'retomar a demanda' }, ...resposta(c.resposta)]
+    case 'entregar_parcial':
+      return [
+        { rotulo: 'Ação', valor: 'entregar o que funciona; a demanda segue para a entrega' },
+        { rotulo: 'Depois', valor: 'o que faltou vira uma demanda nova no mesmo projeto' },
+      ]
     case 'encerrar':
       return [{ rotulo: 'Ação', valor: 'encerrar a demanda' }]
     case 'concluir':
@@ -224,6 +231,7 @@ const LIMITE: Record<'escopo' | 'resposta' | 'ajuste' | 'comentario', number> = 
 /** "Ajustar": os campos editáveis do cartão; o Flow valida de novo ao salvar. */
 export function FormularioDoCartao({
   tipoDoItem,
+  espera = null,
   inicial,
   foco,
   erro,
@@ -231,6 +239,8 @@ export function FormularioDoCartao({
   onCancelar,
 }: {
   tipoDoItem: TipoDeItem
+  /** A espera da demanda do item: algumas ações só cabem nela (entregar o que funciona). */
+  espera?: Espera | null
   inicial: InicialDoCartao
   foco?: string
   erro?: string | null
@@ -238,7 +248,7 @@ export function FormularioDoCartao({
   onCancelar: () => void
 }) {
   const base = useId()
-  const acoes = ACOES_POR_TIPO[tipoDoItem]
+  const acoes = ACOES_POR_TIPO[tipoDoItem].filter((a) => cabeNaEspera(a, espera))
   const [acao, setAcao] = useState<Acao>(inicial.acao)
   const [v, setV] = useState<Valores>({
     destino: inicial.destino ?? 'fila_de_agentes',

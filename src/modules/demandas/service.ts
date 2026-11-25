@@ -21,7 +21,11 @@ import {
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { DESTINOS, NIVEIS, TIPOS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
+  LIMITE_DA_DESCRICAO,
+  LIMITE_DO_TITULO,
+  descricaoDaFilha,
   estadoInicial,
+  tituloDaFilha,
   validarModelo,
   type Ator,
   type Destino,
@@ -284,10 +288,10 @@ export async function criarDemanda(
   exigirPermissao(sujeito, 'projetos.gerenciar')
 
   const titulo = e.titulo.trim()
-  if (titulo.length < 1 || titulo.length > 120) {
-    throw new ErroDeDominio('O título precisa ter de 1 a 120 caracteres.')
+  if (titulo.length < 1 || titulo.length > LIMITE_DO_TITULO) {
+    throw new ErroDeDominio(`O título precisa ter de 1 a ${LIMITE_DO_TITULO} caracteres.`)
   }
-  const descricao = textoOuNulo(e.descricao, 4000, 'A descrição')
+  const descricao = textoOuNulo(e.descricao, LIMITE_DA_DESCRICAO, 'A descrição')
   const nivel = e.nivel ?? null
   if (nivel !== null && !NIVEIS.includes(nivel)) throw new ErroDeDominio('Nível inválido.')
 
@@ -525,11 +529,7 @@ function colunasDoEvento(evento: EventoAplicavel, demanda: LinhaDaDemanda) {
   }
 }
 
-/**
- * Trava a linha da demanda, confere o `idExterno` (repetido ou conflito), aplica a transição pura e
- * grava o estado e um único `EventoDaDemanda` na mesma transação. Recusado não grava nada.
- */
-export async function registrarEvento(e: {
+interface RegistroDeEvento {
   demandaId: string
   idExterno: string
   evento: EventoAplicavel & { ator: Ator }
@@ -539,97 +539,109 @@ export async function registrarEvento(e: {
   fonteId?: string
   /** Grava `Demanda.tipo` na mesma transação (a decisão do Paulo na triagem que falhou). */
   tipo?: TipoDeDemanda
-}): Promise<ResultadoDoRegistro> {
+}
+
+/**
+ * Trava a linha da demanda, confere o `idExterno` (repetido ou conflito), aplica a transição pura e
+ * grava o estado e um único `EventoDaDemanda` na mesma transação. Recusado não grava nada.
+ */
+export async function registrarEvento(e: RegistroDeEvento): Promise<ResultadoDoRegistro> {
   try {
-    return await db.$transaction(async (tx): Promise<ResultadoDoRegistro> => {
-      const travada = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "Demanda" WHERE "id" = ${e.demandaId} FOR UPDATE`
-      if (travada.length === 0) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
-      const demanda = await tx.demanda.findUniqueOrThrow({ where: { id: e.demandaId } })
-      const estado = estadoDaLinha(demanda)
-
-      const guardado = await tx.eventoDaDemanda.findUnique({
-        where: { idExterno: e.idExterno },
-        select: { demandaId: true, tipo: true, dados: true },
-      })
-      if (guardado) {
-        if (guardado.demandaId !== e.demandaId) return { resultado: 'conflito' }
-        return compararEvento(guardado, e.evento) === 'repetido'
-          ? { resultado: 'repetido', estado }
-          : { resultado: 'conflito' }
-      }
-
-      let desenhoId: string | null = null
-      if (e.evento.tipo === 'desenho_pronto') {
-        const desenho = await tx.arquivoDaDemanda.findFirst({
-          where: {
-            id: e.evento.dados.arquivoId,
-            demandaId: e.demandaId,
-            tipo: 'DESENHO',
-            apagadoEm: null,
-          },
-          select: { id: true, versao: true },
-        })
-        if (!desenho) return { resultado: 'recusado', motivo: 'Arquivo do desenho não encontrado.' }
-        // Cada versão tem o seu arquivo; reaproveitar um deixaria a versão anterior sem arquivo.
-        if (desenho.versao !== null) {
-          return { resultado: 'recusado', motivo: 'Este arquivo já é uma versão do desenho.' }
-        }
-        desenhoId = desenho.id
-      }
-
-      const capturas = await tx.arquivoDaDemanda.findMany({
-        where: { demandaId: e.demandaId, tipo: 'CAPTURA', apagadoEm: null, tela: { not: null } },
-        select: { id: true, tela: true },
-      })
-      const r = aplicarEvento(
-        estado,
-        {
-          etapas: demanda.etapas as unknown as EtapaDefinida[],
-          temTela: demanda.temTela,
-          capturas: capturas.map((c) => ({ id: c.id, tela: c.tela as 'desktop' | 'celular' })),
-          artefato: demanda.artefatoUrl,
-        },
-        e.evento,
-      )
-      if (!r.ok) return { resultado: 'recusado', motivo: r.motivo }
-
-      const agora = new Date()
-      await tx.demanda.update({
-        where: { id: e.demandaId },
-        data: {
-          ...colunasDoEstado(r.estado, estado, demanda.esperaDesde, agora),
-          ...colunasDoEvento(e.evento, demanda),
-          ...(e.tipo ? { tipo: doFio.tipo(e.tipo) } : {}),
-          ...(r.estado.encerrada === 'entregue' && !estado.encerrada ? { entregueEm: agora } : {}),
-        },
-      })
-      await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
-      await tx.eventoDaDemanda.create({
-        data: {
-          idExterno: e.idExterno,
-          demandaId: e.demandaId,
-          tipo: e.evento.tipo,
-          origem: e.origem,
-          usuarioId: e.usuarioId ?? null,
-          fonteId: e.fonteId ?? null,
-          dados: e.evento.dados as unknown as Prisma.InputJsonValue,
-          em: e.em,
-        },
-      })
-      if (desenhoId) {
-        await tx.arquivoDaDemanda.update({
-          where: { id: desenhoId },
-          data: { versao: r.estado.versaoDoDesenho },
-        })
-      }
-      return { resultado: 'aplicado', estado: r.estado }
-    })
+    return await db.$transaction((tx) => registrarEventoNa(tx, e))
   } catch (erro) {
     // O mesmo idExterno gravado ao mesmo tempo em outra demanda: o índice único decide.
     if (ehUnicoRepetido(erro)) return { resultado: 'conflito' }
     throw erro
   }
+}
+
+/** O `registrarEvento` dentro de uma transação de quem chama (ela trava a linha da demanda). */
+async function registrarEventoNa(
+  tx: Prisma.TransactionClient,
+  e: RegistroDeEvento,
+): Promise<ResultadoDoRegistro> {
+  const travada = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Demanda" WHERE "id" = ${e.demandaId} FOR UPDATE`
+  if (travada.length === 0) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
+  const demanda = await tx.demanda.findUniqueOrThrow({ where: { id: e.demandaId } })
+  const estado = estadoDaLinha(demanda)
+
+  const guardado = await tx.eventoDaDemanda.findUnique({
+    where: { idExterno: e.idExterno },
+    select: { demandaId: true, tipo: true, dados: true },
+  })
+  if (guardado) {
+    if (guardado.demandaId !== e.demandaId) return { resultado: 'conflito' }
+    return compararEvento(guardado, e.evento) === 'repetido'
+      ? { resultado: 'repetido', estado }
+      : { resultado: 'conflito' }
+  }
+
+  let desenhoId: string | null = null
+  if (e.evento.tipo === 'desenho_pronto') {
+    const desenho = await tx.arquivoDaDemanda.findFirst({
+      where: {
+        id: e.evento.dados.arquivoId,
+        demandaId: e.demandaId,
+        tipo: 'DESENHO',
+        apagadoEm: null,
+      },
+      select: { id: true, versao: true },
+    })
+    if (!desenho) return { resultado: 'recusado', motivo: 'Arquivo do desenho não encontrado.' }
+    // Cada versão tem o seu arquivo; reaproveitar um deixaria a versão anterior sem arquivo.
+    if (desenho.versao !== null) {
+      return { resultado: 'recusado', motivo: 'Este arquivo já é uma versão do desenho.' }
+    }
+    desenhoId = desenho.id
+  }
+
+  const capturas = await tx.arquivoDaDemanda.findMany({
+    where: { demandaId: e.demandaId, tipo: 'CAPTURA', apagadoEm: null, tela: { not: null } },
+    select: { id: true, tela: true },
+  })
+  const r = aplicarEvento(
+    estado,
+    {
+      etapas: demanda.etapas as unknown as EtapaDefinida[],
+      temTela: demanda.temTela,
+      capturas: capturas.map((c) => ({ id: c.id, tela: c.tela as 'desktop' | 'celular' })),
+      artefato: demanda.artefatoUrl,
+    },
+    e.evento,
+  )
+  if (!r.ok) return { resultado: 'recusado', motivo: r.motivo }
+
+  const agora = new Date()
+  await tx.demanda.update({
+    where: { id: e.demandaId },
+    data: {
+      ...colunasDoEstado(r.estado, estado, demanda.esperaDesde, agora),
+      ...colunasDoEvento(e.evento, demanda),
+      ...(e.tipo ? { tipo: doFio.tipo(e.tipo) } : {}),
+      ...(r.estado.encerrada === 'entregue' && !estado.encerrada ? { entregueEm: agora } : {}),
+    },
+  })
+  await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+  await tx.eventoDaDemanda.create({
+    data: {
+      idExterno: e.idExterno,
+      demandaId: e.demandaId,
+      tipo: e.evento.tipo,
+      origem: e.origem,
+      usuarioId: e.usuarioId ?? null,
+      fonteId: e.fonteId ?? null,
+      dados: e.evento.dados as unknown as Prisma.InputJsonValue,
+      em: e.em,
+    },
+  })
+  if (desenhoId) {
+    await tx.arquivoDaDemanda.update({
+      where: { id: desenhoId },
+      data: { versao: r.estado.versaoDoDesenho },
+    })
+  }
+  return { resultado: 'aplicado', estado: r.estado }
 }
 
 async function decisaoDoPaulo(
@@ -734,6 +746,81 @@ export async function retomarDemanda(
 /** O Paulo desiste da demanda: ela fica encerrada como `descartada` e a Fábrica para nela. */
 export async function encerrarDemanda(sujeito: Sujeito, demandaId: string): Promise<void> {
   await decisaoDoPaulo(sujeito, demandaId, { tipo: 'encerrada_pelo_paulo', dados: {} })
+}
+
+const TESTE_JA_DECIDIDO = 'A demanda não espera mais a decisão do teste.'
+
+/**
+ * O teste falhou duas vezes e o Paulo entrega o que funciona: a demanda segue o caminho do teste
+ * que passa (a testada é concluída e a Fábrica faz a entrega) e o que faltou vira uma demanda nova
+ * no mesmo projeto e repositório, aberta como qualquer demanda da tela. Tudo numa transação, com a
+ * linha da demanda travada: o segundo clique encontra a demanda fora de `teste_falhou` e é recusado
+ * sem abrir outra filha.
+ */
+export async function entregarOQueFunciona(
+  sujeito: Sujeito,
+  demandaId: string,
+): Promise<{ filhaId: string }> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  const agora = new Date()
+  return db.$transaction(async (tx) => {
+    const travada = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "Demanda" WHERE "id" = ${demandaId} FOR UPDATE`
+    if (travada.length === 0) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
+    const d = await tx.demanda.findUniqueOrThrow({
+      where: { id: demandaId },
+      select: {
+        titulo: true,
+        projetoId: true,
+        repositorioId: true,
+        temTela: true,
+        espera: true,
+        esperaMotivo: true,
+        encerrada: true,
+        projeto: { select: { arquivadoEm: true } },
+      },
+    })
+    if (d.encerrada || d.espera !== 'teste_falhou') throw new ErroDeDominio(TESTE_JA_DECIDIDO)
+    if (d.projeto.arquivadoEm !== null) {
+      throw new ErroDeDominio('Projeto arquivado não recebe demandas.')
+    }
+    // O resumo do último teste (o que vai para o Paulo); a espera guarda o mesmo texto.
+    const teste = await tx.eventoDaDemanda.findFirst({
+      where: { demandaId, tipo: 'teste' },
+      orderBy: { seq: 'desc' },
+      select: { dados: true },
+    })
+    const resumo = (teste?.dados as { resumo?: unknown } | null)?.resumo
+    const { id: filhaId } = await abrirDemanda(
+      tx,
+      {
+        projetoId: d.projetoId,
+        repositorioId: d.repositorioId,
+        titulo: tituloDaFilha(d.titulo),
+        descricao: descricaoDaFilha(
+          typeof resumo === 'string' ? resumo : d.esperaMotivo,
+          demandaId,
+        ),
+        tipo: null,
+        nivel: null,
+        temTela: d.temTela,
+        origem: 'flow',
+        usuarioId: sujeito.usuarioId,
+      },
+      agora,
+    )
+    const r = await registrarEventoNa(tx, {
+      demandaId,
+      idExterno: randomUUID(),
+      evento: { tipo: 'entrega_parcial', dados: { filha: filhaId }, ator: 'paulo' },
+      origem: 'paulo',
+      em: agora,
+      usuarioId: sujeito.usuarioId,
+    })
+    if (r.resultado === 'recusado') throw new ErroDeDominio(r.motivo)
+    if (r.resultado === 'conflito') throw new Error('idExterno novo em conflito.')
+    return { filhaId }
+  })
 }
 
 export async function concluirEtapaPeloPaulo(

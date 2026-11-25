@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import {
   MODELO_PADRAO,
+  LIMITE_DA_DESCRICAO,
+  LIMITE_DO_TITULO,
   compararNaFila,
   concluirEtapaAtual,
+  descricaoDaFilha,
+  tituloDaFilha,
+  trechoQueNaoFuncionou,
   esperaOPaulo,
   estadoInicial,
   etapasAplicaveis,
@@ -216,5 +221,53 @@ describe('espera do Paulo', () => {
     expect(duracaoDaEspera(200)).toBe('3 h 20 min')
     expect(duracaoDaEspera(24 * 60 + 3 * 60 + 5)).toBe('1 d 3 h')
     expect(duracaoDaEspera(2 * 24 * 60)).toBe('2 d')
+  })
+})
+
+describe('demanda filha da entrega parcial', () => {
+  const RESUMO =
+    'Quase tudo funciona, mas o tutorial guiado não.\n' +
+    'Funcionou:\n- o chat responde\n- o histórico aparece\n' +
+    'Não funcionou:\n- o tutorial guiado não abre\n- o botão de fechar some no celular'
+
+  test('o título ganha " — o que faltou" e cabe no limite', () => {
+    expect(tituloDaFilha('Suporte por IA')).toBe('Suporte por IA — o que faltou')
+    const longo = 'x'.repeat(LIMITE_DO_TITULO)
+    const t = tituloDaFilha(longo)
+    expect(t).toHaveLength(LIMITE_DO_TITULO)
+    expect(t.endsWith('… — o que faltou')).toBe(true)
+    expect(tituloDaFilha('  Suporte  ')).toBe('Suporte — o que faltou')
+  })
+
+  test('o trecho "Não funcionou" do resumo, sem o que funcionou', () => {
+    expect(trechoQueNaoFuncionou(RESUMO)).toBe(
+      '- o tutorial guiado não abre\n- o botão de fechar some no celular',
+    )
+    // na mesma linha, sem acento, e com o "Funcionou:" depois
+    expect(trechoQueNaoFuncionou('Veredito. Nao funcionou: o login.\nFuncionou:\n- o resto')).toBe(
+      'o login.',
+    )
+    expect(trechoQueNaoFuncionou('Quase tudo funciona.\nFuncionou:\n- tudo')).toBeNull()
+    expect(trechoQueNaoFuncionou('Não funcionou:   \n')).toBeNull()
+  })
+
+  test('a descrição: o que faltou e o link para a demanda original', () => {
+    expect(descricaoDaFilha(RESUMO, 'd1')).toBe(
+      '- o tutorial guiado não abre\n- o botão de fechar some no celular\n\n' +
+        'Demanda original: /demandas/d1',
+    )
+    // sem o trecho, o resumo inteiro; sem resumo, um texto padrão
+    expect(descricaoDaFilha('  O cadastro não salva.  ', 'd1')).toBe(
+      'O cadastro não salva.\n\nDemanda original: /demandas/d1',
+    )
+    expect(descricaoDaFilha(null, 'd1')).toBe(
+      'O teste no navegador falhou.\n\nDemanda original: /demandas/d1',
+    )
+  })
+
+  test('a descrição cabe no limite, com o link inteiro', () => {
+    const d = descricaoDaFilha('y'.repeat(LIMITE_DA_DESCRICAO), 'd1')
+    expect(d).toHaveLength(LIMITE_DA_DESCRICAO)
+    expect(d.endsWith('…\n\nDemanda original: /demandas/d1')).toBe(true)
   })
 })

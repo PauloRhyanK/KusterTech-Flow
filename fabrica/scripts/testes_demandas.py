@@ -2752,6 +2752,36 @@ class TestesTesteNoNavegador(BasePasso):
         self.assertEqual(len(self.despachos()), 3)
         self.assertEqual(self.despachos()[2]["chave_idempotencia"], demandas.nonce_do_motor(ID, "teste", 2))
 
+    def test_entrega_parcial_do_paulo_na_segunda_falha_entrega_sem_testar_nem_corrigir(self):
+        # "Entregar o que funciona" no Flow: a testada é concluída e a demanda vai à etapa `entregue`
+        entrega_parcial = [{"id": "e3", "tipo": "entrega_parcial", "origem": "paulo", "em": AGORA, "dados": {"filha": "f"}}]
+        self.falhar_o_teste()
+        self.passo(ClienteDeBusca(pagina(retrato("testada", espera="teste_falhou"), cursor="3")))
+        self.assertEqual((self.item()["fase"], self.reservas()), ("esperando_paulo", {}))
+        self.avancar(60)
+        pedir = PedirFalso()
+        self.passo(
+            ClienteDeBusca(pagina(retrato("entregue", eventos=entrega_parcial, titulo="Suporte por IA", publicacao={"modo": "lote"}), cursor="4")),
+            publicacao=PUBLICACAO,
+            pedir_publicacao=pedir,
+        )
+        self.assertEqual(([e["tipo"] for e in self.saida()], len(pedir.chamadas)), (["entregue"], 1))
+        self.assertEqual((self.item()["fase"], len(self.despachos()), self.reservas()), ("entregando", 1, {}))
+        self.enviado()
+        self.passo(ClienteDeBusca(pagina(retrato("entregue", eventos=entrega_parcial), cursor="5")))
+        self.assertEqual((self.saida(), len(self.despachos())), ([], 1))
+        # o Flow aplicou o `entregue`: o item sai do estado, sem vaga e sem run novo
+        self.passo(ClienteDeBusca(pagina(retrato("entregue", encerrada="entregue", eventos=entrega_parcial), cursor="6")))
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+        self.assertEqual((len(self.despachos()), self.reservas()), (1, {}))
+
+    def test_entrega_parcial_sem_o_kit_ver_a_espera_tambem_so_entrega(self):
+        self.falhar_o_teste()
+        # o kit não viu a `teste_falhou`: o retrato seguinte já está na etapa `entregue`
+        self.passo(ClienteDeBusca(pagina(retrato("entregue"), cursor="3")))
+        self.assertEqual([e["tipo"] for e in self.saida()], ["entregue"])
+        self.assertEqual((self.item()["fase"], len(self.despachos()), self.reservas()), ("entregando", 1, {}))
+
     def test_retomada_da_segunda_falha_sem_ver_a_espera_tambem_corrige(self):
         self.falhar_o_teste()
         self.avancar(60)

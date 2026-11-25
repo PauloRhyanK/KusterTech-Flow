@@ -286,3 +286,41 @@ export function compararNaFila(a: ItemDaFila, b: ItemDaFila): number {
   if (ua !== ub) return ua - ub
   return a.criadaEm.getTime() - b.criadaEm.getTime()
 }
+
+export const LIMITE_DO_TITULO = 120
+export const LIMITE_DA_DESCRICAO = 4000
+
+const SUFIXO_DA_FILHA = ' — o que faltou'
+const SEM_RESUMO = 'O teste no navegador falhou.'
+const NAO_FUNCIONOU = /n[ãa]o funcionou\s*:/i
+const FUNCIONOU = /(?:^|\n)\s*funcionou\s*:/i
+
+function cortar(texto: string, limite: number): string {
+  return texto.length > limite ? `${texto.slice(0, limite - 1).trimEnd()}…` : texto
+}
+
+/** O título da demanda do que faltou: `<título> — o que faltou`, dentro do limite do título. */
+export function tituloDaFilha(titulo: string): string {
+  return `${cortar(titulo.trim(), LIMITE_DO_TITULO - SUFIXO_DA_FILHA.length)}${SUFIXO_DA_FILHA}`
+}
+
+/**
+ * O trecho `Não funcionou:` do resumo do teste (o qa escreve `Funcionou:` e `Não funcionou:`,
+ * fabrica/scripts/prompts.py), até o próximo `Funcionou:`; sem o trecho, ou vazio, `null`.
+ */
+export function trechoQueNaoFuncionou(resumo: string): string | null {
+  const m = NAO_FUNCIONOU.exec(resumo)
+  if (!m) return null
+  const resto = resumo.slice(m.index + m[0].length)
+  const fim = FUNCIONOU.exec(resto)
+  const trecho = (fim ? resto.slice(0, fim.index) : resto).trim()
+  return trecho || null
+}
+
+/** A descrição da demanda do que faltou: o que não funcionou (ou o resumo) e o link da original. */
+export function descricaoDaFilha(resumo: string | null, demandaId: string): string {
+  const texto = resumo?.trim() ?? ''
+  const link = `\n\nDemanda original: /demandas/${demandaId}`
+  const corpo = (texto && trechoQueNaoFuncionou(texto)) || texto || SEM_RESUMO
+  return `${cortar(corpo, LIMITE_DA_DESCRICAO - link.length)}${link}`
+}
