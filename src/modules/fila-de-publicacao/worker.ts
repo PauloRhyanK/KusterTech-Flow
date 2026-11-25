@@ -1,6 +1,9 @@
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
+import { moduloAtivo } from '@/lib/modulos'
+import { fecharPartesNoAr, marcarResultadoNaParte } from '@/modules/demandas/partes-no-ar'
+import type { resultadoDoPedido } from '@/modules/demandas/partes'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import type {
   ComparacaoDaFonte,
@@ -147,6 +150,11 @@ class CicloDoRepositorio {
   ) {}
 
   async executar(): Promise<void> {
+    await this.fila()
+    await this.reconciliarPartes()
+  }
+
+  private async fila(): Promise<void> {
     const pendentes = await db.pedidoDePublicacao.count({
       where: { repositorioId: this.repo.id, estado: { in: [...PENDENTES] } },
     })
@@ -198,6 +206,68 @@ class CicloDoRepositorio {
     return c
   }
 
+  /** Contém = a versão conferida é o próprio commit ou está à frente dele (mesma convenção da conferência). */
+  private async versaoContem(commit: string, versaoNoAr: string): Promise<boolean> {
+    if (commit === versaoNoAr) return true
+    const r = await this.relacao(commit, versaoNoAr)
+    return r === 'a_frente' || r === 'identico'
+  }
+
+  /**
+   * A versão conferida fecha as partes do repositório que ela contém, venha ou não de um pedido
+   * deste ciclo. As consultas ao GitHub ficam fora da transação; falha delas deixa a parte como
+   * está e o ciclo seguinte tenta de novo.
+   */
+  private async reconciliarPartes() {
+    if (!moduloAtivo('demandas')) return
+    const { versaoNoAr } = await lerConfiguracao(this.repo.id)
+    if (versaoNoAr === null) return
+    const partes = await db.parteDaDemanda.findMany({
+      where: {
+        repositorioId: this.repo.id,
+        estado: { in: ['FEITA', 'PUBLICANDO', 'NAO_CHEGOU'] },
+        commitAlvo: { not: null },
+      },
+      select: { commitAlvo: true },
+      distinct: ['commitAlvo'],
+    })
+    if (partes.length === 0) return
+    const veredito = new Map<string, boolean>()
+    for (const { commitAlvo } of partes) {
+      try {
+        veredito.set(commitAlvo!, await this.versaoContem(commitAlvo!, versaoNoAr))
+      } catch (erro) {
+        if (!(erro instanceof ErroDeIntegracao)) throw erro
+        log.warn(
+          { tarefa: 'processar-fila-de-publicacao', erro: resumirErroParaLog(erro) },
+          'partes não conferidas contra a versão no ar',
+        )
+      }
+    }
+    await comTrava(this.repo.id, (tx) =>
+      fecharPartesNoAr(tx, {
+        repositorioId: this.repo.id,
+        versaoNoAr,
+        contem: async (c) => {
+          const v = veredito.get(c)
+          if (v === undefined) throw new Error('commit não comparado')
+          return v
+        },
+        agora: this.agora,
+      }),
+    )
+  }
+
+  /** O resultado de cada pedido que terminou sem conferência volta para a parte dele. */
+  private async marcarPartes(
+    tx: Tx,
+    ids: readonly string[],
+    resultado: Parameters<typeof resultadoDoPedido>[0],
+  ) {
+    if (!moduloAtivo('demandas')) return
+    for (const id of ids) await marcarResultadoNaParte(tx, id, resultado, this.agora)
+  }
+
   /** Da cabeça em relação à base; `desconhecido` quando o GitHub não conhece um dos commits. */
   private async relacao(base: string, cabeca: string): Promise<Relacao | 'desconhecido'> {
     try {
@@ -240,6 +310,21 @@ class CicloDoRepositorio {
     av: Avaliacao,
   ): Promise<'aceito' | 'saiu' | 'tentar_de_novo'> {
     if (av.resultado === 'tentar_de_novo') return 'tentar_de_novo'
+    let conferidoContendo = false
+    if (av.resultado === 'dispensado' && moduloAtivo('demandas')) {
+      const { versaoNoAr } = await lerConfiguracao(this.repo.id)
+      const linha = await db.pedidoDePublicacao.findUnique({
+        where: { id },
+        select: { commit: true },
+      })
+      if (versaoNoAr !== null && linha?.commit) {
+        try {
+          conferidoContendo = await this.versaoContem(linha.commit, versaoNoAr)
+        } catch (erro) {
+          if (!(erro instanceof ErroDeIntegracao)) throw erro
+        }
+      }
+    }
     return comTrava(this.repo.id, async (tx) => {
       const onde = { id, estado, atendidoPorId: null }
       if (av.resultado === 'aceito') {
@@ -261,6 +346,13 @@ class CicloDoRepositorio {
       if (count > 0) {
         if (av.resultado === 'recusado') this.resumo.recusados += 1
         else this.resumo.dispensados += 1
+        // Dispensado contendo o commit: `reconciliarPartes` fecha a parte com o commit conferido.
+        await this.marcarPartes(tx, [id], {
+          estado: av.resultado === 'recusado' ? 'RECUSADO' : 'DISPENSADO',
+          motivo: av.motivo,
+          conserto: null,
+          conferidoContendo,
+        })
       }
       return 'saiu'
     })
@@ -379,10 +471,22 @@ class CicloDoRepositorio {
         data: { estado: 'PUBLICADO', concluidoEm: this.agora },
       })
       if (count === 0) return
+      const atendidos = await tx.pedidoDePublicacao.findMany({
+        where: { atendidoPorId: candidatoId, estado: 'PUBLICANDO' },
+        select: { id: true },
+      })
       await tx.pedidoDePublicacao.updateMany({
         where: { atendidoPorId: candidatoId, estado: 'PUBLICANDO' },
         data: { estado: 'PUBLICADO', concluidoEm: this.agora },
       })
+      if (noArConferido === null) {
+        await this.marcarPartes(tx, [candidatoId, ...atendidos.map((a) => a.id)], {
+          estado: 'PUBLICADO',
+          motivo: null,
+          conserto: null,
+          conferidoContendo: false,
+        })
+      }
       if (noArConferido !== null) {
         await tx.configuracaoDePublicacao.update({
           where: { repositorioId: this.repo.id },
@@ -445,9 +549,19 @@ class CicloDoRepositorio {
         data: { estado: 'FALHOU', motivo, concluidoEm: this.agora },
       })
       if (count === 0) return
+      const atendidos = await tx.pedidoDePublicacao.findMany({
+        where: { atendidoPorId: candidatoId, estado: 'PUBLICANDO' },
+        select: { id: true },
+      })
       await tx.pedidoDePublicacao.updateMany({
         where: { atendidoPorId: candidatoId, estado: 'PUBLICANDO' },
         data: { estado: 'FALHOU', motivo, concluidoEm: this.agora },
+      })
+      await this.marcarPartes(tx, [candidatoId, ...atendidos.map((a) => a.id)], {
+        estado: 'FALHOU',
+        motivo,
+        conserto: null,
+        conferidoContendo: false,
       })
       await tx.configuracaoDePublicacao.update({
         where: { repositorioId: this.repo.id },
@@ -523,10 +637,26 @@ class CicloDoRepositorio {
         data: { estado: 'FALHOU', motivo, concluidoEm: this.agora },
       })
       if (count === 0) return
+      const fundidos = await tx.pedidoDePublicacao.findMany({
+        where: { atendidoPorId: candidato.id, estado: 'PUBLICANDO' },
+        select: { id: true, demandaId: true, parteId: true },
+      })
       await tx.pedidoDePublicacao.updateMany({
         where: { atendidoPorId: candidato.id, estado: 'PUBLICANDO' },
         data: { estado: 'FALHOU', motivo, concluidoEm: this.agora },
       })
+      await this.marcarPartes(tx, [candidato.id, ...fundidos.map((a) => a.id)], {
+        estado: 'FALHOU',
+        motivo,
+        conserto: decisao.abrirConserto ? 'em_curso' : null,
+        conferidoContendo: false,
+      })
+      // O conserto leva a demanda e a parte do pedido que estava publicando (ou de um que ele atendeu).
+      const proprio = await tx.pedidoDePublicacao.findUniqueOrThrow({
+        where: { id: candidato.id },
+        select: { demandaId: true, parteId: true },
+      })
+      const ligado = proprio.parteId ? proprio : (fundidos.find((a) => a.parteId) ?? proprio)
       this.resumo.falhas += 1
       if (decisao.abrirConserto) {
         await tx.configuracaoDePublicacao.update({
@@ -541,6 +671,8 @@ class CicloDoRepositorio {
             execucaoUrl: execucao?.urlHtml ?? candidato.execucaoUrl,
             trechoDoLog: trecho,
             abertoEm: this.agora,
+            demandaId: ligado.demandaId,
+            parteId: ligado.parteId,
           },
         })
         this.resumo.consertosAbertos += 1

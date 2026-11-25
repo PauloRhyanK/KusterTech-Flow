@@ -7,6 +7,7 @@ import {
   type LeituraDaVersao,
 } from '@/modules/fila-de-publicacao/model'
 import { registrarChegada } from '@/modules/fila-de-publicacao/recepcao'
+import { MODELO_PADRAO } from '@/modules/demandas/model'
 import { commitNoAr, processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import type { ExecucaoDaFonte, FonteGitHub, RefRepositorio } from '@/modules/github/fonte'
@@ -933,5 +934,221 @@ describe('versão no ar conferida', () => {
       AGORA,
     )
     expect(chegada).toMatchObject({ tipo: 'dispensado', motivo: MOTIVOS.jaNoAr })
+  })
+})
+
+describe('partes da demanda', () => {
+  const URL_DA_VERSAO = 'https://portal.exemplo.test/versao.json'
+  const comVersao = (repositorioId = portalId) =>
+    db.configuracaoDePublicacao.update({
+      where: { repositorioId },
+      data: { urlDaVersao: URL_DA_VERSAO },
+    })
+
+  async function demandaNoAr(repositorioId: string) {
+    const repo = await db.repositorioGitHub.findUniqueOrThrow({ where: { id: repositorioId } })
+    return db.demanda.create({
+      data: {
+        projetoId: repo.projetoId!,
+        repositorioId,
+        titulo: 'Demanda de exemplo',
+        nivel: 'APROVAR_DESENHO',
+        temTela: false,
+        origem: 'FLOW',
+        etapas: MODELO_PADRAO as unknown as object,
+        etapaAtual: 'no_ar',
+        concluidas: MODELO_PADRAO.filter((e) => e.marco !== 'no_ar').map((e) => e.chave),
+      },
+    })
+  }
+
+  let ordem = 0
+  const parte = (
+    demandaId: string,
+    repositorioId: string,
+    commitAlvo: string,
+    estado: 'FEITA' | 'PUBLICANDO' = 'PUBLICANDO',
+  ) =>
+    db.parteDaDemanda.create({
+      data: {
+        demandaId,
+        repositorioId,
+        chave: `p${ordem++}`,
+        ordem,
+        commitAlvo,
+        estado,
+        feitaEm: AGORA,
+      },
+    })
+  const lerParte = (id: string) => db.parteDaDemanda.findUniqueOrThrow({ where: { id } })
+  const lerDemanda = (id: string) => db.demanda.findUniqueOrThrow({ where: { id } })
+  const pedirDaParte = async (
+    repositorioId: string,
+    commit: string,
+    p: { id: string; demandaId: string },
+    modo: 'IMEDIATO' | 'LOTE' = 'IMEDIATO',
+  ) => {
+    const id = await pedir(repositorioId, commit, { modo })
+    await db.pedidoDePublicacao.update({
+      where: { id },
+      data: { parteId: p.id, demandaId: p.demandaId },
+    })
+    return id
+  }
+
+  test('PUBLICADO conferido fecha a parte e a demanda de uma parte só', async () => {
+    await comVersao()
+    const d = await demandaNoAr(portalId)
+    const p = await parte(d.id, portalId, M2)
+    await db.demanda.update({ where: { id: d.id }, data: { naoChegouDesde: AGORA } })
+    await pedirDaParte(portalId, M2, p)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'lida', commit: M3 }
+    await ciclo(minutos(2))
+
+    expect(await lerParte(p.id)).toMatchObject({
+      estado: 'NO_AR',
+      commitNoAr: M3,
+      noArEm: expect.any(Date),
+    })
+    expect(await lerDemanda(d.id)).toMatchObject({
+      encerrada: 'no_ar',
+      noArEm: expect.any(Date),
+      naoChegouDesde: null,
+    })
+    const evento = await db.eventoDaDemanda.findFirstOrThrow({
+      where: { demandaId: d.id, tipo: 'no_ar' },
+    })
+    expect(evento.origem).toBe('flow')
+  })
+
+  test('fecha parte atendida por pedido de outra demanda', async () => {
+    await comVersao()
+    const a = await demandaNoAr(portalId)
+    const b = await demandaNoAr(portalId)
+    const pa = await parte(a.id, portalId, M2)
+    const pb = await parte(b.id, portalId, M3)
+    const idB = await pedirDaParte(portalId, M3, pb)
+    await ciclo()
+    // O pedido da outra demanda foi atendido pelo de M3, que leva o M2 junto.
+    const idA = await pedirDaParte(portalId, M2, pa, 'LOTE')
+    await db.pedidoDePublicacao.update({
+      where: { id: idA },
+      data: { estado: 'PUBLICANDO', atendidoPorId: idB },
+    })
+    f.concluir(PORTAL, M3, 'success')
+    noSite = { tipo: 'lida', commit: M3 }
+    await ciclo(minutos(2))
+    expect((await lerParte(pa.id)).estado).toBe('NO_AR')
+    expect((await lerParte(pb.id)).estado).toBe('NO_AR')
+    expect((await lerDemanda(a.id)).encerrada).toBe('no_ar')
+    expect((await lerDemanda(b.id)).encerrada).toBe('no_ar')
+  })
+
+  test('DISPENSADO conferido contendo o commit fecha a parte', async () => {
+    await comVersao()
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { versaoNoAr: M3, versaoConferidaEm: AGORA },
+    })
+    const d = await demandaNoAr(portalId)
+    const p = await parte(d.id, portalId, M2, 'FEITA')
+    const id = await pedirDaParte(portalId, M2, p, 'LOTE')
+    await ciclo(minutos(1))
+    expect((await pedido(id)).estado).toBe('DISPENSADO')
+    expect(await lerParte(p.id)).toMatchObject({ estado: 'NO_AR', commitNoAr: M3 })
+    expect((await lerDemanda(d.id)).encerrada).toBe('no_ar')
+  })
+
+  test('DISPENSADO sem conferência leva a nao_chegou com "Publicação dispensada"', async () => {
+    await publicar(portalId, PORTAL, M3, AGORA)
+    const d = await demandaNoAr(portalId)
+    const p = await parte(d.id, portalId, M2, 'FEITA')
+    const id = await pedirDaParte(portalId, M2, p, 'LOTE')
+    await ciclo(minutos(5))
+    expect((await pedido(id)).estado).toBe('DISPENSADO')
+    expect(await lerParte(p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicação dispensada',
+      naoChegouEm: minutos(5),
+    })
+    expect((await lerDemanda(d.id)).naoChegouDesde).toEqual(minutos(5))
+  })
+
+  test('PUBLICADO sem urlDaVersao leva a nao_chegou com "Publicada sem conferir o site"', async () => {
+    const d = await demandaNoAr(portalId)
+    const p = await parte(d.id, portalId, M2)
+    await pedirDaParte(portalId, M2, p)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    await ciclo(minutos(2))
+    expect(await lerParte(p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicada sem conferir o site',
+    })
+    expect(await lerDemanda(d.id)).toMatchObject({ encerrada: null, naoChegouDesde: minutos(2) })
+  })
+
+  test('FALHOU abre conserto com demandaId e parteId e a parte fica publicando com "Consertando a publicação"', async () => {
+    const d = await demandaNoAr(portalId)
+    const p = await parte(d.id, portalId, M2)
+    const id = await pedirDaParte(portalId, M2, p)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'failure')
+    await ciclo(minutos(2))
+    expect((await pedido(id)).estado).toBe('FALHOU')
+    const conserto = await db.pedidoDeConserto.findFirstOrThrow({ where: { pedidoId: id } })
+    expect(conserto).toMatchObject({ demandaId: d.id, parteId: p.id })
+    expect(await lerParte(p.id)).toMatchObject({
+      estado: 'PUBLICANDO',
+      motivo: 'Consertando a publicação',
+    })
+  })
+
+  test('GitHub fora não fecha a parte; no ciclo seguinte fecha', async () => {
+    await comVersao()
+    const d1 = await demandaNoAr(portalId)
+    const d2 = await demandaNoAr(portalId)
+    const velha = await parte(d1.id, portalId, M2)
+    const p = await parte(d2.id, portalId, M3)
+    await pedirDaParte(portalId, M3, p)
+    await ciclo()
+    f.concluir(PORTAL, M3, 'success')
+    noSite = { tipo: 'lida', commit: M3 }
+    f.falhar = (m, args) => m === 'compararCommits' && args[1] === M2 && args[2] === M3
+    await ciclo(minutos(2))
+    expect((await lerParte(p.id)).estado).toBe('NO_AR')
+    expect((await lerParte(velha.id)).estado).toBe('PUBLICANDO')
+    expect((await lerDemanda(d1.id)).encerrada).toBeNull()
+
+    f.falhar = () => false
+    await ciclo(minutos(3))
+    expect((await lerParte(velha.id)).estado).toBe('NO_AR')
+    expect((await lerDemanda(d1.id)).encerrada).toBe('no_ar')
+  })
+
+  test('back no ar e front publicando não fecha a demanda', async () => {
+    await comVersao()
+    await comVersao(siteId)
+    const d = await demandaNoAr(portalId)
+    const back = await parte(d.id, portalId, M2)
+    const front = await parte(d.id, siteId, S2)
+    await pedirDaParte(portalId, M2, back)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'lida', commit: M2 }
+    await ciclo(minutos(2))
+    expect((await lerParte(back.id)).estado).toBe('NO_AR')
+    expect((await lerParte(front.id)).estado).toBe('PUBLICANDO')
+    expect((await lerDemanda(d.id)).encerrada).toBeNull()
+
+    await pedirDaParte(siteId, S2, front)
+    await ciclo(minutos(3))
+    f.concluir(SITE, S2, 'success')
+    noSite = { tipo: 'lida', commit: S2 }
+    await ciclo(minutos(5))
+    expect((await lerParte(front.id)).estado).toBe('NO_AR')
+    expect((await lerDemanda(d.id)).encerrada).toBe('no_ar')
   })
 })

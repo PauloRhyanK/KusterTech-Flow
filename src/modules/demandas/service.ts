@@ -533,7 +533,7 @@ interface RegistroDeEvento {
   demandaId: string
   idExterno: string
   evento: EventoAplicavel & { ator: Ator }
-  origem: 'fabrica' | 'paulo' | 'sessao'
+  origem: 'fabrica' | 'paulo' | 'sessao' | 'flow'
   em: Date
   usuarioId?: string
   fonteId?: string
@@ -556,7 +556,7 @@ export async function registrarEvento(e: RegistroDeEvento): Promise<ResultadoDoR
 }
 
 /** O `registrarEvento` dentro de uma transação de quem chama (ela trava a linha da demanda). */
-async function registrarEventoNa(
+export async function registrarEventoNa(
   tx: Prisma.TransactionClient,
   e: RegistroDeEvento,
 ): Promise<ResultadoDoRegistro> {
