@@ -228,52 +228,51 @@ test.afterAll(async () => {
   await revogarFontesDaFabricaNoBanco()
 })
 
-test('contrato 2: back e front publicados e conferidos → a demanda aparece em "No ar"', async ({
+test('contrato 2: a conferência fecha as partes uma a uma e a demanda só aparece em "No ar" quando todas chegam', async ({
   page,
   request,
 }) => {
   test.setTimeout(180_000)
   const titulo = 'Aba de IA na ficha do lead'
   const id = await ateAsPartesPlanejadas(request, c, titulo)
+  const grupo = (nome: string) =>
+    page.getByRole('region', { name: nome, exact: true }).getByRole('link', {
+      name: new RegExp(titulo),
+    })
 
-  // Back: feita → pedido → publicado (o site ainda não foi conferido).
+  // Back: feita → pedido → publicado → o site mostra BASE: só o back chega ao ar.
   await parteFeita(request, c, id, 'back', c.commits.BASE, 11)
-  const pedidoBack = await pedirPublicacao(request, c, id, 'back', c.commits.BASE)
-  expect(pedidoBack.status).toBe(201)
+  expect((await pedirPublicacao(request, c, id, 'back', c.commits.BASE)).status).toBe(201)
   publicar()
+  await gravarVersaoConferidaNoBanco(c.repositorio, c.commits.BASE)
+  rodarWorkerUmaVez()
 
-  // Front: feita → pedido → publicado.
   await parteFeita(request, c, id, c.front, c.commits.NOVO, 12)
-  const pedidoFront = await pedirPublicacao(request, c, id, c.front, c.commits.NOVO)
-  expect(pedidoFront.status).toBe(201)
-  publicar()
-
-  await encerrarAteEntregue(request, c, id)
-  expect(await consultar(request, c, id)).toMatchObject({
-    etapa: { chave: 'no_ar' },
-    encerrada: null,
-  })
-
+  await evento(request, c, id, 'etapa_concluida', { marco: 'desenvolvida' })
   await entrar(page)
+  await page.goto(`/demandas/${id}`)
+  // A ordem registrada (o Flow a mostra; quem publica nessa ordem é a Fábrica).
+  await expect(page.getByText(`Ordem de publicação: back antes do ${c.front}`)).toBeVisible()
+  await expect(page.getByText(`No ar · ${c.commits.BASE.slice(0, 7)}`).first()).toBeVisible()
   await page.goto('/demandas')
-  const naoChegou = page.getByRole('region', { name: 'Não chegou ao ar' })
-  await expect(naoChegou.getByRole('link', { name: new RegExp(titulo) })).toBeVisible()
+  await expect(grupo('No ar')).toHaveCount(0)
+  await expect(grupo('A caminho')).toHaveCount(1)
+  expect((await consultar(request, c, id)).encerrada).toBeNull()
 
-  // A conferência lê NOVO no site: o worker fecha as duas partes (BASE está contido em NOVO) e a demanda.
+  // Front: pedido → publicado → o site mostra NOVO: a demanda fecha.
+  expect((await pedirPublicacao(request, c, id, c.front, c.commits.NOVO)).status).toBe(201)
+  publicar()
+  await evento(request, c, id, 'etapa_concluida', { marco: 'entregue' })
+  expect(await consultar(request, c, id)).toMatchObject({ etapa: { chave: 'no_ar' } })
   await gravarVersaoConferidaNoBanco(c.repositorio, c.commits.NOVO)
   rodarWorkerUmaVez()
   await expect.poll(async () => (await consultar(request, c, id)).encerrada).toBe('no_ar')
 
   await page.goto('/demandas')
-  const noAr = page.getByRole('region', { name: 'No ar', exact: true })
-  const linha = noAr.getByRole('link', { name: new RegExp(titulo) })
+  const linha = grupo('No ar')
   await expect(linha).toBeVisible()
   await expect(linha.getByText(`No ar · ${c.commits.NOVO.slice(0, 7)}`)).toBeVisible()
-  await expect(
-    page
-      .getByRole('region', { name: 'Não chegou ao ar' })
-      .getByRole('link', { name: new RegExp(titulo) }),
-  ).toHaveCount(0)
+  await expect(grupo('Não chegou ao ar')).toHaveCount(0)
 
   await page.goto(`/demandas/${id}`)
   await expect(page.getByRole('region', { name: /^Falta:/ })).toHaveCount(0)
@@ -284,7 +283,7 @@ test('contrato 2: back e front publicados e conferidos → a demanda aparece em 
   ])
 })
 
-test('o front dispensado sem conter o commit → "Não chegou ao ar" com "Publicação dispensada"', async ({
+test('front dispensado por já estar no ar, sem conferência → "Não chegou ao ar" com "Publicação dispensada"', async ({
   page,
   request,
 }) => {

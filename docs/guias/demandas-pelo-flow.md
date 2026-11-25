@@ -206,7 +206,7 @@ Só entregue plano quando o Paulo pedir, para a demanda que ele indicou.
 
 ## Partes e "No ar"
 
-Uma demanda pode mexer em mais de um repositório. Cada repositório é uma **parte**, com `chave`, `objetivo`, `ordem` e `dependeDe` (a parte que precisa chegar ao ar antes). A parte de entrada leva o nome do repositório da demanda; a Fábrica declara as outras no plano. A demanda só está **No ar** quando todas as partes chegam ao ar, e a ordem de publicação segue o `dependeDe` (o back antes do front).
+Uma demanda pode mexer em mais de um repositório. Cada repositório é uma **parte**, com `chave`, `objetivo`, `ordem` e `dependeDe` (a parte que precisa chegar ao ar antes). A parte de entrada leva o nome do repositório da demanda; a Fábrica declara as outras no plano. A demanda só está **No ar** quando todas as partes chegam ao ar, O Flow registra o `dependeDe` e mostra a ordem de publicação na página da demanda (por exemplo, "back antes do front"); quem publica nessa ordem é a Fábrica, ao pedir cada publicação. O Flow não segura nem recusa um pedido por causa da ordem.
 
 Cada parte passa por: planejando, em curso, feita, publicando, no ar. Ela chega ao ar quando a versão **conferida no site** (o endereço da versão no ar, configurado no projeto) contém o commit dela. O guia de publicação explica essa conferência. A tela **Demandas** mostra quatro números (No ar, A caminho, Não chegou ao ar, Espera você) e, em cada demanda, a faixa "Falta" com o que impede a próxima parte.
 
