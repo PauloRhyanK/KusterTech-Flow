@@ -390,8 +390,8 @@ const NAO_ESPERA_CONFERENCIA = 'Esta parte não espera a sua conferência.'
 
 /**
  * O escape do Paulo (seção 4): a parte publicada sem conferência do site (ou que sobe por versão)
- * vai a `no_ar` com o registro de quem confirmou; com todas no ar, a demanda fecha. Trava a
- * demanda, depois as partes, depois os eventos, como o resto do módulo.
+ * vai a `no_ar` com o registro de quem confirmou; com todas no ar, a demanda fecha. Trava a linha
+ * da demanda, depois a linha da parte (FOR UPDATE), depois os eventos, como o resto do módulo.
  */
 export async function conferirNoArPeloPaulo(
   sujeito: Sujeito,
@@ -408,6 +408,9 @@ export async function conferirNoArPeloPaulo(
     })
     if (!demanda) throw new ErroDeDominio('Demanda não encontrada.')
     if (demanda.encerrada) throw new ErroDeDominio('A demanda já está encerrada.')
+    await tx.$queryRaw`
+      SELECT "id" FROM "ParteDaDemanda"
+      WHERE "demandaId" = ${demandaId} AND "chave" = ${chave} FOR UPDATE`
     const parte = await tx.parteDaDemanda.findUnique({
       where: { demandaId_chave: { demandaId, chave } },
       select: { id: true, estado: true, motivo: true, chegaAoAr: true, commitAlvo: true },

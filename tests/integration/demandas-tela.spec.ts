@@ -259,7 +259,7 @@ test('os quatro números batem com os grupos; no ar há mais de 30 dias e entreg
     ['no_ar', 1, 'conferidas no site'],
     ['a_caminho', 1, 'Fábrica trabalhando'],
     ['nao_chegou', 1, 'feita, mas falta algo'],
-    ['espera_voce', 1, 'há 4 d'],
+    ['espera_voce', 1, 'há 4 dias'],
   ])
   for (const q of tela.quadros) {
     expect(tela.grupos.find((g) => g.chave === q.chave)?.linhas).toHaveLength(q.numero)

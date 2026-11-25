@@ -213,7 +213,7 @@ export async function obterListaDeDemandas(
   const semFiltro = montarGrupos(todas, agora)
   return {
     // Os números contam todas; o filtro só muda a lista.
-    quadros: quadrosAteOAr(semFiltro),
+    quadros: quadrosAteOAr(todas, agora),
     grupos: filtro
       ? montarGrupos(
           todas.filter((d) => d.destino === filtro),
@@ -261,7 +261,7 @@ async function extrasDasPartes(
     pedidoId: string | null
     conferidaPorId: string | null
   }[],
-): Promise<ExtrasDasPartes> {
+): Promise<Omit<ExtrasDasPartes, 'desenho'>> {
   const pedidoIds = partes.flatMap((p) => (p.pedidoId ? [p.pedidoId] : []))
   const [pedidos, consertos] = await Promise.all([
     pedidoIds.length > 0
@@ -282,7 +282,12 @@ async function extrasDasPartes(
         })
       : [],
   ])
-  const extras: ExtrasDasPartes = { planos: {}, consertos: {}, pedidos: {}, conferidas: {} }
+  const extras: Omit<ExtrasDasPartes, 'desenho'> = {
+    planos: {},
+    consertos: {},
+    pedidos: {},
+    conferidas: {},
+  }
   for (const p of partes) {
     if (p.planoPrUrl) extras.planos[p.chave] = p.planoPrUrl
     if (p.conferidaPorId) extras.conferidas[p.chave] = true
@@ -370,6 +375,20 @@ export async function obterPaginaDaDemanda(
       : null
   const textoDoAjuste = (ajuste?.dados as { texto?: unknown } | undefined)?.texto
 
+  // A aprovação do desenho, do histórico inteiro, para o passo "Desenho aprovado" da parte da tela.
+  const aprovacao =
+    d.temTela && d.desenhoAprovado !== null
+      ? await db.eventoDaDemanda.findFirst({
+          where: { demandaId: d.id, tipo: 'desenho_aprovado' },
+          orderBy: { seq: 'desc' },
+          select: { em: true },
+        })
+      : null
+  // A parte da tela é a de entrada (a do repositório da demanda, a primeira criada).
+  const entrada = d.partes
+    .filter((p) => p.repositorioId === d.repositorioId && p.estado !== 'DESCARTADA')
+    .sort((a, b) => a.criadaEm.getTime() - b.criadaEm.getTime())[0]
+
   // O PR da trava vem do último `travada`, também do histórico inteiro.
   const trava =
     d.espera === 'travada'
@@ -439,7 +458,11 @@ export async function obterPaginaDaDemanda(
     faixa,
     falta,
     ordem: textoDaOrdem(partes),
-    partes: cartoesDasPartes(partes, await extrasDasPartes(d.partes)),
+    partes: cartoesDasPartes(partes, {
+      ...(await extrasDasPartes(d.partes)),
+      desenho:
+        d.temTela && entrada ? { chave: entrada.chave, aprovadoEm: aprovacao?.em ?? null } : null,
+    }),
     impacto: { quadros: quadrosDeImpacto(triagem), ...avisosDoImpacto(triagem) },
     desenho: desenho
       ? {

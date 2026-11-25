@@ -184,7 +184,7 @@ test('lista e detalhe até o ar: quatro números, grupos, faixa "Falta" e partes
     /^2No ar/,
     /^1A caminho/,
     /^2Não chegou ao ar/,
-    /^1Espera você/,
+    /^1Espera vocêhá 4 dias$/,
   ])
   for (const [grupo, n] of [
     ['Espera você', 1],
@@ -217,6 +217,9 @@ test('lista e detalhe até o ar: quatro números, grupos, faixa "Falta" e partes
   const cartoes = page.getByRole('article')
   await expect(cartoes.getByRole('heading')).toHaveText(['1 · Back', '2 · Front'])
   await expect(cartoes.nth(1).getByText('espera o back')).toBeVisible()
+  // A demanda tem tela: o passo "Desenho aprovado" fica na parte da tela (a de entrada, o front).
+  await expect(cartoes.nth(1).getByText('Desenho aprovado')).toBeVisible()
+  await expect(cartoes.nth(0).getByText('Desenho aprovado')).toHaveCount(0)
   await expect(page.getByText('Histórico')).toBeVisible()
   await expect(page.getByText('4 eventos')).toBeVisible()
   await expect(page.getByText('Desenho aprovado (versão 1)')).toBeHidden()

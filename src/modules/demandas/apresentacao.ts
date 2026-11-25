@@ -372,13 +372,32 @@ const QUADROS: readonly { chave: GrupoAteOAr; rotulo: string; meta: string }[] =
   { chave: 'espera_voce', rotulo: 'Espera você', meta: '' },
 ]
 
+const DIA_MS = 24 * 60 * 60_000
+
+/** "há 4 dias", "há 1 dia"; menos de um dia, a idade curta ("há 6 h"). */
+function haQuantosDias(desde: Date, agora: Date): string {
+  const dias = Math.floor((agora.getTime() - desde.getTime()) / DIA_MS)
+  if (dias < 1) return formatarIdade(desde, agora)
+  return `há ${dias} ${dias === 1 ? 'dia' : 'dias'}`
+}
+
 /** Os quatro números do topo: a contagem de cada grupo; "Espera você" diz há quanto a mais antiga espera. */
-export function quadrosAteOAr(grupos: readonly GrupoDeDemandas[]): QuadroAteOAr[] {
+export function quadrosAteOAr(demandas: readonly DemandaNaLista[], agora: Date): QuadroAteOAr[] {
+  const por = new Map<GrupoAteOAr, DemandaNaLista[]>()
+  for (const d of demandas) {
+    const g = grupoAteOAr(d, agora)
+    if (g) por.set(g, [...(por.get(g) ?? []), d])
+  }
   return QUADROS.map((q) => {
-    const linhas = grupos.find((g) => g.chave === q.chave)?.linhas ?? []
-    const meta =
-      q.chave === 'espera_voce' ? (linhas[0] ? `há ${linhas[0].idade}` : 'nada esperando') : q.meta
-    return { chave: q.chave, numero: linhas.length, rotulo: q.rotulo, meta }
+    const doGrupo = por.get(q.chave) ?? []
+    let meta = q.meta
+    if (q.chave === 'espera_voce') {
+      const maisAntiga = doGrupo
+        .map((d) => desdeDe(d, 'espera_voce'))
+        .sort((a, b) => a.getTime() - b.getTime())[0]
+      meta = maisAntiga ? haQuantosDias(maisAntiga, agora) : 'nada esperando'
+    }
+    return { chave: q.chave, numero: doGrupo.length, rotulo: q.rotulo, meta }
   })
 }
 
@@ -477,6 +496,8 @@ export interface ExtrasDasPartes {
   pedidos: Record<string, EstadoDoPedido>
   /** A parte foi dada como no ar pelo Paulo ("Conferi no ar"). */
   conferidas: Record<string, boolean>
+  /** Demanda com tela: a parte que tem a tela e quando o desenho foi aprovado (null: pendente). */
+  desenho: { chave: string; aprovadoEm: Date | null } | null
 }
 
 const ROTULO_DO_PEDIDO: Record<EstadoDoPedido, string> = {
@@ -553,6 +574,16 @@ export function cartoesDasPartes(partes: readonly Parte[], x: ExtrasDasPartes): 
           ? { texto: `espera o ${faltam.join(' e o ')}`, tom: 'andando' }
           : chipDe(p),
       passos: [
+        ...(x.desenho?.chave === p.chave
+          ? [
+              {
+                rotulo: 'Desenho aprovado',
+                ponto: x.desenho.aprovadoEm ? ('cheio' as const) : ('vazio' as const),
+                detalhe: x.desenho.aprovadoEm ? diaEMes(x.desenho.aprovadoEm) : null,
+                links: [],
+              },
+            ]
+          : []),
         {
           rotulo: 'Plano da parte',
           ponto: p.estado === 'planejando' ? 'andando' : 'cheio',

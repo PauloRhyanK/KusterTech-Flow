@@ -1453,3 +1453,22 @@ export async function criarDemandaAteOArNoBanco(e: {
   }
   return d
 }
+
+// A publicação da parte de entrada terminou sem conferir o site (repositório sem `urlDaVersao`):
+// o que a fila grava, sem passar por ela; a tela oferece "Conferi no ar".
+export async function publicadaSemConferirNoBanco(
+  demandaId: string,
+  commit: string,
+): Promise<void> {
+  const agora = new Date()
+  await db.parteDaDemanda.updateMany({
+    where: { demandaId, estado: { not: 'DESCARTADA' } },
+    data: {
+      estado: 'NAO_CHEGOU',
+      motivo: 'Publicada sem conferir o site',
+      commitAlvo: commit,
+      naoChegouEm: agora,
+    },
+  })
+  await db.demanda.update({ where: { id: demandaId }, data: { naoChegouDesde: agora } })
+}

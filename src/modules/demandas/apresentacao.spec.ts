@@ -633,25 +633,22 @@ test('trilhoDaDemanda: orientada para na triagem; entregue antiga tem tudo feito
 
 describe('quadrosAteOAr', () => {
   test('quatro números na ordem do desenho, com as metas; Espera você conta a mais antiga', () => {
-    const grupos = montarGrupos(
-      [
-        demanda({
-          id: 'e',
-          espera: 'travada',
-          esperaDesde: new Date(AGORA.getTime() - 4 * 24 * 60 * MIN),
-        }),
-        demanda({ id: 'a' }),
-        demanda({ id: 'b' }),
-      ],
-      AGORA,
-    )
-    expect(quadrosAteOAr(grupos)).toEqual([
+    const espera = (id: string, dias: number) =>
+      demanda({
+        id,
+        espera: 'travada',
+        esperaDesde: new Date(AGORA.getTime() - dias * 24 * 60 * MIN),
+      })
+    const demandas = [espera('e', 4), espera('f', 1), demanda({ id: 'a' }), demanda({ id: 'b' })]
+    expect(quadrosAteOAr(demandas, AGORA)).toEqual([
       { chave: 'no_ar', numero: 0, rotulo: 'No ar', meta: 'conferidas no site' },
       { chave: 'a_caminho', numero: 2, rotulo: 'A caminho', meta: 'Fábrica trabalhando' },
       { chave: 'nao_chegou', numero: 0, rotulo: 'Não chegou ao ar', meta: 'feita, mas falta algo' },
-      { chave: 'espera_voce', numero: 1, rotulo: 'Espera você', meta: 'há 4 d' },
+      { chave: 'espera_voce', numero: 2, rotulo: 'Espera você', meta: 'há 4 dias' },
     ])
-    expect(quadrosAteOAr(montarGrupos([], AGORA))[3]?.meta).toBe('nada esperando')
+    expect(quadrosAteOAr([espera('f', 1)], AGORA)[3]?.meta).toBe('há 1 dia')
+    expect(quadrosAteOAr([espera('g', 0.25)], AGORA)[3]?.meta).toBe('há 6 h')
+    expect(quadrosAteOAr([], AGORA)[3]?.meta).toBe('nada esperando')
   })
 })
 
@@ -728,6 +725,32 @@ describe('faixaDoQueFalta', () => {
 })
 
 describe('cartoesDasPartes', () => {
+  test('demanda com tela: "Desenho aprovado" com a data na parte da tela; pendente sem data', () => {
+    const partes = [parte('back', { ordem: 1 }), parte('front', { ordem: 2, estado: 'em_curso' })]
+    const extras = { planos: {}, consertos: {}, pedidos: {}, conferidas: {} }
+    const [back, front] = cartoesDasPartes(partes, {
+      ...extras,
+      desenho: { chave: 'front', aprovadoEm: new Date('2026-11-24T15:00:00Z') },
+    })
+    expect(back?.passos.map((p) => p.rotulo)).not.toContain('Desenho aprovado')
+    expect(front?.passos[0]).toEqual({
+      rotulo: 'Desenho aprovado',
+      ponto: 'cheio',
+      detalhe: '24/11',
+      links: [],
+    })
+    const pendente = cartoesDasPartes(partes, {
+      ...extras,
+      desenho: { chave: 'front', aprovadoEm: null },
+    })[1]
+    expect(pendente?.passos[0]).toEqual({
+      rotulo: 'Desenho aprovado',
+      ponto: 'vazio',
+      detalhe: null,
+      links: [],
+    })
+  })
+
   test('um cartão por parte na ordem de publicação, com os passos e os links do GitHub', () => {
     const cartoes = cartoesDasPartes(
       [
@@ -748,7 +771,7 @@ describe('cartoesDasPartes', () => {
         }),
         parte('back', { ordem: 2 }),
       ],
-      { planos: {}, consertos: {}, pedidos: {}, conferidas: {} },
+      { planos: {}, consertos: {}, pedidos: {}, conferidas: {}, desenho: null },
     )
     expect(cartoes.map((c) => [c.titulo, c.repositorio, c.estado])).toEqual([
       ['1 · Back', 'alfa-back', { texto: 'planejando', tom: 'neutro' }],
@@ -777,6 +800,7 @@ describe('cartoesDasPartes', () => {
         consertos: { back: 'https://github.com/exemplo/alfa-back/pull/9' },
         pedidos: { back: 'publicando' },
         conferidas: {},
+        desenho: null,
       },
     )
     expect(cartao?.passos[0]?.links).toEqual([
@@ -796,7 +820,7 @@ describe('cartoesDasPartes', () => {
           noArEm: new Date('2026-11-24T15:00:00Z'),
         }),
       ],
-      { planos: {}, consertos: {}, pedidos: {}, conferidas: { back: true } },
+      { planos: {}, consertos: {}, pedidos: {}, conferidas: { back: true }, desenho: null },
     )
     expect(noAr?.passos[2]).toEqual({
       rotulo: 'No ar · abcdef1',

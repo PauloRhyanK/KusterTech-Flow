@@ -9,6 +9,7 @@ import {
   exibirProjetoComoNoBanco,
   limparDemandasNoBanco,
   nomeDeTeste,
+  publicadaSemConferirNoBanco,
   revogarFontesDaFabricaNoBanco,
   vincularNoBanco,
 } from './support/banco'
@@ -277,7 +278,7 @@ test.afterAll(async () => {
   await limparDemandasNoBanco()
 })
 
-test('nova demanda pela tela → aparece em "Na fila" com "Triagem"; captura nova e lista', async ({
+test('nova demanda pela tela → aparece em "A caminho" com "Triagem"; captura nova e lista', async ({
   page,
   request,
 }, testInfo) => {
@@ -304,11 +305,14 @@ test('nova demanda pela tela → aparece em "Na fila" com "Triagem"; captura nov
   ).toBeVisible()
 
   await page.goto('/demandas')
-  const naFila = page.getByRole('region', { name: 'Na fila' })
-  const linha = naFila.getByRole('link').filter({ hasText: 'Exportar contatos em CSV' })
+  const aCaminho = page.getByRole('region', { name: 'A caminho' })
+  const linha = aCaminho.getByRole('link').filter({ hasText: 'Exportar contatos em CSV' })
   await expect(linha).toBeVisible()
   await expect(linha.getByText('Triagem', { exact: true })).toBeVisible()
   await expect(linha.getByText('Projeto Alfa')).toBeVisible()
+  // A parte de entrada, criada com a demanda, e o trilho de quatro pontos na triagem.
+  await expect(linha.getByRole('list', { name: 'Partes' })).toContainText('portal · planejando')
+  await expect(linha.getByRole('img', { name: /^Até o ar: pedida em andamento/ })).toBeVisible()
 })
 
 test('Fábrica simulada: GET traz a demanda; triagem, plano_criado, arquivo desenho-exemplo.html e desenho_pronto → "Espera você" com "Aprovar desenho"', async ({
@@ -355,19 +359,20 @@ test('Fábrica simulada: GET traz a demanda; triagem, plano_criado, arquivo dese
   const espera = page.getByRole('region', { name: 'Espera você' })
   const linha = espera.getByRole('link').filter({ hasText: TITULO })
   await expect(linha.getByText('Aprovar desenho', { exact: true })).toBeVisible()
-  for (const grupo of ['Espera você', 'Em andamento', 'Na fila']) {
+  for (const grupo of ['Espera você', 'A caminho']) {
     await expect(page.getByRole('heading', { level: 2, name: grupo, exact: true })).toBeVisible()
   }
   await expect(page.getByRole('region', { name: 'Espera você' }).getByRole('link')).toHaveCount(3)
-  await expect(
-    page.getByRole('region', { name: 'Em andamento' }).getByText('Desenvolvendo'),
-  ).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Na fila' }).getByText('Triagem')).toBeVisible()
-  // As orientadas não ficam na lista aberta: aparecem no quadro "Orientadas", que filtra.
+  const numeros = page.getByRole('region', { name: 'Demandas até o ar' })
+  await expect(numeros.getByRole('link', { name: /Espera você/ })).toContainText(/^3/)
+  const aCaminho = page.getByRole('region', { name: 'A caminho' })
+  await expect(aCaminho.getByText('Desenvolvendo').first()).toBeVisible()
+  await expect(aCaminho.getByText('Triagem').first()).toBeVisible()
+  // As orientadas não ficam na lista: um link discreto leva ao filtro delas.
   await expect(page.getByRole('heading', { level: 2, name: 'Orientadas hoje' })).toHaveCount(0)
   await capturar(page, testInfo.project.name, 'lista')
 
-  await page.getByRole('link', { name: /Orientadas/ }).click()
+  await page.getByRole('link', { name: /orientadas? hoje/ }).click()
   await expect(page).toHaveURL(/\/demandas\?destino=orientada$/)
   await expect(
     page
@@ -452,7 +457,7 @@ test('tela cheia: /demandas/<id>/desenho mostra o desenho e "← Voltar à deman
   await expect(page).toHaveURL(new RegExp(`/demandas/${id}$`))
 })
 
-test('Fábrica simulada: etapa_concluida desenvolvida, duas capturas (desktop e celular), teste passou, entregue → "✓ Entregue" com desenho aprovado e capturas lado a lado; captura entregue', async ({
+test('Fábrica simulada: etapa_concluida desenvolvida, duas capturas (desktop e celular), teste passou, entregue → espera o no ar; publicada sem conferir → "Conferi no ar" fecha com "✓ No ar", desenho aprovado e capturas lado a lado; captura entregue', async ({
   page,
   request,
   browser,
@@ -489,14 +494,28 @@ test('Fábrica simulada: etapa_concluida desenvolvida, duas capturas (desktop e 
     prs: ['https://github.com/kustertech-exemplo/portal/pull/318'],
   })
 
+  // "Entregue" não encerra mais: a demanda espera a parte chegar ao ar (etapa "No ar").
   expect(await consultarPelaSessao(request, c, id)).toMatchObject({
-    etapa: { chave: 'entregue' },
-    encerrada: 'entregue',
+    etapa: { chave: 'no_ar' },
+    encerrada: null,
     espera: null,
   })
 
+  // O portal não tem `urlDaVersao`: a publicação termina sem conferir o site e o Paulo confere.
+  const commit = '5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f'
+  await publicadaSemConferirNoBanco(id, commit)
   await page.goto(`/demandas/${id}`)
-  await expect(page.getByText('✓ Entregue', { exact: false })).toBeVisible()
+  await expect(
+    page.getByRole('list', { name: 'Até o ar' }).getByRole('listitem').last(),
+  ).toHaveAttribute('aria-current', 'step')
+  const falta = page.getByRole('region', { name: /^Falta: a parte do portal/ })
+  await expect(falta).toContainText('Publicada sem conferir o site.')
+  await falta.getByRole('button', { name: 'Conferi no ar' }).click()
+  await expect.poll(async () => (await consultarPelaSessao(request, c, id)).encerrada).toBe('no_ar')
+
+  await page.reload()
+  await expect(page.getByText(`✓ No ar · ${commit.slice(0, 7)}`)).toBeVisible()
+  await expect(page.getByRole('region', { name: /^Falta:/ })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Desenho aprovado' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Entregue · desktop e celular' })).toBeVisible()
   await expect(page.locator('iframe[title="Desenho · funil-de-vendas.html"]')).toBeVisible()
