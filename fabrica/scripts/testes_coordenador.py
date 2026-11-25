@@ -558,6 +558,25 @@ class TestesAdmissao(Base):
         self.assertIn("FABRICA_PROJETO=outro", (self.pasta(b) / "plano.env").read_text(encoding="utf-8"))
 
 
+class TestesBranchDaCorrecao(Base):
+    """O PR da correção que o GitHub recusou: o main vem pelo clone de um plano do mesmo repositório."""
+
+    def test_usa_o_clone_de_um_plano_do_mesmo_repositorio(self):
+        c = self.novo()
+        (self.raiz / "planos" / "p-outro" / "repo" / ".git").mkdir(parents=True)
+        (self.raiz / "planos" / "p-app" / "repo" / ".git").mkdir(parents=True)
+        c.dados["fila"] = [{"id": "p-outro", "repo": "dono/outro"}, {"id": "p-app", "repo": REPO.upper()}]
+        chamadas = []
+        novo = c._atualizar_branch_de_demanda(REPO, "warren/run_x", "main", atualizar=lambda *a: chamadas.append(a) or "f" * 40)
+        self.assertEqual(novo, "f" * 40)
+        self.assertEqual(chamadas, [(self.raiz / "planos" / "p-app" / "repo", "warren/run_x", "main")])
+
+    def test_sem_clone_do_repositorio_nao_atualiza(self):
+        c = self.novo()
+        c.dados["fila"] = [{"id": "p-app", "repo": REPO}]  # sem a pasta repo/.git
+        self.assertIsNone(c._atualizar_branch_de_demanda(REPO, "b", "main", atualizar=lambda *a: self.fail("não devia chamar")))
+
+
 class TestesFilaDeDemandas(Base):
     DEMANDA = testes_demandas.ID
     URGENTE = testes_demandas.OUTRO

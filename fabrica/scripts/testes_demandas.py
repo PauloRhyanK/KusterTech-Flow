@@ -518,6 +518,7 @@ class BasePasso(unittest.TestCase):
     def passo(self, cliente, *, modelos=None, projetos=None, publicacao=None, pedir_publicacao=None):
         return demandas.passo(
             self.estado,
+            atualizar_branch=getattr(self, "atualizar_branch", None),
             cliente=cliente,
             motor=self.motor,
             forja=self.forja,
@@ -2325,6 +2326,74 @@ class TestesTesteNoNavegador(BasePasso):
         self.veredito(run_id, "aprovado", estado="failed", motivo="no_changes")
         self.passo(ClienteDeBusca())
         self.assertEqual(self.forja.merges, [(PR_C, HEAD_C)])
+
+    # o GitHub recusa o merge (o `.seeds/` conflita: ele ignora o `merge=union`): o main vem para o branch, sem run
+
+    def recusar_o_merge_ate_o_branch_andar(self):
+        """O `mergear` da forja falsa recusa o head antigo; `atualizar_branch` empurra o merge do main (HEAD novo)."""
+        real = self.forja.mergear
+        self.atualizacoes = []
+
+        def mergear(url, sha):
+            return False if sha == HEAD_C else real(url, sha)
+
+        def atualizar(repo, branch, padrao):
+            self.atualizacoes.append((repo, branch, padrao))
+            novo = "3" * 40
+            self.forja.definir_pr(PR_C, head_sha=novo, branch=branch, arquivos=["src/app/clientes/page.tsx", ".seeds/issues.jsonl"], aberto=True, mergeado=False)
+            self.forja.definir_ci(REPO, novo, self.forja.ci(REPO, HEAD_C))
+            return novo
+
+        self.forja.mergear = mergear
+        self.atualizar_branch = atualizar
+
+    def test_merge_recusado_da_correcao_aprovada_traz_o_main_e_mergeia_sem_revisar_de_novo(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.recusar_o_merge_ate_o_branch_andar()
+        self.veredito(run_id, "aprovado")
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.atualizacoes, [(REPO, "fabrica/correcao-11111111", "main")])
+        self.assertEqual((self.saida(), self.forja.merges), ([], []))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, "3" * 40)])
+        self.assertEqual([e["tipo"] for e in self.saida()], ["etapa_concluida"])
+        self.assertEqual(len(self.despachos()), 3)  # nenhum revisor a mais
+
+    def test_merge_recusado_com_ci_verde_traz_o_main_e_espera_o_ci_do_head_novo(self):
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="verde")
+        self.recusar_o_merge_ate_o_branch_andar()
+        self.passo(ClienteDeBusca())
+        self.assertEqual((len(self.atualizacoes), self.saida(), self.forja.merges), (1, [], []))
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.forja.merges, [(PR_C, "3" * 40)])
+
+    def test_merge_recusado_sem_como_atualizar_o_branch_trava_como_antes(self):
+        run_id = self.revisar_correcao_sem_ci()
+        self.forja.mergear = lambda url, sha: False
+        self.atualizar_branch = lambda repo, branch, padrao: None  # conflito de verdade
+        self.veredito(run_id, "aprovado")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "o GitHub recusou o merge da correção", "url": PR_C})
+
+    def test_merge_recusado_tres_vezes_depois_de_atualizar_trava(self):
+        self.entregar_correcao(self.corrigir_depois_da_falha(), ci="verde")
+        self.forja.mergear = lambda url, sha: False
+        vezes = []
+
+        def atualizar(repo, branch, padrao):
+            vezes.append(1)
+            novo = ("%d" % (3 + len(vezes))) * 40
+            self.forja.definir_pr(PR_C, head_sha=novo, branch=branch, arquivos=["src/app/clientes/page.tsx"], aberto=True, mergeado=False)
+            self.forja.definir_ci(REPO, novo, "verde")
+            return novo
+
+        self.atualizar_branch = atualizar
+        for _ in range(4):
+            self.passo(ClienteDeBusca())
+        self.assertEqual(len(vezes), demandas.ATUALIZACOES_DA_CORRECAO)
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"]["motivo"], "o GitHub recusou o merge da correção")
 
     # reprovada pelo revisor: o conserto (um run do frontend no mesmo branch do PR, com os achados), até 2 vezes
 

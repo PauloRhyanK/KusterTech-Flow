@@ -1,3 +1,4 @@
+import datetime
 import os
 import pathlib
 import secrets
@@ -1491,6 +1492,12 @@ class TestesLimpezaProfunda(unittest.TestCase):
         self.assertFora_intacto()
 
 
+def criado(idade_s):
+    """O `{{.CreatedAt}}` do `docker ps`/`docker network ls` de algo criado há `idade_s` segundos."""
+    instante = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-3))) - datetime.timedelta(seconds=idade_s)
+    return instante.strftime("%Y-%m-%d %H:%M:%S %z -03")
+
+
 class TestesLimparResiduos(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp())
@@ -1511,8 +1518,10 @@ class TestesLimparResiduos(unittest.TestCase):
 
     def test_remove_conteineres_redes_e_diretorios_antigos_com_contagens(self):
         fake = DockerFalso()
-        fake.respostas["ps"] = proc(0, "c1\nc2\nc3\n")
-        fake.respostas["rede-ls"] = proc(0, "n1\nn2\n")
+        fake.respostas["ps"] = proc(0, "c1\t%s\nc2\t%s\nc3\t%s\n" % (criado(3 * 3600), criado(5 * 3600), criado(30 * 3600)))
+        # o `network ls` traz fração de segundo: `2026-11-24 08:00:33.01632153 -0300 -03`
+        fracao = criado(9 * 3600).replace(" -0300", ".01632153 -0300")
+        fake.respostas["rede-ls"] = proc(0, "n1\t%s\nn2\t%s\n" % (criado(3 * 3600), fracao))
         velho = self.diretorio("fabrica-verif-velho", 3 * 3600)
         quase = self.diretorio("fabrica-verif-quase", 2 * 3600 - 60)
         novo = self.diretorio("fabrica-verif-novo", 5)
@@ -1529,9 +1538,9 @@ class TestesLimparResiduos(unittest.TestCase):
         self.assertEqual(
             [argv for argv, _ in fake.chamadas],
             [
-                ["docker", "ps", "-aq", "--filter", "label=fabrica.verif=1"],
+                ["docker", "ps", "-a", "--no-trunc", "--filter", "label=fabrica.verif=1", "--format", "{{.ID}}\t{{.CreatedAt}}"],
                 ["docker", "rm", "-f", "-v", "c1", "c2", "c3"],
-                ["docker", "network", "ls", "-q", "--filter", "label=fabrica.verif=1"],
+                ["docker", "network", "ls", "--no-trunc", "--filter", "label=fabrica.verif=1", "--format", "{{.ID}}\t{{.CreatedAt}}"],
                 ["docker", "network", "rm", "n1", "n2"],
             ],
         )
@@ -1539,6 +1548,16 @@ class TestesLimparResiduos(unittest.TestCase):
         for ficou in (quase, novo, outro, arquivo, alvo):
             self.assertTrue(ficou.exists(), ficou)
         self.assertTrue(os.path.islink(self.tmp / "fabrica-verif-link"))
+
+    def test_gate_vivo_de_outro_despachante_fica(self):
+        # um despachante por plano: a partida de um não pode matar o gate que o outro roda agora (o 137 de 2026-11-25)
+        fake = DockerFalso()
+        fake.respostas["ps"] = proc(0, "vivo\t%s\nvelho\t%s\nestranho\tontem\n" % (criado(8 * 60), criado(3 * 3600)))
+        fake.respostas["rede-ls"] = proc(0, "rede-viva\t%s\n" % criado(8 * 60))
+        r = verificacao.limpar_residuos(executar=fake)
+        self.assertEqual(r, {"conteineres": 1, "redes": 0, "diretorios": 0, "erros": []})
+        self.assertIn(["docker", "rm", "-f", "-v", "velho"], [argv for argv, _ in fake.chamadas])
+        self.assertEqual(fake.tipos(), ["ps", "rm", "rede-ls"])
 
     def test_sem_residuos_nao_chama_remocao(self):
         fake = DockerFalso()
@@ -1560,7 +1579,7 @@ class TestesLimparResiduos(unittest.TestCase):
 
     def test_falha_de_listagem_ou_remocao_vira_erro_sem_contar(self):
         fake = DockerFalso()
-        fake.respostas["ps"] = proc(0, "c1\n")
+        fake.respostas["ps"] = proc(0, "c1\t%s\n" % criado(3 * 3600))
         fake.respostas["rm"] = proc(1, "", "boom")
         fake.respostas["rede-ls"] = proc(1, "", "daemon off")
         r = verificacao.limpar_residuos(executar=fake)

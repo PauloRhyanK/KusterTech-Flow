@@ -871,6 +871,9 @@ MOTIVO_TETO_DA_REVISAO = "O revisor da Fábrica passou de 2 h sem avaliar a corr
 # reprovada, a Fábrica conserta o mesmo PR (um run do `frontend` no branch dele, com os achados) até 2 vezes; depois
 # disso, trava com o mesmo começo do `MOTIVO_REVISAO_REPROVOU` (o Decidir oferece o merge pelo cartão por ele)
 CONSERTOS_DA_CORRECAO = 2
+# o GitHub recusa o merge do PR da correção quando o `.seeds/` conflita (ele ignora o `merge=union`): o kit traz o
+# branch padrão para o PR (`atualizar_branch`) até estas vezes antes de travar
+ATUALIZACOES_DA_CORRECAO = 3
 MOTIVO_REVISAO_REPROVOU_DEPOIS_DOS_CONSERTOS = MOTIVO_REVISAO_REPROVOU % "%s (mesmo depois de dois consertos da Fábrica)"
 COMENTARIO_DA_CORRECAO_REFEITA = "A Fábrica refaz a correção a partir do branch padrão: este PR foi reprovado mesmo depois dos consertos."
 # capturas enviadas por run de teste: o teste e o reteste da primeira falha (80 MB) deixam a demanda abaixo dos
@@ -1046,8 +1049,9 @@ def _ainda_na_triagem(demanda: dict) -> bool:
 
 
 class _Passo:
-    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None, publicacao=None, pedir_publicacao=None):
+    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None, publicacao=None, pedir_publicacao=None, atualizar_branch=None):
         self.estado = estado
+        self.atualizar_branch = atualizar_branch
         self.raiz = pathlib.Path(raiz) if raiz is not None else None
         self.sec = secao(estado)
         self.cliente = cliente
@@ -2644,8 +2648,35 @@ class _Passo:
             return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.correcao_mergeada(id_, it, demanda)
-        else:
+        elif not self.atualizar_branch_da_correcao(id_, it, demanda, pr):
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def atualizar_branch_da_correcao(self, id_: str, it: dict, demanda: dict, pr: dict) -> bool:
+        """O GitHub recusou o merge: traz o branch padrão para o PR, sem gastar run (como `_atualizar_branch_da_seed` do
+        despachante). O código da correção não muda: a revisão aprovada continua valendo no head novo
+        (`revisao.head`); com CI, o ciclo seguinte espera o CI do head novo. Conflito de verdade, sem clone ou depois de
+        `ATUALIZACOES_DA_CORRECAO` vezes: `False`, e a recusa trava como antes."""
+        c = it["correcao"]
+        vezes = c.get("atualizacoesDoBranch") if isinstance(c.get("atualizacoesDoBranch"), int) else 0
+        branch = pr.get("branch")
+        if self.atualizar_branch is None or vezes >= ATUALIZACOES_DA_CORRECAO or not isinstance(branch, str) or not branch:
+            return False
+        repo = it.get("repo") or demanda["repositorio"]
+        try:
+            novo = self.atualizar_branch(repo, branch, self.forja.branch_padrao(repo))
+        except Exception:  # noqa: BLE001 - sem atualizar, a recusa segue o caminho de sempre
+            novo = None
+        if not isinstance(novo, str) or not novo:
+            return False
+        c["atualizacoesDoBranch"] = vezes + 1
+        c["headSha"] = novo
+        c.pop("ciPendenteDesde", None)
+        rev = c.get("revisao")
+        if isinstance(rev, dict) and isinstance(rev.get("veredito"), dict):
+            rev["head"] = novo
+        self.salvar()
+        self.eventos.append({"evento": "demanda_branch_da_correcao_atualizado", "id": id_, "sha": novo})
+        return True
 
     def revisar_correcao(self, id_: str, it: dict, demanda: dict, pr: dict) -> None:
         """A correção sem CI num repositório com `ciObrigatorioNasSeeds: false`: um run do `revisor` (`modelos.revisor`)
@@ -2694,7 +2725,7 @@ class _Passo:
             return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.correcao_mergeada(id_, it, demanda)
-        else:
+        elif not self.atualizar_branch_da_correcao(id_, it, demanda, pr):
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
 
     def consertar(self, id_: str, it: dict, demanda: dict, achados, *, sha: str, branch: str) -> None:
@@ -2946,7 +2977,7 @@ class _Passo:
             self.eventos.append({"evento": "demanda_correcao_superada", "id": id_})
 
 
-def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar, publicacao=None, pedir_publicacao=None) -> list[dict]:
+def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar, publicacao=None, pedir_publicacao=None, atualizar_branch=None) -> list[dict]:
     """Um ciclo das demandas: busca no Flow e triagem. Muta `estado["demandas"]` e devolve os eventos de log.
 
     `cliente` é o `ClienteDoFlow`; `projetos` mapeia o repositório (`fila.json`) para o projeto do Warren (repositório
@@ -2957,6 +2988,8 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
     plano da demanda (lendo a pausa em `<raiz>/planos/<id>/estado.json`). `mem_disponivel_mb` vai à reserva de vaga
     do desenho (`capacidade.reservar`); `publicacao` (`{"url", "token_file"}`, a rota já derivada por
     `publicar.url_da_rota`; `None` desliga o pedido) e `pedir_publicacao` (padrão `publicar.pedir`) são da entrega; o HTML do desenho é copiado para `<raiz>/demandas/<id>/` antes da saída.
+    `atualizar_branch(repo, branch, padrao)` traz o branch padrão para o PR da correção que o GitHub recusou
+    (`atualizar_branch.atualizar` num clone do repositório; devolve o head novo ou `None`); `None` desliga.
     """
     p = _Passo(
         estado,
@@ -2972,6 +3005,7 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
         mem_disponivel_mb=mem_disponivel_mb,
         publicacao=publicacao,
         pedir_publicacao=pedir_publicacao,
+        atualizar_branch=atualizar_branch,
     )
     if p.buscar():
         p.decidir()
