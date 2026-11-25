@@ -12,7 +12,7 @@ const minusculo = (e: EstadoNoBanco) => e.toLowerCase() as EstadoDaParte
 const maiusculo = (e: EstadoDaParte) => e.toUpperCase() as EstadoNoBanco
 
 /** Trava as linhas das demandas em ordem de id, antes de mexer nas partes delas. */
-async function travarDemandas(tx: Tx, ids: readonly string[]): Promise<void> {
+export async function travarDemandas(tx: Tx, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return
   await tx.$queryRaw`
     SELECT "id" FROM "Demanda" WHERE "id" IN (${Prisma.join([...ids].sort())}) ORDER BY "id" FOR UPDATE`
@@ -127,14 +127,19 @@ export async function marcarResultadoNaParte(
 ): Promise<void> {
   const pedido = await tx.pedidoDePublicacao.findUnique({
     where: { id: pedidoId },
-    select: { parteId: true },
+    select: { parteId: true, atendidoPorId: true },
   })
   if (!pedido?.parteId) return
   const parte = await tx.parteDaDemanda.findUnique({
     where: { id: pedido.parteId },
-    select: { id: true, demandaId: true },
+    select: { id: true, demandaId: true, pedidoId: true },
   })
   if (!parte) return
+  // Só vale o pedido corrente da parte (ou um que ele atendeu); um pedido antigo não a move.
+  const ehOCorrente =
+    parte.pedidoId === pedidoId ||
+    (parte.pedidoId !== null && pedido.atendidoPorId === parte.pedidoId)
+  if (!ehOCorrente) return
   const novo = resultadoDoPedido(resultado)
   if (novo.estado === 'no_ar') return
   await travarDemandas(tx, [parte.demandaId])
@@ -143,7 +148,6 @@ export async function marcarResultadoNaParte(
     data: {
       estado: maiusculo(novo.estado),
       motivo: novo.motivo ?? null,
-      pedidoId,
       ...(novo.estado === 'nao_chegou' ? { naoChegouEm: agora } : {}),
     },
   })

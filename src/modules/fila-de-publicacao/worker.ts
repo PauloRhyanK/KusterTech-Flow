@@ -2,7 +2,12 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { moduloAtivo } from '@/lib/modulos'
-import { fecharPartesNoAr, marcarResultadoNaParte } from '@/modules/demandas/partes-no-ar'
+import {
+  fecharDemandaSeNoAr,
+  fecharPartesNoAr,
+  marcarResultadoNaParte,
+  travarDemandas,
+} from '@/modules/demandas/partes-no-ar'
 import type { resultadoDoPedido } from '@/modules/demandas/partes'
 import { ErroDeIntegracao } from '@/modules/github/erros'
 import type {
@@ -151,7 +156,17 @@ class CicloDoRepositorio {
 
   async executar(): Promise<void> {
     await this.fila()
-    await this.reconciliarPartes()
+    // O lado das demandas nunca segura a fila: o que falhar aqui o ciclo seguinte refaz.
+    for (const passo of [() => this.fecharPartesContidas(), () => this.fecharDemandasCompletas()]) {
+      try {
+        if (moduloAtivo('demandas')) await passo()
+      } catch (erro) {
+        log.error(
+          { tarefa: 'processar-fila-de-publicacao', erro: resumirErroParaLog(erro) },
+          'partes da demanda não reconciliadas',
+        )
+      }
+    }
   }
 
   private async fila(): Promise<void> {
@@ -218,8 +233,7 @@ class CicloDoRepositorio {
    * deste ciclo. As consultas ao GitHub ficam fora da transação; falha delas deixa a parte como
    * está e o ciclo seguinte tenta de novo.
    */
-  private async reconciliarPartes() {
-    if (!moduloAtivo('demandas')) return
+  private async fecharPartesContidas() {
     const { versaoNoAr } = await lerConfiguracao(this.repo.id)
     if (versaoNoAr === null) return
     const partes = await db.parteDaDemanda.findMany({
@@ -258,14 +272,53 @@ class CicloDoRepositorio {
     )
   }
 
-  /** O resultado de cada pedido que terminou sem conferência volta para a parte dele. */
+  /**
+   * Demandas abertas deste repositório com todas as partes no ar: tenta fechar. A transição recusa
+   * enquanto a etapa atual não é a do no ar; o ciclo seguinte tenta de novo.
+   */
+  private async fecharDemandasCompletas() {
+    const demandas = await db.demanda.findMany({
+      where: {
+        encerrada: null,
+        partes: {
+          some: { repositorioId: this.repo.id },
+          none: { estado: { notIn: ['NO_AR', 'DESCARTADA'] } },
+        },
+      },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    })
+    for (const { id } of demandas) {
+      await comTrava(this.repo.id, (tx) => fecharDemandaSeNoAr(tx, id, this.agora))
+    }
+  }
+
+  /**
+   * O resultado de cada pedido que terminou sem conferência volta para a parte dele. Roda num
+   * SAVEPOINT: se o lado das demandas falhar, a mudança de estado do pedido ainda é gravada.
+   */
   private async marcarPartes(
     tx: Tx,
     ids: readonly string[],
     resultado: Parameters<typeof resultadoDoPedido>[0],
   ) {
     if (!moduloAtivo('demandas')) return
-    for (const id of ids) await marcarResultadoNaParte(tx, id, resultado, this.agora)
+    await tx.$executeRaw`SAVEPOINT partes_da_demanda`
+    try {
+      const partes = await tx.parteDaDemanda.findMany({
+        where: { pedidos: { some: { id: { in: [...ids] } } } },
+        select: { demandaId: true },
+      })
+      await travarDemandas(tx, [...new Set(partes.map((x) => x.demandaId))])
+      for (const id of ids) await marcarResultadoNaParte(tx, id, resultado, this.agora)
+      await tx.$executeRaw`RELEASE SAVEPOINT partes_da_demanda`
+    } catch (erro) {
+      await tx.$executeRaw`ROLLBACK TO SAVEPOINT partes_da_demanda`
+      log.error(
+        { tarefa: 'processar-fila-de-publicacao', erro: resumirErroParaLog(erro) },
+        'resultado do pedido não gravado na parte',
+      )
+    }
   }
 
   /** Da cabeça em relação à base; `desconhecido` quando o GitHub não conhece um dos commits. */

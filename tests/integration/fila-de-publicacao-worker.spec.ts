@@ -945,7 +945,13 @@ describe('partes da demanda', () => {
       data: { urlDaVersao: URL_DA_VERSAO },
     })
 
-  async function demandaNoAr(repositorioId: string) {
+  const concluidasAntesDe = (etapa: string) =>
+    MODELO_PADRAO.slice(
+      0,
+      MODELO_PADRAO.findIndex((e) => e.chave === etapa),
+    ).map((e) => e.chave)
+
+  async function demandaNoAr(repositorioId: string, etapa = 'no_ar') {
     const repo = await db.repositorioGitHub.findUniqueOrThrow({ where: { id: repositorioId } })
     return db.demanda.create({
       data: {
@@ -956,8 +962,8 @@ describe('partes da demanda', () => {
         temTela: false,
         origem: 'FLOW',
         etapas: MODELO_PADRAO as unknown as object,
-        etapaAtual: 'no_ar',
-        concluidas: MODELO_PADRAO.filter((e) => e.marco !== 'no_ar').map((e) => e.chave),
+        etapaAtual: etapa,
+        concluidas: concluidasAntesDe(etapa),
       },
     })
   }
@@ -993,6 +999,7 @@ describe('partes da demanda', () => {
       where: { id },
       data: { parteId: p.id, demandaId: p.demandaId },
     })
+    await db.parteDaDemanda.update({ where: { id: p.id }, data: { pedidoId: id } })
     return id
   }
 
@@ -1150,5 +1157,69 @@ describe('partes da demanda', () => {
     await ciclo(minutos(5))
     expect((await lerParte(front.id)).estado).toBe('NO_AR')
     expect((await lerDemanda(d.id)).encerrada).toBe('no_ar')
+  })
+
+  test('demanda com todas as partes no ar fecha quando a etapa chega ao no ar', async () => {
+    const d = await demandaNoAr(portalId, 'entregue')
+    const p = await parte(d.id, portalId, M2)
+    await db.parteDaDemanda.update({
+      where: { id: p.id },
+      data: { estado: 'NO_AR', noArEm: AGORA, commitNoAr: M2 },
+    })
+    await pedir(portalId, M2)
+    await ciclo()
+    expect((await lerDemanda(d.id)).encerrada).toBeNull()
+
+    await db.demanda.update({
+      where: { id: d.id },
+      data: { etapaAtual: 'no_ar', concluidas: concluidasAntesDe('no_ar') },
+    })
+    await ciclo(minutos(1))
+    expect(await lerDemanda(d.id)).toMatchObject({ encerrada: 'no_ar', noArEm: minutos(1) })
+  })
+
+  test('o lado das demandas que falha não desfaz nem trava a fila', async () => {
+    try {
+      const d = await demandaNoAr(portalId)
+      const p = await parte(d.id, portalId, M2)
+      const id = await pedirDaParte(portalId, M2, p)
+      await ciclo()
+      await db.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION falha_na_parte() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION 'falha de teste'; END; $$ LANGUAGE plpgsql`)
+      await db.$executeRawUnsafe(
+        `CREATE TRIGGER falha_na_parte BEFORE UPDATE ON "ParteDaDemanda" FOR EACH ROW EXECUTE FUNCTION falha_na_parte()`,
+      )
+      f.concluir(PORTAL, M2, 'success')
+      const r = await ciclo(minutos(2))
+      expect(r.publicados).toBe(1)
+      expect((await pedido(id)).estado).toBe('PUBLICADO')
+      expect((await lerParte(p.id)).estado).toBe('PUBLICANDO')
+
+      // A reconciliação também falha sem derrubar o ciclo.
+      await comVersao()
+      await db.configuracaoDePublicacao.update({
+        where: { repositorioId: portalId },
+        data: { versaoNoAr: M3, versaoConferidaEm: AGORA },
+      })
+      await expect(ciclo(minutos(3))).resolves.toBeDefined()
+      expect((await lerParte(p.id)).estado).toBe('PUBLICANDO')
+    } finally {
+      await db.$executeRawUnsafe('DROP TRIGGER IF EXISTS falha_na_parte ON "ParteDaDemanda"')
+      await db.$executeRawUnsafe('DROP FUNCTION IF EXISTS falha_na_parte()')
+    }
+  })
+
+  test('pedido antigo da parte que termina não move a parte do pedido novo', async () => {
+    await publicar(portalId, PORTAL, M3, AGORA)
+    const d = await demandaNoAr(portalId)
+    const p = await parte(d.id, portalId, M2, 'PUBLICANDO')
+    const antigo = await pedirDaParte(portalId, M2, p, 'LOTE')
+    const novo = await db.pedidoDePublicacao.create({
+      data: { repositorioId: portalId, commit: M2, modo: 'LOTE', estado: 'CANCELADO' },
+    })
+    await db.parteDaDemanda.update({ where: { id: p.id }, data: { pedidoId: novo.id } })
+    await ciclo(minutos(5))
+    expect((await pedido(antigo)).estado).toBe('DISPENSADO')
+    expect(await lerParte(p.id)).toMatchObject({ estado: 'PUBLICANDO', motivo: null })
   })
 })
