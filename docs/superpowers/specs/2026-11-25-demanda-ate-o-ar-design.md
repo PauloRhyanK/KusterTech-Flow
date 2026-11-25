@@ -1,7 +1,7 @@
 # Demanda até o ar — desenho (partes 1 e 2)
 
 **Data:** 25/11/2026
-**Estado:** em revisão pelo Paulo
+**Estado:** aprovada pelo Paulo em 25/11/2026 (D77 a D80)
 **Programa:** [`2026-11-25-demanda-ate-o-ar-indice.md`](2026-11-25-demanda-ate-o-ar-indice.md) (decisões (a) a (d))
 **Desenho aprovado:** [`desenhos/2026-11-25-no-ar/01-no-ar.html`](desenhos/2026-11-25-no-ar/01-no-ar.html), com as capturas [`01-lista.png`](desenhos/2026-11-25-no-ar/01-lista.png) e [`02-detalhe.png`](desenhos/2026-11-25-no-ar/02-detalhe.png)
 **Specs que esta altera:** [Demandas](2026-11-19-demandas-design.md) (o fim da demanda) e [Publicação](2026-11-19-publicacao-design.md) (o pedido passa a avisar a demanda)
@@ -305,10 +305,12 @@ A reabertura não acorda a Fábrica sozinha. O "Retomar" do Paulo é que acorda 
 - **Ponta a ponta:** uma demanda com back e front, com a Fábrica simulada: o back publica e é conferido, o front espera, publica e fecha a demanda; uma variante em que o front é dispensado e a demanda aparece em "Não chegou ao ar".
 - **Telas (D74):** lista e detalhe conferidos no navegador contra o desenho aprovado, em desktop e celular, com capturas.
 
-## 15. Perguntas em aberto
+## 15. Respostas (antes "Em aberto")
 
-1. **Tempo para "Nunca foi publicada".** Proposta: 2 h depois de `feita` no modo imediato; no lote, a hora do lote mais 2 h.
-2. **Migração reabre ou só marca?** Proposta: reabre e espera o Paulo (seção 12). A alternativa é deixar as antigas encerradas e marcar só as dos últimos 30 dias.
-3. **Pedido `PUBLICADO` antes da D76** conta como no ar na migração? Proposta: sim, com o histórico "publicada antes da conferência".
-4. **Contrato v1 por quanto tempo.** Proposta: até 7 dias de kit v2 sem chamada v1, numa entrega separada.
-5. **"Conferi no ar" fica para sempre** ou só até todo repositório publicável ter `urlDaVersao`? Proposta: fica, sempre registrado no histórico.
+Aprovadas com a spec, como propostas (Paulo, 25/11).
+
+1. **Tempo para "Nunca foi publicada".** 2 h depois de `feita` no modo imediato; no lote, a hora do lote mais 2 h.
+2. **Migração reabre ou só marca?** Reabre e espera o Paulo (seção 12). A alternativa é deixar as antigas encerradas e marcar só as dos últimos 30 dias.
+3. **Pedido `PUBLICADO` antes da D76** conta como no ar na migração? Sim, com o histórico "publicada antes da conferência".
+4. **Contrato v1 por quanto tempo.** Até 7 dias de kit v2 sem chamada v1, numa entrega separada.
+5. **"Conferi no ar" fica para sempre** ou só até todo repositório publicável ter `urlDaVersao`? Fica, sempre registrado no histórico.

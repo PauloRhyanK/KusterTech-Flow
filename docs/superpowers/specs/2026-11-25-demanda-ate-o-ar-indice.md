@@ -1,7 +1,7 @@
 # Demanda até o ar — índice do programa
 
 **Data:** 25/11/2026
-**Estado:** programa aprovado pelo Paulo em 25/11/2026; specs em revisão
+**Estado:** programa aprovado pelo Paulo em 25/11/2026; spec das partes 1 e 2 aprovada em 25/11/2026
 **Desenho de referência:** [`desenhos/2026-11-25-no-ar/01-no-ar.html`](desenhos/2026-11-25-no-ar/01-no-ar.html)
 
 ## 1. Por que
@@ -25,7 +25,7 @@ Não se reabrem nas specs do programa.
 | (c) | **Um plano pode ter partes em vários repositórios.** O Flow.ia terá forks por projeto, e vários projetos usam o Flow.ia. |
 | (d) | **Núcleo do Flow.ia primeiro, como versão.** Uma mudança no núcleo entra primeiro no `flowia` de origem, como versão, e depois nos forks. O núcleo precisa servir vários clientes e áreas, e isso fica claro para todos os agentes. |
 
-Na aprovação das specs, (a) a (d) entram em `docs/decisoes-aprovadas.md` como decisões numeradas (a partir de D77). A numeração é combinada entre esta spec e a da parte 3 para não colidir.
+Registradas em `docs/decisoes-aprovadas.md` como D77 (a), D78 (b), D79 (c) e D80 (d). Decisões da parte 3 continuam a partir de D81.
 
 ## 3. As quatro partes
 
