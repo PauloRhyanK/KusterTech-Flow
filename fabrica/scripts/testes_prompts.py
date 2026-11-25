@@ -1117,8 +1117,10 @@ class AtendenteTest(unittest.TestCase):
         self.assertEqual(
             set(prompts.CAMPOS_DO_CARTAO),
             {"destino", "guardar", "recusar", "aprovar_desenho", "ajustar_desenho", "responder",
-             "aprovar_e_mergear", "pedir_mudanca", "retomar", "encerrar", "concluir"},
+             "aprovar_e_mergear", "pedir_mudanca", "retomar", "entregar_parcial", "encerrar", "concluir"},
         )
+        self.assertEqual(set(prompts._REGRAS_DO_CARTAO), set(prompts.CAMPOS_DO_CARTAO))
+        self.assertEqual(prompts._REGRAS_DO_CARTAO["entregar_parcial"], {})
         for acao, campos in prompts.CAMPOS_DO_CARTAO.items():
             with self.subTest(acao=acao):
                 self.assertIsInstance(campos, str)

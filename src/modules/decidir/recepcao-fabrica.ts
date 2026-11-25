@@ -106,7 +106,11 @@ export async function buscarConversasParaOAtendente(
             ...fatoDoPr(pr, urlDoRepositorio(l.demanda?.urlDaTrava ?? null, l.item.repositorio)),
           ],
           relato: typeof relato === 'string' ? relato : null,
-          acoes: acoesDoItem(l.item.tipo, { pr }),
+          acoes: acoesDoItem(
+            l.item.tipo,
+            { pr },
+            l.item.ref.tipo === 'demanda' ? l.item.ref.espera : null,
+          ),
         },
         mensagens: recentes.reverse().map((m) => ({
           id: m.id,

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import { buttonVariants } from '@/components/ui/button'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
-import { RESPOSTAS_DO_FLOW, type ItemDaPilha } from '@/modules/decidir/model'
+import { respostasDoItem, type ItemDaPilha } from '@/modules/decidir/model'
 import {
   abrirItemAcao,
   ajustarCartaoAcao,
@@ -37,9 +37,7 @@ const RESPONDER_COM_MENSAGEM: RespostaDoFlow = {
 const DESTINOS = ['urgente', 'lote_da_noite', 'fila_de_agentes']
 
 function respostasDoFlow(item: ItemDaPilha): readonly RespostaDoFlow[] {
-  return item.tipo === 'decisao_da_fabrica'
-    ? [RESPONDER_COM_MENSAGEM]
-    : RESPOSTAS_DO_FLOW[item.tipo]
+  return item.tipo === 'decisao_da_fabrica' ? [RESPONDER_COM_MENSAGEM] : respostasDoItem(item)
 }
 
 /** O cartão a montar quando a resposta rápida ainda precisa de um campo (`faltam`). */
@@ -436,6 +434,7 @@ function ItemAberto({
           <FormularioDoCartao
             key={JSON.stringify(ajuste.inicial)}
             tipoDoItem={item.tipo}
+            espera={item.ref.tipo === 'demanda' ? item.ref.espera : null}
             inicial={ajuste.inicial}
             foco={ajuste.foco}
             erro={erroDoAjuste}

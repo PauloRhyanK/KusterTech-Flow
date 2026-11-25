@@ -90,6 +90,51 @@ describe('CartaoDeFecho', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Falhou da última vez.')
   })
 
+  test('cartão de entregar o que funciona diz o que acontece com a demanda e com o que faltou', () => {
+    render(
+      <CartaoDeFecho
+        cartao={cartao({ acao: 'entregar_parcial' })}
+        erro={null}
+        pendente={false}
+        podeAgir
+        onConfirmar={vi.fn()}
+        onAjustar={vi.fn()}
+      />,
+    )
+    expect(
+      screen.getByText(linha('Ação: entregar o que funciona; a demanda segue para a entrega')),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(linha('Depois: o que faltou vira uma demanda nova no mesmo projeto')),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirmar e ir para a próxima' })).toBeEnabled()
+  })
+
+  test('FormularioDoCartao da trava: "Entregar o que funciona" só no teste que falhou', () => {
+    const opcoes = () => screen.getAllByRole('option').map((o) => o.textContent)
+    const { unmount } = render(
+      <FormularioDoCartao
+        tipoDoItem="trava"
+        espera="teste_falhou"
+        inicial={{ acao: 'retomar' }}
+        onSalvar={vi.fn()}
+        onCancelar={vi.fn()}
+      />,
+    )
+    expect(opcoes()).toContain('Entregar o que funciona')
+    unmount()
+    render(
+      <FormularioDoCartao
+        tipoDoItem="trava"
+        espera="travada"
+        inicial={{ acao: 'retomar' }}
+        onSalvar={vi.fn()}
+        onCancelar={vi.fn()}
+      />,
+    )
+    expect(opcoes()).not.toContain('Entregar o que funciona')
+  })
+
   test('FormularioDoCartao de destino envia os campos do cartão; o campo que falta vem em foco', () => {
     const onSalvar = vi.fn(async () => ({}))
     render(

@@ -88,7 +88,7 @@ describe('ACOES_POR_TIPO', () => {
       desenho: ['aprovar_desenho', 'ajustar_desenho'],
       decisao_da_fabrica: ['responder'],
       fim_de_fase: ['aprovar_e_mergear', 'pedir_mudanca'],
-      trava: ['retomar', 'encerrar', 'aprovar_e_mergear'],
+      trava: ['retomar', 'entregar_parcial', 'encerrar', 'aprovar_e_mergear'],
       concluir_etapa: ['concluir'],
     })
   })
@@ -100,6 +100,55 @@ describe('acoesDoItem', () => {
     expect(acoesDoItem('fim_de_fase', SEM_PR)).toEqual(['pedir_mudanca'])
     expect(acoesDoItem('trava', COM_PR)).toEqual(['retomar', 'encerrar', 'aprovar_e_mergear'])
     expect(acoesDoItem('pedido', SEM_PR)).toEqual(['destino', 'guardar', 'recusar'])
+  })
+
+  it('"entregar o que funciona" só no teste que falhou', () => {
+    expect(acoesDoItem('trava', SEM_PR, 'teste_falhou')).toEqual([
+      'retomar',
+      'entregar_parcial',
+      'encerrar',
+    ])
+    expect(acoesDoItem('trava', SEM_PR, 'travada')).toEqual(['retomar', 'encerrar'])
+  })
+})
+
+describe('entregar o que funciona (teste que falhou)', () => {
+  const testeFalhou = () => itemDeDemanda('trava', { espera: 'teste_falhou' })
+  const trava = () => itemDeDemanda('trava', { espera: 'travada' })
+
+  it('o cartão vale no teste que falhou e não aceita campo nenhum', () => {
+    expect(validarCartao(testeFalhou(), SEM_PR, { acao: 'entregar_parcial' })).toEqual({
+      ok: true,
+      cartao: { acao: 'entregar_parcial' },
+    })
+    expect(
+      validarCartao(testeFalhou(), SEM_PR, { acao: 'entregar_parcial', titulo: 'outro' }),
+    ).toEqual({ ok: false, motivo: FORMATO })
+  })
+
+  it('na trava comum, e nos outros tipos, não vale', () => {
+    expect(validarCartao(trava(), SEM_PR, { acao: 'entregar_parcial' })).toEqual({
+      ok: false,
+      motivo: NAO_VALE,
+    })
+    expect(validarCartao(itemDeDemanda('pedido'), SEM_PR, { acao: 'entregar_parcial' })).toEqual({
+      ok: false,
+      motivo: NAO_VALE,
+    })
+    expect(() => cartaoDaRespostaRapida(trava(), SEM_PR, 'entregar_parcial')).toThrow(
+      'Resposta rápida inválida.',
+    )
+    expect(() => efeitoDoCartao(trava(), { acao: 'entregar_parcial' })).toThrow(NAO_VALE)
+  })
+
+  it('a resposta rápida monta o cartão, e o efeito é a entrega parcial da demanda', () => {
+    expect(cartaoDaRespostaRapida(testeFalhou(), SEM_PR, 'entregar_parcial')).toEqual({
+      cartao: { acao: 'entregar_parcial' },
+    })
+    expect(efeitoDoCartao(testeFalhou(), { acao: 'entregar_parcial' })).toEqual({
+      tipo: 'entregar_parcial',
+      demandaId: 'd1',
+    })
   })
 })
 

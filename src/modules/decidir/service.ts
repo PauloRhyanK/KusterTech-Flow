@@ -33,7 +33,7 @@ import {
 } from './cartao'
 import { LIMITE_DA_MENSAGEM, type RespostaDoAtendente } from './contrato'
 import {
-  RESPOSTAS_DO_FLOW,
+  respostasDoItem,
   amanhaAsSeis,
   motivosDaIssue,
   numeroDoPrDaTrava,
@@ -335,7 +335,7 @@ const semPontoFinal = (s: string) => s.trim().replace(/[.\s]+$/, '')
 
 function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
   const { item, demanda } = l
-  const respostasRapidas = RESPOSTAS_DO_FLOW[item.tipo].map((r) => r.rotulo)
+  const respostasRapidas = respostasDoItem(item).map((r) => r.rotulo)
   const flow = (texto: string): Abertura => ({ autor: 'FLOW', texto, respostasRapidas })
   switch (item.tipo) {
     case 'pedido':
@@ -688,7 +688,7 @@ export async function responderRapido(
   const especial = item.tipo === 'decisao_da_fabrica' && e.chave === RESPONDER_COM_MENSAGEM
   const rotulo = especial
     ? ROTULO_DE_RESPONDER_COM_MENSAGEM
-    : RESPOSTAS_DO_FLOW[item.tipo].find((r) => r.chave === e.chave)?.rotulo
+    : respostasDoItem(item).find((r) => r.chave === e.chave)?.rotulo
   if (!rotulo) throw new ErroDeDominio('Resposta rápida inválida.')
   const impressao = jsonCanonico({ texto: rotulo, respostaRapida: e.chave })
 
@@ -799,7 +799,7 @@ export async function registrarRespostaDoAtendente(
               conversaId,
               autor: 'FLOW',
               texto: falhaDoAtendente(r.falha),
-              respostasRapidas: RESPOSTAS_DO_FLOW[l.item.tipo].map((x) => x.rotulo),
+              respostasRapidas: respostasDoItem(l.item).map((x) => x.rotulo),
               emRespostaA: r.emRespostaA,
               impressao,
               criadaEm: agora,

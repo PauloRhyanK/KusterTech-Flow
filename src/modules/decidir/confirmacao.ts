@@ -10,6 +10,7 @@ import {
   concluirEtapaPeloPaulo,
   decidirDestino,
   encerrarDemanda,
+  entregarOQueFunciona,
   pedirAjuste,
   retomarDemanda,
 } from '@/modules/demandas/service'
@@ -68,6 +69,7 @@ const EVENTO_DO_EFEITO: Partial<Record<Cartao['acao'], string>> = {
   aprovar_desenho: 'desenho_aprovado',
   ajustar_desenho: 'ajuste_pedido',
   retomar: 'retomada',
+  entregar_parcial: 'entrega_parcial',
   concluir: 'etapa_concluida_pelo_paulo',
 }
 
@@ -174,7 +176,8 @@ export async function encerrarConversa(
 // Efeito
 
 type Aplicado =
-  | { ok: true; encerramento: Encerramento }
+  /** `depois`: o que a mensagem de fecho diz além do "Registrado por…" (a demanda nova, com link). */
+  | { ok: true; encerramento: Encerramento; depois?: string }
   | { ok: 'guardado' }
   | {
       ok: false
@@ -329,6 +332,14 @@ async function retomarDepoisDoMerge(sujeito: Sujeito, demandaId: string, numero:
   }
 }
 
+/** O fecho da entrega parcial: para onde a demanda vai e o link da demanda nova. */
+export function depoisDaEntregaParcial(filhaId: string): string {
+  return (
+    'A demanda segue para a entrega com o que funciona; ' +
+    `o que faltou virou uma demanda nova: /demandas/${filhaId}`
+  )
+}
+
 async function aplicarEfeito(
   sujeito: Sujeito,
   efeito: Efeito,
@@ -354,6 +365,10 @@ async function aplicarEfeito(
       case 'retomar':
         await retomarDemanda(sujeito, efeito.demandaId, efeito.resposta)
         return { ok: true, encerramento: 'confirmada' }
+      case 'entregar_parcial': {
+        const { filhaId } = await entregarOQueFunciona(sujeito, efeito.demandaId)
+        return { ok: true, encerramento: 'confirmada', depois: depoisDaEntregaParcial(filhaId) }
+      }
       case 'concluir_etapa':
         await concluirEtapaPeloPaulo(sujeito, efeito.demandaId, efeito.chave)
         return { ok: true, encerramento: 'confirmada' }
@@ -444,6 +459,21 @@ async function efeitoJaAplicado(
   const issue = await fonte.lerIssue(ref, numero)
   if (issue?.estado !== 'FECHADA') return null
   return encerramentoDaIssueFechada(await jaComentou(fonte, ref, numero, conversa.id, progresso))
+}
+
+/** Na recuperação da entrega parcial, o link da demanda nova vem do evento já gravado. */
+async function depoisRecuperado(
+  conversa: { demandaId: string | null },
+  cartao: Cartao,
+): Promise<{ depois?: string }> {
+  if (cartao.acao !== 'entregar_parcial' || !conversa.demandaId) return {}
+  const ev = await db.eventoDaDemanda.findFirst({
+    where: { demandaId: conversa.demandaId, tipo: 'entrega_parcial' },
+    orderBy: { seq: 'desc' },
+    select: { dados: true },
+  })
+  const filha = (ev?.dados as { filha?: unknown } | null)?.filha
+  return typeof filha === 'string' ? { depois: depoisDaEntregaParcial(filha) } : {}
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -563,7 +593,7 @@ export async function confirmarCartao(
       })
       return { resultado: 'recusado', erro: ganhou ? RESOLVIDO : REGISTRANDO }
     }
-    aplicado = { ok: true, encerramento: feito }
+    aplicado = { ok: true, encerramento: feito, ...(await depoisRecuperado(conversa, cartao)) }
   } else {
     const item = localizado!.item
     // 2. O cartão contra o item de agora.
@@ -612,9 +642,12 @@ export async function confirmarCartao(
         erro: null,
       },
     })
+    const registrado = `Registrado por ${nome} às ${HORA.format(agora)}.`
     const texto =
       efeitoFinal.encerramento === 'confirmada'
-        ? `Registrado por ${nome} às ${HORA.format(agora)}.`
+        ? efeitoFinal.depois
+          ? `${registrado} ${efeitoFinal.depois}`
+          : registrado
         : RESOLVIDO_FORA
     await encerrarConversa(tx, conversaId, efeitoFinal.encerramento, texto, agora)
     return true

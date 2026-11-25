@@ -757,6 +757,8 @@ CAMPOS_DO_CARTAO: dict[str, str] = {
     "aprovar_e_mergear": _SEM_CAMPOS,
     "pedir_mudanca": _TEXTO_DO_COMENTARIO,
     "retomar": _RESPOSTA_OPCIONAL,
+    # só no teste que falhou: a demanda segue para a entrega e o que faltou vira uma demanda nova
+    "entregar_parcial": _SEM_CAMPOS,
     "encerrar": _SEM_CAMPOS,
     "concluir": _SEM_CAMPOS,
 }
@@ -777,6 +779,7 @@ _REGRAS_DO_CARTAO: dict[str, dict[str, tuple]] = {
     "aprovar_e_mergear": {},
     "pedir_mudanca": {"texto": (_LIMITE_COMENTARIO_DO_CARTAO, True)},
     "retomar": {"resposta": (_LIMITE_RESPOSTA_DO_CARTAO, False)},
+    "entregar_parcial": {},
     "encerrar": {},
     "concluir": {},
 }
