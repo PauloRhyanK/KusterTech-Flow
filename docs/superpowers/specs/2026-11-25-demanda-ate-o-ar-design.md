@@ -95,7 +95,7 @@ A regra é uma só, e não depende de qual pedido publicou:
 
 **A demanda fecha quando todas as partes estão `no_ar`.** Ela ganha `encerrada = 'no_ar'` e `noArEm`. Antes disso, nenhuma etapa encerra a demanda.
 
-**Parte do tipo `versao`** (núcleo do Flow.ia) não usa a fila: ela fecha quando a versão que contém o `commitAlvo` é publicada no `flowia` de origem. Como a versão é publicada e conferida é da spec 3; esta spec só cria o tipo, o estado `publicando` com o motivo "Esperando a versão" e o evento que a fecha (seção 7.2).
+**Parte do tipo `versao`** (núcleo do Flow.ia) não usa a fila: ela fecha quando o Flow vê lançada a versão que contém o `commitAlvo` no `flowia` de origem (tag, release com notas e imagem publicada). O Flow lê os lançamentos pelo GitHub, sem evento da Fábrica, como já confere o site na D76. O que conta como versão lançada e como o Flow a lê é da spec 3; esta spec só cria o tipo e o estado `publicando` com o motivo "Esperando a versão".
 
 **Escape do Paulo.** Um repositório sem `urlDaVersao` nunca é conferido. A parte para em `nao_chegou` com "Publicada sem conferir o site" e a ação principal da página é **Conferi no ar**: o Paulo confirma, a parte vai a `no_ar` com o registro de quem confirmou, e o histórico mostra "conferida pelo Paulo". A tela da publicação continua sugerindo configurar a `urlDaVersao`.
 
@@ -167,7 +167,6 @@ A Fábrica declara a versão em cada chamada com o cabeçalho `X-Fabrica-Contrat
 | `partes_planejadas` | `{partes: [{chave, repositorio, objetivo, ordem, dependeDe, chegaAoAr}]}` | a lista completa de partes. O Flow cria as novas, atualiza `objetivo`, `ordem` e `dependeDe` das existentes, e remove as ausentes que não têm PR mergeado. Parte com PR mergeado não sai: recusa com "a parte <chave> já tem código em main". Repositório fora do cadastro, chave repetida ou ciclo: recusa. |
 | `parte_planejada` | `{parte, plano, prUrl}` | o plano da parte no repositório dela; a parte vai a `em_curso` quando o plano é mergeado (o kit envia depois do merge) |
 | `parte_feita` | `{parte, prs: [{url, numero, mergeCommit}], commit, pendencias: []}` | `commit` precisa estar no branch padrão do repositório da parte. Com `pendencias` vazia, a parte vai a `feita`. Com pendência, a recusa é `422` "parte com pendência: planeje-a na demanda" (seção 8.4). |
-| `versao_publicada` | `{parte, versao, commit}` | só para `chegaAoAr: 'versao'`; o formato final fica na spec 3 |
 
 `plano_criado`, `etapa_concluida`, `travada`, `destravada`, `teste` e os de desenho continuam. No v2, `etapa_concluida{marco: 'desenvolvida'}` só é aceito quando todas as partes estão `feita`, e `etapa_concluida{marco: 'entregue'}` quando, além disso, toda parte tem pedido de publicação (ou é `versao`). O evento `entregue{prs}` deixa de existir no v2.
 
@@ -259,8 +258,8 @@ A regra do `orquestrador.md` ("não aprova publicação em produção") continua
 
 Esta spec cria só o que a spec 3 precisa encaixar:
 
-- **Tipo de parte `versao`.** A parte do núcleo (`flowia` de origem) chega ao ar como versão publicada, não pela fila. O evento `versao_publicada` fecha a parte.
-- **Fork depende do núcleo.** A parte de um fork tem `dependeDe` a parte do núcleo e um campo opcional `sobeParaVersao` que a spec 3 define. O fork só começa quando o núcleo está `feita` e só publica quando a versão está publicada.
+- **Tipo de parte `versao`.** A parte do núcleo (`flowia` de origem) chega ao ar como versão lançada, não pela fila. O Flow fecha a parte ao ler o lançamento (`versao_lancada` na spec 3) que contém o `commitAlvo`.
+- **Fork sobe de versão.** A parte de um fork é uma parte comum (`chegaAoAr: 'publicacao'`), com `dependeDe` a parte do núcleo e um campo opcional `sobeParaVersao` que a spec 3 define. O fork só começa quando o núcleo está `feita` e só publica quando a versão está lançada. O "no ar" do fork é a regra da seção 4: a `urlDaVersao` do fork aponta para o `/saude` dele, que devolve o `commit` (e, pela spec 3, a versão do núcleo).
 - **Regra no plano coordenador.** Quando a demanda muda o núcleo do Flow.ia, o plano coordenador cria a parte do núcleo e uma parte por fork afetado; nunca uma mudança de núcleo só dentro de um fork. Como o kit sabe que um repositório é núcleo ou fork (cadastro, `fila.json` ou `.fabrica/config.json`) fica na spec 3.
 
 ## 11. Núcleo pensa em vários clientes
