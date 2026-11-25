@@ -91,7 +91,8 @@ class TestesDespachoWarren(unittest.TestCase):
                 "project": "kustertech-flow",
                 "agent": "claude-code",
                 "planId": "pl-1a2b",
-                "promptTemplate": "leia .fabrica/equipes/backend.md e trabalhe na seed {seed_id}",
+                "promptTemplate": motor_warren.REGRA_SEM_SEGUNDO_PLANO
+                + "leia .fabrica/equipes/backend.md e trabalhe na seed {seed_id}",
                 "modelOverride": "claude-sonnet-5-5",
                 "maxCostUsd": 7.5,
             },
@@ -118,12 +119,25 @@ class TestesDespachoWarren(unittest.TestCase):
             {
                 "project": "kustertech-flow",
                 "agent": "claude-code",
-                "prompt": "revise o PR 12",
+                "prompt": motor_warren.REGRA_SEM_SEGUNDO_PLANO + "revise o PR 12",
                 "modelOverride": "claude-opus-4-7",
                 "maxCostUsd": 3.0,
             },
         )
         self.assertNotIn("existingBranch", t.corpo_json())
+
+    def test_todo_run_proibe_comando_em_segundo_plano(self):
+        # Um run sem interface termina quando o agente para de escrever: o aviso de uma tarefa no fundo nunca chega,
+        # e o run acaba sem PR (o orquestrador do CAISv2 parou assim em 2026-11-24, "aguardo a notificação").
+        regra = motor_warren.REGRA_SEM_SEGUNDO_PLANO
+        self.assertIn("segundo plano", regra)
+        self.assertNotIn("{", regra)  # o promptTemplate do Warren só troca {seed_id}
+        m, t = novo(ok({"run": {"id": "r-5"}}))
+        m.despachar_run(**ARGS_RUN)
+        self.assertTrue(t.corpo_json()["prompt"].startswith(regra))
+        m, t = novo(ok({"planRun": {"id": "pr-1"}}))
+        m.despachar_plano(**ARGS_PLANO)
+        self.assertTrue(t.corpo_json()["promptTemplate"].startswith(regra))
 
     def test_branch_vazio_nao_envia_existing_branch(self):
         m, t = novo(ok({"run": {"id": "r-5"}}))

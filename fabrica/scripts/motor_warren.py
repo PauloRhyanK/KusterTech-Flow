@@ -38,6 +38,14 @@ def _classe_da_falha(erro):
 TIMEOUT_REQUISICAO_S = 30
 TIMEOUT_EVENTOS_S = 180
 RETRY_AFTER_PADRAO = 30
+# Vai no começo de todo prompt. O run do Warren não tem interface: ele termina quando o agente para de escrever,
+# então o aviso de uma tarefa no fundo nunca chega e o run acaba sem PR (o orquestrador do CAISv2, em 2026-11-24,
+# parou duas vezes "aguardando a notificação" de uma verificação). Sem chaves: o promptTemplate só troca {seed_id}.
+REGRA_SEM_SEGUNDO_PLANO = (
+    "Regra deste run: rode todo comando em primeiro plano e espere ele terminar, mesmo os demorados (use um timeout "
+    "longo). Nunca deixe comando nem subagente em segundo plano: este run não tem interface, termina quando você para "
+    "de escrever, e nenhum aviso de tarefa no fundo vai chegar.\n\n"
+)
 PREFIXO_FILHO = "child_"
 
 
@@ -211,7 +219,7 @@ class MotorWarren:
                 "project": projeto,
                 "agent": agente,
                 "planId": plano_seeds,
-                "promptTemplate": prompt_template,
+                "promptTemplate": REGRA_SEM_SEGUNDO_PLANO + prompt_template,
                 "modelOverride": modelo,
                 "maxCostUsd": max_custo_usd,
             },
@@ -234,7 +242,7 @@ class MotorWarren:
         corpo = {
             "project": projeto,
             "agent": agente,
-            "prompt": prompt,
+            "prompt": REGRA_SEM_SEGUNDO_PLANO + prompt,
             "modelOverride": modelo,
             "maxCostUsd": max_custo_usd,
         }
