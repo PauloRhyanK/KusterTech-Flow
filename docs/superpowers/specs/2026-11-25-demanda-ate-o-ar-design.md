@@ -259,7 +259,7 @@ A regra do `orquestrador.md` ("não aprova publicação em produção") continua
 Esta spec cria só o que a spec 3 precisa encaixar:
 
 - **Tipo de parte `versao`.** A parte do núcleo (`flowia` de origem) chega ao ar como versão lançada, não pela fila. O Flow fecha a parte ao ler o lançamento (`versao_lancada` na spec 3) que contém o `commitAlvo`.
-- **Fork sobe de versão.** A parte de um fork é uma parte comum (`chegaAoAr: 'publicacao'`), com `dependeDe` a parte do núcleo e um campo opcional `sobeParaVersao` que a spec 3 define. O fork só começa quando o núcleo está `feita` e só publica quando a versão está lançada. O "no ar" do fork é a regra da seção 4: a `urlDaVersao` do fork aponta para o `/saude` dele, que devolve o `commit` (e, pela spec 3, a versão do núcleo).
+- **Fork sobe de versão.** A parte de um fork é uma parte comum (`chegaAoAr: 'publicacao'`), com `dependeDe` a parte do núcleo e um campo opcional `sobeParaVersao` que a spec 3 define. O fork só começa quando o núcleo está `feita` e só publica quando a versão está lançada. O "no ar" do fork é a regra da seção 4: a `urlDaVersao` do fork aponta para o `GET /versao` dele, que sempre responde 200 com o `commit` (e, só para mostrar, a versão do núcleo). Não o `/saude`, que responde 503 quando a fila para e seria lido como fora do ar.
 - **Regra no plano coordenador.** Quando a demanda muda o núcleo do Flow.ia, o plano coordenador cria a parte do núcleo e uma parte por fork afetado; nunca uma mudança de núcleo só dentro de um fork. Como o kit sabe que um repositório é núcleo ou fork (cadastro, `fila.json` ou `.fabrica/config.json`) fica na spec 3.
 
 ## 11. Núcleo pensa em vários clientes
