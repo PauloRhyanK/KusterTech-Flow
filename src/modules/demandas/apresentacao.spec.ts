@@ -837,4 +837,5 @@ test('histórico: eventos das partes e "conferida pelo Paulo"', () => {
   expect(textoDoEvento('parte_conferida_pelo_paulo', { chave: 'back' })).toBe(
     'Parte back conferida pelo Paulo',
   )
+  expect(textoDoEvento('migrada', { texto: 'migrada: no ar' })).toBe('migrada: no ar')
 })

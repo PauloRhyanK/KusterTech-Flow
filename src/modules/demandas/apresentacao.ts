@@ -878,6 +878,7 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   encerrada_pelo_paulo: 'Demanda encerrada',
   entrega_parcial: 'Entregar o que funciona; o que faltou virou uma demanda nova',
   no_ar: 'No ar',
+  migrada: 'Demanda migrada',
   partes_planejadas: 'Partes planejadas',
 }
 
@@ -909,6 +910,7 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
         : r
     return `Retomada com resposta: ${curta}`
   }
+  if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
   if (tipo === 'teste')
     return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'
   if ((tipo === 'desenho_aprovado' || tipo === 'ajuste_pedido') && typeof d.versao === 'number') {

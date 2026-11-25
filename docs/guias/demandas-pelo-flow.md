@@ -210,6 +210,10 @@ A entrega de uma demanda **já pede a publicação**: quando a Fábrica entrega,
 
 Por isso, **a sessão não pede de novo pela fila a publicação de uma demanda**. Para todo o resto (mudanças que a sessão fez fora de uma demanda), vale o guia [Publicar pela fila do KusterTech Flow](publicar-pela-fila.md), com o token de publicação (`fp_`), que é outro.
 
+## Atualização do Flow
+
+Depois do deploy que traz a regra "até o ar", rode `pnpm migrar:ate-o-ar` **uma vez** (na imagem de produção: `node scripts/migrar-demandas-ate-o-ar.mjs`, como em `docs/infra/oficina.md`). Ele dá a parte de entrada às demandas antigas, leva ao no ar as entregues e publicadas e reabre, esperando o Paulo, as que nunca chegaram ao ar. Rodar de novo não duplica nada.
+
 ## O que você nunca deve fazer
 
 - Mandar segredo (senha, token, chave, dado pessoal de cliente) na descrição ou em anexo. A demanda é lida por agentes e fica no histórico.

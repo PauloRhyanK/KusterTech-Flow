@@ -9,6 +9,9 @@ import { ErroDeDominio } from '@/lib/erros'
 import { fecharDemandaSeNoAr, travarDemandas } from './partes-no-ar'
 import {
   acumularPrs,
+  chaveDoNome,
+  chaveLivre,
+  nomeDoRepositorio,
   conferivelPeloPaulo,
   planejarMudancas,
   validarPartes,
@@ -27,31 +30,6 @@ const ok: ResultadoDaParte = { ok: true }
 const recusa = (motivo: string): ResultadoDaParte => ({ ok: false, motivo })
 
 const minusculo = (e: EstadoNoBanco) => e.toLowerCase() as EstadoDaParte
-
-/** `exemplo/alfa-crm` → `alfa-crm`, no formato que a Fábrica aceita como chave de parte. */
-function chaveDoNome(nome: string): string {
-  const limpo = nome
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-    .replace(/-+$/g, '')
-  return limpo === '' ? 'parte' : limpo
-}
-
-const nomeDoRepositorio = (nomeCompleto: string) => nomeCompleto.split('/').pop() ?? nomeCompleto
-
-/** A chave livre na demanda para um repositório: o nome; com dono se o nome já está tomado. */
-function chaveLivre(nomeCompleto: string, usadas: ReadonlySet<string>): string {
-  const [dono = '', nome = nomeCompleto] = nomeCompleto.split('/')
-  const simples = chaveDoNome(nome)
-  if (!usadas.has(simples)) return simples
-  const comDono = chaveDoNome(`${nome}-${dono}`)
-  if (!usadas.has(comDono)) return comDono
-  let n = 2
-  while (usadas.has(`${comDono}-${n}`)) n += 1
-  return `${comDono}-${n}`
-}
 
 export async function criarParteDeEntrada(
   tx: Tx,

@@ -304,3 +304,29 @@ export function conferivelPeloPaulo(p: Pick<Parte, 'estado' | 'motivo' | 'chegaA
     (p.motivo === MOTIVOS.publicadaSemConferir || p.chegaAoAr === 'versao')
   )
 }
+
+/** `exemplo/alfa-crm` → `alfa-crm`, no formato que a Fábrica aceita como chave de parte. */
+export function chaveDoNome(nome: string): string {
+  const limpo = nome
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/g, '')
+  return limpo === '' ? 'parte' : limpo
+}
+
+export const nomeDoRepositorio = (nomeCompleto: string) =>
+  nomeCompleto.split('/').pop() ?? nomeCompleto
+
+/** A chave livre na demanda para um repositório: o nome; com dono se o nome já está tomado. */
+export function chaveLivre(nomeCompleto: string, usadas: ReadonlySet<string>): string {
+  const [dono = '', nome = nomeCompleto] = nomeCompleto.split('/')
+  const simples = chaveDoNome(nome)
+  if (!usadas.has(simples)) return simples
+  const comDono = chaveDoNome(`${nome}-${dono}`)
+  if (!usadas.has(comDono)) return comDono
+  let n = 2
+  while (usadas.has(`${comDono}-${n}`)) n += 1
+  return `${comDono}-${n}`
+}
