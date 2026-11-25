@@ -114,6 +114,10 @@ class _AjudasDoOrquestrador:
     def orquestrador(self):
         return self.estado()["orquestrador"]
 
+    def passar_espera_da_quebra(self, minutos=46):
+        """O run do orquestrador que falha espera (5, 15 ou 45 min) antes de a acordada voltar."""
+        self.instante += datetime.timedelta(minutes=minutos)
+
 
 class Base(_AjudasDoOrquestrador, unittest.TestCase):
     def setUp(self):
@@ -2905,22 +2909,26 @@ class TestesB_AcordadaPreservada(Base):
         rid = self.orquestrador()["runId"]
         self.motor.definir_run(rid, estado="failed", motivoFalha="timeout")
         d.ciclo()
+        self.assertEqual(len(self.runs(FABLE)), 1)  # espera antes de refazer
+        self.passar_espera_da_quebra()
+        d.ciclo()
         ultimo = self.runs(FABLE)[-1]["prompt"]
         self.assertEqual(len(self.runs(FABLE)), 2)
         self.assertIn("Motivo: nova_spec", ultimo)
         self.assertIn('"spec": "docs/spec.md"', ultimo)
         self.assertNotIn("plano_invalido", ultimo)
 
-    def test_tres_falhas_seguidas_pausam_com_uma_decisao_e_fechar_retoma(self):
+    def test_quatro_falhas_seguidas_pausam_com_uma_decisao_e_fechar_retoma(self):
         self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
         d = self.novo()
         d.iniciar(spec="docs/spec.md")
-        for _ in range(5):
+        for _ in range(8):  # cada falha leva dois ciclos: a quebra e, depois da espera, o redespacho
             rid = self.orquestrador()["runId"]
             if rid:
                 self.motor.definir_run(rid, estado="cancelled")
             d.ciclo()
-        self.assertEqual(len(self.runs(FABLE)), 3)
+            self.passar_espera_da_quebra()
+        self.assertEqual(len(self.runs(FABLE)), 4)
         self.assertTrue(self.estado()["pausado"])
         pausas = [x for x in self.forja.decisoes if x[0].startswith("[fábrica] despachante pausado")]
         self.assertEqual(len(pausas), 1)
@@ -2929,13 +2937,14 @@ class TestesB_AcordadaPreservada(Base):
         d.ciclo()
         self.assertIsNone(self.estado()["pausado"])
         self.assertEqual(self.estado()["falhasAcordar"], 0)
-        self.assertEqual(len(self.runs(FABLE)), 4)
+        self.assertEqual(len(self.runs(FABLE)), 5)
         self.assertIn("Motivo: nova_spec", self.runs(FABLE)[-1]["prompt"])
 
     def test_estado_desconhecido_vira_failed_com_aviso_unico(self):
         d, rid = self.acordar_por_falha()
         self.motor.definir_run(rid, estado="canceled")
         d.ciclo()
+        self.passar_espera_da_quebra()
         d.ciclo()
         self.assertEqual(len(self.runs(FABLE)), 2)
         self.assertIn("Motivo: raia_falhou", self.runs(FABLE)[-1]["prompt"])
@@ -3041,6 +3050,8 @@ class TestesD_WarrenInstavel(Base):
         del self.motor._runs[rid]  # o Plan Run da raia b ainda se lê: há leitura boa no ciclo
         d.ciclo()
         self.assertTrue(any(rid in a and "404" in a for a in self.estado()["avisos"]))
+        self.passar_espera_da_quebra()
+        d.ciclo()
         self.assertEqual(len(self.runs(FABLE)), 2)
         self.assertIn("Motivo: raia_falhou", self.runs(FABLE)[-1]["prompt"])
 
@@ -4840,6 +4851,8 @@ class TestesRodada4(Base):
         """c19 G7: queda logo depois de o orquestrador novo ser aceito; a recuperação acha o run pelo nonce."""
         d, rid = self.acordar_por_falha()
         self.motor.definir_run(rid, estado="failed", motivoFalha="agent_crashed")
+        d.ciclo()
+        self.passar_espera_da_quebra()
         original = despachante.gravar_json_atomico
 
         def gravar(caminho, dados):
@@ -4855,6 +4868,7 @@ class TestesRodada4(Base):
         d2 = self.novo()
         for _ in range(4):
             d2.ciclo()
+            self.passar_espera_da_quebra()
         linhas = self.acordadas()
         ids = [linha["runId"] for linha in linhas]
         self.assertEqual(len(ids), len(set(ids)))
@@ -4862,6 +4876,26 @@ class TestesRodada4(Base):
         novo = self.estado()["orquestrador"]["runId"]
         self.assertEqual(ids.count(novo), 1)
         self.assertEqual(len(self.runs(FABLE)), 2)
+
+    # ------------------------------------------------ orquestrador que quebra espera antes de tentar de novo
+    def test_orquestrador_quebrado_espera_5_15_45_min_e_so_pausa_na_quarta(self):
+        """Três quebras em 90 s pausavam a fábrica por dias: agora a acordada volta depois de 5, 15 e 45 min."""
+        d, rid = self.acordar_por_falha()
+        for espera in (5, 15, 45):
+            self.motor.definir_run(self.orquestrador()["runId"], estado="failed", motivoFalha="agent_crashed")
+            antes = len(self.runs(FABLE))
+            d.ciclo()
+            self.assertEqual(len(self.runs(FABLE)), antes, "acordou no mesmo ciclo da quebra")
+            self.assertIsNone(self.estado().get("pausado"))
+            self.instante += datetime.timedelta(minutes=espera - 1)
+            d.ciclo()
+            self.assertEqual(len(self.runs(FABLE)), antes, "acordou antes de %d min" % espera)
+            self.instante += datetime.timedelta(minutes=2)
+            d.ciclo()
+            self.assertEqual(len(self.runs(FABLE)), antes + 1, "não acordou depois de %d min" % espera)
+        self.motor.definir_run(self.orquestrador()["runId"], estado="failed", motivoFalha="agent_crashed")
+        d.ciclo()
+        self.assertEqual(self.estado()["pausado"], "orquestrador falhou 4 vezes seguidas")
 
     # ------------------------------------------------ Q6: config.json ilegível no rodar
     def test_q6_config_json_ilegivel_no_rodar_abre_decisao_e_sai_com_2(self):
@@ -5159,6 +5193,9 @@ class TestesRodada5(Base):
                     self.assertEqual(e["retriesEsperados"][original]["papel"], papel)
                 self._avancar(150)
                 d.ciclo()
+                if papel == "orquestrador":  # a acordada espera depois da falha
+                    self._avancar(46 * 60)
+                    d.ciclo()
                 e = self.estado()
                 self.assertNotIn(original, e.get("retriesEsperados") or {})
                 self.assertEqual(len(self.runs()), posts + 1)  # caminho de hoje: redespacho
@@ -6810,6 +6847,9 @@ class TestesCapacidadeGlobal(Base):
         self.assertIsNone(self.estado_de(a)["orquestrador"]["runId"])
         self.assertEqual(len(self.runs(FABLE)), 1)
         self.assertEqual(self.trava(), {})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("b")]})  # A espera depois da falha, fora da fila
+        self.passar_espera_da_quebra()
+        a.ciclo()
         self.assertEqual(self.espera(), {REPO: [self.plano_id("b"), self.plano_id("a")]})
         b.ciclo()
         self.assertEqual(len(self.runs(FABLE)), 2)
@@ -6823,7 +6863,8 @@ class TestesCapacidadeGlobal(Base):
         self.motor.definir_run(rid_b, estado="failed", motivoFalha="timeout")
         b.ciclo()
         self.assertEqual(self.trava(), {})
-        self.assertEqual(self.espera(), {REPO: [self.plano_id("a"), self.plano_id("b")]})
+        self.assertEqual(self.espera(), {REPO: [self.plano_id("a")]})  # B espera depois da falha
+        self.passar_espera_da_quebra()
         a.ciclo()
         self.assertEqual(len(self.runs(FABLE)), 3)
         self.assertEqual(self.trava(), {REPO: self.plano_id("a")})

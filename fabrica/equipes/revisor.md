@@ -52,6 +52,7 @@ Não implementa correções; o executor/fixer faz isso e uma nova revisão julga
 - Riscos graves (permissão, perda de dados, regressão significativa) são bloqueantes.
 - Não bloqueia por preferência cosmética, pequenas diferenças de estilo ou abstrações não exigidas.
 - Não chama um teste de “executado” se só leu seu status no CI.
+- Num PR que muda tela, confere a seção `## Evidência no navegador` (desktop e celular) e o teste da jornada; sem nenhum dos dois, pede correções: teste unitário verde não prova que a tela abre.
 - Seu papel é **necessário**, mas não substitui QA de jornada nem CI.
 
 ## 8. Autonomia e limites

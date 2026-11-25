@@ -11,12 +11,13 @@ cada chamada:
   `repo_dir` nunca é montado e os arquivos gravados ficam com o dono do despachante;
 - o contêiner, os serviços de apoio (com os volumes anônimos), a rede e o diretório são removidos
   no `finally`, sem recursão e sem seguir symlink; tudo recebe o rótulo `fabrica.verif=1`, e
-  `limpar_residuos()` recolhe o que uma queda deixou.
+  `limpar_residuos()` recolhe o que uma queda deixou, só depois de 2 h.
 
 O `docker` roda com o ambiente do pai (ele é confiável); o contêiner recebe só os `-e` explícitos.
 Passe sempre o sha completo (40 hex minúsculos).
 """
 
+import datetime
 import os
 import pathlib
 import re
@@ -585,12 +586,31 @@ def _limpar(executar, principal: str, criados: dict, rede: str, base: str, aviso
         avisos.append("erro na limpeza: não foi possível apagar o diretório temporário")
 
 
+def _residuos_antigos(listagem: str, agora: float) -> list[str]:
+    """Os ids de `ID<tab>CreatedAt` (formato do `docker ps`/`docker network ls`) criados há mais de
+    `IDADE_MAXIMA_RESIDUO_S`; linha com data ilegível fica de fora (na dúvida, não remove)."""
+    ids = []
+    for linha in listagem.splitlines():
+        partes = linha.split("\t")
+        if len(partes) != 2 or not partes[0].strip():
+            continue
+        try:
+            dia, hora, fuso = partes[1].split()[:3]
+            criado = datetime.datetime.strptime("%s %s %s" % (dia, hora.split(".")[0], fuso), "%Y-%m-%d %H:%M:%S %z")
+        except ValueError:  # também a linha com menos de três campos
+            continue
+        if agora - criado.timestamp() >= IDADE_MAXIMA_RESIDUO_S:
+            ids.append(partes[0].strip())
+    return ids
+
+
 def limpar_residuos(*, executar=subprocess.run) -> dict:
     """Remove o que uma execução interrompida (SIGKILL, queda) deixou para trás.
 
-    Contêineres (com os volumes anônimos) e redes com o rótulo `fabrica.verif=1` e diretórios
-    `fabrica-verif-*` do tempdir com mais de 2 horas. Devolve as contagens e os erros; nunca lança
-    `Exception`. A Task 7 chama na partida.
+    Contêineres (com os volumes anônimos), redes com o rótulo `fabrica.verif=1` e diretórios
+    `fabrica-verif-*` do tempdir, todos com mais de 2 horas. Devolve as contagens e os erros; nunca
+    lança `Exception`. O despachante chama na partida. A idade protege o gate que outro despachante
+    (um por plano) roda agora: o teto do gate é 30 min, então nada vivo passa de 2 h.
     """
     resultado = {"conteineres": 0, "redes": 0, "diretorios": 0, "erros": []}
 
@@ -601,9 +621,11 @@ def limpar_residuos(*, executar=subprocess.run) -> dict:
             resultado["erros"].append("docker %s (%s)" % (args[0], type(erro).__name__))
             return None
 
+    formato = ["--no-trunc", "--filter", "label=" + ROTULO, "--format", "{{.ID}}\t{{.CreatedAt}}"]
+    agora = time.time()
     for chave, listar, remover in (
-        ("conteineres", ["ps", "-aq", "--filter", "label=" + ROTULO], ["rm", "-f", "-v"]),
-        ("redes", ["network", "ls", "-q", "--filter", "label=" + ROTULO], ["network", "rm"]),
+        ("conteineres", ["ps", "-a"] + formato, ["rm", "-f", "-v"]),
+        ("redes", ["network", "ls"] + formato, ["network", "rm"]),
     ):
         try:
             listagem = docker(listar)
@@ -611,7 +633,7 @@ def limpar_residuos(*, executar=subprocess.run) -> dict:
                 if listagem is not None:
                     resultado["erros"].append("docker %s (código %s)" % (listar[0], listagem.returncode))
                 continue
-            ids = _texto(listagem.stdout).split()
+            ids = _residuos_antigos(_texto(listagem.stdout), agora)
             if not ids:
                 continue
             remocao = docker(remover + ids)
@@ -627,7 +649,6 @@ def limpar_residuos(*, executar=subprocess.run) -> dict:
     except Exception as erro:  # noqa: BLE001
         resultado["erros"].append("tempdir (%s)" % type(erro).__name__)
         caminhos = []
-    agora = time.time()
     for caminho in caminhos:
         try:
             if caminho.is_symlink() or not caminho.is_dir() or agora - caminho.lstat().st_mtime < IDADE_MAXIMA_RESIDUO_S:

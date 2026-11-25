@@ -57,7 +57,9 @@ seeds, `correcao.revisao`, com a vaga da demanda) e o aprovado mergeia. O reprov
 head novo é revisado de novo, e o conserto sem commit conta como rodada. Reprovado depois dos dois consertos, a demanda
 trava, e a retomada do Paulo fecha o PR e corrige do zero a partir do branch padrão. Com a config padrão, a demanda
 trava para o Paulo revisar e mergear o PR (o merge dele segue sem retomada). Na segunda
-falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Nunca há
+falha, o Flow espera o Paulo (`teste_falhou`) e só a retomada dele corrige, com a etapa ainda em `testada`. Cada rodada que falha entra em `rodadas`
+(resumo, detalhes e o PR da correção): o teste seguinte confere essas falhas primeiro, a correção as recebe e, da
+3ª rodada em diante, roda com o modelo do orquestrador. Nunca há
 dois runs da demanda ao mesmo tempo: o run que passou do teto (ou foi superado) segura a vaga até terminar.
 """
 
@@ -834,6 +836,7 @@ MOTIVO_DESENHO_RECUSADO = "o Flow recusou o desenho enviado pela Fábrica"
 MOTIVO_ERRO_DO_DESENHO = "o desenho parou: o mesmo erro %d ciclos seguidos (%s)"
 PAPEL_DO_TESTE = "qa"
 PAPEL_DA_CORRECAO = "frontend"
+LIMITE_RODADAS = 10  # rodadas do teste guardadas no item
 COMENTARIO_DO_TESTE = "Evidência enviada ao Flow."
 RESULTADOS_DO_TESTE = ("passou", "falhou", "nao_subiu")  # `nao_subiu` é do kit: o qa não subiu o sistema no run
 CAPTURAS_POR_TELA = 10
@@ -868,6 +871,9 @@ MOTIVO_TETO_DA_REVISAO = "O revisor da Fábrica passou de 2 h sem avaliar a corr
 # reprovada, a Fábrica conserta o mesmo PR (um run do `frontend` no branch dele, com os achados) até 2 vezes; depois
 # disso, trava com o mesmo começo do `MOTIVO_REVISAO_REPROVOU` (o Decidir oferece o merge pelo cartão por ele)
 CONSERTOS_DA_CORRECAO = 2
+# o GitHub recusa o merge do PR da correção quando o `.seeds/` conflita (ele ignora o `merge=union`): o kit traz o
+# branch padrão para o PR (`atualizar_branch`) até estas vezes antes de travar
+ATUALIZACOES_DA_CORRECAO = 3
 MOTIVO_REVISAO_REPROVOU_DEPOIS_DOS_CONSERTOS = MOTIVO_REVISAO_REPROVOU % "%s (mesmo depois de dois consertos da Fábrica)"
 COMENTARIO_DA_CORRECAO_REFEITA = "A Fábrica refaz a correção a partir do branch padrão: este PR foi reprovado mesmo depois dos consertos."
 # capturas enviadas por run de teste: o teste e o reteste da primeira falha (80 MB) deixam a demanda abaixo dos
@@ -1043,8 +1049,9 @@ def _ainda_na_triagem(demanda: dict) -> bool:
 
 
 class _Passo:
-    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None, publicacao=None, pedir_publicacao=None):
+    def __init__(self, estado, *, cliente, motor, forja, capacidade_path, projetos, modelos, agora, salvar, raiz=None, mem_disponivel_mb=None, publicacao=None, pedir_publicacao=None, atualizar_branch=None):
         self.estado = estado
+        self.atualizar_branch = atualizar_branch
         self.raiz = pathlib.Path(raiz) if raiz is not None else None
         self.sec = secao(estado)
         self.cliente = cliente
@@ -2210,7 +2217,7 @@ class _Passo:
         t = it["teste"]
         d = it.get("desenho") if isinstance(it.get("desenho"), dict) else {}
         desenho = prompts.caminho_do_desenho(id_) if d.get("mergeado") is True else None
-        prompt = prompts.prompt_teste_no_navegador(demanda=demanda, desenho=desenho, refazer=bool(t.get("refeito")))
+        prompt = prompts.prompt_teste_no_navegador(demanda=demanda, desenho=desenho, refazer=bool(t.get("refeito")), rodadas=it.get("rodadas"))
         branch = t.get("branch") if t.get("refeito") and isinstance(t.get("branch"), str) and t.get("branch") else None
         run_id = self.motor.despachar_run(
             projeto=it["projeto"],
@@ -2325,6 +2332,8 @@ class _Passo:
             detalhes=resultado.get("detalhes"),
             fecharPr=True,
         )
+        if resultado["resultado"] == "falhou":
+            self.registrar_rodada(it, resultado)
         self.sair_do_teste(id_, it, fase="testando")
         self.eventos.append({"evento": "demanda_teste_enviado", "id": id_, "resultado": resultado["resultado"], "prUrl": t.get("prUrl")})
         self.fechar_pr_do_teste(id_, it)
@@ -2396,6 +2405,19 @@ class _Passo:
             self.sair_do_teste(id_, it, vivo=True, fase="esperando_paulo", inicio=self.agora_texto)
             self.eventos.append({"evento": "demanda_teste_superado", "id": id_})
 
+    def registrar_rodada(self, it: dict, resultado: dict) -> None:
+        """A rodada que falhou entra em `rodadas` (o teste seguinte confere essas falhas primeiro, e a correção sabe o
+        que já foi tentado). Fica só as `LIMITE_RODADAS` mais recentes."""
+        rodadas = [r for r in (it.get("rodadas") or []) if isinstance(r, dict)]
+        rodadas.append(
+            {
+                "resumo": prompts._cortar_utf16(resultado.get("resumo") or "", prompts.LIMITE_TEXTO_DA_RODADA),
+                "detalhes": prompts._cortar_utf16(resultado["detalhes"], prompts.LIMITE_TEXTO_DA_RODADA) if resultado.get("detalhes") else None,
+                "correcao": None,
+            }
+        )
+        it["rodadas"] = rodadas[-LIMITE_RODADAS:]
+
     # ------------------------------------------------------------ correção do teste
 
     def corrigir(self, id_: str, it: dict, demanda: dict) -> None:
@@ -2439,10 +2461,16 @@ class _Passo:
 
     def despachar_correcao(self, id_: str, it: dict, demanda: dict) -> None:
         """O POST do run da correção (a partir do branch padrão) ou, com `correcao.conserto`, do conserto no branch do PR."""
-        modelo, c = self.modelo_da_correcao, it["correcao"]
+        c = it["correcao"]
+        rodadas = [r for r in (it.get("rodadas") or []) if isinstance(r, dict)]
+        rodada = max(len(rodadas), 1)
+        modelo = self.modelo_da_correcao
+        if rodada >= prompts.RODADA_QUE_MUDA_DE_ABORDAGEM and self.modelo_do_plano is not None:
+            modelo = self.modelo_do_plano  # o mesmo remendo voltou duas vezes: o modelo do orquestrador procura a causa
         conserto = c.get("conserto") if isinstance(c.get("conserto"), dict) else None
         if conserto is None:
-            prompt, branch = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=c.get("resumo") or ""), None
+            prompt = prompts.prompt_correcao_do_teste(demanda=demanda, resumo=c.get("resumo") or "", historico=rodadas[:-1], rodada=rodada)
+            branch = None
         else:
             prompt = prompts.prompt_conserto_da_correcao(demanda=demanda, resumo=c.get("resumo") or "", achados=conserto.get("achados") or [], pr_url=c["prUrl"])
             branch = conserto["branch"]
@@ -2620,8 +2648,35 @@ class _Passo:
             return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.correcao_mergeada(id_, it, demanda)
-        else:
+        elif not self.atualizar_branch_da_correcao(id_, it, demanda, pr):
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
+
+    def atualizar_branch_da_correcao(self, id_: str, it: dict, demanda: dict, pr: dict) -> bool:
+        """O GitHub recusou o merge: traz o branch padrão para o PR, sem gastar run (como `_atualizar_branch_da_seed` do
+        despachante). O código da correção não muda: a revisão aprovada continua valendo no head novo
+        (`revisao.head`); com CI, o ciclo seguinte espera o CI do head novo. Conflito de verdade, sem clone ou depois de
+        `ATUALIZACOES_DA_CORRECAO` vezes: `False`, e a recusa trava como antes."""
+        c = it["correcao"]
+        vezes = c.get("atualizacoesDoBranch") if isinstance(c.get("atualizacoesDoBranch"), int) else 0
+        branch = pr.get("branch")
+        if self.atualizar_branch is None or vezes >= ATUALIZACOES_DA_CORRECAO or not isinstance(branch, str) or not branch:
+            return False
+        repo = it.get("repo") or demanda["repositorio"]
+        try:
+            novo = self.atualizar_branch(repo, branch, self.forja.branch_padrao(repo))
+        except Exception:  # noqa: BLE001 - sem atualizar, a recusa segue o caminho de sempre
+            novo = None
+        if not isinstance(novo, str) or not novo:
+            return False
+        c["atualizacoesDoBranch"] = vezes + 1
+        c["headSha"] = novo
+        c.pop("ciPendenteDesde", None)
+        rev = c.get("revisao")
+        if isinstance(rev, dict) and isinstance(rev.get("veredito"), dict):
+            rev["head"] = novo
+        self.salvar()
+        self.eventos.append({"evento": "demanda_branch_da_correcao_atualizado", "id": id_, "sha": novo})
+        return True
 
     def revisar_correcao(self, id_: str, it: dict, demanda: dict, pr: dict) -> None:
         """A correção sem CI num repositório com `ciObrigatorioNasSeeds: false`: um run do `revisor` (`modelos.revisor`)
@@ -2670,7 +2725,7 @@ class _Passo:
             return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.correcao_mergeada(id_, it, demanda)
-        else:
+        elif not self.atualizar_branch_da_correcao(id_, it, demanda, pr):
             self.travar_correcao(id_, it, MOTIVO_MERGE_DA_CORRECAO, url)
 
     def consertar(self, id_: str, it: dict, demanda: dict, achados, *, sha: str, branch: str) -> None:
@@ -2874,6 +2929,9 @@ class _Passo:
         c = _dados(it, "correcao")
         c["mergeado"] = True
         c.pop("ciPendenteDesde", None)
+        rodadas = it.get("rodadas")
+        if isinstance(rodadas, list) and rodadas and isinstance(rodadas[-1], dict) and c.get("prUrl"):
+            rodadas[-1]["correcao"] = c["prUrl"]
         if _marco(demanda) == "desenvolvida" and not demanda.get("encerrada"):
             enfileirar_evento(self.estado, id_, "etapa_concluida", {"marco": "desenvolvida"}, agora=self.agora_texto)
         self.sair_da_correcao(id_, it)
@@ -2919,7 +2977,7 @@ class _Passo:
             self.eventos.append({"evento": "demanda_correcao_superada", "id": id_})
 
 
-def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar, publicacao=None, pedir_publicacao=None) -> list[dict]:
+def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dict, modelos: dict, raiz, agora, mem_disponivel_mb, salvar, publicacao=None, pedir_publicacao=None, atualizar_branch=None) -> list[dict]:
     """Um ciclo das demandas: busca no Flow e triagem. Muta `estado["demandas"]` e devolve os eventos de log.
 
     `cliente` é o `ClienteDoFlow`; `projetos` mapeia o repositório (`fila.json`) para o projeto do Warren (repositório
@@ -2930,6 +2988,8 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
     plano da demanda (lendo a pausa em `<raiz>/planos/<id>/estado.json`). `mem_disponivel_mb` vai à reserva de vaga
     do desenho (`capacidade.reservar`); `publicacao` (`{"url", "token_file"}`, a rota já derivada por
     `publicar.url_da_rota`; `None` desliga o pedido) e `pedir_publicacao` (padrão `publicar.pedir`) são da entrega; o HTML do desenho é copiado para `<raiz>/demandas/<id>/` antes da saída.
+    `atualizar_branch(repo, branch, padrao)` traz o branch padrão para o PR da correção que o GitHub recusou
+    (`atualizar_branch.atualizar` num clone do repositório; devolve o head novo ou `None`); `None` desliga.
     """
     p = _Passo(
         estado,
@@ -2945,6 +3005,7 @@ def passo(estado: dict, *, cliente, motor, forja, capacidade_path, projetos: dic
         mem_disponivel_mb=mem_disponivel_mb,
         publicacao=publicacao,
         pedir_publicacao=pedir_publicacao,
+        atualizar_branch=atualizar_branch,
     )
     if p.buscar():
         p.decidir()

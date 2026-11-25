@@ -1073,6 +1073,7 @@ class Coordenador:
                     salvar=self._salvar,
                     publicacao=publicacao,
                     pedir_publicacao=self._pedir_publicacao,
+                    atualizar_branch=self._atualizar_branch_de_demanda,
                 )
             except Exception as exc:  # noqa: BLE001 - só a classe no aviso; o texto vai ao log, sem segredo
                 self._falha_das_demandas("passo", exc)
@@ -1463,6 +1464,19 @@ class Coordenador:
 
     def _pasta(self, id_: str) -> pathlib.Path:
         return self.raiz / DIR_PLANOS / id_
+
+    def _atualizar_branch_de_demanda(self, repo: str, branch: str, padrao: str, *, atualizar=None):
+        """O `atualizar_branch` das demandas: traz `padrao` para `branch` pelo clone de um plano do mesmo repositório
+        (`atualizar_branch.atualizar`). Sem clone, `None`."""
+        import atualizar_branch
+
+        for entrada in self.dados.get("fila") or []:
+            if not isinstance(entrada, dict) or str(entrada.get("repo", "")).lower() != str(repo).lower():
+                continue
+            repo_dir = self._pasta(str(entrada.get("id"))) / "repo"
+            if (repo_dir / ".git").exists():
+                return (atualizar or atualizar_branch.atualizar)(repo_dir, branch, padrao)
+        return None
 
     def _unit(self, id_: str) -> str:
         return "fabrica-plano@%s" % id_
