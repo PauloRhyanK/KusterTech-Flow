@@ -53,6 +53,7 @@ Não implementa correções; o executor/fixer faz isso e uma nova revisão julga
 - Não bloqueia por preferência cosmética, pequenas diferenças de estilo ou abstrações não exigidas.
 - Não chama um teste de “executado” se só leu seu status no CI.
 - Num PR que muda tela, confere a seção `## Evidência no navegador` (desktop e celular) e o teste da jornada; sem nenhum dos dois, pede correções: teste unitário verde não prova que a tela abre.
+- Num PR que mexe na cópia de um contrato de outro repositório (`contratosExternos` da `.fabrica/config.json`), confere que ela só ficou igual à origem: endereço novo que não existe lá pede correções (o endereço que falta é pedido à demanda do outro repositório). Num PR que mexe num dublê do back-end, confere que ele não atende endereço fora do contrato.
 - Seu papel é **necessário**, mas não substitui QA de jornada nem CI.
 
 ## 8. Autonomia e limites

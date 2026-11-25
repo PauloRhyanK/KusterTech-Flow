@@ -60,6 +60,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import atendente  # noqa: E402
 import capacidade  # noqa: E402
 import consertos  # noqa: E402
+import contratos_externos  # noqa: E402
 import conversas_flow  # noqa: E402
 import demandas  # noqa: E402
 import demandas_flow  # noqa: E402
@@ -1005,6 +1006,12 @@ class Coordenador:
                     continue
                 feature = entrada.get("feature") if isinstance(entrada.get("feature"), str) and entrada.get("feature") else id_
                 descricao = retrato._cortar("%s · %s" % (feature, novas[0]), LIMITE_DESCRICAO)
+                segura = self._contrato_segura_a_publicacao(entrada.get("repo"))
+                if segura is not None:
+                    # as seeds não contam como vistas: com a cópia consertada, o pedido sai num ciclo seguinte
+                    self._aviso("publicacao:contrato:%s" % id_, "Publicação: %s não foi pedida: %s" % (feature, segura))
+                    continue
+                self._esquecer("publicacao:contrato:%s" % id_)
                 try:
                     self._pedir_publicacao(repo=entrada.get("repo"), descricao=descricao, url=url, token_file=central["publicacao_token_file"])
                 except retrato.FalhaDeEnvio as exc:
@@ -1030,6 +1037,24 @@ class Coordenador:
             else:
                 self._aviso("publicacao:envio", "Publicação: pedido ao Flow falhou (%s)" % falha)
             self._salvar()
+
+    def _contrato_segura_a_publicacao(self, repo):
+        """O motivo para não pedir a publicação (a cópia de um contrato externo não bate com a origem, ou a lista
+        `contratosExternos` está torta), ou `None`. Falha de leitura sobe e vira a falha transitória do passo."""
+        if not isinstance(repo, str):
+            return None
+        ref = self.forja.branch_padrao(repo)
+        bruto = self.forja.arquivo(repo, ref, ".fabrica/config.json")
+        try:
+            config = json.loads(bruto) if isinstance(bruto, str) else {}
+        except ValueError:
+            config = {}
+        try:
+            contratos = contratos_externos.validar(config.get("contratosExternos") if isinstance(config, dict) else None)
+        except ValueError as exc:
+            return "a lista contratosExternos da .fabrica/config.json está torta (%s)" % exc
+        divergencias = contratos_externos.conferir(self.forja, repo, ref, contratos)
+        return ("o back-end mudou: " + "; ".join(divergencias)) if divergencias else None
 
     def _modelos_do_kit(self) -> dict:
         """`modelos` de `<kit>/fabrica/modelos/config.json`; ausente ou torto vale `{}` (cada fase avisa o papel sem modelo)."""

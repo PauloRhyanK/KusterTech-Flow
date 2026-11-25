@@ -55,6 +55,7 @@ Demonstrar, com evidências, que a entrega **funciona, atende às regras e faz s
 - Bugs têm passos reproduzíveis, impacto e responsável, sem “falhou” genérico.
 - Limitações de ambiente e testes não executados são explícitos.
 - Não considera entregue só porque CI está verde.
+- Diz contra o quê testou: no `teste.json` da demanda, `"contra": "simulacao"` (porta de mentira, dublê, mocks) ou `"contra": "real"` (cada chamada da tela atendida pelo back-end de verdade). Na dúvida, `simulacao`. Se publicar exporia algo que não funciona, acrescenta `"publicar": false` e `"motivoDeNaoPublicar"`.
 
 ## 8. Autonomia e limites
 

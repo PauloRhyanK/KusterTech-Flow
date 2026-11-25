@@ -558,7 +558,7 @@ class BaseJornada(unittest.TestCase):
         url = self.pr(id_, "teste")
         capturas = ["%s/capturas/%s" % (pasta, nome) for nome in ("desktop-01.png", "celular-01.png")]
         self.forja.definir_pr(url, head_sha=head, branch="fabrica/teste-%s" % id_[:8], arquivos=[pasta + "/teste.json", *capturas])
-        self.forja.definir_arquivo(REPO, head, pasta + "/teste.json", json.dumps({"resultado": "passou", "resumo": "a tela abre e salva"}))
+        self.forja.definir_arquivo(REPO, head, pasta + "/teste.json", json.dumps({"resultado": "passou", "contra": "real", "resumo": "a tela abre e salva"}))
         for caminho in capturas:
             self.forja.definir_arquivo(REPO, head, caminho, PNG)
         self.motor.definir_run(run_id, estado="succeeded", prUrl=url)

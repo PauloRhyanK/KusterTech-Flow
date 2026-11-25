@@ -1964,7 +1964,7 @@ class TestesTesteNoNavegador(BasePasso):
     def entregar_teste(self, run_id, *, resultado="passou", resumo="o fluxo passou", telas=("desktop-01.png", "celular-01.png"), head=HEAD_T, teste=None, extras=()):
         arquivos = [TESTE_JSON] + ["%s/%s" % (CAPTURAS, t) for t in telas] + list(extras)
         self.forja.definir_pr(PR_T, head_sha=head, branch=BRANCH_T, arquivos=arquivos)
-        corpo = json.dumps({"resultado": resultado, "resumo": resumo}) if teste is None else teste
+        corpo = json.dumps({"resultado": resultado, "contra": "real", "resumo": resumo}) if teste is None else teste
         self.forja.definir_arquivo(REPO, head, TESTE_JSON, corpo)
         for t in telas:
             self.forja.definir_arquivo(REPO, head, "%s/%s" % (CAPTURAS, t), PNG)
@@ -2009,7 +2009,7 @@ class TestesTesteNoNavegador(BasePasso):
         self.assertEqual(telas, [("captura", "celular-01.png", "image/png", "celular"), ("captura", "desktop-01.png", "image/png", "desktop")])
         self.assertEqual((self.raiz / saida[0]["arquivo"]["caminho"]).read_bytes(), PNG)
         dados = saida[2]["evento"]["dados"]
-        self.assertEqual(dados, {"resultado": "passou", "resumo": "o fluxo passou", "capturas": [saida[0]["arquivo"]["id"], saida[1]["arquivo"]["id"]]})
+        self.assertEqual(dados, {"resultado": "passou", "resumo": "o fluxo passou\n\nTestado contra o back-end real.", "capturas": [saida[0]["arquivo"]["id"], saida[1]["arquivo"]["id"]]})
         self.assertEqual(self.forja.fechados, [(PR_T, "Evidência enviada ao Flow.")])
         self.assertEqual(self.forja.merges, [])
         self.assertEqual((self.reservas(), demandas.chaves_ocupando(self.estado)), ({}, set()))
@@ -2069,11 +2069,11 @@ class TestesTesteNoNavegador(BasePasso):
 
     def test_detalhes_do_teste_vao_so_para_a_correcao_e_o_resumo_vai_ao_flow(self):
         run_id = self.abrir_teste()
-        corpo = json.dumps({"resultado": "falhou", "resumo": "O salvar não funciona.", "detalhes": "peca.tsx:264 undefined is not iterable"})
+        corpo = json.dumps({"resultado": "falhou", "contra": "real", "resumo": "O salvar não funciona.", "detalhes": "peca.tsx:264 undefined is not iterable"})
         self.entregar_teste(run_id, teste=corpo)
         self.passo(ClienteDeBusca())
         evento = self.estado["demandas"]["saida"][-1]["evento"]
-        self.assertEqual(evento["dados"]["resumo"], "O salvar não funciona.")
+        self.assertEqual(evento["dados"]["resumo"], "O salvar não funciona.\n\nTestado contra o back-end real.")
         self.assertNotIn("detalhes", evento["dados"])
         self.enviado()
         self.passo(ClienteDeBusca(pagina(retrato("desenvolvida"), cursor="3")))
@@ -2791,7 +2791,7 @@ class TestesTesteNoNavegador(BasePasso):
 
     def test_captura_acima_de_10_mb_nao_e_enviada(self):
         grande = b"\x89PNG\r\n\x1a\n" + b"\x00" * (10 * 1024 * 1024)
-        self.forja.definir_arquivo(REPO, HEAD_T, TESTE_JSON, json.dumps({"resultado": "passou", "resumo": "ok"}))
+        self.forja.definir_arquivo(REPO, HEAD_T, TESTE_JSON, json.dumps({"resultado": "passou", "contra": "real", "resumo": "ok"}))
         for nome, dados in (("desktop-01.png", grande), ("desktop-02.png", PNG), ("celular-01.png", PNG), ("celular-02.png", b"GIF89a"), ("outra.png", PNG)):
             self.forja.definir_arquivo(REPO, HEAD_T, "%s/%s" % (CAPTURAS, nome), dados)
         r = demandas.ler_resultado_do_teste(self.forja, REPO, HEAD_T, ID)

@@ -25,7 +25,7 @@ Sem CI, use `--sem-ci`: o instalador aceita o repositório e grava `"ciObrigator
 O instalador é idempotente e grava:
 
 - `.fabrica/orquestrador.md`, `.fabrica/equipes/*.md`, `.fabrica/PADROES-COMUNS.md`, `.fabrica/raias.py` e `.fabrica/globs.py` (sempre a versão do kit);
-- `.fabrica/config.json` (só se não existir): limite de paralelismo, `protegidos`, modelos por papel e o contêiner da verificação;
+- `.fabrica/config.json` (só se não existir): limite de paralelismo, `protegidos`, modelos por papel e o contêiner da verificação. Se ela já existe, o instalador só confere a lista `contratosExternos` (veja [Contratos de outro repositório](#contratos-de-outro-repositório)) e recusa a instalação se ela estiver torta;
 - `.warren/config.yaml` (só se não existir; sem auto-merge, com `admission.maxConcurrentRuns`);
 - o bloco da fábrica em `AGENTS.md`, entre os marcadores `fabrica:inicio` e `fabrica:fim`;
 - o esforço por modelo em `.claude/settings.json` (`modelSettings`).
@@ -215,6 +215,7 @@ FABRICA_PUBLICACAO_TOKEN_FILE=/home/<usuário>/.fabrica-publicacao-token
 - A primeira leitura de um plano só anota as seeds já mergeadas (linha de base), sem pedir. Depois, é um pedido por plano por ciclo, mesmo com várias seeds novas, com a descrição `<feature> · <seed>`. As seeds vistas ficam em `fila-estado.json`, em `publicacao.vistas`.
 - Falha transitória (Flow fora do ar, 5xx, 401, timeout) nunca para o coordenador nem o despachante: a seed não é marcada como vista, o próximo ciclo tenta de novo, o passo para no primeiro pedido que falhou e o aviso `Publicação:` sai só quando a categoria muda.
 - Recusa definitiva (404 repositório sem projeto, 409 "publicação não configurada", 422 pedido inválido): repetir não mudaria a resposta, então as seeds contam como vistas, sai um aviso `Publicação: o Flow recusou…` e o passo segue para o próximo plano. Configure a publicação no projeto antes da próxima seed mergeada.
+- Com `contratosExternos` na config do repositório, o pedido só sai se cada cópia no branch padrão bater com a origem. Se não bater, sai o aviso `Publicação: <feature> não foi pedida: o back-end mudou: …` e as seeds não contam como vistas: com a cópia consertada, o pedido sai no ciclo seguinte.
 
 ### Consertos de publicação
 
@@ -244,9 +245,42 @@ O Paulo pede uma demanda no Flow (defeito, ideia, ajuste ou função nova, com o
 3. **Plano segurado.** Mergeado, o plano entra na fila como qualquer outro, mas fica segurado até a etapa `desenvolvida` da demanda, no mesmo ciclo em que é descoberto. Enquanto isso, o `status` mostra `(segurado pela demanda <id8>)`.
 4. **Desenho**, só nas demandas com tela. Um run do `ux-ui` (`modelos.ux-ui`) numa vaga gera `.fabrica/demandas/<id>/desenho.html`: um HTML autocontido, sem `<script>`, sem recurso de fora e com até 10 MB. O kit confere o arquivo antes de mandá-lo ao Flow; um desenho recusado é refeito uma vez e, na segunda recusa, a demanda trava. O ajuste pedido no Flow refaz o desenho no mesmo branch. Aprovado, o PR do desenho é mergeado no head da versão aprovada (nunca outra) e o plano sai da espera no ciclo seguinte.
 5. **Desenvolvimento.** O plano roda pela fila de sempre (o urgente é visto primeiro na admissão, sem tirar vaga de quem roda). Um plano `pausado` trava a demanda e, quando volta a `ativo`, a destrava. Um plano `concluido` conclui a etapa `desenvolvida`.
-6. **Teste no navegador**, só nas demandas com tela. Um run do `qa` (`modelos.qa`) numa vaga sobe o sistema no próprio run e grava `.fabrica/demandas/<id>/teste.json` e `.fabrica/demandas/<id>/capturas/{desktop,celular}-NN.png` num PR em rascunho. As capturas (até 40 MB por teste) e o resultado vão ao Flow, e esse PR é fechado sem merge. Sem as duas telas, o teste é refeito uma vez. Na primeira falha o Flow volta a etapa para `desenvolvida` e o kit despacha uma correção (`frontend`, `modelos.frontend`); na segunda, a demanda espera o Paulo. Cada rodada que falha fica no item (`rodadas`): o teste seguinte confere essas falhas primeiro, e a correção recebe as rodadas anteriores com o PR que não bastou. A correção reproduz a falha no navegador em 1440×900 e 390×844 e descreve o antes e o depois na seção `## Evidência no navegador` do PR, que o revisor cobra. Da 3ª rodada em diante, a correção roda com o modelo do orquestrador e procura a causa antes de corrigir.
+6. **Teste no navegador**, só nas demandas com tela. Um run do `qa` (`modelos.qa`) numa vaga sobe o sistema no próprio run e grava `.fabrica/demandas/<id>/teste.json` (veja [O resultado do teste](#o-resultado-do-teste)) e `.fabrica/demandas/<id>/capturas/{desktop,celular}-NN.png` num PR em rascunho. As capturas (até 40 MB por teste) e o resultado vão ao Flow, e esse PR é fechado sem merge. Sem as duas telas, o teste é refeito uma vez. Na primeira falha o Flow volta a etapa para `desenvolvida` e o kit despacha uma correção (`frontend`, `modelos.frontend`); na segunda, a demanda espera o Paulo. Cada rodada que falha fica no item (`rodadas`): o teste seguinte confere essas falhas primeiro, e a correção recebe as rodadas anteriores com o PR que não bastou. A correção reproduz a falha no navegador em 1440×900 e 390×844 e descreve o antes e o depois na seção `## Evidência no navegador` do PR, que o revisor cobra. Da 3ª rodada em diante, a correção roda com o modelo do orquestrador e procura a causa antes de corrigir.
 
-Em "planejar comigo", o plano entregue pela sessão com o link do artefato do Claude faz do artefato o desenho: o Flow espera o Paulo aprovar (sem versão da Fábrica), e o kit não despacha o `ux-ui` nem mergeia PR de desenho. Aprovado, a demanda vai ao desenvolvimento; com ajuste, volta a esperar a sessão. 7. **Entrega.** O pedido de publicação é feito uma vez por demanda, com o `modo` do destino (`imediato` no urgente, `lote` no lote da noite) e o id da demanda. Depois vai o `entregue` com os PRs das seeds mergeadas. Os planos de demanda nunca entram no pedido de publicação por seed.
+Em "planejar comigo", o plano entregue pela sessão com o link do artefato do Claude faz do artefato o desenho: o Flow espera o Paulo aprovar (sem versão da Fábrica), e o kit não despacha o `ux-ui` nem mergeia PR de desenho. Aprovado, a demanda vai ao desenvolvimento; com ajuste, volta a esperar a sessão.
+
+7. **Entrega.** O pedido de publicação é feito uma vez por demanda, com o `modo` do destino (`imediato` no urgente, `lote` no lote da noite) e o id da demanda. Depois vai o `entregue` com os PRs das seeds mergeadas. Os planos de demanda nunca entram no pedido de publicação por seed. Antes do pedido, a Fábrica confere se pode publicar sozinha (veja [O que não é publicado sozinho](#o-que-não-é-publicado-sozinho)).
+
+#### O resultado do teste
+
+O `teste.json` que o `qa` grava:
+
+```jsonc
+{
+  "resultado": "passou",
+  "contra": "simulacao",
+  "resumo": "…",
+  "detalhes": "…",
+  "publicar": false,
+  "motivoDeNaoPublicar": "…",
+}
+```
+
+- `resultado`: `passou`, `falhou` ou `nao_subiu`.
+- `contra` (obrigatório no `passou` e no `falhou`): `simulacao` quando o back-end foi a porta de mentira, um dublê ou mocks; `real` só quando cada chamada da tela foi atendida pelo back-end de verdade. Sem `contra` (ou com outro valor), o resultado é inválido como um `teste.json` torto: o teste é refeito uma vez e, na segunda, a demanda trava.
+- `resumo`: o que o Paulo lê no Flow. O kit acrescenta uma linha no fim: "Testado contra a simulação do back-end." ou "Testado contra o back-end real.". O evento `teste` do Flow não muda: o `contra` chega ao Paulo só por essa frase.
+- `publicar` (opcional, booleano; o padrão é `true`) e `motivoDeNaoPublicar` (opcional, até 200 caracteres): o `qa` pede para não publicar quando a entrega exporia algo que não funciona. Um `publicar` que não é booleano invalida o resultado.
+
+#### O que não é publicado sozinho
+
+Na etapa `entregue`, com o token de publicação configurado, a Fábrica não pede a publicação quando:
+
+1. a cópia de um contrato externo não bate com a origem ("O back-end mudou: …", com os endereços que sobram e os que faltam);
+2. o relatório final do plano (`.fabrica/planejamento/<feature>/relatorio-final.md`, no branch padrão; `<feature>` é a do plano na fila) traz a linha `publicar: false`. O motivo vem da linha `motivoDeNaoPublicar: …`. As duas linhas ficam soltas no texto, como o `orquestrador.md` pede;
+3. o `teste.json` do último teste traz `"publicar": false`;
+4. o último teste rodou com `"contra": "simulacao"`, também na entrega parcial ("Entregar o que funciona").
+
+Vale o primeiro motivo da lista. A demanda vai ao Paulo como uma trava no Decidir, com o motivo e a frase "Retomar publica mesmo assim; Encerrar não publica.". Para o caso 4, a mensagem é "Testado só contra a simulação do back-end. Publicar assim pode expor algo que não funciona. Retomar publica mesmo assim; Encerrar não publica.". **Retomar** segue a entrega normal: pede a publicação e envia o `entregue`. **Encerrar demanda** encerra sem publicar. Sem o token de publicação nada é publicado, então a entrega segue como antes.
 
 Papel sem modelo em `fabrica/modelos/config.json` deixa a fase esperando, com o aviso `configure modelos.<papel>`.
 
@@ -258,8 +292,8 @@ Papel sem modelo em `fabrica/modelos/config.json` deixa a fase esperando, com o 
 
 - **Plano:** só nos níveis "vai sozinho" e "aprovar desenho". O PR pode mexer só no próprio `.fabrica/planos/demanda-<id8>.json`, em `.fabrica/planejamento/**` e em `.seeds/**`, e em nenhum caminho dos `protegidos` da `.fabrica/config.json`. O plano precisa passar em `validar_plano` e trazer `"demanda": "<id>"`. O CI precisa estar verde (ausente só vale com `ciObrigatorioNoPlano` falso).
 - **Desenho:** o PR pode mexer só no `desenho.html` da demanda. Só a versão aprovada é mergeada, e só se o head for o mesmo do envio. O CI precisa estar verde ou ausente.
-- **Correção do teste:** o PR não pode mexer em `.warren/**`, `.fabrica/**` ou `.claude/**` (`PROTEGIDOS_FIXOS`, que valem sempre) nem nos `protegidos` da config. O CI precisa estar verde. Sem CI nenhum no head, vale a mesma regra das seeds: com `"ciObrigatorioNasSeeds": false` na config, o revisor da Fábrica (`modelos.revisor`) confere o PR no head e, aprovado no mesmo commit, a Fábrica mergeia. Reprovado, a Fábrica conserta sozinha: um run do `frontend` (`modelos.frontend`) no mesmo branch do PR, com os achados do revisor e o resumo do teste, e o head novo é revisado de novo. São até 2 consertos por PR, e o conserto que termina sem commit novo (ou só com o commit de controle do Warren) conta como um deles. Reprovado depois dos dois, a demanda trava com "O revisor da Fábrica reprovou a correção: … (mesmo depois de dois consertos da Fábrica)" (o primeiro achado) e o link do PR. A retomada do Paulo nessa trava não revisa o mesmo PR de novo: a Fábrica fecha o PR com um comentário e refaz a correção do zero a partir do branch padrão. Sem veredito válido duas vezes, trava também. Se o head mudar, a revisão começa de novo. Com o padrão (`true`), a Fábrica não mergeia: a demanda trava com "PR de correção sem CI: revise e faça o merge" e o link do PR. Quando o Paulo mergeia um PR travado assim (mesmo com um commit a mais, desde que entre no branch padrão), a demanda segue sozinha no ciclo seguinte.
-- A `.fabrica/config.json` (`protegidos`, `ciObrigatorioNoPlano`, `ciObrigatorioNasSeeds`) é lida do **branch padrão**, nunca do head do PR, que poderia reescrevê-la para passar.
+- **Correção do teste:** o PR não pode mexer em `.warren/**`, `.fabrica/**` ou `.claude/**` (`PROTEGIDOS_FIXOS`, que valem sempre) nem nos `protegidos` da config. A cópia de um contrato externo só pode mudar para ficar igual à origem; senão a demanda trava com "o PR da correção muda a cópia de um contrato externo e ela não bate com a origem: …". O CI precisa estar verde. Sem CI nenhum no head, vale a mesma regra das seeds: com `"ciObrigatorioNasSeeds": false` na config, o revisor da Fábrica (`modelos.revisor`) confere o PR no head e, aprovado no mesmo commit, a Fábrica mergeia. Reprovado, a Fábrica conserta sozinha: um run do `frontend` (`modelos.frontend`) no mesmo branch do PR, com os achados do revisor e o resumo do teste, e o head novo é revisado de novo. São até 2 consertos por PR, e o conserto que termina sem commit novo (ou só com o commit de controle do Warren) conta como um deles. Reprovado depois dos dois, a demanda trava com "O revisor da Fábrica reprovou a correção: … (mesmo depois de dois consertos da Fábrica)" (o primeiro achado) e o link do PR. A retomada do Paulo nessa trava não revisa o mesmo PR de novo: a Fábrica fecha o PR com um comentário e refaz a correção do zero a partir do branch padrão. Sem veredito válido duas vezes, trava também. Se o head mudar, a revisão começa de novo. Com o padrão (`true`), a Fábrica não mergeia: a demanda trava com "PR de correção sem CI: revise e faça o merge" e o link do PR. Quando o Paulo mergeia um PR travado assim (mesmo com um commit a mais, desde que entre no branch padrão), a demanda segue sozinha no ciclo seguinte.
+- A `.fabrica/config.json` (`protegidos`, `ciObrigatorioNoPlano`, `ciObrigatorioNasSeeds`, `contratosExternos`) é lida do **branch padrão**, nunca do head do PR, que poderia reescrevê-la para passar.
 - Guarda que falha trava a demanda para o Paulo, com o motivo e o link do PR. A retomada dele no Flow refaz a fase com um run novo. O PR do teste nunca é mergeado.
 
 **Liberar um plano segurado por uma demanda.** O plano de uma demanda espera a etapa `desenvolvida`. Para ele andar, aprove o desenho ou conclua a etapa no Flow, e o plano sai da espera sozinho no ciclo seguinte. `coordenador.py soltar <id>` recusa esse plano e diz o caminho, porque a espera é da demanda e voltaria no mesmo ciclo. `coordenador.py segurar <id>` transfere a espera para o Paulo: o plano continua segurado depois da aprovação, até um `soltar`. Para tirar o plano da fila, use `coordenador.py remover <id> --manter-arquivo` (o arquivo continua no branch padrão sem reentrar). A demanda fica parada no Flow, na etapa em que estava: conclua a etapa por lá ou use **Encerrar demanda** na página dela. Encerrada (`descartada`), a Fábrica para: o run em curso deixa de contar e segura a vaga ou a trava só até terminar, e o item sai do estado do kit. Um plano da demanda que já roda na fila não é parado por isso; tire-o com `coordenador.py remover`.
@@ -273,6 +307,31 @@ Papel sem modelo em `fabrica/modelos/config.json` deixa a fase esperando, com o 
 - `demandas: Flow sem a rota`.
 
 **Flow de antes das demandas.** Um `404` na busca desliga o passo com um aviso único (`Demandas: o Flow não tem a rota de demandas…`) e o kit tenta de novo uma hora depois. Uma recusa da busca que repetir não conserta (`401`, `403` e outros `4xx`, fora de `404`, `408` e `429`) dá um aviso único e uma tentativa a cada 15 min; rede, timeout e `5xx` tentam em todo ciclo. Retrato, fila, consertos e publicação por seed seguem como antes. Um `422` "Corpo inválido." no pedido de publicação com `demanda` e `modo` é repetido uma vez sem esses campos. Uma falha inesperada no passo (no cliente, na busca ou numa fase) vira o aviso `Demandas: o passo falhou (<classe>)` (na caixa de saída, `Demandas: o envio da caixa de saída falhou (<classe>)`), sai do aviso quando um passo dá certo e nunca para o ciclo nem muda a fila.
+
+### Contratos de outro repositório
+
+Quando um projeto consome a API de outro repositório (o front do CAISv2 e o back-end do flowia, por exemplo), a cópia local do contrato precisa ser fiel à origem. A dublê do back-end (porta de mentira) é montada dessa cópia: uma cópia editada à mão faz todo teste passar contra endereços que o back-end não tem. Foi o que levou o Suporte por IA do CAISv2 ao ar com 404 (demanda 9c44dfa8).
+
+A `.fabrica/config.json` do projeto aceita:
+
+```jsonc
+"contratosExternos": [
+  { "arquivo": "docs/flowia/enderecos-do-back-end.txt", "repo": "PauloRhyanK/flowia", "caminho": "pacotes/contratos/openapi.yaml", "modo": "enderecos" }
+]
+```
+
+- `arquivo`: o caminho da cópia no repositório do projeto. `repo` e `caminho`: a origem, lida no branch padrão do `repo`.
+- `modo: "copia"`: o `arquivo` é idêntico, byte a byte, à origem.
+- `modo: "enderecos"`: o `arquivo` é a lista `MÉTODO /caminho` (e `COMANDO <nome>`) tirada do openapi da origem, no formato do `docs/flowia/enderecos-do-back-end.txt` do CAISv2. As linhas com `#` e as vazias não contam. A extração é a do `front/scripts/fixar-enderecos-do-back-end.mjs`, refeita em Python sem dependências em `scripts/contratos_externos.py`. Para gerar a lista: `python3 -I fabrica/scripts/contratos_externos.py enderecos <openapi.yaml> <commit> > <arquivo>`.
+- A lista é validada como as outras chaves: o despachante sai com `config inválida: contratosExternos[0].modo` (por exemplo) e o instalador recusa a instalação.
+- O token do GitHub da Fábrica precisa de leitura (**Contents**) no repositório de origem.
+
+O que a Fábrica faz com ela:
+
+- **Protegido pelo conteúdo.** Todo `arquivo` da lista é protegido: um PR de seed ou de correção que o mude só mergeia sozinho se o conteúdo no head bater com a origem. Senão, a seed vai ao Paulo com "toca arquivos protegidos: … (a cópia do contrato externo não bate com a origem: …)", e a correção trava a demanda.
+- **Antes da primeira raia.** O despachante confere as cópias no branch padrão antes de despachar a primeira raia do plano. Se não baterem, nenhuma raia sai e abre uma decisão `[fábrica] contrato externo: a cópia não bate com a origem`, com o que diverge. A cópia consertada solta o despacho e fecha a decisão sozinha. Fechar a decisão com um comentário também solta o despacho daquela divergência, e a resposta vai ao orquestrador.
+- **Antes de pedir a publicação.** Da demanda (trava no Decidir, veja [O que não é publicado sozinho](#o-que-não-é-publicado-sozinho)) e por seed (aviso no `status`).
+- **No plano.** O prompt do plano da demanda e o `orquestrador.md` pedem que o plano declare a fonte do contrato, que nenhuma raia receba a posse da cópia, que o endereço que falta vire pedido para a demanda do outro repositório e que o plano com dublê tenha um teste que impede o dublê de atender endereço fora do contrato.
 
 ### Decidir (atendente)
 
