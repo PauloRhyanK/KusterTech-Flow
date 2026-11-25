@@ -172,17 +172,6 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-// A migration acrescenta "No ar" ao modelo padrão do banco; MODELO_PADRAO em TypeScript só a ganha na Task 3.
-const ETAPA_NO_AR_DO_BANCO = {
-  chave: 'no_ar',
-  nome: 'No ar',
-  rotulo: 'No ar',
-  marco: 'no_ar',
-  quemConclui: 'flow',
-  puladaSemTela: false,
-  esperaEm: [],
-} as unknown as EtapaDefinida
-
 describe('demandas / service (integração)', () => {
   async function demandaParaDecidir() {
     const { projeto, repositorio } = await cenario()
@@ -256,7 +245,7 @@ describe('demandas / service (integração)', () => {
       espera: null,
       encerrada: null,
     })
-    expect(d.etapas).toEqual([...MODELO_PADRAO, ETAPA_NO_AR_DO_BANCO])
+    expect(d.etapas).toEqual(MODELO_PADRAO)
     expect(d.eventos).toHaveLength(1)
     expect(d.eventos[0]).toMatchObject({
       tipo: 'criada',
@@ -568,7 +557,7 @@ describe('demandas / service (integração)', () => {
 
     const a = await db.demanda.findUniqueOrThrow({ where: { id: antiga.id } })
     const n = await db.demanda.findUniqueOrThrow({ where: { id: nova.id } })
-    expect((a.etapas as unknown[]).length).toBe(MODELO_PADRAO.length + 1)
+    expect((a.etapas as unknown[]).length).toBe(MODELO_PADRAO.length)
     expect(a.nivel).toBe('APROVAR_DESENHO')
     expect(n.etapas).toEqual(sete)
     expect(n.modeloId).toBe(modeloId)

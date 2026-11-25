@@ -162,6 +162,7 @@ const AREA_DO_MARCO: Record<Marco, Area> = {
   desenvolvida: 'desenvolvimento',
   testada: 'teste',
   entregue: 'publicacao',
+  no_ar: 'publicacao',
 }
 
 const PAPEIS_QUE_REVISAM = new Set(['revisor', 'qa'])

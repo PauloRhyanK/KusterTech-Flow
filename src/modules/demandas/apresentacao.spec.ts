@@ -200,9 +200,9 @@ describe('rotuloDoEstado', () => {
 })
 
 describe('trilho', () => {
-  test('trilho sem tela tem 4 pontos; com espera aprovar_desenho o ponto de "desenho" é "espera" e os dois anteriores "feito"', () => {
+  test('trilho sem tela tem 5 pontos; com espera aprovar_desenho o ponto de "desenho" é "espera" e os dois anteriores "feito"', () => {
     const semTela = demanda({ temTela: false })
-    expect(trilho(etapasAplicaveis(semTela.etapas, false), semTela)).toHaveLength(4)
+    expect(trilho(etapasAplicaveis(semTela.etapas, false), semTela)).toHaveLength(5)
 
     const d = demanda({
       etapaAtual: 'desenho',
@@ -216,6 +216,7 @@ describe('trilho', () => {
       ['desenvolvida', 'futuro'],
       ['testada', 'futuro'],
       ['entregue', 'futuro'],
+      ['no_ar', 'futuro'],
     ])
   })
 

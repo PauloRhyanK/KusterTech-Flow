@@ -222,6 +222,7 @@ test('obterPaginaDaDemanda sem permissão → ErroDeAutorizacao; com → chips, 
     ['Desenvolvida', 'futuro'],
     ['Testada', 'futuro'],
     ['Entregue', 'futuro'],
+    ['No ar', 'futuro'],
   ])
   expect(pagina!.faixa).toEqual({
     titulo: 'O desenho está pronto para você aprovar',

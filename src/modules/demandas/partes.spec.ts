@@ -2,6 +2,9 @@ import { describe, expect, test } from 'vitest'
 import {
   MOTIVOS,
   acumularPrs,
+  fraseDaDemanda,
+  grupoAteOAr,
+  trilhoAteOAr,
   nuncaPublicada,
   planejarMudancas,
   podeComecar,
@@ -268,5 +271,111 @@ describe('MOTIVOS', () => {
     expect(MOTIVOS.prAberto(3)).toBe('PR aberto há 3 d')
     expect(MOTIVOS.noAr('abcdef0123')).toBe('No ar · abcdef0')
     expect(MOTIVOS.falta('back')).toBe('Falta a parte do back')
+  })
+})
+
+describe('grupoAteOAr', () => {
+  const agora = new Date('2026-11-25T12:00:00Z')
+  const diasAtras = (n: number) => new Date(agora.getTime() - n * 86_400_000)
+  const d = (o: Partial<Parameters<typeof grupoAteOAr>[0]> = {}) => ({
+    espera: null,
+    naoChegouDesde: null,
+    encerrada: null,
+    noArEm: null,
+    ...o,
+  })
+
+  test('espera vence naoChegouDesde, que vence a caminho', () => {
+    expect(grupoAteOAr(d({ espera: 'travada', naoChegouDesde: diasAtras(1) }), agora)).toBe(
+      'espera_voce',
+    )
+    expect(grupoAteOAr(d({ naoChegouDesde: diasAtras(1) }), agora)).toBe('nao_chegou')
+    expect(grupoAteOAr(d(), agora)).toBe('a_caminho')
+  })
+
+  test('no_ar entra por 30 dias; orientada e descartada ficam fora', () => {
+    expect(grupoAteOAr(d({ encerrada: 'no_ar', noArEm: diasAtras(29) }), agora)).toBe('no_ar')
+    expect(grupoAteOAr(d({ encerrada: 'no_ar', noArEm: diasAtras(31) }), agora)).toBeNull()
+    expect(grupoAteOAr(d({ encerrada: 'orientada' }), agora)).toBeNull()
+    expect(
+      grupoAteOAr(d({ encerrada: 'descartada', naoChegouDesde: diasAtras(2) }), agora),
+    ).toBeNull()
+  })
+})
+
+describe('trilhoAteOAr', () => {
+  const base = { triada: true, temTela: false, desenhoAprovado: false, testePassou: false }
+
+  test('exemplo do desenho: back planejando, front feita', () => {
+    const partes = [
+      parte('back', { estado: 'planejando' }),
+      parte('front', { estado: 'feita', motivo: MOTIVOS.publicacaoDispensada }),
+    ]
+    expect(trilhoAteOAr(base, partes)).toEqual(['cheio', 'cheio', 'andando', 'vazio'])
+  })
+
+  test('todas no ar: último ponto verde', () => {
+    const partes = [parte('back', { estado: 'no_ar' }), parte('front', { estado: 'no_ar' })]
+    expect(trilhoAteOAr(base, partes)).toEqual(['cheio', 'cheio', 'cheio', 'verde'])
+  })
+
+  test('uma nao_chegou: último ponto vermelho', () => {
+    const partes = [parte('back', { estado: 'no_ar' }), parte('front', { estado: 'nao_chegou' })]
+    expect(trilhoAteOAr(base, partes)[3]).toBe('vermelho')
+  })
+
+  test('uma publicando e as demais no ar: último ponto andando', () => {
+    const partes = [parte('back', { estado: 'no_ar' }), parte('front', { estado: 'publicando' })]
+    expect(trilhoAteOAr(base, partes)).toEqual(['cheio', 'cheio', 'cheio', 'andando'])
+  })
+
+  test('demanda com tela espera desenho aprovado e teste passado', () => {
+    const partes = [parte('back', { estado: 'feita' })]
+    const tela = { ...base, temTela: true }
+    expect(trilhoAteOAr(tela, partes)).toEqual(['cheio', 'andando', 'vazio', 'vazio'])
+    expect(trilhoAteOAr({ ...tela, desenhoAprovado: true }, partes)).toEqual([
+      'cheio',
+      'cheio',
+      'andando',
+      'vazio',
+    ])
+    expect(trilhoAteOAr({ ...tela, desenhoAprovado: true, testePassou: true }, partes)).toEqual([
+      'cheio',
+      'cheio',
+      'cheio',
+      'vazio',
+    ])
+  })
+
+  test('antes da triagem: pedida andando e o resto vazio', () => {
+    expect(trilhoAteOAr({ ...base, triada: false }, [])).toEqual([
+      'andando',
+      'vazio',
+      'vazio',
+      'vazio',
+    ])
+  })
+})
+
+describe('fraseDaDemanda', () => {
+  test('a parte mais atrasada manda: falta a parte do back', () => {
+    const partes = [
+      parte('back', { estado: 'planejando' }),
+      parte('front', { estado: 'nao_chegou', motivo: MOTIVOS.prAberto(1) }),
+    ]
+    expect(fraseDaDemanda(partes)).toEqual({ texto: 'Falta a parte do back', tom: 'erro' })
+  })
+
+  test('usa o motivo da parte e a execução como tom', () => {
+    const partes = [parte('back', { estado: 'publicando', motivo: MOTIVOS.conferindo })]
+    expect(fraseDaDemanda(partes)).toEqual({ texto: 'Conferindo o site', tom: 'execucao' })
+  })
+
+  test('tudo no ar mostra a versão de 7 caracteres', () => {
+    const partes = [
+      parte('back', { estado: 'no_ar', commitAlvo: 'c5c01ba1234567890' }),
+      parte('front', { estado: 'no_ar', commitAlvo: 'c5c01ba1234567890', ordem: 2 }),
+    ]
+    expect(fraseDaDemanda(partes)).toEqual({ texto: 'No ar · c5c01ba', tom: 'sucesso' })
   })
 })

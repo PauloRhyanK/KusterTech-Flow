@@ -33,13 +33,13 @@ beforeEach(async () => {
 })
 
 describe('schema de Demandas', () => {
-  test('a migration deixa um único ModeloDeEtapas padrao com as seis etapas do MODELO_PADRAO (mais no_ar) na ordem e esperaEm do MODELO_PADRAO', async () => {
+  test('a migration deixa um único ModeloDeEtapas padrao com as etapas do MODELO_PADRAO na ordem e esperaEm do MODELO_PADRAO', async () => {
     const modelos = await db.modeloDeEtapas.findMany({
       where: { padrao: true },
       include: { etapas: { orderBy: { ordem: 'asc' } } },
     })
     expect(modelos).toHaveLength(1)
-    const etapas = modelos[0]!.etapas.filter((e) => e.chave !== 'no_ar')
+    const etapas = modelos[0]!.etapas
     expect(etapas.map((e) => e.chave)).toEqual(MODELO_PADRAO.map((e) => e.chave))
     etapas.forEach((e, i) => {
       const esperado = MODELO_PADRAO[i]!

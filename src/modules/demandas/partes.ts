@@ -205,3 +205,87 @@ export function nuncaPublicada(
 export function todasNoAr(partes: readonly Parte[]): boolean {
   return partes.length > 0 && partes.every((p) => p.estado === 'no_ar')
 }
+
+export type GrupoAteOAr = 'espera_voce' | 'nao_chegou' | 'a_caminho' | 'no_ar'
+
+const TRINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000
+
+/** O grupo da lista (seção 5.3); `null` para orientada, descartada e no ar há mais de 30 dias. */
+export function grupoAteOAr(
+  d: {
+    espera: string | null
+    naoChegouDesde: Date | null
+    encerrada: string | null
+    noArEm: Date | null
+  },
+  agora: Date,
+): GrupoAteOAr | null {
+  if (d.encerrada === 'no_ar') {
+    return d.noArEm && agora.getTime() - d.noArEm.getTime() <= TRINTA_DIAS_MS ? 'no_ar' : null
+  }
+  if (d.encerrada) return null
+  if (d.espera) return 'espera_voce'
+  if (d.naoChegouDesde) return 'nao_chegou'
+  return 'a_caminho'
+}
+
+export type PontoAteOAr = 'vazio' | 'andando' | 'cheio' | 'verde' | 'vermelho'
+
+// `nao_chegou` conta como `feita` para os pontos anteriores ao último.
+const ADIANTAMENTO: Record<Exclude<EstadoDaParte, 'descartada'>, number> = {
+  planejando: 0,
+  em_curso: 1,
+  feita: 2,
+  nao_chegou: 2,
+  publicando: 3,
+  no_ar: 4,
+}
+
+const abertas = (partes: readonly Parte[]) =>
+  partes.filter(
+    (p): p is Parte & { estado: Exclude<EstadoDaParte, 'descartada'> } => p.estado !== 'descartada',
+  )
+
+/** Os quatro pontos do trilho (seção 5.2): cada um mostra a parte menos adiantada. */
+export function trilhoAteOAr(
+  d: { triada: boolean; temTela: boolean; desenhoAprovado: boolean; testePassou: boolean },
+  partes: readonly Parte[],
+): [PontoAteOAr, PontoAteOAr, PontoAteOAr, PontoAteOAr] {
+  const ativas = abertas(partes)
+  if (!d.triada) return ['andando', 'vazio', 'vazio', 'vazio']
+  const menos = ativas.length ? Math.min(...ativas.map((p) => ADIANTAMENTO[p.estado])) : -1
+
+  const desenhando = d.temTela && !d.desenhoAprovado
+  const plano: PontoAteOAr = desenhando ? 'andando' : 'cheio'
+
+  let feita: PontoAteOAr = 'vazio'
+  if (plano === 'cheio' && menos >= 0) {
+    if (menos <= 1) feita = 'andando'
+    else feita = d.temTela && !d.testePassou ? 'andando' : 'cheio'
+  }
+
+  let noAr: PontoAteOAr = 'vazio'
+  if (ativas.some((p) => p.estado === 'nao_chegou')) noAr = 'vermelho'
+  else if (ativas.length > 0 && menos === 4) noAr = 'verde'
+  else if (ativas.some((p) => p.estado === 'publicando')) noAr = 'andando'
+
+  return ['cheio', plano, feita, noAr]
+}
+
+/** A frase da linha: o `motivo` da parte mais atrasada; "No ar · <sha7>" quando todas chegaram. */
+export function fraseDaDemanda(partes: readonly Parte[]): {
+  texto: string
+  tom: 'erro' | 'execucao' | 'sucesso'
+} {
+  const ativas = abertas(partes)
+  if (todasNoAr(ativas)) {
+    const ultima = [...ativas].sort((a, b) => b.ordem - a.ordem)[0]
+    return { texto: MOTIVOS.noAr(ultima?.commitAlvo ?? ''), tom: 'sucesso' }
+  }
+  const atrasada = [...ativas].sort(
+    (a, b) => ADIANTAMENTO[a.estado] - ADIANTAMENTO[b.estado] || a.ordem - b.ordem,
+  )[0]
+  const tom = ativas.some((p) => p.estado === 'nao_chegou') ? 'erro' : 'execucao'
+  if (!atrasada) return { texto: '', tom }
+  return { texto: atrasada.motivo ?? MOTIVOS.falta(atrasada.chave), tom }
+}

@@ -119,6 +119,7 @@ const TEXTO_DO_MARCO: Record<Marco, string> = {
   desenvolvida: 'Desenvolvendo',
   testada: 'Testando no navegador',
   entregue: 'Entregando',
+  no_ar: 'Indo ao ar',
 }
 
 const travou = (espera: Espera | null) => espera === 'travada' || espera === 'teste_falhou'
