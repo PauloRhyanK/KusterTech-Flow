@@ -6,6 +6,7 @@ const TOM: Record<TomDaDemanda, string> = {
   atencao: 'bg-tonal-atencao text-atencao',
   informacao: 'bg-tonal-informacao text-informacao',
   execucao: 'bg-tonal-execucao text-execucao',
+  sucesso: 'bg-tonal-sucesso text-sucesso',
   neutro: 'bg-tonal-neutro text-neutro',
 }
 

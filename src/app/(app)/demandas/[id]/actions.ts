@@ -16,6 +16,7 @@ import {
   pedirAjuste,
   retomarDemanda,
 } from '@/modules/demandas/service'
+import { conferirNoArPeloPaulo } from '@/modules/demandas/partes-service'
 import { resumirErroParaLog } from '@/modules/github/model'
 
 export interface EstadoDaDecisao {
@@ -145,4 +146,26 @@ export async function encerrarDemandaAction(
   return decidir(form, { demandaId }, 'encerrar a demanda', 'Demanda encerrada.', (s, d) =>
     encerrarDemanda(s, d.demandaId),
   )
+}
+
+const chaveDaParte = z.string().min(1, 'Parte inválida.').max(60, 'Parte inválida.')
+
+/** "Conferi no ar": o Paulo confirma que a parte está no site (seção 4 da spec). */
+export async function conferirNoArAction(
+  demandaIdBruto: string,
+  chaveBruta: string,
+): Promise<EstadoDaDecisao> {
+  const sessao = await exigirSessao()
+  const parse = z.object({ demandaId, chave: chaveDaParte }).safeParse({
+    demandaId: demandaIdBruto,
+    chave: chaveBruta,
+  })
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  try {
+    await conferirNoArPeloPaulo(sessao.sujeito, parse.data.demandaId, parse.data.chave)
+    revalidar(parse.data.demandaId)
+    return { sucesso: 'Parte no ar.' }
+  } catch (erro) {
+    return traduzirErro(erro, 'conferir a parte no ar')
+  }
 }

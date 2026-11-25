@@ -1,8 +1,7 @@
+import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { formatarIdade } from '@/modules/inicio/model'
 import {
   FABRICA_SEM_BUSCAR_MS,
-  compararNaFila,
-  etapasAplicaveis,
   type Destino,
   type EtapaDefinida,
   type Encerramento,
@@ -12,8 +11,18 @@ import {
   type Origem,
   type TipoDeDemanda,
 } from './model'
+import {
+  MOTIVOS,
+  conferivelPeloPaulo,
+  fraseDaDemanda,
+  grupoAteOAr,
+  trilhoAteOAr,
+  type GrupoAteOAr,
+  type Parte,
+  type PontoAteOAr,
+} from './partes'
 
-export type TomDaDemanda = 'erro' | 'atencao' | 'informacao' | 'execucao' | 'neutro'
+export type TomDaDemanda = 'erro' | 'atencao' | 'informacao' | 'execucao' | 'sucesso' | 'neutro'
 
 /** O que a tela Demandas lê de cada demanda. */
 export interface DemandaNaLista {
@@ -31,16 +40,20 @@ export interface DemandaNaLista {
   criadaEm: Date
   esperaDesde: Date | null
   atualizadaEm: Date
+  /** As partes, em qualquer ordem; a tela as põe na ordem de publicação. */
+  partes: readonly Parte[]
+  naoChegouDesde: Date | null
+  noArEm: Date | null
+  /** A versão do desenho aprovada, se houver. */
+  desenhoAprovado: number | null
 }
 
-export type PontoDoTrilho = 'feito' | 'atual' | 'espera' | 'travado' | 'futuro'
+export type TomDaParte = 'ok' | 'andando' | 'nao' | 'neutro'
 
-export interface QuadroDeEntrada {
-  chave: 'recebidas' | 'orientadas' | 'urgente' | 'lote' | 'agentes' | 'decisao'
-  n: number
-  rotulo: string
-  meta: string
-  filtro: string | null
+export interface ChipDaParte {
+  chave: string
+  texto: string
+  tom: TomDaParte
 }
 
 export interface LinhaDeDemanda {
@@ -48,24 +61,31 @@ export interface LinhaDeDemanda {
   href: string
   titulo: string
   projeto: string
-  icone: ReturnType<typeof iconeDoTipo>
-  trilho: ReturnType<typeof trilho>
+  partes: ChipDaParte[]
+  trilho: PontoAteOAr[]
   estado: { texto: string; tom: TomDaDemanda }
   idade: string
 }
 
-export type ChaveDoGrupo = 'espera_voce' | 'em_andamento' | 'na_fila'
-
 export interface GrupoDeDemandas {
-  chave: ChaveDoGrupo | 'orientadas_hoje'
-  titulo: 'Espera você' | 'Em andamento' | 'Na fila' | 'Orientadas hoje'
+  chave: GrupoAteOAr | 'orientadas_hoje'
+  titulo: 'Espera você' | 'Não chegou ao ar' | 'A caminho' | 'No ar' | 'Orientadas hoje'
   contagem: string
   linhas: LinhaDeDemanda[]
 }
 
+export interface QuadroAteOAr {
+  chave: GrupoAteOAr
+  numero: number
+  rotulo: string
+  meta: string
+}
+
 export interface TelaDeDemandas {
-  quadros: QuadroDeEntrada[]
+  quadros: QuadroAteOAr[]
   grupos: GrupoDeDemandas[]
+  /** Quantas demandas foram orientadas hoje (o filtro "orientada" as mostra). */
+  orientadasHoje: number
   fabricaSemBuscar: string | null
   podeCriar: boolean
 }
@@ -97,7 +117,10 @@ function etapaAtualDe(d: DemandaNaLista): EtapaDefinida | undefined {
   return d.etapas.find((e) => e.chave === d.etapaAtual)
 }
 
-export function grupoDaDemanda(d: DemandaNaLista): ChaveDoGrupo | null {
+type GrupoDaFabrica = 'espera_voce' | 'em_andamento' | 'na_fila'
+
+/** O grupo do "vem aí" da tela Publicação: o que a Fábrica ainda está fazendo. */
+export function grupoDaDemanda(d: DemandaNaLista): GrupoDaFabrica | null {
   if (d.encerrada) return null
   if (d.espera !== null) return 'espera_voce'
   if (etapaAtualDe(d)?.marco === 'recebida') return 'na_fila'
@@ -161,149 +184,170 @@ export function demandasQueVemAi(demandas: readonly DemandaNaLista[]): DemandaQu
     .map(({ d }) => ({ id: d.id, titulo: d.titulo, projeto: d.projeto, estado: rotuloDoEstado(d) }))
 }
 
-export function trilho(
-  etapas: readonly EtapaDefinida[],
-  d: DemandaNaLista,
-): { chave: string; rotulo: string; ponto: PontoDoTrilho }[] {
-  const posicaoAtual = etapas.findIndex((e) => e.chave === d.etapaAtual)
-  return etapas.map((e, i) => {
-    let ponto: PontoDoTrilho = 'futuro'
-    if (
-      d.encerrada === 'entregue' ||
-      d.concluidas.includes(e.chave) ||
-      i < posicaoAtual ||
-      // A orientada termina na triagem: o ponto dela está feito.
-      (d.encerrada === 'orientada' && i === posicaoAtual)
-    ) {
-      ponto = 'feito'
-    } else if (i === posicaoAtual) {
-      if (travou(d.espera)) ponto = 'travado'
-      else if (d.espera !== null) ponto = 'espera'
-      else ponto = 'atual'
-    }
-    return { chave: e.chave, rotulo: e.rotulo, ponto }
-  })
+// "há menos de 1 min" vira "agora": a coluna da idade é estreita.
+const semHa = (idade: string) =>
+  idade === 'há menos de 1 min' ? 'agora' : idade.replace(/^há /, '')
+
+// ——— Lista até o ar (spec "demanda até o ar", 5.2 e 5.3) ———
+
+const ORDEM_DOS_GRUPOS: readonly GrupoAteOAr[] = ['espera_voce', 'nao_chegou', 'a_caminho', 'no_ar']
+
+const TITULO_DO_GRUPO: Record<GrupoAteOAr, GrupoDeDemandas['titulo']> = {
+  espera_voce: 'Espera você',
+  nao_chegou: 'Não chegou ao ar',
+  a_caminho: 'A caminho',
+  no_ar: 'No ar',
 }
 
-const semHa = (idade: string) => idade.replace(/^há /, '')
+const ativas = (partes: readonly Parte[]) => partes.filter((p) => p.estado !== 'descartada')
 
-export function fluxoDeEntrada(e: {
-  hoje: readonly { origem: Origem; destino: Destino | null; encerrada: string | null }[]
-  decidindo: readonly { esperaDesde: Date }[]
-  horaDoLote: string
-  vagas: { ocupadas: number; efetivas: number } | null
-  agora: Date
-}): QuadroDeEntrada[] {
-  const conta = (f: (h: (typeof e.hoje)[number]) => boolean) => e.hoje.filter(f).length
-  const voce = conta((h) => h.origem === 'flow')
-  const sessoes = conta((h) => h.origem === 'sessao')
-  const maisAntiga = e.decidindo.reduce<Date | null>(
-    (min, d) => (min === null || d.esperaDesde < min ? d.esperaDesde : min),
-    null,
-  )
+/** A ordem de publicação: segue `dependeDe`; `ordem` desempata (e decide num ciclo). */
+export function ordemDePublicacao(partes: readonly Parte[]): Parte[] {
+  const restantes = [...partes].sort((a, b) => a.ordem - b.ordem || a.chave.localeCompare(b.chave))
+  const chaves = new Set(partes.map((p) => p.chave))
+  const publicadas = new Set<string>()
+  const ordem: Parte[] = []
+  while (restantes.length > 0) {
+    const i = restantes.findIndex((p) =>
+      p.dependeDe.every((d) => !chaves.has(d) || publicadas.has(d)),
+    )
+    const [p] = restantes.splice(Math.max(i, 0), 1)
+    if (!p) break
+    ordem.push(p)
+    publicadas.add(p.chave)
+  }
+  return ordem
+}
+
+const CURTO_DO_MOTIVO: Record<string, string> = {
+  [MOTIVOS.publicacaoDispensada]: 'dispensada',
+  [MOTIVOS.nuncaPublicada]: 'sem publicação',
+  [MOTIVOS.publicadaSemConferir]: 'sem conferir',
+  [MOTIVOS.publicacaoFalhou]: 'falhou',
+}
+
+function curtoDoMotivo(motivo: string | null): string {
+  if (motivo === null) return 'não chegou'
+  if (motivo.startsWith('PR aberto')) return 'PR aberto'
+  return CURTO_DO_MOTIVO[motivo] ?? 'não chegou'
+}
+
+function chipDe(p: Parte): Omit<ChipDaParte, 'chave'> {
+  switch (p.estado) {
+    case 'planejando':
+      return { texto: 'planejando', tom: 'neutro' }
+    case 'em_curso':
+      return { texto: 'em curso', tom: 'andando' }
+    case 'feita':
+      return { texto: 'feita', tom: 'neutro' }
+    case 'publicando':
+      return { texto: 'publicando', tom: 'andando' }
+    case 'no_ar':
+      return { texto: 'no ar', tom: 'ok' }
+    case 'nao_chegou':
+      return { texto: curtoDoMotivo(p.motivo), tom: 'nao' }
+    case 'descartada':
+      return { texto: 'descartada', tom: 'neutro' }
+  }
+}
+
+/** `<chave> · <estado curto>` de cada parte, na ordem de publicação; a descartada não aparece. */
+export function chipsDasPartes(partes: readonly Parte[]): ChipDaParte[] {
+  return ordemDePublicacao(ativas(partes)).map((p) => ({ chave: p.chave, ...chipDe(p) }))
+}
+
+const marcoConcluido = (d: DemandaNaLista, marco: Marco) =>
+  d.etapas.some((e) => e.marco === marco && d.concluidas.includes(e.chave))
+
+/** Os quatro pontos (pedida, plano, feita, no ar); a orientada para na triagem. */
+export function trilhoDaDemanda(d: DemandaNaLista): PontoAteOAr[] {
+  if (d.encerrada === 'orientada') return ['cheio', 'vazio', 'vazio', 'vazio']
+  // Encerrada como entregue antes das partes: feita, mas sem a conferência no site.
+  if (d.encerrada === 'entregue') return ['cheio', 'cheio', 'cheio', 'cheio']
+  const atual = etapaAtualDe(d)
   return [
-    {
-      chave: 'recebidas',
-      n: e.hoje.length,
-      rotulo: 'Recebidas',
-      meta: `você ${voce} · sessões ${sessoes}`,
-      filtro: null,
-    },
-    {
-      chave: 'orientadas',
-      n: conta((h) => h.destino === 'orientada' || h.encerrada === 'orientada'),
-      rotulo: 'Orientadas',
-      meta: 'sem ir à Fábrica',
-      filtro: 'orientada',
-    },
-    {
-      chave: 'urgente',
-      n: conta((h) => h.destino === 'urgente'),
-      rotulo: 'Urgente',
-      meta: 'na frente da fila',
-      filtro: 'urgente',
-    },
-    {
-      chave: 'lote',
-      n: conta((h) => h.destino === 'lote_da_noite'),
-      rotulo: 'Lote da noite',
-      meta: `publica às ${e.horaDoLote}`,
-      filtro: 'lote_da_noite',
-    },
-    {
-      chave: 'agentes',
-      n: conta((h) => h.destino === 'fila_de_agentes'),
-      rotulo: 'Fila de agentes',
-      meta: e.vagas
-        ? `${e.vagas.ocupadas} de ${e.vagas.efetivas} vagas`
-        : 'sem notícias da Fábrica',
-      filtro: 'fila_de_agentes',
-    },
-    {
-      chave: 'decisao',
-      n: e.decidindo.length,
-      rotulo: 'Decisão sua',
-      meta: maisAntiga
-        ? `a mais antiga: ${semHa(formatarIdade(maisAntiga, e.agora))}`
-        : 'nada esperando',
-      filtro: 'decisao_do_paulo',
-    },
+    ...trilhoAteOAr(
+      {
+        triada:
+          marcoConcluido(d, 'recebida') || (atual !== undefined && atual.marco !== 'recebida'),
+        temTela: d.temTela,
+        desenhoAprovado: d.desenhoAprovado !== null || marcoConcluido(d, 'desenho'),
+        testePassou: marcoConcluido(d, 'testada'),
+      },
+      d.partes,
+    ),
   ]
 }
 
-const TITULO_DO_GRUPO: Record<ChaveDoGrupo, GrupoDeDemandas['titulo']> = {
-  espera_voce: 'Espera você',
-  em_andamento: 'Em andamento',
-  na_fila: 'Na fila',
+/**
+ * A frase da linha: o motivo da parte mais atrasada. "Espera você" fala do que o Paulo tem a
+ * fazer; "A caminho" sem motivo fala da etapa, porque "Falta a parte" lá seria alarme falso.
+ */
+function fraseDaLinha(
+  d: DemandaNaLista,
+  grupo: GrupoDeDemandas['chave'],
+): { texto: string; tom: TomDaDemanda } {
+  if (grupo === 'espera_voce' || grupo === 'orientadas_hoje' || ativas(d.partes).length === 0) {
+    return rotuloDoEstado(d)
+  }
+  const frase = fraseDaDemanda(d.partes)
+  if (grupo === 'a_caminho' && d.partes.some((p) => frase.texto === MOTIVOS.falta(p.chave))) {
+    return rotuloDoEstado(d)
+  }
+  return frase
 }
 
 function desdeDe(d: DemandaNaLista, grupo: GrupoDeDemandas['chave']): Date {
   if (grupo === 'espera_voce') return d.esperaDesde ?? d.atualizadaEm
-  if (grupo === 'na_fila') return d.criadaEm
+  if (grupo === 'nao_chegou') return d.naoChegouDesde ?? d.atualizadaEm
+  if (grupo === 'no_ar') return d.noArEm ?? d.atualizadaEm
   return d.atualizadaEm
 }
 
 function linhaDe(d: DemandaNaLista, grupo: GrupoDeDemandas['chave'], agora: Date): LinhaDeDemanda {
+  const desde = desdeDe(d, grupo)
   return {
     id: d.id,
     href: `/demandas/${d.id}`,
     titulo: d.titulo,
     projeto: d.projeto,
-    icone: iconeDoTipo(d.tipo),
-    trilho: trilho(etapasAplicaveis(d.etapas, d.temTela), d),
-    estado: rotuloDoEstado(d),
-    idade: semHa(formatarIdade(desdeDe(d, grupo), agora)),
+    partes: chipsDasPartes(d.partes),
+    trilho: trilhoDaDemanda(d),
+    estado: fraseDaLinha(d, grupo),
+    idade:
+      grupo === 'no_ar' && ehDeHoje(desde, agora) ? 'hoje' : semHa(formatarIdade(desde, agora)),
   }
 }
 
 /**
- * "Espera você": a que espera há mais tempo primeiro; "Em andamento": a que andou por último
- * primeiro; "Na fila": urgente primeiro e depois a mais antiga, a ordem em que entram.
+ * Espera você no topo; depois Não chegou ao ar (a mais antiga primeiro), A caminho (a que andou
+ * por último primeiro) e No ar (a mais recente primeiro).
  */
 export function montarGrupos(
   demandas: readonly DemandaNaLista[],
   agora: Date,
-  /** Só com o filtro "orientada": as encerradas como orientadas hoje, num quarto grupo. */
+  /** Só com o filtro "orientada": as encerradas como orientadas hoje, num grupo no fim. */
   orientadasHoje: readonly DemandaNaLista[] | null = null,
 ): GrupoDeDemandas[] {
-  const por: Record<ChaveDoGrupo, DemandaNaLista[]> = {
+  const por: Record<GrupoAteOAr, DemandaNaLista[]> = {
     espera_voce: [],
-    em_andamento: [],
-    na_fila: [],
+    nao_chegou: [],
+    a_caminho: [],
+    no_ar: [],
   }
   for (const d of demandas) {
-    const g = grupoDaDemanda(d)
+    const g = grupoAteOAr(d, agora)
     if (g) por[g].push(d)
   }
-  por.espera_voce.sort(
-    (a, b) => desdeDe(a, 'espera_voce').getTime() - desdeDe(b, 'espera_voce').getTime(),
-  )
-  por.em_andamento.sort((a, b) => b.atualizadaEm.getTime() - a.atualizadaEm.getTime())
-  por.na_fila.sort(compararNaFila)
-  const grupos: GrupoDeDemandas[] = (Object.keys(por) as ChaveDoGrupo[]).map((chave) => ({
+  const t = (d: DemandaNaLista, g: GrupoAteOAr) => desdeDe(d, g).getTime()
+  por.espera_voce.sort((a, b) => t(a, 'espera_voce') - t(b, 'espera_voce'))
+  por.nao_chegou.sort((a, b) => t(a, 'nao_chegou') - t(b, 'nao_chegou'))
+  por.a_caminho.sort((a, b) => t(b, 'a_caminho') - t(a, 'a_caminho'))
+  por.no_ar.sort((a, b) => t(b, 'no_ar') - t(a, 'no_ar'))
+  const grupos: GrupoDeDemandas[] = ORDEM_DOS_GRUPOS.map((chave) => ({
     chave,
     titulo: TITULO_DO_GRUPO[chave],
-    contagem: chave === 'na_fila' ? 'entram na ordem' : String(por[chave].length),
+    contagem: String(por[chave].length),
     linhas: por[chave].map((d) => linhaDe(d, chave, agora)),
   }))
   if (orientadasHoje === null) return grupos
@@ -319,6 +363,212 @@ export function montarGrupos(
       linhas: orientadas.map((d) => linhaDe(d, 'orientadas_hoje', agora)),
     },
   ]
+}
+
+const QUADROS: readonly { chave: GrupoAteOAr; rotulo: string; meta: string }[] = [
+  { chave: 'no_ar', rotulo: 'No ar', meta: 'conferidas no site' },
+  { chave: 'a_caminho', rotulo: 'A caminho', meta: 'Fábrica trabalhando' },
+  { chave: 'nao_chegou', rotulo: 'Não chegou ao ar', meta: 'feita, mas falta algo' },
+  { chave: 'espera_voce', rotulo: 'Espera você', meta: '' },
+]
+
+/** Os quatro números do topo: a contagem de cada grupo; "Espera você" diz há quanto a mais antiga espera. */
+export function quadrosAteOAr(grupos: readonly GrupoDeDemandas[]): QuadroAteOAr[] {
+  return QUADROS.map((q) => {
+    const linhas = grupos.find((g) => g.chave === q.chave)?.linhas ?? []
+    const meta =
+      q.chave === 'espera_voce' ? (linhas[0] ? `há ${linhas[0].idade}` : 'nada esperando') : q.meta
+    return { chave: q.chave, numero: linhas.length, rotulo: q.rotulo, meta }
+  })
+}
+
+// ——— Detalhe até o ar (5.4) ———
+
+const ADIANTAMENTO: Record<Parte['estado'], number> = {
+  planejando: 0,
+  em_curso: 1,
+  feita: 2,
+  nao_chegou: 2,
+  publicando: 3,
+  no_ar: 4,
+  descartada: 5,
+}
+
+function maisAtrasada(partes: readonly Parte[]): Parte | undefined {
+  const ordem = ordemDePublicacao(ativas(partes))
+  return [...ordem].sort(
+    (a, b) =>
+      ADIANTAMENTO[a.estado] - ADIANTAMENTO[b.estado] || ordem.indexOf(a) - ordem.indexOf(b),
+  )[0]
+}
+
+export interface FaixaDoQueFalta {
+  titulo: string
+  contexto: string
+  /** A chave da parte que o Paulo pode dar como no ar ("Conferi no ar"); null sem ação. */
+  conferir: string | null
+}
+
+function oQueAconteceCom(p: Parte): string {
+  switch (p.estado) {
+    case 'planejando':
+      return 'A Fábrica está planejando essa parte.'
+    case 'em_curso':
+      return 'A Fábrica está fazendo essa parte.'
+    case 'feita':
+      return 'Feita; falta publicar.'
+    case 'publicando':
+      return `${p.motivo ?? 'Publicando'}.`
+    default:
+      return `${p.motivo ?? 'Não chegou ao ar'}.`
+  }
+}
+
+/** A faixa "Falta": só com a demanda em "Não chegou ao ar"; a parte mais atrasada e o que acontece com ela. */
+export function faixaDoQueFalta(e: {
+  grupo: GrupoAteOAr | null
+  partes: readonly Parte[]
+  podeConferir: boolean
+}): FaixaDoQueFalta | null {
+  if (e.grupo !== 'nao_chegou') return null
+  const atrasada = maisAtrasada(e.partes)
+  if (!atrasada) return null
+  const n = ativas(e.partes).length
+  const objetivo = atrasada.objetivo.trim()
+  const conferivel = ordemDePublicacao(ativas(e.partes)).find(conferivelPeloPaulo)
+  return {
+    titulo: `Falta: a parte do ${atrasada.chave}${objetivo ? ` (${objetivo})` : ''}`,
+    contexto:
+      oQueAconteceCom(atrasada) + (n > 1 ? ` A demanda só fecha com as ${n} partes no ar.` : ''),
+    conferir: e.podeConferir && conferivel ? conferivel.chave : null,
+  }
+}
+
+/** "Ordem de publicação: back antes do front"; com uma parte só, nada. */
+export function textoDaOrdem(partes: readonly Parte[]): string | null {
+  const chaves = ordemDePublicacao(ativas(partes)).map((p) => p.chave)
+  if (chaves.length < 2) return null
+  if (chaves.length === 2) return `Ordem de publicação: ${chaves[0]} antes do ${chaves[1]}`
+  return `Ordem de publicação: ${chaves.join(' → ')}`
+}
+
+export interface PassoDaParte {
+  rotulo: string
+  ponto: PontoAteOAr
+  detalhe: string | null
+  links: { texto: string; href: string }[]
+}
+
+export interface CartaoDaParte {
+  chave: string
+  titulo: string
+  repositorio: string
+  estado: { texto: string; tom: TomDaParte }
+  passos: PassoDaParte[]
+}
+
+/** O que vem do banco para os passos, por chave da parte. */
+export interface ExtrasDasPartes {
+  /** O PR do plano da parte. */
+  planos: Record<string, string>
+  /** O PR do conserto em curso da publicação da parte. */
+  consertos: Record<string, string>
+  /** O estado do pedido de publicação corrente da parte. */
+  pedidos: Record<string, EstadoDoPedido>
+  /** A parte foi dada como no ar pelo Paulo ("Conferi no ar"). */
+  conferidas: Record<string, boolean>
+}
+
+const ROTULO_DO_PEDIDO: Record<EstadoDoPedido, string> = {
+  na_fila: 'na fila',
+  verificando: 'verificando',
+  publicando: 'publicando',
+  publicado: 'publicado',
+  recusado: 'recusado',
+  dispensado: 'dispensado',
+  falhou: 'falhou',
+  cancelado: 'cancelado',
+}
+
+const maiuscula = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+const link = (texto: string, url: string | undefined) => {
+  const href = linkDoGithub(url ?? null)
+  return href ? [{ texto, href }] : []
+}
+
+function passoDaPublicacao(p: Parte, x: ExtrasDasPartes): PassoDaParte {
+  switch (p.estado) {
+    case 'no_ar': {
+      const sha = p.commitNoAr ?? p.commitAlvo
+      const detalhe = [
+        x.conferidas[p.chave] ? 'conferida por você' : null,
+        p.noArEm && diaEMes(p.noArEm),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      return {
+        rotulo: sha ? MOTIVOS.noAr(sha) : 'No ar',
+        ponto: 'verde',
+        detalhe: detalhe || null,
+        links: [],
+      }
+    }
+    case 'nao_chegou':
+      return { rotulo: p.motivo ?? 'Não chegou ao ar', ponto: 'vermelho', detalhe: null, links: [] }
+    case 'publicando': {
+      const pedido = x.pedidos[p.chave]
+      return {
+        rotulo: p.motivo ?? 'Publicando',
+        ponto: 'andando',
+        detalhe: pedido ? ROTULO_DO_PEDIDO[pedido] : null,
+        links: link('conserto', x.consertos[p.chave]),
+      }
+    }
+    default:
+      return { rotulo: 'Publicada e conferida no site', ponto: 'vazio', detalhe: null, links: [] }
+  }
+}
+
+const COM_PRS: ReadonlySet<Parte['estado']> = new Set([
+  'feita',
+  'publicando',
+  'no_ar',
+  'nao_chegou',
+])
+
+/** Um cartão por parte, na ordem de publicação: plano, PRs e publicação com conferência. */
+export function cartoesDasPartes(partes: readonly Parte[], x: ExtrasDasPartes): CartaoDaParte[] {
+  const ordem = ordemDePublicacao(ativas(partes))
+  return ordem.map((p, i) => {
+    const faltam = p.dependeDe.filter((d) =>
+      ordem.some((o) => o.chave === d && o.estado !== 'no_ar'),
+    )
+    const abertos = p.prs.filter((pr) => pr.estado === 'aberto').length
+    return {
+      chave: p.chave,
+      titulo: `${i + 1} · ${maiuscula(p.chave)}`,
+      repositorio: p.repositorio.split('/').pop() ?? p.repositorio,
+      estado:
+        p.estado !== 'no_ar' && faltam.length > 0
+          ? { texto: `espera o ${faltam.join(' e o ')}`, tom: 'andando' }
+          : chipDe(p),
+      passos: [
+        {
+          rotulo: 'Plano da parte',
+          ponto: p.estado === 'planejando' ? 'andando' : 'cheio',
+          detalhe: null,
+          links: link('plano', x.planos[p.chave]),
+        },
+        {
+          rotulo: 'PRs mergeados',
+          ponto: COM_PRS.has(p.estado) ? 'cheio' : p.estado === 'em_curso' ? 'andando' : 'vazio',
+          detalhe: abertos > 0 ? `${abertos} aberto${abertos > 1 ? 's' : ''}` : null,
+          links: p.prs.flatMap((pr) => link(`#${pr.numero}`, pr.url)),
+        },
+        passoDaPublicacao(p, x),
+      ],
+    }
+  })
 }
 
 /** A mesma regra do Início: só avisa com recebida parada além do limite e a Fábrica sem buscar. */
@@ -596,6 +846,14 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   entregue: 'Entregue',
   encerrada_pelo_paulo: 'Demanda encerrada',
   entrega_parcial: 'Entregar o que funciona; o que faltou virou uma demanda nova',
+  no_ar: 'No ar',
+  partes_planejadas: 'Partes planejadas',
+}
+
+const TEXTO_DO_EVENTO_DA_PARTE: Record<string, (chave: string) => string> = {
+  parte_planejada: (c) => `Parte ${c} planejada`,
+  parte_feita: (c) => `Parte ${c} feita`,
+  parte_conferida_pelo_paulo: (c) => `Parte ${c} conferida pelo Paulo`,
 }
 
 const QUEM_FEZ: Record<string, string> = {
@@ -610,6 +868,8 @@ const LIMITE_DA_RESPOSTA_NO_HISTORICO = 120
 
 export function textoDoEvento(tipo: string, dados: unknown): string {
   const d = (dados ?? {}) as Record<string, unknown>
+  const daParte = TEXTO_DO_EVENTO_DA_PARTE[tipo]
+  if (daParte && typeof d.chave === 'string') return daParte(d.chave)
   if (tipo === 'retomada' && typeof d.resposta === 'string' && d.resposta.trim()) {
     const r = d.resposta.trim()
     const curta =
@@ -655,15 +915,20 @@ export interface EventoNoHistorico {
 export interface PaginaDaDemanda {
   id: string
   titulo: string
-  icone: ReturnType<typeof iconeDoTipo>
-  chips: string[]
-  /** Só na entregue: "✓ Entregue · …". */
+  /** "Projeto Alfa · aberta há 1 d". */
+  subtitulo: string
+  /** Só na fechada: "✓ No ar · c5c01ba" (ou "✓ Entregue · …" nas antigas). */
   entrega: string | null
-  trilho: ReturnType<typeof trilho>
+  trilho: PontoAteOAr[]
   etapaAtual: string
   faixa: FaixaDaEspera | null
+  /** A faixa "Falta", com a ação "Conferi no ar" quando cabe e nenhuma outra ação está na tela. */
+  falta: FaixaDoQueFalta | null
+  /** "Ordem de publicação: back antes do front"; null com uma parte. */
+  ordem: string | null
+  partes: CartaoDaParte[]
   impacto: { quadros: QuadroDeImpacto[]; podeQuebrar: string[]; pilulas: string[] }
-  /** Na entregue, o desenho aprovado; antes disso, a versão mais nova. */
+  /** Na fechada, o desenho aprovado; antes disso, a versão mais nova. */
   desenho: DesenhoNaPagina | null
   artefatoUrl: string | null
   capturas: { id: string; tela: 'desktop' | 'celular' }[]

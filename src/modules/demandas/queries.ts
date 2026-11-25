@@ -1,45 +1,42 @@
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
-import { HORA_DO_LOTE_PADRAO } from '@/modules/fila-de-publicacao/model'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { moduloAtivo } from '@/lib/modulos'
-import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
-import { esperasDasDemandas, type ItemDeEspera } from '@/modules/inicio/model'
+import { esperasDasDemandas, formatarIdade, type ItemDeEspera } from '@/modules/inicio/model'
 import {
-  ROTULO_DO_DESTINO,
-  ROTULO_DO_NIVEL,
   avisosDoImpacto,
   cabecalhoDaEntrega,
-  chipDeAbertura,
-  chipDoPr,
+  cartoesDasPartes,
   ehDeHoje,
   faixaDaEspera,
-  fluxoDeEntrada,
-  iconeDoTipo,
+  faixaDoQueFalta,
   linkDoArtefato,
   montarGrupos,
+  quadrosAteOAr,
   quadrosDeImpacto,
   quemFez,
+  textoDaOrdem,
   textoDoEvento,
-  trilho,
+  trilhoDaDemanda,
   avisoDeFabricaSemBuscar,
   demandasQueVemAi,
   type DemandaNaLista,
   type DemandaQueVemAi,
   type PaginaDaDemanda,
   type TelaDeDemandas,
+  type ExtrasDasPartes,
   type TriagemDaDemanda,
 } from './apresentacao'
+import { fraseDaDemanda, grupoAteOAr } from './partes'
+import { comoParte } from './partes-service'
 import { cabecalhosDoArquivo, lerArquivo } from './arquivos'
 import {
-  etapasAplicaveis,
   type Destino,
   type EtapaDefinida,
   type Espera,
   type Nivel,
-  type Origem,
   type TipoDeDemanda,
 } from './model'
 
@@ -128,7 +125,15 @@ const minusculo = <T extends string>(v: string) => v.toLowerCase() as T
 const DIA_MS = 24 * 60 * 60_000
 const LIMITE_DE_ORIENTADAS = 200
 
-/** A tela Demandas: o fluxo de entrada de hoje, os três grupos e o aviso da Fábrica parada. */
+const COM_AS_PARTES = {
+  partes: { include: { repositorio: { select: { nomeCompleto: true } } } },
+} as const
+
+/**
+ * A tela Demandas (spec "demanda até o ar", 5.3): os quatro números e os grupos — as abertas e as
+ * que fecharam no ar nos últimos 30 dias. As encerradas como `entregue` antes das partes ficam
+ * de fora até a migração (Task 9) levá-las ao `no_ar`.
+ */
 export async function obterListaDeDemandas(
   sujeito: Sujeito,
   filtro: Destino | null,
@@ -150,52 +155,37 @@ export async function obterListaDeDemandas(
     criadaEm: true,
     esperaDesde: true,
     atualizadaEm: true,
+    naoChegouDesde: true,
+    noArEm: true,
+    desenhoAprovado: true,
     projeto: { select: { nome: true } },
+    ...COM_AS_PARTES,
   } as const
   const umDiaEMeio = new Date(agora.getTime() - 1.5 * DIA_MS)
-  const [abertas, orientadas, recentes, decidindo, config, retrato, recebidas, fonte] =
-    await Promise.all([
-      db.demanda.findMany({
-        where: {
-          ...ativo,
-          encerrada: null,
-          ...(filtro ? { destino: filtro.toUpperCase() as Uppercase<Destino> } : {}),
-        },
-        select: selecao,
-      }),
-      // Só com o filtro "orientada": as encerradas como orientadas, com teto; o corte do dia é `ehDeHoje`.
-      filtro === 'orientada'
-        ? db.demanda.findMany({
-            where: { ...ativo, encerrada: 'orientada', atualizadaEm: { gte: umDiaEMeio } },
-            orderBy: { atualizadaEm: 'desc' },
-            take: LIMITE_DE_ORIENTADAS,
-            select: selecao,
-          })
-        : null,
-      // Um dia e meio para trás cobre o começo do dia em São Paulo; o corte exato é `ehDeHoje`.
-      db.demanda.findMany({
-        where: { ...ativo, criadaEm: { gte: umDiaEMeio } },
-        select: { origem: true, destino: true, encerrada: true, criadaEm: true },
-      }),
-      db.demanda.findMany({
-        where: { ...ativo, encerrada: null, espera: 'decidir_destino' },
-        select: { esperaDesde: true, atualizadaEm: true },
-      }),
-      db.configuracaoDePublicacao.findFirst({
-        orderBy: { horaDoLote: 'asc' },
-        select: { horaDoLote: true },
-      }),
-      obterRetratoMaisRecente(sujeito).catch(() => null),
-      db.demanda.aggregate({
-        where: { ...ativo, encerrada: null, etapaAtual: 'recebida' },
-        _count: true,
-        _min: { criadaEm: true },
-      }),
-      db.fonteDaFabrica.aggregate({
-        where: { revogadaEm: null },
-        _max: { demandasBuscadasEm: true },
-      }),
-    ])
+  const trintaDias = new Date(agora.getTime() - 30 * DIA_MS)
+  const [abertas, noAr, orientadas, recebidas, fonte] = await Promise.all([
+    db.demanda.findMany({ where: { ...ativo, encerrada: null }, select: selecao }),
+    db.demanda.findMany({
+      where: { ...ativo, encerrada: 'no_ar', noArEm: { gte: trintaDias } },
+      select: selecao,
+    }),
+    // As encerradas como orientadas, com teto; o corte do dia é `ehDeHoje`.
+    db.demanda.findMany({
+      where: { ...ativo, encerrada: 'orientada', atualizadaEm: { gte: umDiaEMeio } },
+      orderBy: { atualizadaEm: 'desc' },
+      take: LIMITE_DE_ORIENTADAS,
+      select: selecao,
+    }),
+    db.demanda.aggregate({
+      where: { ...ativo, encerrada: null, etapaAtual: 'recebida' },
+      _count: true,
+      _min: { criadaEm: true },
+    }),
+    db.fonteDaFabrica.aggregate({
+      where: { revogadaEm: null },
+      _max: { demandasBuscadasEm: true },
+    }),
+  ])
 
   const naLista = (d: (typeof abertas)[number]): DemandaNaLista => ({
     id: d.id,
@@ -212,28 +202,26 @@ export async function obterListaDeDemandas(
     criadaEm: d.criadaEm,
     esperaDesde: d.esperaDesde,
     atualizadaEm: d.atualizadaEm,
+    partes: d.partes.map(comoParte),
+    naoChegouDesde: d.naoChegouDesde,
+    noArEm: d.noArEm,
+    desenhoAprovado: d.desenhoAprovado,
   })
 
-  const vagas = retrato?.retrato.vagas
+  const todas = [...abertas, ...noAr].map(naLista)
+  const deHoje = orientadas.filter((d) => ehDeHoje(d.atualizadaEm, agora)).map(naLista)
+  const semFiltro = montarGrupos(todas, agora)
   return {
-    quadros: fluxoDeEntrada({
-      hoje: recentes
-        .filter((d) => ehDeHoje(d.criadaEm, agora))
-        .map((d) => ({
-          origem: minusculo<Origem>(d.origem),
-          destino: d.destino ? minusculo<Destino>(d.destino) : null,
-          encerrada: d.encerrada,
-        })),
-      decidindo: decidindo.map((d) => ({ esperaDesde: d.esperaDesde ?? d.atualizadaEm })),
-      horaDoLote: config?.horaDoLote ?? HORA_DO_LOTE_PADRAO,
-      vagas: vagas ? { ocupadas: vagas.ocupadas, efetivas: vagas.efetivas } : null,
-      agora,
-    }),
-    grupos: montarGrupos(
-      abertas.map(naLista),
-      agora,
-      orientadas && orientadas.filter((d) => ehDeHoje(d.atualizadaEm, agora)).map(naLista),
-    ),
+    // Os números contam todas; o filtro só muda a lista.
+    quadros: quadrosAteOAr(semFiltro),
+    grupos: filtro
+      ? montarGrupos(
+          todas.filter((d) => d.destino === filtro),
+          agora,
+          filtro === 'orientada' ? deHoje : null,
+        )
+      : semFiltro,
+    orientadasHoje: deHoje.length,
     fabricaSemBuscar: avisoDeFabricaSemBuscar(
       {
         buscouEm: fonte._max.demandasBuscadasEm,
@@ -262,6 +250,50 @@ function capturasPorTela(
   })
 }
 
+const CONSERTO_EM_CURSO = ['ABERTO', 'EM_CURSO', 'COM_PR'] as const
+
+/** O que os passos das partes leem além da linha: o pedido corrente e o PR do conserto em curso. */
+async function extrasDasPartes(
+  partes: readonly {
+    id: string
+    chave: string
+    planoPrUrl: string | null
+    pedidoId: string | null
+    conferidaPorId: string | null
+  }[],
+): Promise<ExtrasDasPartes> {
+  const pedidoIds = partes.flatMap((p) => (p.pedidoId ? [p.pedidoId] : []))
+  const [pedidos, consertos] = await Promise.all([
+    pedidoIds.length > 0
+      ? db.pedidoDePublicacao.findMany({
+          where: { id: { in: pedidoIds } },
+          select: { id: true, estado: true },
+        })
+      : [],
+    partes.length > 0
+      ? db.pedidoDeConserto.findMany({
+          where: {
+            parteId: { in: partes.map((p) => p.id) },
+            estado: { in: [...CONSERTO_EM_CURSO] },
+            prUrl: { not: null },
+          },
+          orderBy: { abertoEm: 'desc' },
+          select: { parteId: true, prUrl: true },
+        })
+      : [],
+  ])
+  const extras: ExtrasDasPartes = { planos: {}, consertos: {}, pedidos: {}, conferidas: {} }
+  for (const p of partes) {
+    if (p.planoPrUrl) extras.planos[p.chave] = p.planoPrUrl
+    if (p.conferidaPorId) extras.conferidas[p.chave] = true
+    const pedido = pedidos.find((x) => x.id === p.pedidoId)
+    if (pedido) extras.pedidos[p.chave] = estadoNoFio(pedido.estado)
+    const conserto = consertos.find((c) => c.parteId === p.id)
+    if (conserto?.prUrl) extras.consertos[p.chave] = conserto.prUrl
+  }
+  return extras
+}
+
 /**
  * A página da demanda: cabeçalho, trilho, faixa do que espera o Paulo, impacto da triagem,
  * desenho, capturas e histórico. Demanda que não existe → null.
@@ -277,6 +309,7 @@ export async function obterPaginaDaDemanda(
     where: { id },
     include: {
       projeto: { select: { nome: true } },
+      ...COM_AS_PARTES,
       arquivos: {
         where: { tipo: { in: ['DESENHO', 'CAPTURA'] } },
         select: {
@@ -300,9 +333,11 @@ export async function obterPaginaDaDemanda(
   if (!d) return null
 
   const etapas = d.etapas as unknown as EtapaDefinida[]
+  // `entregue` é a encerrada antes das partes; até a migração ela aparece como fechada.
   const entregue = d.encerrada === 'entregue'
-  const nivel = minusculo<Nivel>(d.nivel)
+  const fechada = entregue || d.encerrada === 'no_ar'
   const destino = d.destino ? minusculo<Destino>(d.destino) : null
+  const partes = d.partes.map(comoParte)
   const naLista: DemandaNaLista = {
     id: d.id,
     titulo: d.titulo,
@@ -318,6 +353,10 @@ export async function obterPaginaDaDemanda(
     criadaEm: d.criadaEm,
     esperaDesde: d.esperaDesde,
     atualizadaEm: d.atualizadaEm,
+    partes,
+    naoChegouDesde: d.naoChegouDesde,
+    noArEm: d.noArEm,
+    desenhoAprovado: d.desenhoAprovado,
   }
 
   // O último ajuste vem do histórico inteiro, não só da página dele.
@@ -345,7 +384,7 @@ export async function obterPaginaDaDemanda(
   const publicacao =
     entregue && moduloAtivo('fila-de-publicacao') ? await publicacaoDaDemanda(d.id) : null
 
-  const versaoMostrada = entregue ? (d.desenhoAprovado ?? d.versaoDoDesenho) : d.versaoDoDesenho
+  const versaoMostrada = fechada ? (d.desenhoAprovado ?? d.versaoDoDesenho) : d.versaoDoDesenho
   const desenho = d.arquivos.find(
     (a) => a.tipo === 'DESENHO' && a.apagadoEm === null && a.versao === versaoMostrada,
   )
@@ -358,48 +397,49 @@ export async function obterPaginaDaDemanda(
 
   const triagem = d.triagem as unknown as TriagemDaDemanda | null
   const podeAgir = autorizar(sujeito, 'projetos.gerenciar')
-  const chips = entregue
-    ? [
-        d.projeto.nome,
-        ROTULO_DO_NIVEL[nivel],
-        chipDoPr(d.prs),
-        publicacao?.estado === 'publicado' && publicacao.commit
-          ? `publicado ${publicacao.commit.slice(0, 7)}`
-          : null,
-      ]
-    : [
-        d.projeto.nome,
-        ROTULO_DO_NIVEL[nivel],
-        destino ? ROTULO_DO_DESTINO[destino] : null,
-        chipDeAbertura(minusculo<Origem>(d.origem), d.criadaEm, agora),
-      ]
+  const faixa = d.encerrada
+    ? null
+    : faixaDaEspera(
+        {
+          id: d.id,
+          espera: naLista.espera,
+          esperaMotivo: d.esperaMotivo,
+          versaoDoDesenho: d.versaoDoDesenho,
+          ultimoAjuste:
+            ajuste && typeof textoDoAjuste === 'string'
+              ? { texto: textoDoAjuste, em: ajuste.em }
+              : null,
+          urlDaTrava: typeof urlDaTrava === 'string' ? urlDaTrava : null,
+          etapaAtual: d.etapaAtual,
+          etapas,
+        },
+        agora,
+      )
+  // A faixa "Falta" vale para a demanda aberta com parte que não chegou, mesmo esperando o Paulo;
+  // "Conferi no ar" só aparece quando a faixa da espera não tem ação (uma ação principal só).
+  const falta = faixaDoQueFalta({
+    grupo: d.encerrada === null && d.naoChegouDesde ? 'nao_chegou' : grupoAteOAr(naLista, agora),
+    partes,
+    podeConferir: podeAgir && (faixa === null || faixa.acoes.length === 0),
+  })
 
   return {
     id: d.id,
     titulo: d.titulo,
-    icone: iconeDoTipo(naLista.tipo),
-    chips: chips.filter((c): c is string => c !== null),
-    entrega: entregue ? cabecalhoDaEntrega(publicacao, agora) : null,
-    trilho: trilho(etapasAplicaveis(etapas, d.temTela), naLista),
+    subtitulo: fechada
+      ? d.projeto.nome
+      : `${d.projeto.nome} · aberta ${formatarIdade(d.criadaEm, agora)}`,
+    entrega: entregue
+      ? cabecalhoDaEntrega(publicacao, agora)
+      : d.encerrada === 'no_ar'
+        ? `✓ ${partes.length > 0 ? fraseDaDemanda(partes).texto : 'No ar'}`
+        : null,
+    trilho: trilhoDaDemanda(naLista),
     etapaAtual: d.etapaAtual,
-    faixa: d.encerrada
-      ? null
-      : faixaDaEspera(
-          {
-            id: d.id,
-            espera: naLista.espera,
-            esperaMotivo: d.esperaMotivo,
-            versaoDoDesenho: d.versaoDoDesenho,
-            ultimoAjuste:
-              ajuste && typeof textoDoAjuste === 'string'
-                ? { texto: textoDoAjuste, em: ajuste.em }
-                : null,
-            urlDaTrava: typeof urlDaTrava === 'string' ? urlDaTrava : null,
-            etapaAtual: d.etapaAtual,
-            etapas,
-          },
-          agora,
-        ),
+    faixa,
+    falta,
+    ordem: textoDaOrdem(partes),
+    partes: cartoesDasPartes(partes, await extrasDasPartes(d.partes)),
     impacto: { quadros: quadrosDeImpacto(triagem), ...avisosDoImpacto(triagem) },
     desenho: desenho
       ? {
@@ -555,6 +595,10 @@ export async function obterDemandasQueVemAi(sujeito: Sujeito): Promise<DemandaQu
       criadaEm: d.criadaEm,
       esperaDesde: d.esperaDesde,
       atualizadaEm: d.atualizadaEm,
+      partes: [],
+      naoChegouDesde: null,
+      noArEm: null,
+      desenhoAprovado: null,
     })),
   )
 }

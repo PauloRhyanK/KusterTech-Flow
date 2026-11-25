@@ -10,6 +10,7 @@ import { registrarAcaoDeHomologacao } from '@/modules/homologacao/service'
 import { obterVersaoCorrenteEmQA } from '@/modules/homologacao/versao-corrente'
 import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
+import { MODELO_PADRAO } from '@/modules/demandas/model'
 import { criarDemanda, registrarEvento } from '@/modules/demandas/service'
 import { MAQUINA_LOCAL_E2E } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
@@ -1369,4 +1370,86 @@ export async function esperaDaDemandaNoBanco(
     where: { id },
     select: { espera: true, encerrada: true, destino: true },
   })
+}
+
+// "Demanda até o ar": uma demanda com as partes gravadas direto no banco, para conferir a tela.
+export interface ParteDeTeste {
+  chave: string
+  repositorio: string
+  ordem: number
+  objetivo?: string
+  dependeDe?: string[]
+  estado?: 'PLANEJANDO' | 'EM_CURSO' | 'FEITA' | 'PUBLICANDO' | 'NO_AR' | 'NAO_CHEGOU'
+  motivo?: string
+  prs?: number
+  commitNoAr?: string
+}
+
+export async function criarDemandaAteOArNoBanco(e: {
+  projetoId: string
+  repositorio: string
+  titulo: string
+  partes: readonly ParteDeTeste[]
+  demanda?: Record<string, unknown>
+  eventos?: readonly { tipo: string; origem: string; dados?: Record<string, unknown> }[]
+}): Promise<{ id: string }> {
+  const repo = async (nomeCompleto: string) =>
+    (await db.repositorioGitHub.findFirstOrThrow({ where: { nomeCompleto }, select: { id: true } }))
+      .id
+  const agora = Date.now()
+  const d = await db.demanda.create({
+    data: {
+      projetoId: e.projetoId,
+      repositorioId: await repo(e.repositorio),
+      titulo: e.titulo,
+      nivel: 'APROVAR_DESENHO',
+      temTela: true,
+      origem: 'FLOW',
+      etapas: MODELO_PADRAO as never,
+      etapaAtual: 'desenvolvida',
+      concluidas: ['recebida', 'planejada', 'desenho'],
+      desenhoAprovado: 1,
+      versaoDoDesenho: 1,
+      criadaEm: new Date(agora - 26 * 60 * 60_000),
+      ...e.demanda,
+    } as never,
+    select: { id: true },
+  })
+  for (const p of e.partes) {
+    const repositorioId = await repo(p.repositorio)
+    await db.parteDaDemanda.create({
+      data: {
+        demandaId: d.id,
+        chave: p.chave,
+        repositorioId,
+        ordem: p.ordem,
+        objetivo: p.objetivo ?? null,
+        dependeDe: p.dependeDe ?? [],
+        estado: p.estado ?? 'PLANEJANDO',
+        motivo: p.motivo ?? null,
+        commitNoAr: p.commitNoAr ?? null,
+        noArEm: p.estado === 'NO_AR' ? new Date(agora - 60 * 60_000) : null,
+        prs: Array.from({ length: p.prs ?? 0 }, (_, i) => ({
+          url: `https://github.com/${p.repositorio}/pull/${100 + i}`,
+          repositorio: p.repositorio,
+          numero: 100 + i,
+          estado: 'mergeado',
+          mergeCommit: null,
+        })),
+      },
+    })
+  }
+  for (const [i, ev] of (e.eventos ?? []).entries()) {
+    await db.eventoDaDemanda.create({
+      data: {
+        idExterno: randomUUID(),
+        demandaId: d.id,
+        tipo: ev.tipo,
+        origem: ev.origem,
+        dados: (ev.dados ?? {}) as never,
+        em: new Date(agora - (26 - i) * 60 * 60_000),
+      },
+    })
+  }
+  return d
 }

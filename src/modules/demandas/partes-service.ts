@@ -1,9 +1,15 @@
 // Escrita das partes de uma demanda a partir dos eventos (spec "demanda até o ar", seções 3, 7.2 e
 // 7.3). Tudo roda dentro da transação do `registrarEvento`, depois da trava da linha da demanda;
 // cada função confere tudo antes de gravar, porque uma recusa não pode deixar escrita para trás.
+import { randomUUID } from 'node:crypto'
 import type { Prisma, EstadoDaParte as EstadoNoBanco } from '@prisma/client'
+import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
+import { fecharDemandaSeNoAr, travarDemandas } from './partes-no-ar'
 import {
   acumularPrs,
+  conferivelPeloPaulo,
   planejarMudancas,
   validarPartes,
   type EstadoDaParte,
@@ -11,6 +17,7 @@ import {
   type ParteDeclarada,
   type PrDaParte,
 } from './partes'
+import { TRAVA_DOS_EVENTOS_SQL } from './service'
 import type { EventoAplicavel } from './transicoes'
 
 type Tx = Prisma.TransactionClient
@@ -65,7 +72,7 @@ export async function criarParteDeEntrada(
   })
 }
 
-type LinhaDaParte = Prisma.ParteDaDemandaGetPayload<{
+export type LinhaDaParte = Prisma.ParteDaDemandaGetPayload<{
   include: { repositorio: { select: { nomeCompleto: true } } }
 }>
 
@@ -77,7 +84,7 @@ async function carregar(tx: Tx, demandaId: string): Promise<LinhaDaParte[]> {
   })
 }
 
-function comoParte(l: LinhaDaParte): Parte {
+export function comoParte(l: LinhaDaParte): Parte {
   return {
     chave: l.chave,
     repositorio: l.repositorio.nomeCompleto,
@@ -377,4 +384,66 @@ async function registrarEntregaV1(
     })
   }
   return ok
+}
+
+const NAO_ESPERA_CONFERENCIA = 'Esta parte não espera a sua conferência.'
+
+/**
+ * O escape do Paulo (seção 4): a parte publicada sem conferência do site (ou que sobe por versão)
+ * vai a `no_ar` com o registro de quem confirmou; com todas no ar, a demanda fecha. Trava a
+ * demanda, depois as partes, depois os eventos, como o resto do módulo.
+ */
+export async function conferirNoArPeloPaulo(
+  sujeito: Sujeito,
+  demandaId: string,
+  chave: string,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  const agora = new Date()
+  await db.$transaction(async (tx) => {
+    await travarDemandas(tx, [demandaId])
+    const demanda = await tx.demanda.findUnique({
+      where: { id: demandaId },
+      select: { encerrada: true },
+    })
+    if (!demanda) throw new ErroDeDominio('Demanda não encontrada.')
+    if (demanda.encerrada) throw new ErroDeDominio('A demanda já está encerrada.')
+    const parte = await tx.parteDaDemanda.findUnique({
+      where: { demandaId_chave: { demandaId, chave } },
+      select: { id: true, estado: true, motivo: true, chegaAoAr: true, commitAlvo: true },
+    })
+    if (
+      !parte ||
+      !conferivelPeloPaulo({
+        estado: minusculo(parte.estado),
+        motivo: parte.motivo,
+        chegaAoAr: parte.chegaAoAr === 'VERSAO' ? 'versao' : 'publicacao',
+      })
+    ) {
+      throw new ErroDeDominio(NAO_ESPERA_CONFERENCIA)
+    }
+    await tx.parteDaDemanda.update({
+      where: { id: parte.id },
+      data: {
+        estado: 'NO_AR',
+        noArEm: agora,
+        commitNoAr: parte.commitAlvo,
+        conferidaPorId: sujeito.usuarioId,
+        motivo: null,
+      },
+    })
+    await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+    await tx.eventoDaDemanda.create({
+      data: {
+        idExterno: randomUUID(),
+        demandaId,
+        tipo: 'parte_conferida_pelo_paulo',
+        origem: 'paulo',
+        usuarioId: sujeito.usuarioId,
+        dados: { chave },
+        em: agora,
+      },
+    })
+    await fecharDemandaSeNoAr(tx, demandaId, agora)
+  })
 }

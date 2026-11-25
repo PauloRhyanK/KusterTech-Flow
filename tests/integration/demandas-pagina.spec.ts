@@ -207,23 +207,11 @@ test('obterPaginaDaDemanda sem permissão → ErroDeAutorizacao; com → chips, 
   const pagina = await obterPaginaDaDemanda(admin, d.id, AGORA)
   expect(pagina).not.toBeNull()
   expect(pagina!.titulo).toBe('Tela de funil de vendas')
-  expect(pagina!.icone).toEqual({ letra: 'F', tom: 'execucao' })
-  expect(pagina!.chips).toEqual([
-    'Projeto Alfa',
-    'Aprovar desenho',
-    'Fila de agentes',
-    'aberta por uma sessão · há 1 d',
-  ])
+  expect(pagina!.subtitulo).toBe('Projeto Alfa · aberta há 1 d')
   expect(pagina!.entrega).toBeNull()
-  expect(pagina!.trilho.map((p) => [p.rotulo, p.ponto])).toEqual([
-    ['Recebida', 'feito'],
-    ['Planejada', 'feito'],
-    ['Desenho', 'espera'],
-    ['Desenvolvida', 'futuro'],
-    ['Testada', 'futuro'],
-    ['Entregue', 'futuro'],
-    ['No ar', 'futuro'],
-  ])
+  // Desenho esperando aprovação: o plano está em andamento.
+  expect(pagina!.trilho).toEqual(['cheio', 'andando', 'vazio', 'vazio'])
+  expect(pagina!.falta).toBeNull()
   expect(pagina!.faixa).toEqual({
     titulo: 'O desenho está pronto para você aprovar',
     contexto: 'versão 2 · ajuste pedido ontem: "menos texto no topo"',
@@ -253,7 +241,7 @@ test('obterPaginaDaDemanda sem permissão → ErroDeAutorizacao; com → chips, 
   expect(await obterPaginaDaDemanda(admin, 'nao-e-uuid', AGORA)).toBeNull()
 })
 
-test('entregue: chips com PR e commit publicado, desenho aprovado, capturas e capturas apagadas', async () => {
+test('entregue (antes das partes): cabeçalho da publicação, desenho aprovado, capturas e capturas apagadas', async () => {
   const d = await demanda('Fuso errado na agenda', {
     tipo: 'DEFEITO',
     nivel: 'VAI_SOZINHO',
@@ -303,9 +291,9 @@ test('entregue: chips com PR e commit publicado, desenho aprovado, capturas e ca
   })
 
   const pagina = await obterPaginaDaDemanda(admin, d.id, AGORA)
-  expect(pagina!.chips).toEqual(['Projeto Alfa', 'Vai sozinho', 'PR #318', 'publicado 9d2e41b'])
+  expect(pagina!.subtitulo).toBe('Projeto Alfa')
   expect(pagina!.entrega).toBe('✓ Entregue · no ar há 2 h')
-  expect(pagina!.trilho.every((p) => p.ponto === 'feito')).toBe(true)
+  expect(pagina!.trilho).toEqual(['cheio', 'cheio', 'cheio', 'cheio'])
   expect(pagina!.faixa).toBeNull()
   expect(pagina!.desenho?.arquivoId).toBe(desenho)
   expect(pagina!.capturas).toEqual([

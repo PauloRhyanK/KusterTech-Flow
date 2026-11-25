@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 import { HistoricoDaDemanda } from './historico-da-demanda'
 
 describe('HistoricoDaDemanda', () => {
-  test('evento, quem e quando de cada linha; vazio não aparece', () => {
-    render(
+  test('recolhido por padrão, com "N eventos"; dentro, evento, quem e quando', () => {
+    const { container } = render(
       <HistoricoDaDemanda
         eventos={[
           {
@@ -22,11 +22,26 @@ describe('HistoricoDaDemanda', () => {
         ]}
       />,
     )
-    expect(screen.getByRole('heading', { name: 'Histórico' })).toBeInTheDocument()
-    const linhas = screen.getAllByRole('listitem')
+    const detalhes = container.querySelector('details')
+    expect(detalhes).not.toHaveAttribute('open')
+    const resumo = container.querySelector('summary')
+    expect(resumo).toHaveTextContent('Histórico')
+    expect(resumo).toHaveTextContent('2 eventos')
+    const linhas = container.querySelectorAll('li')
     expect(linhas).toHaveLength(2)
     expect(linhas[0]).toHaveTextContent('Desenho enviado')
     expect(linhas[0]).toHaveTextContent('a Fábrica')
     expect(linhas[0]?.querySelector('time')).toHaveAttribute('dateTime', '2026-11-20T14:00:00.000Z')
+  })
+
+  test('um evento: "1 evento"; vazio não aparece', () => {
+    const { container, rerender } = render(
+      <HistoricoDaDemanda
+        eventos={[{ id: '1', evento: 'Demanda aberta', quem: 'você', quando: new Date() }]}
+      />,
+    )
+    expect(container.querySelector('summary')).toHaveTextContent('1 evento')
+    rerender(<HistoricoDaDemanda eventos={[]} />)
+    expect(container.querySelector('details')).toBeNull()
   })
 })

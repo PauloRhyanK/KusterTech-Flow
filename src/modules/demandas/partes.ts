@@ -293,3 +293,14 @@ export function fraseDaDemanda(partes: readonly Parte[]): {
   if (!atrasada) return { texto: '', tom }
   return { texto: atrasada.motivo ?? MOTIVOS.falta(atrasada.chave), tom }
 }
+
+/**
+ * O escape do Paulo (seção 4): a parte que não chegou porque o site não foi conferido (ou que
+ * sobe por versão) pode ser dada como no ar por ele, com "Conferi no ar".
+ */
+export function conferivelPeloPaulo(p: Pick<Parte, 'estado' | 'motivo' | 'chegaAoAr'>): boolean {
+  return (
+    p.estado === 'nao_chegou' &&
+    (p.motivo === MOTIVOS.publicadaSemConferir || p.chegaAoAr === 'versao')
+  )
+}
