@@ -41,7 +41,15 @@ describe('prédio da Fábrica', () => {
     render(
       <Predio
         andares={e.andares}
-        recepcao={[{ demandaId: 'd', titulo: 'Nova', repositorio: 'a/b', esperaPaulo: false }]}
+        recepcao={[
+          {
+            demandaId: 'd',
+            titulo: 'Nova',
+            repositorio: 'a/b',
+            esperaPaulo: false,
+            esperando: null,
+          },
+        ]}
         selecionado={null}
         onSelecionar={onSelecionar}
       />,
@@ -54,8 +62,8 @@ describe('prédio da Fábrica', () => {
   test('o andar que espera o Paulo vem primeiro, mesmo sendo o mais antigo', () => {
     const base = escritorioDeTeste().andares[0]!
     const andares = [
-      { ...base, planoId: 'velho', titulo: 'Velho', esperaPaulo: true },
-      { ...base, planoId: 'novo', titulo: 'Novo', esperaPaulo: false },
+      { ...base, planoId: 'velho', titulo: 'Velho', esperaPaulo: true, esperando: null },
+      { ...base, planoId: 'novo', titulo: 'Novo', esperaPaulo: false, esperando: null },
     ]
     render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
     const nomes = screen
@@ -65,13 +73,43 @@ describe('prédio da Fábrica', () => {
     expect(nomes[1]).toMatch(/2º andar: Novo/)
   })
 
+  test('entre os que esperam o Paulo, a espera mais longa vem primeiro e o rótulo diz há quanto tempo', () => {
+    const base = escritorioDeTeste().andares[0]!
+    const andares = [
+      {
+        ...base,
+        planoId: 'a',
+        titulo: 'Curta',
+        esperaPaulo: true,
+        esperando: { minutos: 30, longa: false },
+      },
+      {
+        ...base,
+        planoId: 'b',
+        titulo: 'Longa',
+        esperaPaulo: true,
+        esperando: { minutos: 200, longa: true },
+      },
+      { ...base, planoId: 'c', titulo: 'Decisão', esperaPaulo: true, esperando: null },
+      { ...base, planoId: 'd', titulo: 'Andando', esperaPaulo: false, esperando: null },
+    ]
+    render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
+    const nomes = screen
+      .getAllByRole('button', { name: /andar:/ })
+      .map((b) => b.getAttribute('aria-label'))
+    expect(nomes[0]).toMatch(/Longa.*espera você há 3 h 20 min$/)
+    expect(nomes[1]).toMatch(/Curta.*espera você há 30 min$/)
+    expect(nomes[2]).toMatch(/Decisão.*espera você$/)
+    expect(nomes[3]).toMatch(/Andando/)
+  })
+
   test('a recepção avisa quantas demandas sem andar esperam o Paulo', () => {
     render(
       <Predio
         andares={[]}
         recepcao={[
-          { demandaId: 'a', titulo: 'A', repositorio: 'a/b', esperaPaulo: true },
-          { demandaId: 'b', titulo: 'B', repositorio: 'a/b', esperaPaulo: false },
+          { demandaId: 'a', titulo: 'A', repositorio: 'a/b', esperaPaulo: true, esperando: null },
+          { demandaId: 'b', titulo: 'B', repositorio: 'a/b', esperaPaulo: false, esperando: null },
         ]}
         selecionado={null}
         onSelecionar={() => {}}

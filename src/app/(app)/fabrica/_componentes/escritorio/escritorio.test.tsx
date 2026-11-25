@@ -37,3 +37,19 @@ test('sem tela aberta, nenhum personagem livre vira a tela do agente', () => {
   render(montar())
   expect(screen.queryByRole('dialog')).toBeNull()
 })
+
+test('o que espera o Paulo aparece no topo, com há quanto tempo espera', () => {
+  const tresHorasAntes = new Date(AGORA.getTime() - 3 * 60 * 60_000)
+  render(montar(escritorioDeTeste(undefined, 'aprovar_desenho', tresHorasAntes)))
+  const secao = screen.getByRole('region', { name: 'Esperando você' })
+  const item = within(secao).getByRole('listitem')
+  expect(item).toHaveTextContent('Suporte por IA no CRM')
+  expect(item).toHaveTextContent('esperando você há 3 h · passou de 2 h')
+  // no celular, a lista de andares também diz o tempo
+  expect(screen.getByText(/· espera você há 3 h$/)).toBeInTheDocument()
+})
+
+test('sem espera, a faixa "Esperando você" não aparece', () => {
+  render(montar())
+  expect(screen.queryByRole('region', { name: 'Esperando você' })).toBeNull()
+})

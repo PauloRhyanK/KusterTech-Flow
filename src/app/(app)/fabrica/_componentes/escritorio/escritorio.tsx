@@ -8,12 +8,14 @@ import {
   contarEstados,
   type Escritorio as DadosDoEscritorio,
   type Grupo,
+  porEsperaMaisLonga,
 } from '@/modules/fabrica/escritorio/model'
 import { Contadores } from './contadores'
 import { Detalhe, type Selecao } from './detalhe'
+import { EsperasDoPaulo } from './esperas-do-paulo'
 import { Mapa } from './mapa'
 import { PlanoDaEntrega, textoDosTotais } from './plano-da-entrega'
-import { Predio } from './predio'
+import { Predio, textoDaEspera } from './predio'
 import { SalaDeGestao } from './sala-de-gestao'
 import { TelaDoAgente } from './tela-do-agente'
 
@@ -29,9 +31,12 @@ export interface EscritorioProps {
 type Escolha = { tipo: 'agente'; id: string } | { tipo: 'parte'; raia: string; fase: string } | null
 
 export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioProps) {
-  const { andares, recepcao, formatoAntigo } = escritorio
+  const { andares, recepcao, esperas, formatoAntigo } = escritorio
+  // abre no andar que espera o Paulo há mais tempo
   const primeiro =
-    andares.find((a) => a.esperaPaulo)?.planoId ?? andares[andares.length - 1]?.planoId ?? null
+    [...andares].sort(porEsperaMaisLonga).find((a) => a.esperaPaulo)?.planoId ??
+    andares[andares.length - 1]?.planoId ??
+    null
   const [planoId, setPlanoId] = useState<string | null>(primeiro)
   const [selecao, setSelecao] = useState<Escolha>(null)
   const [tela, setTela] = useState<string | null>(null)
@@ -83,23 +88,35 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
         </p>
       )}
 
-      {/* celular: lista simples */}
+      <EsperasDoPaulo esperas={esperas} />
+
+      {/* celular: lista simples, quem espera o Paulo há mais tempo primeiro */}
       <ul className="space-y-2 md:hidden">
         {andares.length === 0 && (
           <li className="text-sm text-text-secondary">nenhuma demanda andando</li>
         )}
-        {[...andares].reverse().map((a) => (
-          <li
-            key={a.planoId}
-            className={`rounded-padrao border border-border bg-surface p-3 ${a.esperaPaulo ? 'bg-tonal-atencao' : ''}`}
-          >
-            <b className="block text-sm text-text-primary">{a.titulo}</b>
-            <span className="text-xs text-text-secondary">
-              {textoDosTotais(a.fases)}
-              {a.esperaPaulo ? ' · espera você' : ''}
-            </span>
-          </li>
-        ))}
+        {[...andares]
+          .reverse()
+          .sort(porEsperaMaisLonga)
+          .map((a) => (
+            <li
+              key={a.planoId}
+              data-longa={a.esperando?.longa ?? false}
+              className={`rounded-padrao border p-3 ${
+                a.esperando?.longa
+                  ? 'border-erro/30 bg-tonal-erro'
+                  : a.esperaPaulo
+                    ? 'border-border bg-tonal-atencao'
+                    : 'border-border bg-surface'
+              }`}
+            >
+              <b className="block text-sm text-text-primary">{a.titulo}</b>
+              <span className="text-xs text-text-secondary">
+                {textoDosTotais(a.fases)}
+                {a.esperaPaulo ? ` · ${textoDaEspera(a)}` : ''}
+              </span>
+            </li>
+          ))}
       </ul>
 
       {/* tela grande: o escritório */}

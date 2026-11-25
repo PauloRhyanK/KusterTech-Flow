@@ -67,4 +67,30 @@ describe('escritório / queries', () => {
       'paulorhyank--caisv2--demanda-9c44dfa8--abc123',
     ])
   })
+
+  test('a espera conta de esperaDesde; sem a coluna, de atualizadaEm', async () => {
+    const agora = new Date('2026-11-21T05:05:00Z')
+    const linha = (id: string, esperaDesde: Date | null) => ({
+      id,
+      titulo: id,
+      etapas: [{ chave: 'recebida', marco: 'recebida' }],
+      etapaAtual: 'recebida',
+      espera: 'decidir_destino',
+      esperaDesde,
+      atualizadaEm: new Date('2026-11-21T04:05:00Z'),
+      criadaEm: new Date('2026-11-20T00:00:00Z'),
+      repositorio: { nomeCompleto: 'a/b' },
+    })
+    mockDb.demanda.findMany.mockResolvedValue([
+      linha('com-coluna', new Date('2026-11-21T02:05:00Z')),
+      linha('sem-coluna', null),
+    ])
+    mockDb.seedDoRepositorio.findMany.mockResolvedValue([])
+    mockDb.eventoDaDemanda.findMany.mockResolvedValue([])
+    const r = await obterEscritorio(admin, agora)
+    expect(r.escritorio.esperas.map((e) => [e.demandaId, e.minutos, e.longa])).toEqual([
+      ['com-coluna', 180, true],
+      ['sem-coluna', 60, false],
+    ])
+  })
 })

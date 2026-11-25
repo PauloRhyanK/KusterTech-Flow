@@ -1,7 +1,7 @@
 // Modelo de tela do escritório da Fábrica: regras puras que transformam o retrato e as demandas no que a tela
 // desenha (andares, agentes, caixas e o plano da entrega). Spec: docs/superpowers/specs/2026-11-21-escritorio-da-fabrica-design.md
 import { TEXTO_DA_ESPERA } from '@/modules/demandas/apresentacao'
-import type { Marco } from '@/modules/demandas/model'
+import { type Marco, type TempoDeEspera, tempoDeEspera } from '@/modules/demandas/model'
 import type { ExecucaoV2, RaiaV2, RetratoV2 } from '../contrato'
 import type { RetratoRecebido } from '../queries'
 
@@ -18,6 +18,8 @@ export interface DemandaDaTela {
   /** marco da etapa atual; null quando a etapa é do Paulo (fora dos seis marcos) */
   marco: Marco | null
   espera: string | null
+  /** quando a espera começou (`inicioDaEspera`); null sem espera */
+  esperaDesde: Date | null
 }
 
 export interface EntradaDoEscritorio {
@@ -97,6 +99,8 @@ export interface Andar {
   titulo: string
   repositorio: string
   esperaPaulo: boolean
+  /** há quanto tempo a demanda do andar espera o Paulo; null sem espera da demanda */
+  esperando: TempoDeEspera | null
   semAgentes: boolean
   progresso: { partes: [number, number]; criterios: [number, number] }
   /** null quando a etapa é do Paulo: nenhuma área acende */
@@ -112,11 +116,22 @@ export interface ItemDaRecepcao {
   repositorio: string
   /** a demanda ainda não tem andar, mas espera o Paulo (etapa dele ou com espera) */
   esperaPaulo: boolean
+  esperando: TempoDeEspera | null
+}
+
+/** Uma demanda que espera o Paulo, com o tempo de espera. */
+export interface EsperaDoPaulo extends TempoDeEspera {
+  demandaId: string
+  titulo: string
+  repositorio: string
+  espera: string
 }
 
 export interface Escritorio {
   andares: Andar[]
   recepcao: ItemDaRecepcao[]
+  /** da espera mais longa para a mais curta */
+  esperas: EsperaDoPaulo[]
   formatoAntigo: boolean
 }
 
@@ -446,6 +461,7 @@ function montarAndar(
     titulo: demanda?.titulo ?? plano.feature,
     repositorio: demanda?.repositorio ?? plano.repo,
     esperaPaulo,
+    esperando: esperandoDesde(demanda, agora),
     semAgentes: agentes.every((a) => a.runId === null),
     progresso: {
       partes: [todas.filter((p) => p.situacao === 'entregue').length, todas.length],
@@ -459,6 +475,36 @@ function montarAndar(
 }
 
 const ENCERRADOS = new Set(['concluido', 'removido'])
+
+function esperandoDesde(d: DemandaDaTela | undefined, agora: Date): TempoDeEspera | null {
+  if (!d || d.espera === null || d.esperaDesde === null) return null
+  return tempoDeEspera(d.esperaDesde, agora)
+}
+
+/** Para `sort`: quem espera o Paulo antes; entre eles, a espera mais longa; sem instante, por último. */
+export function porEsperaMaisLonga(
+  a: { esperaPaulo: boolean; esperando: TempoDeEspera | null },
+  b: { esperaPaulo: boolean; esperando: TempoDeEspera | null },
+): number {
+  if (a.esperaPaulo !== b.esperaPaulo) return a.esperaPaulo ? -1 : 1
+  return (b.esperando?.minutos ?? -1) - (a.esperando?.minutos ?? -1)
+}
+
+export function esperasDoPaulo(demandas: DemandaDaTela[], agora: Date): EsperaDoPaulo[] {
+  const esperas: EsperaDoPaulo[] = []
+  for (const d of demandas) {
+    const tempo = esperandoDesde(d, agora)
+    if (tempo === null || d.espera === null) continue
+    esperas.push({
+      demandaId: d.id,
+      titulo: d.titulo,
+      repositorio: d.repositorio,
+      espera: d.espera,
+      ...tempo,
+    })
+  }
+  return esperas.sort((a, b) => b.minutos - a.minutos || a.demandaId.localeCompare(b.demandaId))
+}
 
 export function montarEscritorio(entrada: EntradaDoEscritorio, agora: Date): Escritorio {
   const retrato = entrada.recebido?.retrato
@@ -488,6 +534,12 @@ export function montarEscritorio(entrada: EntradaDoEscritorio, agora: Date): Esc
       titulo: d.titulo,
       repositorio: d.repositorio,
       esperaPaulo,
+      esperando: esperandoDesde(d, agora),
     }))
-  return { andares, recepcao, formatoAntigo: entrada.recebido?.versaoOriginal === 1 }
+  return {
+    andares,
+    recepcao,
+    esperas: esperasDoPaulo(entrada.demandas, agora),
+    formatoAntigo: entrada.recebido?.versaoOriginal === 1,
+  }
 }

@@ -9,6 +9,10 @@ import {
   modoDePublicacao,
   podeConcluir,
   validarModelo,
+  LIMITE_DA_ESPERA_LONGA_MS,
+  duracaoDaEspera,
+  inicioDaEspera,
+  tempoDeEspera,
   type EtapaDefinida,
 } from './model'
 
@@ -170,5 +174,47 @@ describe('modelo de etapas', () => {
     const outra = { destino: 'fila_de_agentes' as const, criadaEm: new Date('2026-03-01') }
     expect(compararNaFila(velha, outra)).toBeLessThan(0)
     expect(compararNaFila(outra, velha)).toBeGreaterThan(0)
+  })
+})
+
+describe('espera do Paulo', () => {
+  const agora = new Date('2026-11-25T15:00:00.000Z')
+  const antes = (min: number) => new Date(agora.getTime() - min * 60_000)
+
+  test('o limite da espera longa é 2 h', () => {
+    expect(LIMITE_DA_ESPERA_LONGA_MS).toBe(2 * 60 * 60_000)
+  })
+
+  test('inicioDaEspera: vale esperaDesde; sem a coluna, atualizadaEm; sem espera, null', () => {
+    const base = { esperaDesde: antes(30), atualizadaEm: antes(5) }
+    expect(inicioDaEspera({ ...base, espera: 'travada' })).toEqual(antes(30))
+    expect(inicioDaEspera({ ...base, espera: 'aprovar_desenho', esperaDesde: null })).toEqual(
+      antes(5),
+    )
+    expect(inicioDaEspera({ ...base, espera: null })).toBeNull()
+  })
+
+  test('tempoDeEspera: minutos inteiros e longa só quando passa de 2 h', () => {
+    expect(tempoDeEspera(antes(119), agora)).toEqual({ minutos: 119, longa: false })
+    expect(tempoDeEspera(antes(120), agora)).toEqual({ minutos: 120, longa: false })
+    expect(tempoDeEspera(new Date(antes(120).getTime() - 1), agora)).toEqual({
+      minutos: 120,
+      longa: true,
+    })
+    expect(tempoDeEspera(antes(200), agora)).toEqual({ minutos: 200, longa: true })
+    // registro à frente do relógio do servidor: nunca negativo
+    expect(tempoDeEspera(new Date(agora.getTime() + 60_000), agora)).toEqual({
+      minutos: 0,
+      longa: false,
+    })
+  })
+
+  test('duracaoDaEspera escreve horas e minutos', () => {
+    expect(duracaoDaEspera(0)).toBe('menos de 1 min')
+    expect(duracaoDaEspera(45)).toBe('45 min')
+    expect(duracaoDaEspera(120)).toBe('2 h')
+    expect(duracaoDaEspera(200)).toBe('3 h 20 min')
+    expect(duracaoDaEspera(24 * 60 + 3 * 60 + 5)).toBe('1 d 3 h')
+    expect(duracaoDaEspera(2 * 24 * 60)).toBe('2 d')
   })
 })

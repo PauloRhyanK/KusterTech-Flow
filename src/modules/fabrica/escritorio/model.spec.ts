@@ -31,6 +31,7 @@ function demanda(sobrepor: Partial<DemandaDaTela> = {}): DemandaDaTela {
     repositorio: 'PauloRhyanK/CAISv2',
     marco: 'desenvolvida',
     espera: null,
+    esperaDesde: null,
     ...sobrepor,
   }
 }
@@ -107,7 +108,13 @@ describe('escritório: recepção e formato antigo', () => {
       demanda({ id: 'outra', titulo: 'Nova', marco: 'recebida' }),
     ])
     expect(e.recepcao).toEqual([
-      { demandaId: 'outra', titulo: 'Nova', repositorio: 'PauloRhyanK/CAISv2', esperaPaulo: false },
+      {
+        demandaId: 'outra',
+        titulo: 'Nova',
+        repositorio: 'PauloRhyanK/CAISv2',
+        esperaPaulo: false,
+        esperando: null,
+      },
     ])
   })
 
@@ -146,6 +153,70 @@ describe('escritório: recepção e formato antigo', () => {
     )
     expect(e.andares).toEqual([])
     expect(e.recepcao).toHaveLength(1)
+  })
+})
+
+describe('escritório: esperas do Paulo', () => {
+  const antes = (min: number) => new Date(AGORA.getTime() - min * 60_000)
+
+  test('cada demanda com espera diz há quanto tempo espera; a mais longa vem primeiro', () => {
+    const e = escritorio(v2(), [
+      demanda({ espera: 'aprovar_desenho', esperaDesde: antes(45) }),
+      demanda({
+        id: 'travada',
+        titulo: 'Travada há muito',
+        marco: 'recebida',
+        espera: 'travada',
+        esperaDesde: antes(200),
+      }),
+      demanda({ id: 'andando', titulo: 'Sem espera', marco: 'recebida' }),
+    ])
+    expect(e.esperas).toEqual([
+      {
+        demandaId: 'travada',
+        titulo: 'Travada há muito',
+        repositorio: 'PauloRhyanK/CAISv2',
+        espera: 'travada',
+        minutos: 200,
+        longa: true,
+      },
+      {
+        demandaId: DEMANDA,
+        titulo: 'Suporte por IA no CRM',
+        repositorio: 'PauloRhyanK/CAISv2',
+        espera: 'aprovar_desenho',
+        minutos: 45,
+        longa: false,
+      },
+    ])
+  })
+
+  test('o andar e a recepção levam o tempo da espera da demanda; sem espera, null', () => {
+    const e = escritorio(v2(), [
+      demanda({ espera: 'aprovar_desenho', esperaDesde: antes(130) }),
+      demanda({
+        id: 'nova',
+        titulo: 'Nova',
+        marco: 'recebida',
+        espera: 'decidir_destino',
+        esperaDesde: antes(5),
+      }),
+      demanda({ id: 'outra', titulo: 'Outra', marco: 'recebida' }),
+    ])
+    expect(e.andares[0]!.esperando).toEqual({ minutos: 130, longa: true })
+    expect(e.recepcao.map((r) => [r.demandaId, r.esperando])).toEqual([
+      ['nova', { minutos: 5, longa: false }],
+      ['outra', null],
+    ])
+  })
+
+  test('decisão aberta do plano espera o Paulo sem instante conhecido: sem tempo', () => {
+    const r = v2()
+    r.planos[0]!.decisoes = [{ titulo: 'Aprovar fase', url: 'https://github.com/a/b/issues/1' }]
+    const e = escritorio(r)
+    expect(e.andares[0]!.esperaPaulo).toBe(true)
+    expect(e.andares[0]!.esperando).toBeNull()
+    expect(e.esperas).toEqual([])
   })
 })
 
