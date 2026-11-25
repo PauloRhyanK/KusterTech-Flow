@@ -423,15 +423,10 @@ describe('versão no ar: tela, Início e Decidir', () => {
         },
       ],
     })
+    // o site conferido contém o pedido: está no ar, nada pede o Paulo
     const pilha = await obterPilha(admin, AGORA)
     expect(
       pilha.itens.find((i) => i.chave.startsWith(`publicacao:dispensado-${cais}`)),
-    ).toMatchObject({
-      titulo: 'CAIS: Modo editor não subiu de novo',
-      relato: {
-        resumo: `já está no ar: o site mostra ${'7'.repeat(7)}, que contém ${'7'.repeat(7)}`,
-        href: 'https://github.com/kustertech-exemplo/cais/actions/runs/80',
-      },
-    })
+    ).toBeUndefined()
   })
 })

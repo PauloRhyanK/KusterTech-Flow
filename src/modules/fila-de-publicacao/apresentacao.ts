@@ -508,24 +508,24 @@ function avisosDaLinha(linha: LinhaDaFila, agora: Date): AvisoDePublicacao[] {
 }
 
 /**
- * Um pedido dispensado como "já está no ar" nas últimas 24 h: o Paulo confere que a versão que o
- * dispensou é mesmo a do site. Os repetidos sobem junto com o pedido igual e não avisam.
+ * Um pedido dispensado como "já está no ar" nas últimas 24 h sem o site conferido: o Flow só olhou
+ * o último publicado, e o Paulo confere no site. Com a versão conferida (`urlDaVersao`), a dispensa
+ * já exigiu que o site contenha o pedido: está no ar e nada pede o Paulo. Os repetidos sobem junto
+ * com o pedido igual e não avisam.
  */
 function avisoDoDispensado(linha: LinhaDaFila, agora: Date): AvisoDePublicacao | null {
   const d = linha.ultimoDispensado
   if (!d || d.motivo !== MOTIVOS.jaNoAr) return null
   if (agora.getTime() - d.concluidoEm.getTime() > JANELA_DO_RECUSADO_MS) return null
+  if (linha.conferencia && linha.versaoConferida) return null
   const pedido = sha7(d.commit)
   const titulo = d.titulo?.trim()
-  const conferida = linha.conferencia ? (linha.versaoConferida ?? null) : null
   const url = linha.noAr?.execucaoUrl ?? null
   return {
     id: `dispensado-${linha.repositorioId}`,
     repositorioId: linha.repositorioId,
-    titulo: `${linha.rotulo}: ${titulo || `o pedido ${pedido}`} não subiu de novo`,
-    contexto: conferida
-      ? `já está no ar: o site mostra ${sha7(conferida.commit)}, que contém ${pedido}`
-      : `já está no ar: o último publicado (${sha7(linha.noAr?.commit ?? null)}) contém ${pedido}`,
+    titulo: `${linha.rotulo}: ${titulo || `o pedido ${pedido}`} foi dispensado sem conferir o site`,
+    contexto: `o último publicado (${sha7(linha.noAr?.commit ?? null)}) já contém ${pedido}; confira no site se a mudança está no ar`,
     href: url ?? `#${linha.repositorioId}`,
     externo: url !== null,
     rotuloDaFaixa: url !== null ? 'Ver o run no GitHub' : 'Ver a fila',
