@@ -337,6 +337,40 @@ describe('GET /api/fabrica/demandas', () => {
   })
 })
 
+describe('GET /api/fabrica/demandas: contrato 1 e 2', () => {
+  test('sem o cabeçalho não há contrato nem partes; com o cabeçalho 2 há os dois', async () => {
+    const id = await novaDemanda('Com parte')
+    await db.parteDaDemanda.create({
+      data: { demandaId: id, chave: 'alfa', repositorioId, objetivo: 'Entrada', ordem: 0 },
+    })
+
+    const v1 = (await buscarDemandasParaAFabrica(auth(), null, AGORA)).corpo as {
+      contrato?: number
+      demandas: Record<string, unknown>[]
+    }
+    expect(v1).not.toHaveProperty('contrato')
+    expect(v1.demandas).toHaveLength(1)
+    expect(v1.demandas[0]).not.toHaveProperty('partes')
+
+    const v2 = (await buscarDemandasParaAFabrica(auth(), null, AGORA, 2)).corpo as {
+      contrato?: number
+      demandas: { partes: Record<string, unknown>[]; naoChegouDesde: string | null }[]
+    }
+    expect(v2.contrato).toBe(2)
+    expect(v2.demandas[0]!.naoChegouDesde).toBeNull()
+    expect(v2.demandas[0]!.partes).toEqual([
+      expect.objectContaining({
+        chave: 'alfa',
+        repositorio: 'kustertech-exemplo/alfa',
+        objetivo: 'Entrada',
+        estado: 'planejando',
+        chegaAoAr: 'publicacao',
+        publicacao: null,
+      }),
+    ])
+  })
+})
+
 describe('cursor sob concorrência', () => {
   test('o evento de um escritor aberto durante o GET chega no GET seguinte, nunca se perde', async () => {
     const a = await novaDemanda('A')

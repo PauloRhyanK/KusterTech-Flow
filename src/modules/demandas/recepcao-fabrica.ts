@@ -5,7 +5,12 @@ import { ARMAZENAMENTO_NAO_CONFIGURADO, ArmazenamentoNaoConfigurado } from './ar
 import { log } from '@/lib/log'
 import { autenticarFonte, type EntradaDaRecepcao } from '@/modules/fabrica/recepcao'
 import { resumirErroParaLog } from '@/modules/github/model'
-import { LIMITE_DA_PAGINA, LIMITE_DO_CORPO_DO_EVENTO, eventoDaFabricaSchema } from './contrato'
+import {
+  LIMITE_DA_PAGINA,
+  LIMITE_DO_CORPO_DO_EVENTO,
+  eventoDaFabricaSchema,
+  eventoDaFabricaV2Schema,
+} from './contrato'
 import {
   compararNaFila,
   etapasAplicaveis,
@@ -14,6 +19,7 @@ import {
   type EtapaDefinida,
 } from './model'
 import { guardarArquivo, paraOFio, registrarEvento } from './service'
+import { demandaParaAFabrica, type ParteParaAFabrica } from './visao-da-fabrica'
 
 type Saida<S extends number> = { status: S; corpo: object }
 
@@ -57,6 +63,7 @@ export async function buscarDemandasParaAFabrica(
   authorization: string | null,
   desde: string | null,
   agora: Date,
+  contrato: 1 | 2 = 1,
 ): Promise<Saida<200 | 400 | 401 | 500>> {
   try {
     const fonte = await autenticarFonte(authorization)
@@ -105,6 +112,17 @@ export async function buscarDemandasParaAFabrica(
       include: {
         repositorio: { select: { nomeCompleto: true } },
         projeto: { select: { nome: true } },
+        partes: {
+          orderBy: [{ ordem: 'asc' }, { chave: 'asc' }],
+          include: {
+            repositorio: { select: { nomeCompleto: true } },
+            pedidos: {
+              orderBy: { criadoEm: 'desc' },
+              take: 1,
+              include: { conserto: { select: { estado: true, prUrl: true } } },
+            },
+          },
+        },
         arquivos: {
           where: { tipo: 'ANEXO', apagadoEm: null },
           orderBy: { criadoEm: 'asc' },
@@ -146,59 +164,94 @@ export async function buscarDemandasParaAFabrica(
     return {
       status: 200,
       corpo: {
+        ...(contrato === 2 ? { contrato: 2 } : {}),
         cursor: String(cursor),
         mais,
         demandas: ordenadas.map(({ d, destino }) => {
           const etapas = etapasAplicaveis(d.etapas as unknown as EtapaDefinida[], d.temTela)
           const atual = etapas.find((e) => e.chave === d.etapaAtual)
-          return {
-            id: d.id,
-            repositorio: d.repositorio.nomeCompleto,
-            projeto: d.projeto.nome,
-            titulo: d.titulo,
-            descricao: d.descricao,
-            tipo: d.tipo ? paraOFio.tipo(d.tipo) : null,
-            destino,
-            escopo: escopos.get(d.id) ?? null,
-            nivel: paraOFio.nivel(d.nivel),
-            temTela: d.temTela,
-            origem: paraOFio.origem(d.origem),
-            criadaEm: instanteNoFio(d.criadaEm),
-            etapas,
-            etapaAtual: { chave: d.etapaAtual, marco: atual?.marco ?? null },
-            espera: d.espera
-              ? {
-                  tipo: d.espera,
-                  motivo: d.esperaMotivo,
-                  desde: instanteNoFio(d.esperaDesde ?? d.atualizadaEm),
-                }
-              : null,
-            encerrada: d.encerrada,
-            desenho: { versao: d.versaoDoDesenho, aprovada: d.desenhoAprovado },
-            ajustes: d.eventos
-              .filter((e) => e.tipo === 'ajuste_pedido')
-              .map((e) => {
-                const dados = e.dados as { versao: number; texto: string }
-                return { versao: dados.versao, texto: dados.texto, em: instanteNoFio(e.em) }
-              }),
-            plano: d.planoCaminho
-              ? { caminho: d.planoCaminho, prUrl: d.planoPrUrl, artefato: d.artefatoUrl }
-              : null,
-            publicacao: { modo: modoDePublicacao(destino as Destino | null) },
-            anexos: d.arquivos,
-            eventos: d.eventos
-              .filter(
-                (e) =>
-                  e.seq > inicio && e.seq <= cursor && ORIGENS_PARA_A_FABRICA.includes(e.origem),
-              )
-              .map((e) => ({
-                id: e.idExterno,
-                tipo: e.tipo,
-                origem: e.origem,
-                em: instanteNoFio(e.em),
-                dados: e.dados,
-              })),
-          }
+          const partes: ParteParaAFabrica[] = d.partes.map((p) => {
+            const pedido = p.pedidos[0]
+            return {
+              chave: p.chave,
+              repositorio: p.repositorio.nomeCompleto,
+              objetivo: p.objetivo,
+              ordem: p.ordem,
+              dependeDe: p.dependeDe,
+              chegaAoAr: p.chegaAoAr.toLowerCase() as 'publicacao' | 'versao',
+              estado: p.estado.toLowerCase(),
+              motivo: p.motivo,
+              plano: p.planoCaminho ? { caminho: p.planoCaminho, prUrl: p.planoPrUrl } : null,
+              prs: p.prs,
+              commitAlvo: p.commitAlvo,
+              publicacao: pedido
+                ? {
+                    pedidoId: pedido.id,
+                    estado: pedido.estado.toLowerCase(),
+                    motivo: pedido.motivo,
+                    conserto: pedido.conserto
+                      ? {
+                          estado: pedido.conserto.estado.toLowerCase(),
+                          prUrl: pedido.conserto.prUrl,
+                        }
+                      : null,
+                  }
+                : null,
+            }
+          })
+          return demandaParaAFabrica(
+            {
+              id: d.id,
+              repositorio: d.repositorio.nomeCompleto,
+              projeto: d.projeto.nome,
+              titulo: d.titulo,
+              descricao: d.descricao,
+              tipo: d.tipo ? paraOFio.tipo(d.tipo) : null,
+              destino,
+              escopo: escopos.get(d.id) ?? null,
+              nivel: paraOFio.nivel(d.nivel),
+              temTela: d.temTela,
+              origem: paraOFio.origem(d.origem),
+              criadaEm: instanteNoFio(d.criadaEm),
+              etapas,
+              etapaAtual: { chave: d.etapaAtual, marco: atual?.marco ?? null },
+              espera: d.espera
+                ? {
+                    tipo: d.espera,
+                    motivo: d.esperaMotivo,
+                    desde: instanteNoFio(d.esperaDesde ?? d.atualizadaEm),
+                  }
+                : null,
+              encerrada: d.encerrada,
+              naoChegouDesde: d.naoChegouDesde ? instanteNoFio(d.naoChegouDesde) : null,
+              desenho: { versao: d.versaoDoDesenho, aprovada: d.desenhoAprovado },
+              ajustes: d.eventos
+                .filter((e) => e.tipo === 'ajuste_pedido')
+                .map((e) => {
+                  const dados = e.dados as { versao: number; texto: string }
+                  return { versao: dados.versao, texto: dados.texto, em: instanteNoFio(e.em) }
+                }),
+              plano: d.planoCaminho
+                ? { caminho: d.planoCaminho, prUrl: d.planoPrUrl, artefato: d.artefatoUrl }
+                : null,
+              publicacao: { modo: modoDePublicacao(destino as Destino | null) },
+              anexos: d.arquivos,
+              eventos: d.eventos
+                .filter(
+                  (e) =>
+                    e.seq > inicio && e.seq <= cursor && ORIGENS_PARA_A_FABRICA.includes(e.origem),
+                )
+                .map((e) => ({
+                  id: e.idExterno,
+                  tipo: e.tipo,
+                  origem: e.origem,
+                  em: instanteNoFio(e.em),
+                  dados: e.dados,
+                })),
+            },
+            partes,
+            contrato,
+          )
         }),
       },
     }
@@ -211,6 +264,7 @@ export async function receberEventoDaFabrica(
   authorization: string | null,
   demandaId: string,
   e: EntradaDaRecepcao,
+  contrato: 1 | 2 = 1,
 ): Promise<Saida<200 | 201 | 401 | 404 | 409 | 413 | 415 | 422 | 500>> {
   try {
     const fonte = await autenticarFonte(authorization)
@@ -233,7 +287,7 @@ export async function receberEventoDaFabrica(
     } catch {
       return invalido
     }
-    const lido = eventoDaFabricaSchema.safeParse(json)
+    const lido = (contrato === 2 ? eventoDaFabricaV2Schema : eventoDaFabricaSchema).safeParse(json)
     if (!lido.success) return invalido
     if (!UUID.test(demandaId)) return { status: 404, corpo: NAO_ENCONTRADA }
 

@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { eventoDaFabricaSchema } from './contrato'
+import type { eventoDaFabricaSchema, eventoDaFabricaV2Schema } from './contrato'
 import {
   LIMITE_DE_FALHAS_DO_TESTE,
   LIMITE_DE_RECUSAS_DO_DESENHO,
@@ -13,7 +13,7 @@ import {
   type EtapaDefinida,
 } from './model'
 
-type EventoDoFio = z.infer<typeof eventoDaFabricaSchema>
+type EventoDoFio = z.infer<typeof eventoDaFabricaSchema> | z.infer<typeof eventoDaFabricaV2Schema>
 
 export type EventoAplicavel =
   | {
@@ -60,6 +60,9 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   destravada: ['fabrica'],
   teste: ['fabrica'],
   entregue: ['fabrica'],
+  partes_planejadas: ['fabrica'],
+  parte_planejada: ['fabrica'],
+  parte_feita: ['fabrica'],
   destino_decidido: ['paulo'],
   desenho_aprovado: ['paulo'],
   ajuste_pedido: ['paulo'],
@@ -295,6 +298,11 @@ export function aplicarEvento(
         return recusa('A demanda não espera mais a decisão do teste.')
       }
       return concluir({ ...estado, espera: null, esperaMotivo: null })
+    // As escritas nas partes vêm do service; aqui o estado da demanda não muda.
+    case 'partes_planejadas':
+    case 'parte_planejada':
+    case 'parte_feita':
+      return aceita(estado)
     case 'entregue':
       if (atual.marco !== 'entregue') return naoE('entregue')
       return concluir(estado)
