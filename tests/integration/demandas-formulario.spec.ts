@@ -182,7 +182,7 @@ test('a action de configuração grava o modelo e o nível, e as queries devolve
   const config = await obterDemandasDoProjeto(admin, projetoId)
   expect(config.modeloId).toBe(modelo.id)
   expect(config.nivelPadrao).toBe('vai_sozinho')
-  expect(config.modelos[0]!.etapas.map((e) => e.chave)).toHaveLength(6)
+  expect(config.modelos[0]!.etapas.map((e) => e.chave)).toHaveLength(7)
 
   const form = await obterFormularioDeDemanda(admin)
   expect(form.projetos).toEqual([

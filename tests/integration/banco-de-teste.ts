@@ -8,6 +8,8 @@ interface LinhaTabela {
 
 const MIGRATION_DE_DEMANDAS = 'prisma/migrations/20261120120000_demandas/migration.sql'
 const MARCADOR_DO_MODELO_PADRAO = '-- Modelo padrão'
+const MIGRATION_DO_NO_AR = 'prisma/migrations/20261126120100_etapa_no_ar/migration.sql'
+const MARCADOR_DO_NO_AR = '-- Etapa "No ar"'
 
 /** Limpa todas as tabelas e reaplica o modelo de etapas padrão que a migration semeia. */
 export async function limparBanco(): Promise<void> {
@@ -30,12 +32,17 @@ export async function limparBanco(): Promise<void> {
   await semearModeloPadrao()
 }
 
-// O TRUNCATE apaga o modelo semeado pela migration; reaplica só o trecho de semente (sem o índice).
+// O TRUNCATE apaga o modelo semeado pelas migrations; reaplica só os trechos de semente (sem o índice).
 export async function semearModeloPadrao(): Promise<void> {
-  const sql = readFileSync(join(process.cwd(), MIGRATION_DE_DEMANDAS), 'utf8')
-  const inicio = sql.indexOf(MARCADOR_DO_MODELO_PADRAO)
+  await executarTrecho(MIGRATION_DE_DEMANDAS, MARCADOR_DO_MODELO_PADRAO)
+  await executarTrecho(MIGRATION_DO_NO_AR, MARCADOR_DO_NO_AR)
+}
+
+async function executarTrecho(arquivo: string, marcador: string): Promise<void> {
+  const sql = readFileSync(join(process.cwd(), arquivo), 'utf8')
+  const inicio = sql.indexOf(marcador)
   if (inicio < 0) {
-    throw new Error(`"${MARCADOR_DO_MODELO_PADRAO}" não está em ${MIGRATION_DE_DEMANDAS}.`)
+    throw new Error(`"${marcador}" não está em ${arquivo}.`)
   }
   const trecho = sql.slice(inicio)
   for (const comando of trecho.split(';')) {
