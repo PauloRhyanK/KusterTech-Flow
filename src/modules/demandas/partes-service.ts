@@ -111,6 +111,7 @@ export async function conferirPartesDaEtapa(
   marco: 'desenvolvida' | 'entregue',
 ): Promise<ResultadoDaParte> {
   const partes = (await carregar(tx, demandaId)).filter((p) => p.estado !== 'DESCARTADA')
+  if (partes.length === 0) return recusa('a demanda não tem partes')
   const faltam = partes.filter((p) => !JA_FEITAS.includes(p.estado)).map((p) => p.chave)
   if (faltam.length > 0) return recusa(`Faltam partes feitas: ${faltam.join(', ')}.`)
   if (marco === 'entregue') {
@@ -138,14 +139,6 @@ function prDaUrl(url: string, repositorio: string, mergeCommit: string | null): 
   }
 }
 
-/** A demanda sem parte aberta com `naoChegou` não fica marcada. */
-async function limparNaoChegou(tx: Tx, demandaId: string): Promise<void> {
-  const restam = await tx.parteDaDemanda.count({ where: { demandaId, estado: 'NAO_CHEGOU' } })
-  if (restam === 0) {
-    await tx.demanda.updateMany({ where: { id: demandaId }, data: { naoChegouDesde: null } })
-  }
-}
-
 export async function aplicarEventoDeParte(
   tx: Tx,
   demanda: { id: string; repositorioId: string },
@@ -166,7 +159,6 @@ export async function aplicarEventoDeParte(
             : {}),
         },
       })
-      if (entrada.estado === 'NAO_CHEGOU') await limparNaoChegou(tx, demanda.id)
       return ok
     }
     case 'partes_planejadas':
@@ -184,7 +176,6 @@ export async function aplicarEventoDeParte(
           ...(volta ? { estado: 'EM_CURSO', motivo: null } : {}),
         },
       })
-      if (parte.estado === 'NAO_CHEGOU') await limparNaoChegou(tx, demanda.id)
       return ok
     }
     case 'parte_feita':
@@ -287,7 +278,6 @@ async function registrarParteFeita(
       ...(vira ? { estado: 'FEITA', feitaEm: agora, motivo: null } : {}),
     },
   })
-  if (parte.estado === 'NAO_CHEGOU') await limparNaoChegou(tx, demandaId)
 
   const depois = linhas
     .filter((p) => p.estado !== 'DESCARTADA')
@@ -313,6 +303,7 @@ async function registrarEntregaV1(
   const entrada = abertas.find((p) => p.repositorioId === demanda.repositorioId) ?? abertas[0]
   const usadas = new Set(linhas.map((p) => p.chave))
   let ordem = linhas.reduce((m, p) => Math.max(m, p.ordem), 0)
+  const foraDoCadastro: PrDaParte[] = []
   const porRepositorio = new Map<string, { id: string; prs: PrDaParte[] }>()
 
   for (const url of urls) {
@@ -333,7 +324,14 @@ async function registrarEntregaV1(
           where: { nomeCompleto: { equals: nome, mode: 'insensitive' }, projetoId: { not: null } },
           select: { id: true, nomeCompleto: true },
         })
-        if (!repo) continue
+        if (!repo) {
+          // Fora do cadastro: o PR não se perde, vai para a parte de entrada com o repositório da URL.
+          const pr = prDaUrl(url, nome, null)
+          if (pr && entrada) {
+            foraDoCadastro.push(pr)
+          }
+          continue
+        }
         const chave = chaveLivre(repo.nomeCompleto, usadas)
         usadas.add(chave)
         ordem += 1
@@ -356,6 +354,16 @@ async function registrarEntregaV1(
     const pr = prDaUrl(url, nome, null)
     if (pr) alvo.prs = acumularPrs(alvo.prs, [pr])
   }
+  if (entrada && foraDoCadastro.length > 0) {
+    const dela = [...porRepositorio.values()].find((a) => a.id === entrada.id)
+    if (dela) dela.prs = acumularPrs(dela.prs, foraDoCadastro)
+    else {
+      porRepositorio.set(entrada.id, {
+        id: entrada.id,
+        prs: acumularPrs(entrada.prs as unknown as PrDaParte[], foraDoCadastro),
+      })
+    }
+  }
   for (const a of porRepositorio.values()) {
     await tx.parteDaDemanda.update({
       where: { id: a.id },
@@ -367,7 +375,6 @@ async function registrarEntregaV1(
       where: { id: entrada.id },
       data: { estado: 'FEITA', feitaEm: agora, motivo: null },
     })
-    if (entrada.estado === 'NAO_CHEGOU') await limparNaoChegou(tx, demanda.id)
   }
   return ok
 }

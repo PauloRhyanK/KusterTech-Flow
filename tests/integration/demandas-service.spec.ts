@@ -1124,4 +1124,62 @@ describe('demandas / eventos de parte e compatibilidade v1 (integração)', () =
     ])
     expect((await db.demanda.findUniqueOrThrow({ where: { id } })).encerrada).toBe('descartada')
   })
+
+  test('naoChegouDesde fica quando a parte volta a em_curso', async () => {
+    const { id } = await demanda()
+    const desde = new Date('2026-11-20T10:00:00Z')
+    await db.parteDaDemanda.updateMany({
+      where: { demandaId: id },
+      data: { estado: 'NAO_CHEGOU', motivo: 'Publicação falhou' },
+    })
+    await db.demanda.update({ where: { id }, data: { naoChegouDesde: desde } })
+    const r = await v2(id, {
+      tipo: 'parte_planejada',
+      ator: 'fabrica',
+      dados: { parte: 'alfa', plano: '.fabrica/planos/alfa.json', prUrl: null },
+    })
+    expect(r.resultado).toBe('aplicado')
+    expect((await partesDe(id))[0]!.estado).toBe('EM_CURSO')
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).naoChegouDesde).toEqual(desde)
+  })
+
+  test('v1: PR de repositório fora do cadastro vai para a parte de entrada', async () => {
+    const { id } = await demanda()
+    await ateEntregue(id)
+    const fora = 'https://github.com/outro-dono/fora/pull/7'
+    const r = await daFabrica(id, {
+      tipo: 'entregue',
+      ator: 'fabrica',
+      dados: { prs: [URL_PR('alfa-crm', 6), fora] },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const partes = await partesDe(id)
+    const entrada = partes.find((p) => p.chave === 'alfa')!
+    expect(entrada.prs).toEqual([
+      expect.objectContaining({
+        url: fora,
+        repositorio: 'outro-dono/fora',
+        numero: 7,
+        estado: 'mergeado',
+        mergeCommit: null,
+      }),
+    ])
+    expect(partes.find((p) => p.chave === 'alfa-crm')!.prs as unknown[]).toHaveLength(1)
+  })
+
+  test('v2: etapa_concluida sem nenhuma parte aberta é recusada', async () => {
+    const { id } = await demanda()
+    await daFabrica(id, {
+      tipo: 'plano_criado',
+      ator: 'fabrica',
+      dados: { plano: '.fabrica/planos/exportar.json', prUrl: null },
+    })
+    await db.parteDaDemanda.deleteMany({ where: { demandaId: id } })
+    const r = await v2(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'desenvolvida' },
+    })
+    expect(r).toEqual({ resultado: 'recusado', motivo: 'a demanda não tem partes' })
+  })
 })
