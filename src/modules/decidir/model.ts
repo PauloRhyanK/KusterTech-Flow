@@ -448,6 +448,10 @@ function itemDaPublicacao(a: AvisoDaPublicacaoNaPilha, agora: Date): ItemDaPilha
   }
 }
 
+function pesoDoTom(item: ItemDaPilha): number {
+  return item.ref.tipo === 'publicacao' && item.ref.tom === 'atencao' ? 1 : 0
+}
+
 export function montarPilha(e: {
   demandas: readonly DemandaEsperando[]
   decisoes: readonly DecisaoDoRetrato[]
@@ -490,6 +494,9 @@ export function montarPilha(e: {
     if (pa !== null && pb !== null && pa !== pb) return pa - pb
     const porTipo = ORDEM_DOS_ITENS.indexOf(a.tipo) - ORDEM_DOS_ITENS.indexOf(b.tipo)
     if (porTipo !== 0) return porTipo
+    // Entre os avisos da publicação, o que parou a fila vem antes do que só avisa.
+    const porTom = pesoDoTom(a) - pesoDoTom(b)
+    if (porTom !== 0) return porTom
     const da = a.desde?.getTime() ?? null
     const db = b.desde?.getTime() ?? null
     if (da !== db) {

@@ -95,6 +95,8 @@ export interface EsperaVoce {
 function compararItens(a: ItemDeEspera, b: ItemDeEspera): number {
   const porTipo = ORDEM_DOS_TIPOS.indexOf(a.tipo) - ORDEM_DOS_TIPOS.indexOf(b.tipo)
   if (porTipo !== 0) return porTipo
+  // Na publicação, o erro (fila parada) vem antes da atenção, como na faixa da tela.
+  if (a.tipo === 'publicacao' && a.tom !== b.tom) return a.tom === 'erro' ? -1 : 1
   if (a.desde && b.desde) {
     const porData = a.desde.getTime() - b.desde.getTime()
     if (porData !== 0) return porData
@@ -567,7 +569,7 @@ export function esperasComDecidir(
       tipo: 'decidir',
       titulo:
         naPilha === 1 ? '1 item espera sua resposta' : `${naPilha} itens esperam sua resposta`,
-      contexto: 'Decisões da Fábrica e pedidos das demandas',
+      contexto: 'Decisões da Fábrica, pedidos das demandas e avisos da publicação',
       href: '/decidir',
       externo: false,
       rotuloDoLink: 'Abrir Decidir',

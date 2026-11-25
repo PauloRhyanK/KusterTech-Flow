@@ -308,6 +308,16 @@ describe('tipo publicacao', () => {
 })
 
 describe('montarEsperaVoce', () => {
+  it('na publicação, o erro vem antes da atenção mesmo sendo mais novo', () => {
+    const atencao = {
+      ...item('publicacao', 'p-atencao', minutosAntes(30)),
+      tom: 'atencao' as const,
+    }
+    const erro = { ...item('publicacao', 'p-erro', minutosAntes(5)), tom: 'erro' as const }
+    const r = montarEsperaVoce([{ tipo: 'publicacao', itens: [atencao, erro] }])
+    expect(r.itens.map((i) => i.id)).toEqual(['p-erro', 'p-atencao'])
+  })
+
   it('ordena por tipo e, dentro do tipo, do mais antigo ao mais novo, com sem-data por último', () => {
     const r = montarEsperaVoce([
       { tipo: 'integracao', itens: [item('integracao', 'i1', minutosAntes(90))] },

@@ -312,6 +312,19 @@ describe('avisos da publicação na pilha', () => {
     })
   })
 
+  it('o aviso de erro (fila parada) vem antes do de atenção, mesmo mais novo', () => {
+    const { itens } = pilha({
+      publicacoes: [
+        aviso({ id: 'dispensado-r2', tom: 'atencao', desde: new Date('2026-11-21T14:40:00Z') }),
+        aviso(),
+      ],
+    })
+    expect(itens.map((i) => i.ref.tipo === 'publicacao' && i.ref.avisoId)).toEqual([
+      'parado-r1',
+      'dispensado-r2',
+    ])
+  })
+
   it('a publicação vem depois das travas e antes do fim de fase; pular e adiar valem para ela', () => {
     const trava = demanda({
       id: 'd9',
