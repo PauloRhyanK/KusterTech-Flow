@@ -1113,6 +1113,74 @@ describe('partes da demanda', () => {
     })
   })
 
+  const pedirRepetido = async (p: { id: string; demandaId: string }) => {
+    const chegada = await registrarChegada(
+      portalId,
+      { usuarioId },
+      { commit: M2, modo: 'imediato' },
+      p.demandaId,
+      { modoPadrao: 'IMEDIATO', baseRedefinidaEm: null },
+      AGORA,
+      p.id,
+    )
+    expect(chegada.tipo).toBe('dispensado')
+    return chegada.id
+  }
+
+  test('pedido repetido de outra parte recebe o resultado do atendente: publicado sem conferir → nao_chegou nas duas', async () => {
+    const d1 = await demandaNoAr(portalId)
+    const d2 = await demandaNoAr(portalId)
+    const a = await parte(d1.id, portalId, M2)
+    const b = await parte(d2.id, portalId, M2)
+    const atendente = await pedirDaParte(portalId, M2, a)
+    const repetido = await pedirRepetido(b)
+    expect(await lerParte(b.id)).toMatchObject({ estado: 'PUBLICANDO', pedidoId: atendente })
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    await ciclo(minutos(2))
+    expect((await pedido(repetido)).estado).toBe('DISPENSADO')
+    for (const p of [a, b]) {
+      expect(await lerParte(p.id)).toMatchObject({
+        estado: 'NAO_CHEGOU',
+        motivo: 'Publicada sem conferir o site',
+      })
+    }
+  })
+
+  test('pedido repetido de outra parte fecha junto com o atendente quando a versão é conferida', async () => {
+    await comVersao()
+    const d1 = await demandaNoAr(portalId)
+    const d2 = await demandaNoAr(portalId)
+    const a = await parte(d1.id, portalId, M2)
+    const b = await parte(d2.id, portalId, M2)
+    await pedirDaParte(portalId, M2, a)
+    await pedirRepetido(b)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'success')
+    noSite = { tipo: 'lida', commit: M2 }
+    await ciclo(minutos(2))
+    expect((await lerParte(a.id)).estado).toBe('NO_AR')
+    expect((await lerParte(b.id)).estado).toBe('NO_AR')
+  })
+
+  test('pedido repetido de outra parte acompanha o conserto do atendente que falhou', async () => {
+    const d1 = await demandaNoAr(portalId)
+    const d2 = await demandaNoAr(portalId)
+    const a = await parte(d1.id, portalId, M2)
+    const b = await parte(d2.id, portalId, M2)
+    await pedirDaParte(portalId, M2, a)
+    await pedirRepetido(b)
+    await ciclo()
+    f.concluir(PORTAL, M2, 'failure')
+    await ciclo(minutos(2))
+    for (const p of [a, b]) {
+      expect(await lerParte(p.id)).toMatchObject({
+        estado: 'PUBLICANDO',
+        motivo: 'Consertando a publicação',
+      })
+    }
+  })
+
   test('GitHub fora não fecha a parte; no ciclo seguinte fecha', async () => {
     await comVersao()
     const d1 = await demandaNoAr(portalId)

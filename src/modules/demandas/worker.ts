@@ -125,8 +125,9 @@ export async function marcarPartesSemPublicacao(agora: Date): Promise<number> {
     const dias = Math.floor((agora.getTime() - feitaEm.getTime()) / DIA_MS)
     const prs = c.prs as unknown as PrDaParte[]
     let motivo: string | null = null
-    if (dias >= 1 && prs.some((p) => urlsAbertas.has(p.url.toLowerCase()))) {
-      motivo = MOTIVOS.prAberto(dias)
+    if (prs.some((p) => urlsAbertas.has(p.url.toLowerCase()))) {
+      // Com PR aberto nunca é "Nunca foi publicada": espera 1 dia e então "PR aberto há N d".
+      if (dias >= 1) motivo = MOTIVOS.prAberto(dias)
     } else {
       const config = c.repositorio.configuracaoDePublicacao
       const lote = config?.modoPadrao === 'LOTE'

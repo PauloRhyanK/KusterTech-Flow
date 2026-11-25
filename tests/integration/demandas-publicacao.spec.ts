@@ -324,8 +324,9 @@ describe('marcarPartesSemPublicacao', () => {
     expect((await ler(b.p.id)).estado).toBe('FEITA')
   })
 
-  test('feita com PR ainda aberto no GitHub → nao_chegou "PR aberto há N d"', async () => {
-    const url = 'https://github.com/kustertech-exemplo/portal/pull/9'
+  const URL_DO_PR = 'https://github.com/kustertech-exemplo/portal/pull/9'
+  const prAberto = async () => {
+    const url = URL_DO_PR
     await db.pullRequestGitHub.create({
       data: {
         githubId: BigInt(9),
@@ -342,18 +343,35 @@ describe('marcarPartesSemPublicacao', () => {
         sincronizadoEm: AGORA,
       },
     })
-    const pr = {
-      url,
-      repositorio: 'kustertech-exemplo/portal',
-      numero: 9,
-      estado: 'mergeado',
-      mergeCommit: C1,
-    }
+  }
+  const PR = {
+    url: URL_DO_PR,
+    repositorio: 'kustertech-exemplo/portal',
+    numero: 9,
+    estado: 'mergeado',
+    mergeCommit: C1,
+  }
+
+  test('feita com PR ainda aberto e um pedido → nao_chegou "PR aberto há N d"', async () => {
+    await prAberto()
     const pedido = await db.pedidoDePublicacao.create({
       data: { repositorioId, commit: C1, modo: 'IMEDIATO' },
     })
-    const { p } = await demandaComParte(3 * 24 * HORA, { prs: [pr], pedidoId: pedido.id })
+    const { p } = await demandaComParte(3 * 24 * HORA, { prs: [PR], pedidoId: pedido.id })
     expect(await marcarPartesSemPublicacao(AGORA)).toBe(1)
     expect(await ler(p.id)).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'PR aberto há 3 d' })
+  })
+
+  test('com PR aberto e sem pedido nunca é "Nunca foi publicada": 3 h não marca; 25 h → "PR aberto há 1 d"', async () => {
+    await prAberto()
+    const { p } = await demandaComParte(3 * HORA, { prs: [PR] })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(0)
+    expect((await ler(p.id)).estado).toBe('FEITA')
+    await db.parteDaDemanda.update({
+      where: { id: p.id },
+      data: { feitaEm: new Date(AGORA.getTime() - 25 * HORA) },
+    })
+    expect(await marcarPartesSemPublicacao(AGORA)).toBe(1)
+    expect(await ler(p.id)).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'PR aberto há 1 d' })
   })
 })

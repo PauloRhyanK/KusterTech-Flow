@@ -299,12 +299,22 @@ class CicloDoRepositorio {
    */
   private async marcarPartes(
     tx: Tx,
-    ids: readonly string[],
+    candidatos: readonly string[],
     resultado: Parameters<typeof resultadoDoPedido>[0],
   ) {
     if (!moduloAtivo('demandas')) return
     await tx.$executeRaw`SAVEPOINT partes_da_demanda`
     try {
+      // Pedidos repetidos (DISPENSADO na chegada, atendidos por estes) levam o mesmo resultado.
+      const repetidos = await tx.pedidoDePublicacao.findMany({
+        where: {
+          atendidoPorId: { in: [...candidatos] },
+          estado: 'DISPENSADO',
+          parteId: { not: null },
+        },
+        select: { id: true },
+      })
+      const ids = [...new Set([...candidatos, ...repetidos.map((r) => r.id)])]
       const partes = await tx.parteDaDemanda.findMany({
         where: { pedidos: { some: { id: { in: [...ids] } } } },
         select: { demandaId: true },
