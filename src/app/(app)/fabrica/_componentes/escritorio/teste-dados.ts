@@ -13,6 +13,7 @@ export function retratoDeTeste(): RetratoV2 {
 export function escritorioDeTeste(
   retrato: RetratoV2 = retratoDeTeste(),
   espera: string | null = null,
+  esperaDesde: Date | null = null,
 ): Escritorio {
   return montarEscritorio(
     {
@@ -24,6 +25,7 @@ export function escritorioDeTeste(
           repositorio: 'PauloRhyanK/CAISv2',
           marco: 'desenvolvida',
           espera,
+          esperaDesde: espera === null ? null : (esperaDesde ?? AGORA),
         },
       ],
       titulos: { 'CAISv2-d87a': 'Suporte e Tour no kit CAIS' },

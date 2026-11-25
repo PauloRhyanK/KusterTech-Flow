@@ -1,7 +1,7 @@
 // Dados da tela do escritório da Fábrica: retrato, demandas abertas, títulos das seeds, histórico e gestão.
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import type { EtapaDefinida } from '@/modules/demandas/model'
+import { type EtapaDefinida, inicioDaEspera } from '@/modules/demandas/model'
 import { obterRetratoMaisRecente, type RetratoRecebido } from '../queries'
 import { type DadosDaGestao, montarGestao } from './gestao'
 import { gastoPorPlano, lerHistorico, lerLinhasDosPlanos } from './intervalos'
@@ -28,6 +28,8 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
       etapas: true,
       etapaAtual: true,
       espera: true,
+      esperaDesde: true,
+      atualizadaEm: true,
       criadaEm: true,
       repositorio: { select: { nomeCompleto: true } },
     },
@@ -39,6 +41,7 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
     marco:
       (d.etapas as unknown as EtapaDefinida[]).find((e) => e.chave === d.etapaAtual)?.marco ?? null,
     espera: d.espera,
+    esperaDesde: inicioDaEspera(d),
   }))
 
   const retrato = recebido?.retrato

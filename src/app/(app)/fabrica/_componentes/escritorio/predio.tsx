@@ -1,7 +1,12 @@
 'use client'
 
 // O prédio da Fábrica: um andar por demanda em execução, a equipe pela janela e sirenes onde o Paulo é esperado.
-import type { Andar, ItemDaRecepcao } from '@/modules/fabrica/escritorio/model'
+import { duracaoDaEspera } from '@/modules/demandas/model'
+import {
+  type Andar,
+  type ItemDaRecepcao,
+  porEsperaMaisLonga,
+} from '@/modules/fabrica/escritorio/model'
 import { s } from './classes'
 import { Boneco } from './pixel'
 
@@ -15,18 +20,23 @@ export interface PredioProps {
 function rotulo(andar: Andar, numero: number): string {
   const [feitas, total] = andar.progresso.partes
   const partes = `${feitas} de ${total} partes entregues`
-  return `${numero}º andar: ${andar.titulo}, ${partes}${andar.esperaPaulo ? ', espera você' : ''}`
+  return `${numero}º andar: ${andar.titulo}, ${partes}${andar.esperaPaulo ? `, ${textoDaEspera(andar)}` : ''}`
+}
+
+export function textoDaEspera(andar: Pick<Andar, 'esperando'>): string {
+  return andar.esperando
+    ? `espera você há ${duracaoDaEspera(andar.esperando.minutos)}`
+    : 'espera você'
 }
 
 export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioProps) {
   // o andar mais novo fica em cima: a lista vem do mais antigo para o mais novo
   const esperam = recepcao.filter((r) => r.esperaPaulo).length
-  // em cima, quem espera o Paulo; depois, do mais novo para o mais antigo (o número do andar é a ordem de chegada)
-  const numerados = andares.map((a, i) => ({ andar: a, numero: i + 1 })).reverse()
-  const deCimaParaBaixo = [
-    ...numerados.filter((n) => n.andar.esperaPaulo),
-    ...numerados.filter((n) => !n.andar.esperaPaulo),
-  ]
+  // em cima, quem espera o Paulo há mais tempo; depois, do mais novo para o mais antigo (o número do andar é a ordem de chegada)
+  const deCimaParaBaixo = andares
+    .map((a, i) => ({ andar: a, numero: i + 1 }))
+    .reverse()
+    .sort((a, b) => porEsperaMaisLonga(a.andar, b.andar))
   return (
     <div className={s.predio}>
       <div className={s.ceu}>

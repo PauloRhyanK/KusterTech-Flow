@@ -114,6 +114,46 @@ export const MODELO_PADRAO: readonly EtapaDefinida[] = [
 export const LIMITE_DE_RECUSAS_DO_DESENHO = 3
 export const LIMITE_DE_FALHAS_DO_TESTE = 2
 export const FABRICA_SEM_BUSCAR_MS = 10 * 60_000
+/** Espera do Paulo que passa disto ganha destaque de alerta. */
+export const LIMITE_DA_ESPERA_LONGA_MS = 2 * 60 * 60_000
+
+/**
+ * Desde quando a demanda espera o Paulo: `esperaDesde`, que só muda quando a espera muda. As
+ * gravadas antes da coluna existir caem em `atualizadaEm`. Sem espera, null.
+ */
+export function inicioDaEspera(d: {
+  espera: string | null
+  esperaDesde: Date | null
+  atualizadaEm: Date
+}): Date | null {
+  if (d.espera === null) return null
+  return d.esperaDesde ?? d.atualizadaEm
+}
+
+export interface TempoDeEspera {
+  minutos: number
+  /** passou de `LIMITE_DA_ESPERA_LONGA_MS` */
+  longa: boolean
+}
+
+export function tempoDeEspera(desde: Date, agora: Date): TempoDeEspera {
+  const ms = Math.max(0, agora.getTime() - desde.getTime())
+  return { minutos: Math.floor(ms / 60_000), longa: ms > LIMITE_DA_ESPERA_LONGA_MS }
+}
+
+/** "45 min", "3 h 20 min", "1 d 3 h". */
+export function duracaoDaEspera(minutos: number): string {
+  if (minutos < 1) return 'menos de 1 min'
+  if (minutos < 60) return `${minutos} min`
+  const horas = Math.floor(minutos / 60)
+  if (horas < 24) {
+    const resto = minutos % 60
+    return resto === 0 ? `${horas} h` : `${horas} h ${resto} min`
+  }
+  const dias = Math.floor(horas / 24)
+  const resto = horas % 24
+  return resto === 0 ? `${dias} d` : `${dias} d ${resto} h`
+}
 
 const CHAVE_VALIDA = /^[a-z0-9-]{1,40}$/
 

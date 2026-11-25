@@ -19,6 +19,7 @@ function cenario(historico: Historico[], gastoRegistrado?: number) {
           repositorio: 'PauloRhyanK/CAISv2',
           marco: 'desenvolvida',
           espera: null,
+          esperaDesde: null,
         },
       ],
       titulos: {},
