@@ -1472,3 +1472,20 @@ export async function publicadaSemConferirNoBanco(
   })
   await db.demanda.update({ where: { id: demandaId }, data: { naoChegouDesde: agora } })
 }
+
+// A leitura do site (D76) só existe com `urlDaVersao` em https, que o E2E não alcança: este é o
+// único ponto simulado. Grava o commit que a conferência teria lido; o worker real fecha as
+// partes que ele contém (compara pelas fixtures do GitHub) e a demanda quando todas estão no ar.
+export async function gravarVersaoConferidaNoBanco(
+  nomeCompleto: string,
+  commit: string,
+): Promise<void> {
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto },
+    select: { id: true },
+  })
+  await db.configuracaoDePublicacao.update({
+    where: { repositorioId: repositorio.id },
+    data: { versaoNoAr: commit, versaoConferidaEm: new Date() },
+  })
+}
