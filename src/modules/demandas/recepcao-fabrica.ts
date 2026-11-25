@@ -301,6 +301,7 @@ export async function receberEventoDaFabrica(
         origem: 'fabrica',
         em: new Date(em),
         fonteId: fonte.id,
+        contrato,
       })
     } catch (erro) {
       if (erro instanceof ErroDeDominio && erro.message === NAO_ENCONTRADA.erro) {
