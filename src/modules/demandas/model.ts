@@ -191,8 +191,8 @@ export function validarModelo(etapas: readonly EtapaDefinida[]): string[] {
   }
   if (etapas[0]?.marco !== 'recebida') erros.push('a primeira etapa precisa ser a "recebida"')
   const ultimo = etapas[etapas.length - 1]?.marco
-  if (ultimo !== 'entregue' && ultimo !== 'no_ar') {
-    erros.push('a última etapa precisa ser a "no ar" (ou a "entregue", em modelos antigos)')
+  if (ultimo !== 'no_ar') {
+    erros.push('a última etapa precisa ser No ar')
   }
   return erros
 }
@@ -275,7 +275,7 @@ export function concluirEtapaAtual(
   const proxima = etapas.slice(posicao + 1).find((e) => temTela || !e.puladaSemTela)
   if (!proxima) {
     const etapa = etapas[posicao]
-    if (etapa?.marco !== 'no_ar') return { ...estado, concluidas }
+    if (etapa?.marco !== 'no_ar') return estado
     return { ...estado, concluidas, espera: null, esperaMotivo: null, encerrada: 'no_ar' }
   }
   return {

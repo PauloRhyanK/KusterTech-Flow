@@ -26,6 +26,8 @@ export interface Parte extends ParteDeclarada {
   estado: EstadoDaParte
   prs: PrDaParte[]
   commitAlvo: string | null
+  /** A versão conferida no site quando a parte chegou ao ar. */
+  commitNoAr: string | null
   motivo: string | null
   feitaEm: Date | null
   noArEm: Date | null
@@ -279,8 +281,10 @@ export function fraseDaDemanda(partes: readonly Parte[]): {
 } {
   const ativas = abertas(partes)
   if (todasNoAr(ativas)) {
-    const ultima = [...ativas].sort((a, b) => b.ordem - a.ordem)[0]
-    return { texto: MOTIVOS.noAr(ultima?.commitAlvo ?? ''), tom: 'sucesso' }
+    const quando = (p: Parte) => p.noArEm?.getTime() ?? 0
+    const ultima = [...ativas].sort((a, b) => quando(b) - quando(a) || b.ordem - a.ordem)[0]
+    const sha = ultima?.commitNoAr ?? ultima?.commitAlvo ?? null
+    return { texto: sha ? MOTIVOS.noAr(sha) : 'No ar', tom: 'sucesso' }
   }
   const atrasada = [...ativas].sort(
     (a, b) => ADIANTAMENTO[a.estado] - ADIANTAMENTO[b.estado] || a.ordem - b.ordem,

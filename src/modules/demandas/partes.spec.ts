@@ -36,6 +36,7 @@ function parte(chave: string, extra: Partial<Parte> = {}): Parte {
     estado: 'em_curso',
     prs: [],
     commitAlvo: null,
+    commitNoAr: null,
     motivo: null,
     feitaEm: null,
     noArEm: null,
@@ -373,9 +374,22 @@ describe('fraseDaDemanda', () => {
 
   test('tudo no ar mostra a versão de 7 caracteres', () => {
     const partes = [
-      parte('back', { estado: 'no_ar', commitAlvo: 'c5c01ba1234567890' }),
-      parte('front', { estado: 'no_ar', commitAlvo: 'c5c01ba1234567890', ordem: 2 }),
+      parte('back', { estado: 'no_ar', commitNoAr: 'aaaaaaa1', noArEm: new Date('2026-11-24') }),
+      parte('front', {
+        estado: 'no_ar',
+        commitNoAr: 'c5c01ba1234567890',
+        commitAlvo: 'bbbbbbb2',
+        noArEm: new Date('2026-11-25'),
+        ordem: 2,
+      }),
     ]
     expect(fraseDaDemanda(partes)).toEqual({ texto: 'No ar · c5c01ba', tom: 'sucesso' })
+    expect(fraseDaDemanda([parte('a', { estado: 'no_ar', commitAlvo: 'd4d4d4d9' })]).texto).toBe(
+      'No ar · d4d4d4d',
+    )
+    expect(fraseDaDemanda([parte('a', { estado: 'no_ar' })])).toEqual({
+      texto: 'No ar',
+      tom: 'sucesso',
+    })
   })
 })

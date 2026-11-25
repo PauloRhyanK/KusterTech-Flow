@@ -52,7 +52,7 @@ describe('modelo de etapas', () => {
   })
 
   test('validarModelo aponta os defeitos e aceita etapa extra com marco null', () => {
-    const [rec, pla, des, dev, tes, ent] = MODELO_PADRAO.map((e) => e)
+    const [rec, pla, des, dev, tes, , ent] = MODELO_PADRAO.map((e) => e)
     if (!rec || !pla || !des || !dev || !tes || !ent) throw new Error('modelo')
     expect(validarModelo([rec, pla, pla, ent]).length).toBeGreaterThan(0)
     expect(validarModelo([rec, { ...pla, chave: 'Ruim Chave' }, ent]).length).toBeGreaterThan(0)
@@ -63,6 +63,7 @@ describe('modelo de etapas', () => {
     expect(validarModelo([rec, des, pla, dev, tes, ent])).not.toEqual([])
     expect(validarModelo([pla, ent])).not.toEqual([])
     expect(validarModelo([rec, pla])).not.toEqual([])
+    expect(validarModelo(MODELO_PADRAO.slice(0, 6))).toEqual(['a última etapa precisa ser No ar'])
     expect(validarModelo([rec, extra, pla, ent])).toEqual([])
   })
 
@@ -164,10 +165,8 @@ describe('modelo de etapas', () => {
   test('concluirEtapaAtual num modelo sem no_ar não encerra na última etapa', () => {
     const modelo = MODELO_PADRAO.slice(0, 6)
     const base = estadoInicial(modelo, true, 'vai_sozinho')
-    const a = concluirEtapaAtual({ ...base, etapaAtual: 'entregue' }, modelo, true)
-    expect(a.encerrada).toBeNull()
-    expect(a.etapaAtual).toBe('entregue')
-    expect(a.concluidas).toContain('entregue')
+    const parado = { ...base, etapaAtual: 'entregue' }
+    expect(concluirEtapaAtual(parado, modelo, true)).toBe(parado)
   })
 
   test('concluirEtapaAtual não avança demanda encerrada nem etapa fora do modelo', () => {

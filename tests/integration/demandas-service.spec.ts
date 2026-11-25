@@ -520,7 +520,7 @@ describe('demandas / service (integração)', () => {
     ])
   })
 
-  test('troca de modelo com demandas em curso: definirDemandasDoProjeto com um modelo de 7 etapas → a demanda aberta antes segue com as etapas do retrato; a nova nasce com 7', async () => {
+  test('troca de modelo com demandas em curso: definirDemandasDoProjeto com um modelo com etapa extra → a demanda aberta antes segue com as etapas do retrato; a nova nasce com a etapa extra', async () => {
     const { projeto, repositorio } = await cenario()
     const entrada = {
       projetoId: projeto.id,
@@ -545,6 +545,7 @@ describe('demandas / service (integração)', () => {
         esperaEm: [],
       },
       MODELO_PADRAO[5]!,
+      MODELO_PADRAO[6]!,
     ]
     const { id: modeloId } = await criarModeloDeEtapas(admin, 'Com conferência', sete)
     await expect(
