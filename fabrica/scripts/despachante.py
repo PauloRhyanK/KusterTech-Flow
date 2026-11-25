@@ -130,6 +130,8 @@ LIMITE_RELATO_DO_FIXER = 2000
 MAX_ATUALIZACOES_DO_BRANCH = 5
 MAX_FALHAS_DE_LEITURA = 5
 MAX_FALHAS_DE_CANCELAR = 5
+# depois de cada quebra seguida do orquestrador, a acordada espera estes minutos; a quebra seguinte a eles pausa
+ESPERAS_DEPOIS_DA_QUEBRA_MIN = (5, 15, 45)
 MAX_TENTATIVAS_DE_FECHAR = 5
 CICLOS_WARREN_FORA = 5
 CI_PENDENTE_MAXIMO = datetime.timedelta(hours=2)
@@ -926,6 +928,7 @@ class Despachante:
         antes = {"pausado": self.estado.get("pausado"), "falhasAcordar": self.estado.get("falhasAcordar")}
         self.estado["pausado"] = None
         self.estado["falhasAcordar"] = 0
+        self.estado.pop("acordarDepoisDe", None)
         self.estado["adiamentosRede"] = {}
         liberadas = liberar_raias_em_cota(self.estado)
         if liberadas:
@@ -1630,6 +1633,7 @@ class Despachante:
             n += 1
         orquestrador["semResultadoSeguidos"] = n
         self.estado["falhasAcordar"] = 0  # o run terminou bem: a cadeia de falhas acabou
+        self.estado.pop("acordarDepoisDe", None)
         if resultado["r"] == "sem_resultado":
             if n >= MAX_SEM_RESULTADO:
                 url = resultado.get("decisao")
@@ -1667,8 +1671,13 @@ class Despachante:
         falhas = self.estado.get("falhasAcordar")
         falhas = (falhas if _inteiro(falhas) and falhas >= 0 else 0) + 1
         self.estado["falhasAcordar"] = falhas
-        if falhas >= est.MAX_FALHAS_ACORDAR and not self.estado.get("pausado"):
+        if falhas > len(ESPERAS_DEPOIS_DA_QUEBRA_MIN) and not self.estado.get("pausado"):
             self.estado["pausado"] = "orquestrador falhou %d vezes seguidas" % falhas
+            self.estado.pop("acordarDepoisDe", None)
+        elif falhas <= len(ESPERAS_DEPOIS_DA_QUEBRA_MIN):
+            # uma quebra costuma ser passageira (Warren, rede, cota): a mesma acordada espera antes de voltar
+            espera = datetime.timedelta(minutes=ESPERAS_DEPOIS_DA_QUEBRA_MIN[falhas - 1])
+            self.estado["acordarDepoisDe"] = (self._agora() + espera).isoformat()
         self._salvar()
         self._aviso(
             "run %s do orquestrador terminou %s (%s): acordada %s:%s de volta à fila (falha %d)"
@@ -2815,10 +2824,29 @@ class Despachante:
             return [self._limitar(v) for v in valor]
         return copy.deepcopy(valor)
 
+    def _esperando_depois_da_quebra(self) -> bool:
+        """Há uma espera depois da quebra do orquestrador (`acordarDepoisDe`) que ainda não passou."""
+        texto = self.estado.get("acordarDepoisDe")
+        if not _texto(texto):
+            return False
+        try:
+            limite = datetime.datetime.fromisoformat(texto)
+        except ValueError:
+            self.estado.pop("acordarDepoisDe", None)
+            return False
+        agora = self._agora()
+        if (limite.tzinfo is None) != (agora.tzinfo is None):
+            limite = limite.replace(tzinfo=agora.tzinfo)
+        if agora >= limite:
+            self.estado.pop("acordarDepoisDe", None)
+            return False
+        return True
+
     def _proposta_de_pendente(self):
         """A primeira acordada da fila; com o orquestrador bloqueado (A), só as respostas do Paulo passam."""
         if self.estado.get("pausado") or self._orq().get("runId") is not None or self._orquestrador_incerto():
             return None
+        esperando = self._esperando_depois_da_quebra()
         bloqueado = self._bloqueado()
         pendentes = self.estado.get("acordarPendentes")
         if not isinstance(pendentes, list):
@@ -2834,7 +2862,7 @@ class Despachante:
                 pendentes.remove(pendente)
                 self._salvar()
                 continue
-            if bloqueado and pendente.get("motivo") != "resposta_paulo":
+            if (bloqueado or esperando) and pendente.get("motivo") != "resposta_paulo":
                 continue
             return {
                 "tipo": "acordar",
@@ -3861,6 +3889,7 @@ def retomar(raiz, *, agora=datetime.datetime.now) -> None:
     antes = {"pausado": estado.get("pausado"), "falhasAcordar": estado.get("falhasAcordar")}
     estado["pausado"] = None
     estado["falhasAcordar"] = 0
+    estado.pop("acordarDepoisDe", None)
     estado["adiamentosRede"] = {}
     liberadas = liberar_raias_em_cota(estado)
     if liberadas:
