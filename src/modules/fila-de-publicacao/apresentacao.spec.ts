@@ -635,7 +635,7 @@ describe('avisos da publicação que não conferiu, falhou ou foi dispensada', (
     expect(avisosDaPublicacao([l], AGORA)).toEqual([])
   })
 
-  test('dispensado por "já está no ar" nas últimas 24 h → aviso com a versão conferida e o run dela', () => {
+  test('dispensado com o site conferido contendo o pedido → sem aviso: está no ar, nada a fazer', () => {
     const l = linha({
       noAr: { commit: sha('e'), desde: minutos(-60), execucaoUrl: RUN },
       conferencia: true,
@@ -647,19 +647,7 @@ describe('avisos da publicação que não conferiu, falhou ou foi dispensada', (
         concluidoEm: minutos(-10),
       },
     })
-    expect(avisosDaPublicacao([l], AGORA)).toEqual([
-      {
-        id: 'dispensado-r1',
-        repositorioId: 'r1',
-        titulo: 'Projeto Alfa: Modo editor não subiu de novo',
-        contexto: 'já está no ar: o site mostra eeeeeee, que contém bbbbbbb',
-        href: RUN,
-        externo: true,
-        rotuloDaFaixa: 'Ver o run no GitHub',
-        tom: 'atencao',
-        desde: minutos(-10),
-      },
-    ])
+    expect(avisosDaPublicacao([l], AGORA)).toEqual([])
   })
 
   test('dispensado sem conferência, sem título ou sem run → texto do último publicado e âncora', () => {
@@ -673,8 +661,9 @@ describe('avisos da publicação que não conferiu, falhou ou foi dispensada', (
       },
     })
     expect(avisosDaPublicacao([l], AGORA)[0]).toMatchObject({
-      titulo: 'Projeto Alfa: o pedido bbbbbbb não subiu de novo',
-      contexto: 'já está no ar: o último publicado (eeeeeee) contém bbbbbbb',
+      titulo: 'Projeto Alfa: o pedido bbbbbbb foi dispensado sem conferir o site',
+      contexto:
+        'o último publicado (eeeeeee) já contém bbbbbbb; confira no site se a mudança está no ar',
       href: '#r1',
       externo: false,
       rotuloDaFaixa: 'Ver a fila',
