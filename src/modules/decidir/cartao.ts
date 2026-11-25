@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { ErroDeDominio } from '@/lib/erros'
 import { NIVEIS, TIPOS } from '@/modules/demandas/contrato'
-import type { Nivel, TipoDeDemanda } from '@/modules/demandas/model'
-import { RESPOSTAS_DO_FLOW, type ItemDaPilha, type TipoDeItem } from './model'
+import type { Espera, Nivel, TipoDeDemanda } from '@/modules/demandas/model'
+import { respostasDoItem, type ItemDaPilha, type TipoDeItem } from './model'
 
 export type Acao =
   | 'destino'
@@ -14,6 +14,7 @@ export type Acao =
   | 'aprovar_e_mergear'
   | 'pedir_mudanca'
   | 'retomar'
+  | 'entregar_parcial'
   | 'encerrar'
   | 'concluir'
 
@@ -25,13 +26,36 @@ export const ACOES_POR_TIPO: Record<TipoDeItem, readonly Acao[]> = {
   desenho: ['aprovar_desenho', 'ajustar_desenho'],
   decisao_da_fabrica: ['responder'],
   fim_de_fase: ['aprovar_e_mergear', 'pedir_mudanca'],
-  trava: ['retomar', 'encerrar', 'aprovar_e_mergear'],
+  trava: ['retomar', 'entregar_parcial', 'encerrar', 'aprovar_e_mergear'],
   concluir_etapa: ['concluir'],
 }
 
-/** As ações que o item aceita agora: o merge só existe com o PR lido ao abrir. */
-export function acoesDoItem(tipo: TipoDeItem, contexto: ContextoDoItem): Acao[] {
-  return ACOES_POR_TIPO[tipo].filter((a) => a !== 'aprovar_e_mergear' || contexto.pr !== null)
+/** A ação cabe na espera da demanda: entregar o que funciona só no teste que falhou. */
+export function cabeNaEspera(acao: Acao, espera: Espera | null): boolean {
+  return acao !== 'entregar_parcial' || espera === 'teste_falhou'
+}
+
+function esperaDo(item: ItemDaPilha): Espera | null {
+  return item.ref.tipo === 'demanda' ? item.ref.espera : null
+}
+
+/** A ação vale para o item: está no tipo dele e cabe na espera da demanda. */
+function valeNoItem(item: ItemDaPilha, acao: Acao): boolean {
+  return ACOES_POR_TIPO[item.tipo].includes(acao) && cabeNaEspera(acao, esperaDo(item))
+}
+
+/**
+ * As ações que o item aceita agora: o merge só existe com o PR lido ao abrir; entregar o que
+ * funciona, só no teste que falhou.
+ */
+export function acoesDoItem(
+  tipo: TipoDeItem,
+  contexto: ContextoDoItem,
+  espera: Espera | null = null,
+): Acao[] {
+  return ACOES_POR_TIPO[tipo].filter(
+    (a) => (a !== 'aprovar_e_mergear' || contexto.pr !== null) && cabeNaEspera(a, espera),
+  )
 }
 
 type DestinoDoCartao = 'urgente' | 'lote_da_noite' | 'fila_de_agentes'
@@ -54,6 +78,7 @@ export type Cartao =
   | { acao: 'aprovar_e_mergear'; pr: string; numero: number; head: string; protegidos: string[] }
   | { acao: 'pedir_mudanca'; texto: string }
   | { acao: 'retomar'; resposta: string | null }
+  | { acao: 'entregar_parcial' }
   | { acao: 'encerrar' }
   | { acao: 'concluir'; etapa: string }
 
@@ -97,6 +122,7 @@ export const propostaDoAgenteSchema = z.discriminatedUnion('acao', [
   z.strictObject({ acao: z.literal('aprovar_e_mergear') }),
   z.strictObject({ acao: z.literal('pedir_mudanca'), texto: textoLivre }),
   z.strictObject({ acao: z.literal('retomar'), resposta: opcional }),
+  z.strictObject({ acao: z.literal('entregar_parcial') }),
   z.strictObject({ acao: z.literal('encerrar') }),
   z.strictObject({ acao: z.literal('concluir') }),
 ])
@@ -183,6 +209,8 @@ function montar(item: ItemDaPilha, contexto: ContextoDoItem, p: Proposta): Resul
           ok: true,
           cartao: { acao: 'retomar', resposta: opcionalAparado(p.resposta, LIMITE_DA_RESPOSTA) },
         }
+      case 'entregar_parcial':
+        return { ok: true, cartao: { acao: 'entregar_parcial' } }
       case 'encerrar':
         return { ok: true, cartao: { acao: 'encerrar' } }
       case 'concluir':
@@ -218,7 +246,7 @@ export function validarCartao(
 ): Resultado {
   const lido = propostaDoAgenteSchema.safeParse(proposta)
   if (!lido.success) return { ok: false, motivo: FORMATO }
-  if (!ACOES_POR_TIPO[item.tipo].includes(lido.data.acao)) return { ok: false, motivo: NAO_VALE }
+  if (!valeNoItem(item, lido.data.acao)) return { ok: false, motivo: NAO_VALE }
   try {
     return montar(item, contexto, lido.data)
   } catch (e) {
@@ -234,7 +262,7 @@ export function cartaoDaRespostaRapida(
   contexto: ContextoDoItem,
   chave: string,
 ): { cartao: Cartao } | { faltam: Falta[]; base: Partial<Cartao> } {
-  if (!RESPOSTAS_DO_FLOW[item.tipo].some((r) => r.chave === chave)) {
+  if (!respostasDoItem(item).some((r) => r.chave === chave)) {
     throw new ErroDeDominio('Resposta rápida inválida.')
   }
   const ref = item.ref
@@ -278,6 +306,7 @@ export type Efeito =
   | { tipo: 'aprovar_desenho'; demandaId: string; versao: number }
   | { tipo: 'pedir_ajuste'; demandaId: string; versao: number; texto: string }
   | { tipo: 'retomar'; demandaId: string; resposta?: string }
+  | { tipo: 'entregar_parcial'; demandaId: string }
   | { tipo: 'concluir_etapa'; demandaId: string; chave: string }
   | { tipo: 'responder_issue'; repositorio: string; numero: number; comentario: string }
   | {
@@ -294,7 +323,7 @@ export type Efeito =
 
 export function efeitoDoCartao(item: ItemDaPilha, cartao: Cartao): Efeito {
   const ref = item.ref
-  if (!ACOES_POR_TIPO[item.tipo].includes(cartao.acao)) throw new ErroDeDominio(NAO_VALE)
+  if (!valeNoItem(item, cartao.acao)) throw new ErroDeDominio(NAO_VALE)
   if (ref.tipo === 'demanda') {
     const demandaId = ref.demandaId
     switch (cartao.acao) {
@@ -324,6 +353,8 @@ export function efeitoDoCartao(item: ItemDaPilha, cartao: Cartao): Efeito {
           demandaId,
           ...(cartao.resposta !== null ? { resposta: cartao.resposta } : {}),
         }
+      case 'entregar_parcial':
+        return { tipo: 'entregar_parcial', demandaId }
       case 'concluir':
         return { tipo: 'concluir_etapa', demandaId, chave: cartao.etapa }
       // Depois do merge, a retomada avisa a Fábrica, que confere o PR e segue a correção.

@@ -593,6 +593,7 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   teste: 'Teste no navegador',
   entregue: 'Entregue',
   encerrada_pelo_paulo: 'Demanda encerrada',
+  entrega_parcial: 'Entregar o que funciona; o que faltou virou uma demanda nova',
 }
 
 const QUEM_FEZ: Record<string, string> = {

@@ -126,15 +126,46 @@ export const RESPOSTAS_DO_FLOW: Record<TipoDeItem, readonly { chave: string; rot
   ],
   trava: [
     { chave: 'retomar', rotulo: 'Retomar' },
+    { chave: 'entregar_parcial', rotulo: 'Entregar o que funciona' },
     { chave: 'encerrar', rotulo: 'Encerrar a demanda' },
   ],
   concluir_etapa: [{ chave: 'concluir', rotulo: 'Concluir' }],
   decisao_da_fabrica: [],
 }
 
+/** As respostas que só valem no teste que falhou (a trava comum não as mostra). */
+const SO_NO_TESTE_QUE_FALHOU = ['entregar_parcial']
+
+/** As respostas rápidas do item: "Entregar o que funciona" só na espera `teste_falhou`. */
+export function respostasDoItem(
+  item: Pick<ItemDaPilha, 'tipo' | 'ref'>,
+): readonly { chave: string; rotulo: string }[] {
+  const testeFalhou = item.ref.tipo === 'demanda' && item.ref.espera === 'teste_falhou'
+  return RESPOSTAS_DO_FLOW[item.tipo].filter(
+    (r) => testeFalhou || !SO_NO_TESTE_QUE_FALHOU.includes(r.chave),
+  )
+}
+
 const BOTOES_DO_TESTE_QUE_FALHOU =
   'Retomar: um agente corrige o que falhou e o teste roda de novo.\n' +
+  'Entregar o que funciona: a demanda segue para a entrega como está, e o que faltou vira uma demanda nova.\n' +
   'Encerrar a demanda: ela fecha como está, sem correção.'
+
+const CAMINHO_DA_DEMANDA =
+  /(?<![\w/:.])\/demandas\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\w-])/g
+
+/** O texto de uma mensagem em trechos; o caminho de uma demanda (`/demandas/<id>`) vira link. */
+export function trechosComLink(texto: string): { texto: string; href?: string }[] {
+  const trechos: { texto: string; href?: string }[] = []
+  let desde = 0
+  for (const m of texto.matchAll(CAMINHO_DA_DEMANDA)) {
+    if (m.index > desde) trechos.push({ texto: texto.slice(desde, m.index) })
+    trechos.push({ texto: m[0], href: m[0] })
+    desde = m.index + m[0].length
+  }
+  if (desde < texto.length || trechos.length === 0) trechos.push({ texto: texto.slice(desde) })
+  return trechos
+}
 
 /** O texto da trava no Decidir; no teste que falhou, diz o que cada botão faz. */
 export function textoDaTrava(espera: Espera, motivo: string | null): string {

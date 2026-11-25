@@ -438,6 +438,41 @@ describe('teste', () => {
   })
 })
 
+describe('entrega parcial (o Paulo entrega o que funciona)', () => {
+  const filha = { tipo: 'entrega_parcial', dados: { filha: A } } as EventoAplicavel
+  const parada = () =>
+    est({
+      etapaAtual: 'testada',
+      concluidas: ['recebida', 'planejada', 'desenho', 'desenvolvida'],
+      espera: 'teste_falhou',
+      esperaMotivo: 'r',
+      falhasDoTeste: 2,
+    })
+
+  test('em teste_falhou conclui a testada como o teste que passa: etapa entregue, sem espera', () => {
+    const e = ok(ap(parada(), filha, 'paulo'))
+    expect(e.etapaAtual).toBe('entregue')
+    expect(e.concluidas).toContain('testada')
+    expect(e.espera).toBeNull()
+    expect(e.esperaMotivo).toBeNull()
+    expect(e.encerrada).toBeNull()
+  })
+
+  test('fora de teste_falhou é recusada (o segundo clique não passa)', () => {
+    const entregue = ok(ap(parada(), filha, 'paulo'))
+    expect(recusa(ap(entregue, filha, 'paulo'))).toBe(
+      'A demanda não espera mais a decisão do teste.',
+    )
+    expect(ap(est({ etapaAtual: 'testada', espera: 'travada' }), filha, 'paulo').ok).toBe(false)
+    expect(ap(est({ etapaAtual: 'testada' }), filha, 'paulo').ok).toBe(false)
+  })
+
+  test('só o Paulo entrega em parte', () => {
+    expect(ap(parada(), filha, 'fabrica').ok).toBe(false)
+    expect(ap(parada(), filha, 'sessao').ok).toBe(false)
+  })
+})
+
 describe('entregue e encerrada', () => {
   test('entregue só na etapa entregue; depois de encerrada tudo é recusado', () => {
     const ev = { tipo: 'entregue', dados: { prs: [] } } as EventoAplicavel

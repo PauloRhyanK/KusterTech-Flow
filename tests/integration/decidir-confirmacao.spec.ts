@@ -8,10 +8,11 @@ import { db } from '@/lib/db'
 import { confirmarCartao, marcadorDoCartao } from '@/modules/decidir/confirmacao'
 import { chaveDaDemanda, chaveDaIssue } from '@/modules/decidir/model'
 import { localizarItem } from '@/modules/decidir/queries'
-import { abrirItem, ajustarCartao } from '@/modules/decidir/service'
+import { abrirItem, ajustarCartao, responderRapido } from '@/modules/decidir/service'
 import {
   criarDemanda,
   encerrarDemanda,
+  entregarOQueFunciona,
   guardarArquivo,
   registrarEvento,
 } from '@/modules/demandas/service'
@@ -248,6 +249,49 @@ async function demandaTravada(titulo: string) {
   return { id, chave: await chaveAtual(id) }
 }
 
+const RESUMO_DO_TESTE =
+  'Quase tudo funciona, mas o tutorial guiado não.\n' +
+  'Funcionou:\n- o chat responde\n' +
+  'Não funcionou:\n- o tutorial guiado não abre'
+
+/** Uma demanda "vai sozinho" com tela que falhou duas vezes no teste: espera `teste_falhou`. */
+async function demandaComTesteQueFalhou(titulo: string) {
+  const { id } = await criarDemanda(admin, {
+    projetoId,
+    repositorioId,
+    titulo,
+    descricao: 'Relato de quem pediu.',
+    nivel: 'vai_sozinho',
+    temTela: true,
+    anexos: [],
+  })
+  expect((await daFabrica(id, triagem('fila_de_agentes'))).resultado).toBe('aplicado')
+  const plano = await daFabrica(id, {
+    tipo: 'plano_criado',
+    ator: 'fabrica',
+    dados: { plano: '.fabrica/planos/suporte.json', prUrl: null },
+  })
+  expect(plano.resultado).toBe('aplicado')
+  await enviarDesenho(id)
+  for (const resumo of ['O chat não abre.', RESUMO_DO_TESTE]) {
+    const dev = await daFabrica(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'desenvolvida' },
+    })
+    expect(dev.resultado).toBe('aplicado')
+    const t = await daFabrica(id, {
+      tipo: 'teste',
+      ator: 'fabrica',
+      dados: { resultado: 'falhou', resumo, capturas: [] },
+    })
+    expect(t.resultado).toBe('aplicado')
+  }
+  const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+  expect(d.espera).toBe('teste_falhou')
+  return { id, chave: await chaveAtual(id) }
+}
+
 async function abrirComCartao(chave: string, campos: unknown, fonte?: FonteGitHub) {
   const f = fonte ?? criarFonteFixtures()
   const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => f })
@@ -384,6 +428,96 @@ describe('decidir / confirmação (integração)', () => {
     expect(
       await db.eventoDaDemanda.count({ where: { demandaId: b.id, tipo: 'encerrada_pelo_paulo' } }),
     ).toBe(1)
+  })
+
+  test('teste que falhou: "Entregar o que funciona" leva a demanda à entrega e abre a demanda do que faltou, uma vez só', async () => {
+    const { id, chave } = await demandaComTesteQueFalhou('Suporte por IA')
+    const f = criarFonteFixtures()
+    const { conversaId } = await abrirItem(admin, chave, AGORA, { fonte: () => f })
+    const abertura = await db.mensagem.findFirstOrThrow({
+      where: { conversaId },
+      orderBy: { seq: 'asc' },
+    })
+    expect(abertura.respostasRapidas).toEqual([
+      'Retomar',
+      'Entregar o que funciona',
+      'Encerrar a demanda',
+    ])
+    const r0 = await responderRapido(
+      admin,
+      { conversaId, id: randomUUID(), chave: 'entregar_parcial' },
+      AGORA,
+    )
+    expect('cartaoId' in r0).toBe(true)
+    const cartao = await cartaoProposto(conversaId)
+    expect(cartao.conteudo).toEqual({ acao: 'entregar_parcial' })
+
+    const r = await confirmarCartao(admin, cartao.id, AGORA, { fonte: null })
+    expect(r.resultado).toBe('confirmado')
+
+    // A original: a testada concluída, na etapa entregue, sem espera (a Fábrica faz a entrega).
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d).toMatchObject({ etapaAtual: 'entregue', espera: null, encerrada: null })
+    expect(d.concluidas).toContain('testada')
+    const ev = await db.eventoDaDemanda.findFirstOrThrow({
+      where: { demandaId: id, tipo: 'entrega_parcial' },
+    })
+    expect(ev).toMatchObject({ origem: 'paulo', usuarioId: admin.usuarioId })
+    const filhaId = (ev.dados as { filha: string }).filha
+
+    // A filha: mesmo projeto e repositório, estado inicial de uma demanda nova.
+    const filha = await db.demanda.findUniqueOrThrow({ where: { id: filhaId } })
+    expect(filha).toMatchObject({
+      projetoId,
+      repositorioId,
+      titulo: 'Suporte por IA — o que faltou',
+      descricao: `- o tutorial guiado não abre\n\nDemanda original: /demandas/${id}`,
+      etapaAtual: 'recebida',
+      espera: null,
+      encerrada: null,
+      origem: 'FLOW',
+      temTela: true,
+      criadaPorId: admin.usuarioId,
+    })
+    expect(await db.eventoDaDemanda.count({ where: { demandaId: filhaId, tipo: 'criada' } })).toBe(
+      1,
+    )
+
+    const ultima = await db.mensagem.findFirstOrThrow({
+      where: { conversaId },
+      orderBy: { seq: 'desc' },
+    })
+    expect(ultima.texto).toBe(
+      'Registrado por Admin às 12:00. A demanda segue para a entrega com o que funciona; ' +
+        `o que faltou virou uma demanda nova: /demandas/${filhaId}`,
+    )
+
+    // O segundo clique (o cartão já confirmado, ou o service de novo) não abre outra filha.
+    expect((await confirmarCartao(admin, cartao.id, AGORA, { fonte: null })).resultado).toBe(
+      'confirmado',
+    )
+    await expect(entregarOQueFunciona(admin, id)).rejects.toThrow(
+      'A demanda não espera mais a decisão do teste.',
+    )
+    expect(await db.demanda.count({ where: { titulo: 'Suporte por IA — o que faltou' } })).toBe(1)
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'entrega_parcial' } }),
+    ).toBe(1)
+  })
+
+  test('entregar o que funciona: só com permissão, e só no teste que falhou', async () => {
+    const { id } = await demandaComTesteQueFalhou('Suporte por IA')
+    await expect(entregarOQueFunciona(aprovador, id)).rejects.toThrow(ErroDeAutorizacao)
+    const travada = await demandaTravada('Outra trava')
+    await expect(entregarOQueFunciona(admin, travada.id)).rejects.toThrow(
+      'A demanda não espera mais a decisão do teste.',
+    )
+    // Na trava comum o cartão nem vale.
+    await expect(abrirComCartao(travada.chave, { acao: 'entregar_parcial' })).rejects.toThrow(
+      'Esta ação não vale para este item.',
+    )
+    expect(await db.demanda.count({ where: { titulo: { endsWith: '— o que faltou' } } })).toBe(0)
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).espera).toBe('teste_falhou')
   })
 
   test('trava com o PR da correção: confirmar o merge mergeia o PR e retoma a demanda', async () => {
