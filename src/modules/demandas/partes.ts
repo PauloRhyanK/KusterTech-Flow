@@ -94,10 +94,8 @@ export function validarPartes(
 
 function mudou(a: ParteDeclarada, b: ParteDeclarada): boolean {
   return (
-    a.repositorio !== b.repositorio ||
     a.objetivo !== b.objetivo ||
     a.ordem !== b.ordem ||
-    a.chegaAoAr !== b.chegaAoAr ||
     a.dependeDe.length !== b.dependeDe.length ||
     a.dependeDe.some((d, i) => d !== b.dependeDe[i])
   )
@@ -116,7 +114,12 @@ export function planejarMudancas(
   for (const d of declaradas) {
     const atual = porChave.get(d.chave)
     if (!atual) criar.push(d)
-    else if (mudou(atual, d)) atualizar.push(d)
+    else if (atual.repositorio !== d.repositorio || atual.chegaAoAr !== d.chegaAoAr) {
+      return {
+        ok: false,
+        motivo: `a parte ${d.chave} não pode mudar de repositório nem de tipo; use outra chave`,
+      }
+    } else if (mudou(atual, d)) atualizar.push(d)
   }
   const remover: string[] = []
   for (const p of atuais) {
@@ -195,8 +198,7 @@ export function nuncaPublicada(
   e: { agora: Date; modo: 'imediato' | 'lote'; proximoLote: Date | null },
 ): boolean {
   if (parte.estado !== 'feita' || parte.temPedido || !parte.feitaEm) return false
-  const referencia = e.modo === 'lote' ? e.proximoLote : parte.feitaEm
-  if (!referencia) return false
+  const referencia = e.modo === 'lote' && e.proximoLote ? e.proximoLote : parte.feitaEm
   return e.agora.getTime() - referencia.getTime() > DUAS_HORAS_MS
 }
 

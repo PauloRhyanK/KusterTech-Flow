@@ -96,6 +96,29 @@ describe('planejarMudancas', () => {
     )
     expect(r).toEqual({ ok: true, criar: [], atualizar: [], remover: ['front'] })
   })
+  test('mudar de repositório é recusado', () => {
+    const r = planejarMudancas([parte('back')], [decl('back', { repositorio: 'exemplo/outro' })])
+    expect(r).toEqual({
+      ok: false,
+      motivo: 'a parte back não pode mudar de repositório nem de tipo; use outra chave',
+    })
+  })
+  test('mudar de tipo é recusado', () => {
+    const r = planejarMudancas([parte('back')], [decl('back', { chegaAoAr: 'versao' })])
+    expect(r).toEqual({
+      ok: false,
+      motivo: 'a parte back não pode mudar de repositório nem de tipo; use outra chave',
+    })
+  })
+  test('só o objetivo mudou', () => {
+    const novo = decl('back', { objetivo: 'Novo' })
+    expect(planejarMudancas([parte('back')], [novo])).toEqual({
+      ok: true,
+      criar: [],
+      atualizar: [novo],
+      remover: [],
+    })
+  })
   test('ausente com PR mergeado é recusada', () => {
     const r = planejarMudancas(
       [parte('back', { prs: [pr('u', 'mergeado', 'abc')] }), parte('front')],
@@ -216,6 +239,10 @@ describe('nuncaPublicada', () => {
         proximoLote: lote,
       }),
     ).toBe(true)
+  })
+  test('lote sem proximoLote usa a regra imediata', () => {
+    expect(nuncaPublicada(feita, { agora: apos(121), modo: 'lote', proximoLote: null })).toBe(true)
+    expect(nuncaPublicada(feita, { agora: apos(119), modo: 'lote', proximoLote: null })).toBe(false)
   })
   test('com pedido', () => {
     expect(
