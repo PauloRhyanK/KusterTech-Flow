@@ -44,6 +44,7 @@ import uuid
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
+import contratos_externos  # noqa: E402
 import estado as est  # noqa: E402
 import globs  # noqa: E402
 import prompts  # noqa: E402
@@ -616,6 +617,10 @@ def _validar_config(config) -> dict:
         verificacao._validar_conteiner(config.get("verificacao"))
     except verificacao._ConfigInvalida as erro:
         raise ConfigInvalida("verificacao.%s" % erro) from None
+    try:
+        config["contratosExternos"] = contratos_externos.validar(config.get("contratosExternos"))
+    except ValueError as erro:
+        raise ConfigInvalida(str(erro)) from None
     return config
 
 
@@ -814,7 +819,99 @@ class Despachante:
         return None
 
     def _protegidos(self) -> list[str]:
+        """Os protegidos de verdade: a config, os fixos e as cópias dos contratos externos."""
+        return list(dict.fromkeys(self._protegidos_do_gate() + contratos_externos.arquivos(self.config["contratosExternos"])))
+
+    def _protegidos_do_gate(self) -> list[str]:
+        """O que o gate puro (`est.proximas_acoes`) recebe: a cópia de um contrato externo fica de fora porque o merge
+        dela é conferido pelo conteúdo (`_conferir_contratos_das_seeds`), não só pelo caminho."""
         return list(dict.fromkeys(list(self.config["protegidos"]) + list(PROTEGIDOS_FIXOS)))
+
+    def _conferir_contratos_das_seeds(self, acoes: list[dict]) -> list[dict]:
+        """O `mergear` de uma seed que muda a cópia de um contrato externo só passa se a cópia no head bater com a
+        origem; senão vira `aguardar_humano` com o que diverge. Sem leitura da origem, o merge espera o ciclo seguinte."""
+        contratos = self.config["contratosExternos"]
+        copias = set(contratos_externos.arquivos(contratos))
+        if not copias:
+            return acoes
+        saida = []
+        for acao in acoes:
+            seed = _dict(_dict(self.estado.get("seeds")).get(acao.get("seed"))) if acao.get("tipo") == "mergear" else {}
+            tocados = copias & {a for a in _lista(seed.get("arquivos")) if isinstance(a, str)}
+            if not tocados:
+                saida.append(acao)
+                continue
+            try:
+                divergencias = contratos_externos.conferir(self.forja, self.repo, acao.get("sha"), contratos, so=tocados)
+            except Exception as exc:  # noqa: BLE001 - sem a origem não há merge; tenta no próximo ciclo
+                self._erro_de_etapa("contrato_externo", acao.get("seed"), exc)
+                continue
+            if not divergencias:
+                saida.append(acao)
+                continue
+            motivo = "toca arquivos protegidos: %s (a cópia do contrato externo não bate com a origem: %s)" % (
+                ", ".join(sorted(tocados)),
+                "; ".join(divergencias),
+            )
+            saida.append({"tipo": "aguardar_humano", "seed": acao.get("seed"), "motivos": [self._seguro(motivo, LIMITE_CONTEXTO)]})
+        return saida
+
+    def _contratos_liberam_o_despacho(self) -> bool:
+        """Antes da primeira raia do plano, a cópia de cada contrato externo no branch padrão bate com a origem? Se não,
+        uma decisão (`contratos`) leva ao Paulo o que diverge e o despacho espera. A cópia consertada solta o despacho
+        e fecha a decisão; a resposta do Paulo (a decisão fechada com um comentário) solta o despacho daquela
+        divergência mesmo assim."""
+        contratos = self.config["contratosExternos"]
+        registro = _dict(self.estado.get("contratos"))
+        if not contratos:
+            return True
+        try:
+            divergencias = contratos_externos.conferir(self.forja, self.repo, self.branch, contratos)
+        except Exception as exc:  # noqa: BLE001 - sem a origem a raia espera; tenta no próximo ciclo
+            self._erro_de_etapa("contrato_externo", "despacho", exc)
+            return False
+        if not divergencias:
+            if registro:
+                aberta = self._decisao_aberta("contratos", "contratos", None)
+                if aberta:
+                    self._fechar_depois(aberta, "A cópia do contrato voltou a bater com a origem; o despacho seguiu.", decisao=True)
+                    self.estado["decisoes"] = [d for d in _lista(self.estado.get("decisoes")) if _dict(d).get("url") != aberta]
+                self.estado.pop("contratos", None)
+                self._salvar()
+            return True
+        assinatura = json.dumps(divergencias, ensure_ascii=False)
+        if registro.get("liberado") == assinatura:
+            return True
+        aberta = self._decisao_aberta("contratos", "contratos", None)
+        if registro.get("assinatura") == assinatura and registro.get("url") and not aberta:
+            # o Paulo respondeu a decisão desta divergência: o despacho segue
+            self.estado["contratos"] = dict(registro, liberado=assinatura)
+            self._salvar()
+            self._log({"evento": "contrato_liberado_pelo_paulo", "url": registro.get("url")})
+            return True
+        if aberta:
+            return False
+        motivo = "o back-end mudou: a cópia do contrato não bate com a origem: " + "; ".join(divergencias)
+        corpo = (
+            "Antes de despachar a primeira raia, a Fábrica conferiu a cópia de cada contrato externo "
+            "(`contratosExternos` da `.fabrica/config.json`) com a origem, e o back-end mudou: a cópia não bate.\n\n%s\n\n"
+            "Nenhuma raia foi despachada. Atualize a cópia a partir da origem (o despacho segue sozinho) ou feche esta "
+            "issue com um comentário dizendo como seguir: a resposta solta o despacho e vai ao orquestrador. Endereço "
+            "que falta é pedido à demanda do outro repositório, nunca uma edição à mão da cópia.\n\n%s"
+            % ("\n".join("- " + d for d in divergencias), RODAPE_DECISAO)
+        )
+        try:
+            url = self._abrir_decisao_rastreada(motivo, "contratos", "[fábrica] contrato externo: a cópia não bate com a origem", corpo, tipo="contratos")
+        except Exception as exc:  # noqa: BLE001 - tenta de novo no próximo ciclo
+            self._erro_de_etapa("contrato_externo", "decisao", exc)
+            return False
+        self.estado["contratos"] = {"assinatura": assinatura, "url": url}
+        self._salvar()
+        return False
+
+    def _nenhuma_raia_despachada(self) -> bool:
+        raias_ = _dict(self.estado.get("raias"))
+        return not _dict(self.estado.get("seeds")) and all(_dict(r).get("estado") == "planejada" for r in raias_.values())
 
     def _raia_do_plano(self, raia_id):
         return _raias_por_id(self.plano).get(raia_id)
@@ -3134,13 +3231,20 @@ class Despachante:
         acoes = est.proximas_acoes(
             self.estado,
             self._plano_despachavel(),
-            self._protegidos(),
+            self._protegidos_do_gate(),
             agora=self._agora(),
             ci_opcional=self.config["ciObrigatorioNasSeeds"] is False,
             resolver_travas=self.config["orquestradorResolveTravas"],
         )
         if not any(a.get("tipo") == "acordar" for a in acoes):
             acoes = acoes + self._acoes_de_seeds_paradas()
+        acoes = self._conferir_contratos_das_seeds(acoes)
+        if (
+            any(a.get("tipo") == "despachar_raia" for a in acoes)
+            and self._nenhuma_raia_despachada()
+            and not self._contratos_liberam_o_despacho()
+        ):
+            acoes = [a for a in acoes if a.get("tipo") != "despachar_raia"]
         incertas = self._chaves_incertas()
         orquestrador_incerto = self._orquestrador_incerto()
         acoes = [

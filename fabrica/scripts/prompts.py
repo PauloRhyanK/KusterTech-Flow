@@ -319,6 +319,8 @@ def prompt_triagem(*, demanda: dict) -> str:
         "4. Se não é pedido de código (dúvida, configuração), responda em `resposta` e use o destino `orientada`.\n"
         "5. Urgente só para defeito que impede o uso. Na dúvida sobre o destino, use `decisao_do_paulo` e explique "
         "em `motivo`.\n"
+        "6. Se a demanda consome endereços de outro repositório (um back-end, uma API), ponha em `impacto.toca` o "
+        "contrato de lá (`dono/repo` e o arquivo) e em `podeQuebrar` o que falha se ele não tiver o endereço.\n"
         "\n"
         "Termine a sua mensagem final com o bloco abaixo, como a última coisa escrita.\n"
         "Escreva o JSON cru, sem bloco de código nem formatação, e deixe cada marcador sozinho na sua linha.\n"
@@ -353,6 +355,18 @@ def _neutralizado(valor, profundidade: int = 0):
     return valor if isinstance(valor, (bool, int, float)) or valor is None else None
 
 
+# demanda que consome endereços de outro repositório (o front de um back-end que mora em outro repo): demanda 9c44dfa8
+INSTRUCOES_DO_CONTRATO_EXTERNO = (
+    "Se a demanda consome endereços de outro repositório (um back-end, uma API), o contrato é de lá: declare a fonte "
+    "em `.fabrica/config.json` → `contratosExternos` (`arquivo`, `repo`, `caminho`, `modo` `copia` ou `enderecos`) e "
+    "cite-a no plano. A cópia local é fiel à origem: nenhuma raia recebe a posse da cópia, e um PR que a mude sem "
+    "bater com a origem é recusado. Endereço que falta vira pedido para a demanda do outro repositório (escreva-o "
+    "em `.fabrica/pergunta.md` ou nas pendências do plano), nunca uma edição local da cópia nem um endereço inventado. "
+    "Plano com dublê (porta de mentira, mocks do back-end) tem um critério com um teste que impede o dublê de atender "
+    "endereço fora do contrato. O teste no navegador declara `contra` (`simulacao` ou `real`); a entrega testada só "
+    "contra a simulação não é publicada sozinha, e o relatório final traz `publicar: false` e `motivoDeNaoPublicar: …` "
+    "quando publicar exporia algo que não funciona."
+)
 INSTRUCOES_DO_PLANO_DA_DEMANDA = (
     "Este plano é de uma demanda do KusterTech Flow. O JSON do plano precisa trazer, no topo, "
     '`"demanda": "%s"`; sem esse campo o PR não é mergeado.\n'
@@ -360,7 +374,8 @@ INSTRUCOES_DO_PLANO_DA_DEMANDA = (
     "de cada uma) e não crie o plano nesta acordada: o PR não é mergeado, a pergunta vai ao Paulo na página da "
     "demanda e a resposta dele volta num planejamento novo, em `conversa` no contexto. Com `conversa`, siga a "
     "resposta do Paulo e não repita a pergunta já respondida; resposta vazia quer dizer siga o caminho padrão que "
-    "você mesmo propôs."
+    "você mesmo propôs.\n"
+    + INSTRUCOES_DO_CONTRATO_EXTERNO
 )
 LIMITE_PERGUNTA = 4000
 LIMITE_RESPOSTA_DO_PAULO = 2000
@@ -535,7 +550,13 @@ def prompt_teste_no_navegador(*, demanda: dict, desenho: str | None, refazer: bo
         "2. Percorra o fluxo da demanda, do começo ao fim, como quem pediu.",
         f"3. Capture desktop em 1440×900 e celular em 390×844, em PNG, em `{pasta}/capturas/desktop-NN.png` e "
         "`celular-NN.png` (até 10 de cada, até 10 MB cada).",
-        f'4. Grave `{pasta}/teste.json` com `{{"resultado": "passou" | "falhou", "resumo": "…", "detalhes": "…"}}`.',
+        f'4. Grave `{pasta}/teste.json` com `{{"resultado": "passou" | "falhou", "contra": "simulacao" | "real", '
+        '"resumo": "…", "detalhes": "…"}`.',
+        "   - `contra` é obrigatório: `simulacao` se o back-end foi a porta de mentira, um dublê ou mocks; `real` só se "
+        "cada chamada da tela foi atendida pelo back-end de verdade. Na dúvida, `simulacao`. Sem `contra` o teste não vale.",
+        '   - Se publicar o que você testou exporia algo que não funciona (por exemplo, o back-end real ainda não tem um '
+        'endereço que a tela chama), acrescente `"publicar": false` e `"motivoDeNaoPublicar": "…"` (em português '
+        "simples, até 200 caracteres): a Fábrica não publica e pergunta ao Paulo.",
         "   - `resumo` é para o Paulo, que não é técnico e lê no celular: até 600 caracteres, em português simples, "
         "sem nome de arquivo, porta, comando, mensagem de erro nem termo de código. Comece pelo veredito numa frase "
         "(por exemplo: \"Quase tudo funciona, mas o tutorial guiado não.\"), depois `Funcionou:` e `Não funcionou:` em "

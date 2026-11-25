@@ -78,6 +78,7 @@ import uuid
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
+import contratos_externos  # noqa: E402
 import despachante  # noqa: E402
 import globs  # noqa: E402
 import motor as motor_  # noqa: E402
@@ -851,6 +852,22 @@ MOTIVO_PR_DO_TESTE_FECHADO = "o PR do teste foi fechado"
 MOTIVO_TESTE_OUTRO_REPO = "o PR do teste está em outro repositório"
 MOTIVO_TESTE_RECUSADO = "o Flow recusou o teste enviado pela Fábrica"
 MOTIVO_ERRO_DO_TESTE = "o teste parou: o mesmo erro %d ciclos seguidos (%s)"
+# contra o quê o qa testou (obrigatório no `passou` e no `falhou`): a porta de mentira (mocks, dublê) ou o back-end real
+CONTRAS_DO_TESTE = ("simulacao", "real")
+FRASE_DO_CONTRA = {"simulacao": "Testado contra a simulação do back-end.", "real": "Testado contra o back-end real."}
+# a entrega que não publica sozinha: o Paulo decide pela trava (Retomar publica, Encerrar não publica)
+CAUDA_DA_PUBLICACAO = "Retomar publica mesmo assim; Encerrar não publica."
+MOTIVO_SO_SIMULACAO = "Testado só contra a simulação do back-end. Publicar assim pode expor algo que não funciona."
+MOTIVO_TESTE_NAO_PUBLICAR = "O teste pede para não publicar: %s."
+MOTIVO_RELATORIO_NAO_PUBLICAR = "O relatório final pede para não publicar: %s."
+MOTIVO_CONTRATO_MUDOU = "O back-end mudou: %s."
+MOTIVO_SEM_MOTIVO_DE_NAO_PUBLICAR = "sem motivo escrito"
+MOTIVO_CONTRATOS_TORTOS = "A lista contratosExternos da .fabrica/config.json está torta (%s): não dá para conferir o contrato."
+CAMINHO_DO_RELATORIO_FINAL = ".fabrica/planejamento/%s/relatorio-final.md"
+# a marca do relatório final (linhas soltas, como o orquestrador.md pede): `publicar: false` e `motivoDeNaoPublicar: …`
+_PUBLICAR_FALSE = re.compile(r"^[ \t]*publicar:[ \t]*false[ \t]*$", re.IGNORECASE | re.MULTILINE)
+_MOTIVO_DE_NAO_PUBLICAR = re.compile(r"^[ \t]*motivoDeNaoPublicar:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+LIMITE_MOTIVO_DE_NAO_PUBLICAR = 200
 # o Decidir do Flow oferece o merge pelo cartão nas travas da correção com PR aberto pelo texto destes motivos
 # (`MOTIVOS_DA_CORRECAO_COM_PR` em src/modules/decidir/model.ts): mudou um texto aqui, muda lá
 MOTIVO_CORRECAO_SEM_PR = "o frontend terminou sem PR da correção 2 vezes"
@@ -881,6 +898,7 @@ COMENTARIO_DA_CORRECAO_REFEITA = "A Fábrica refaz a correção a partir do bran
 LIMITE_CAPTURAS_POR_TESTE = 40 * 1024 * 1024
 NOTA_CAPTURAS_DE_FORA = " (%d capturas ficaram de fora (limite de 40 MB por teste))"
 MOTIVO_CORRECAO_PROTEGIDO = "o PR da correção mexe em caminho protegido: %s"
+MOTIVO_CORRECAO_CONTRATO = "o PR da correção muda a cópia de um contrato externo e ela não bate com a origem: %s"
 MOTIVO_CI_DA_CORRECAO = "o PR da correção do teste está com o CI vermelho"
 MOTIVO_CI_DA_CORRECAO_PENDENTE = "o CI da correção do teste não terminou em 2 h"
 MOTIVO_MERGE_DA_CORRECAO = "o GitHub recusou o merge da correção"
@@ -991,10 +1009,12 @@ def _resumo_do_teste(valor) -> str | None:
 def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
     """O `teste.json` e as capturas do head do PR do teste: `{"resultado", "resumo", "detalhes", "capturas": [{"caminho",
     "tela", "dados"}]}` (as capturas em ordem de caminho, até 10 por tela). O `resumo` vai ao Flow (é o que o Paulo lê);
-    o `detalhes` (opcional, `None` se faltar) fica no kit e vai só para a correção.
+    o `detalhes` (opcional, `None` se faltar) fica no kit e vai só para a correção. `contra` (`simulacao` ou `real`) diz
+    contra o quê o qa testou; `publicar` (opcional, `True` se faltar) e `motivoDeNaoPublicar` seguram a entrega.
 
-    `teste.json` ausente, fora de UTF-8/JSON, com `resultado` desconhecido ou sem `resumo` → `None`. Captura fora do
-    nome `desktop-NN.png`/`celular-NN.png`, que não é PNG ou acima de 10 MB fica de fora (o Flow a recusaria).
+    `teste.json` ausente, fora de UTF-8/JSON, com `resultado` desconhecido, sem `resumo`, sem `contra` válido (no
+    `passou` e no `falhou`) ou com `publicar` que não é booleano → `None`. Captura fora do nome
+    `desktop-NN.png`/`celular-NN.png`, que não é PNG ou acima de 10 MB fica de fora (o Flow a recusaria).
     """
     pasta = prompts.pasta_da_demanda(_id_valido(id_))
     bruto = forja.arquivo_bruto(repo, sha, pasta + "/teste.json")
@@ -1007,6 +1027,13 @@ def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
     resumo = _resumo_do_teste(teste.get("resumo"))
     if resumo is None:
         return None
+    contra = teste.get("contra")
+    if teste["resultado"] != "nao_subiu" and contra not in CONTRAS_DO_TESTE:
+        return None
+    publicar_ = teste.get("publicar", True)
+    if not isinstance(publicar_, bool):
+        return None
+    motivo = _resumo_do_teste(teste.get("motivoDeNaoPublicar"))
     prefixo = pasta + "/capturas/"
     capturas, por_tela = [], {"desktop": 0, "celular": 0}
     for caminho in sorted(c for c in forja.listar(repo, sha, pasta + "/capturas") or [] if isinstance(c, str)):
@@ -1018,7 +1045,15 @@ def ler_resultado_do_teste(forja, repo: str, sha: str, id_: str) -> dict | None:
             continue
         por_tela[m.group(1)] += 1
         capturas.append({"caminho": caminho, "tela": m.group(1), "dados": bytes(dados)})
-    return {"resultado": teste["resultado"], "resumo": resumo, "detalhes": _resumo_do_teste(teste.get("detalhes")), "capturas": capturas}
+    return {
+        "resultado": teste["resultado"],
+        "resumo": resumo,
+        "detalhes": _resumo_do_teste(teste.get("detalhes")),
+        "contra": contra if contra in CONTRAS_DO_TESTE else None,
+        "publicar": publicar_,
+        "motivoDeNaoPublicar": motivo[:LIMITE_MOTIVO_DE_NAO_PUBLICAR] if motivo else None,
+        "capturas": capturas,
+    }
 
 
 def _capturas_no_limite(capturas: list[dict]) -> tuple[list[dict], int]:
@@ -1264,6 +1299,9 @@ class _Passo:
                 enfileirar_evento(self.estado, id_, "travada", {"motivo": MOTIVO_CORRECAO_RECUSADA, "url": c.get("prUrl")}, agora=self.agora_texto)
             else:
                 self.aviso_do_teste(id_)
+        elif it.get("travaDaPublicacao") and _marco(demanda) == "entregue" and not demanda.get("encerrada"):
+            # a trava da publicação não pegou no Flow: nada se publica sozinho (sem retomada), só o aviso
+            self.aviso("demandas:entrega:%s" % id_, "Demandas: o Flow recusou a trava da publicação da demanda %s; confira a demanda" % id_[:8])
         elif it.get("fase") == "entregando" and _marco(demanda) == "entregue" and not demanda.get("encerrada"):
             # o Flow não aplicou o `entregue`: mandar de novo seria recusado outra vez; só o aviso
             self.aviso("demandas:entrega:%s" % id_, "Demandas: o Flow recusou a entrega da demanda %s; confira a demanda" % id_[:8])
@@ -1330,13 +1368,88 @@ class _Passo:
         """A etapa `entregue`: pede a publicação (com o modo da demanda) e envia o `entregue` com os PRs, uma vez.
 
         Só chega aqui depois do teste no navegador (ou sem ele, nas demandas sem tela): o Flow só põe a demanda na
-        etapa `entregue` depois da `testada`. O evento e a fase `entregando` vão ao disco juntos."""
-        if not it.get("pedida") and not self.pedir_a_publicacao(id_, it, demanda):
-            return
+        etapa `entregue` depois da `testada`. O evento e a fase `entregando` vão ao disco juntos. Antes do pedido,
+        `publicacao_liberada` pode levar a demanda ao Paulo em vez de publicar."""
+        if not it.get("pedida"):
+            if self.publicacao is not None and not self.publicacao_liberada(id_, it, demanda):
+                return
+            if not self.pedir_a_publicacao(id_, it, demanda):
+                return
         enfileirar_evento(self.estado, id_, "entregue", {"prs": self.prs_do_plano(id_, it, demanda)}, agora=self.agora_texto)
         it.update(fase="entregando", inicio=self.agora_texto)
         self.salvar()
         self.eventos.append({"evento": "demanda_entregue", "id": id_})
+
+    def publicacao_liberada(self, id_: str, it: dict, demanda: dict) -> bool:
+        """A entrega pode pedir a publicação sozinha? Não quando a cópia de um contrato externo não bate com a origem,
+        quando o relatório final do plano ou o `teste.json` trazem `publicar: false`, ou quando o último teste rodou só
+        contra a simulação do back-end: a demanda vai ao Paulo numa `travada` (uma vez). A retomada dele depois da trava
+        publica mesmo assim (`publicacaoLiberada`); Encerrar não publica (a demanda sai como `descartada`)."""
+        if it.get("publicacaoLiberada"):
+            return True
+        if it.get("travaDaPublicacao"):
+            if not _retomada_nova(it, demanda):
+                return False  # o Paulo ainda não decidiu
+            it.update(publicacaoLiberada=True, travaDaPublicacao=False)
+            self.salvar()
+            return True
+        motivo = self.motivo_para_nao_publicar(id_, it, demanda)
+        if motivo is None:
+            return True
+        cabe = 300 - len(CAUDA_DA_PUBLICACAO) - 1
+        motivo = (motivo if len(motivo) <= cabe else motivo[: cabe - 1].rstrip() + "…") + " " + CAUDA_DA_PUBLICACAO
+        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo, "url": None}, agora=self.agora_texto)
+        it.update(fase="esperando_paulo", inicio=self.agora_texto, travaDaPublicacao=True)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_publicacao_segurada", "id": id_, "motivo": motivo})
+        return False
+
+    def motivo_para_nao_publicar(self, id_: str, it: dict, demanda: dict):
+        """O primeiro motivo para não publicar sozinho (o contrato, o relatório final, o teste), ou `None`."""
+        repo = demanda["repositorio"]
+        ref = self.forja.branch_padrao(repo)
+        contratos, torto = self.contratos_do_repo(repo, ref)
+        if torto is not None:
+            return MOTIVO_CONTRATOS_TORTOS % torto
+        divergencias = contratos_externos.conferir(self.forja, repo, ref, contratos)
+        if divergencias:
+            return MOTIVO_CONTRATO_MUDOU % "; ".join(divergencias).rstrip(".")
+        relatorio = self.relatorio_final(id_, it, demanda, ref)
+        if isinstance(relatorio, str) and _PUBLICAR_FALSE.search(relatorio):
+            m = _MOTIVO_DE_NAO_PUBLICAR.search(relatorio)
+            texto = _resumo_do_teste(m.group(1)) if m else None
+            return MOTIVO_RELATORIO_NAO_PUBLICAR % (texto or MOTIVO_SEM_MOTIVO_DE_NAO_PUBLICAR)[:LIMITE_MOTIVO_DE_NAO_PUBLICAR].rstrip(".")
+        t = it.get("teste") if isinstance(it.get("teste"), dict) else {}
+        if t.get("enviado") and t.get("publicar") is False:
+            return MOTIVO_TESTE_NAO_PUBLICAR % (t.get("motivoDeNaoPublicar") or MOTIVO_SEM_MOTIVO_DE_NAO_PUBLICAR).rstrip(".")
+        if t.get("enviado") and t.get("contra") == "simulacao":
+            return MOTIVO_SO_SIMULACAO
+        return None
+
+    def relatorio_final(self, id_: str, it: dict, demanda: dict, ref: str):
+        """O `relatorio-final.md` do plano da demanda no branch padrão (a pasta é a da feature do plano na fila)."""
+        entrada = _entrada_da_demanda(self.estado.get("fila"), id_, it, demanda)
+        feature = entrada.get("feature") if isinstance(entrada, dict) else None
+        if not isinstance(feature, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", feature):
+            return None
+        return self.forja.arquivo(demanda["repositorio"], ref, CAMINHO_DO_RELATORIO_FINAL % feature)
+
+    def contratos_do_repo(self, repo: str, ref: str | None = None):
+        """`(contratosExternos, None)` da `.fabrica/config.json` do branch padrão (ausente: `[]`), ou `([], motivo)`
+        quando a config ou a lista estão tortas."""
+        bruto = self.forja.arquivo(repo, ref or self.forja.branch_padrao(repo), CAMINHO_CONFIG_DO_REPO)
+        if bruto is None:
+            return [], None
+        try:
+            config = json.loads(bruto)
+        except ValueError:
+            return [], "config ilegível"
+        if not isinstance(config, dict):
+            return [], "config ilegível"
+        try:
+            return contratos_externos.validar(config.get("contratosExternos")), None
+        except ValueError as exc:
+            return [], str(exc)
 
     def encerrar(self, id_: str, it: dict) -> None:
         """A demanda acabou (entregue ou orientada) e a saída dela esvaziou (quem decide é `proxima_acao`): o item sai
@@ -2317,10 +2430,13 @@ class _Passo:
             )
             for c in capturas
         ]
-        resumo = resultado["resumo"]
-        if de_fora:
-            nota = NOTA_CAPTURAS_DE_FORA % de_fora
-            resumo = prompts._cortar_utf16(resumo, prompts.LIMITE_RESUMO_DO_TESTE - len(nota.encode("utf-16-le")) // 2) + nota
+        resumo = original = resultado["resumo"]
+        # o Paulo lê no Flow contra o quê o teste rodou; a nota e a frase sempre cabem no limite do `resumo`
+        sufixo = (NOTA_CAPTURAS_DE_FORA % de_fora if de_fora else "") + (
+            "\n\n" + FRASE_DO_CONTRA[resultado["contra"]] if resultado.get("contra") in FRASE_DO_CONTRA else ""
+        )
+        if sufixo:
+            resumo = prompts._cortar_utf16(resumo, prompts.LIMITE_RESUMO_DO_TESTE - len(sufixo.encode("utf-16-le")) // 2) + sufixo
         resultado = dict(resultado, resumo=resumo)
         dados = {"resultado": resultado["resultado"], "resumo": resumo, "capturas": ids}
         enfileirar_evento(self.estado, id_, "teste", dados, agora=self.agora_texto)
@@ -2330,10 +2446,13 @@ class _Passo:
             resultado=resultado["resultado"],
             resumo=resultado["resumo"],
             detalhes=resultado.get("detalhes"),
+            contra=resultado.get("contra"),
+            publicar=resultado.get("publicar", True),
+            motivoDeNaoPublicar=resultado.get("motivoDeNaoPublicar"),
             fecharPr=True,
         )
         if resultado["resultado"] == "falhou":
-            self.registrar_rodada(it, resultado)
+            self.registrar_rodada(it, dict(resultado, resumo=original))  # a rodada guarda o texto do qa
         self.sair_do_teste(id_, it, fase="testando")
         self.eventos.append({"evento": "demanda_teste_enviado", "id": id_, "resultado": resultado["resultado"], "prUrl": t.get("prUrl")})
         self.fechar_pr_do_teste(id_, it)
@@ -2624,6 +2743,16 @@ class _Passo:
         protegido = next((a for a in arquivos if not isinstance(a, str) or any(globs.casa_glob(a, g) for g in protegidos)), None)
         if protegido is not None:
             self.travar_correcao(id_, it, MOTIVO_CORRECAO_PROTEGIDO % str(protegido)[:200], url)
+            return
+        # a cópia de um contrato externo só muda para ficar idêntica à origem (`contratosExternos`)
+        contratos, torto = self.contratos_do_repo(repo)
+        if torto is not None:
+            self.travar_correcao(id_, it, MOTIVO_CONTRATOS_TORTOS % torto, url)
+            return
+        tocados = set(contratos_externos.arquivos(contratos)) & {a for a in arquivos if isinstance(a, str)}
+        divergencias = contratos_externos.conferir(self.forja, repo, head, contratos, so=tocados) if tocados else []
+        if divergencias:
+            self.travar_correcao(id_, it, (MOTIVO_CORRECAO_CONTRATO % "; ".join(divergencias))[:300], url)
             return
         ci = self.forja.ci(repo, head)
         if ci == "pendente":

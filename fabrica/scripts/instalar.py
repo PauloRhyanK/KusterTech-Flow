@@ -11,6 +11,10 @@ import pathlib
 import sys
 import tempfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+import contratos_externos  # noqa: E402
+
 KIT_PADRAO = pathlib.Path(__file__).resolve().parents[2]
 
 MARCADOR_INICIO = "<!-- fabrica:inicio -->"
@@ -175,6 +179,21 @@ def _validar_destino(destino: pathlib.Path, *, sem_ci: bool = False) -> None:
         raise ValueError("sem Seeds: rode sd init")
 
 
+def _validar_contratos(config_bytes: bytes, origem: str) -> None:
+    """`contratosExternos` da config (a do projeto, se já existe; senão a do kit) validado como no despachante.
+    Config que não é JSON fica como está: o despachante a recusa na partida."""
+    try:
+        config = json.loads(config_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return
+    if not isinstance(config, dict):
+        return
+    try:
+        contratos_externos.validar(config.get("contratosExternos"))
+    except ValueError as exc:
+        raise ValueError("config.json inválido (%s): %s" % (exc, origem)) from None
+
+
 def _validar_caminhos(destino: pathlib.Path, arquivos: list[str]) -> None:
     """Tudo ou nada, antes de gravar: nenhum diretório do caminho é link, tudo fica dentro do destino e os tipos batem.
 
@@ -322,6 +341,11 @@ def instalar(destino, *, kit, sem_ci: bool = False) -> dict:
         config["ciObrigatorioNasSeeds"] = False
         conteudo["config"] = (json.dumps(config, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     _validar_caminhos(destino, [*conteudo["copias"], ARQ_CONFIG, ARQ_WARREN, ARQ_AGENTS, ARQ_SETTINGS])
+    config_do_projeto = destino / ARQ_CONFIG
+    if config_do_projeto.is_file() and not config_do_projeto.is_symlink():
+        _validar_contratos(config_do_projeto.read_bytes(), str(config_do_projeto))
+    else:
+        _validar_contratos(conteudo["config"], "config do kit")
     relatorio = _Relatorio(destino)
     for relativo, origem in conteudo["copias"].items():
         relatorio.gravar(relativo, origem.read_bytes())
