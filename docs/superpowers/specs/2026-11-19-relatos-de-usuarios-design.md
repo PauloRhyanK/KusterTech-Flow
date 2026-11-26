@@ -1,7 +1,7 @@
 # Relatos de usuários — desenho
 
 **Data:** 19/11/2026
-**Estado:** rascunho aguardando a revisão do Paulo
+**Estado:** aprovada pelo Paulo em 21/11/2026 (spec e desenho de Sistemas conectados)
 **Depende de:** Demandas (produto 3) e Decidir (produto 4)
 
 ## 1. Por que
@@ -104,7 +104,7 @@ Os relatos trazem nome e papel de funcionários dos clientes, e podem trazer dad
 
 D70 diz que o Flow só conversa com o GitHub e com a Fábrica. Buscar relatos em sistemas dos clientes é uma integração nova. Este produto precisa de uma decisão do Paulo, registrada como emenda:
 
-> **D76 (proposta) — Sistemas conectados.** O Flow também conversa com os sistemas registrados em "Sistemas conectados", só para buscar relatos e devolver andamento, sempre por iniciativa do Flow.
+> **D76 (aprovada pelo Paulo em 21/11/2026) — Sistemas conectados.** O Flow também conversa com os sistemas registrados em "Sistemas conectados", só para buscar relatos e devolver andamento, sempre por iniciativa do Flow.
 
 Isso é o primeiro "conector por cliente" que a base enxuta deixou previsto como módulo.
 
@@ -126,11 +126,11 @@ Isso é o primeiro "conector por cliente" que a base enxuta deixou previsto como
 - **Contrato:** um arquivo de exemplos compartilhado com o produto base, validado dos dois lados.
 - **Ponta a ponta:** relato chega, vira demanda, é classificado, o Paulo decide, o andamento volta.
 
-## 11. Em aberto
+## 11. Respostas (antes "Em aberto")
 
-1. **Direção da conversa.** A premissa é o Flow buscar. A alternativa é pôr os servidores dos clientes na Tailscale para eles enviarem; é mais simples de programar e pior de operar.
-2. **Onde roda a orientação na hora** e com que conhecimento (manual do sistema, base de dúvidas). É da outra sessão; aqui só importa o campo `resultado`.
-3. **Intervalo de busca.** Com o ciclo de 10 minutos, "na hora" vira "em até 10 minutos" para o que segue. Urgente precisa de menos; a premissa é uma busca própria a cada 1 minuto.
-4. **Urgente resolve na hora de verdade?** Depende de a Fábrica ter vaga e de a publicação imediata estar configurada no projeto. Sem isso, urgente vira "decisão do Paulo" com alerta.
-5. **Resposta automática ao usuário.** O agente escreve e envia sozinho, ou toda resposta passa pelo Paulo? A premissa é: estados (na fila, entregue) vão sozinhos; texto de recusa passa pelo Paulo.
-6. **Retenção** de prints e áudios, e se o contrato com cada cliente permite guardar esses dados fora do sistema dele.
+1. **Direção:** o Flow busca nos sistemas, com token por sistema (D76 aprovada em 21/11).
+2. **Orientação na hora:** é da outra sessão (produto base); aqui só importa o campo `resultado`.
+3. **Intervalo:** busca própria de relatos a cada 1 minuto.
+4. **Urgente:** vai sozinho só com vaga na Fábrica e publicação imediata configurada no projeto; sem isso, vira "decisão do Paulo" com alerta.
+5. **Respostas automáticas:** estados (recebido, na fila, entregue) vão sozinhos; texto de recusa passa pelo Paulo.
+6. **Retenção e contrato com os clientes:** os contratos permitem; prints e áudios ficam 90 dias depois de a demanda fechar, e o Flow guarda só id, nome e papel do autor (Paulo, 21/11).

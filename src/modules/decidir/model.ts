@@ -1,4 +1,12 @@
-import type { Espera, Nivel, Origem, TipoDeDemanda } from '@/modules/demandas/model'
+import type { PlanoDaTriagem } from '@/modules/demandas/contrato'
+import {
+  rotuloDoDesfecho,
+  type Desfecho,
+  type Espera,
+  type Nivel,
+  type Origem,
+  type TipoDeDemanda,
+} from '@/modules/demandas/model'
 import { formatarIdade } from '@/modules/inicio/model'
 
 export type TipoDeItem =
@@ -34,13 +42,21 @@ export interface DemandaEsperando {
   esperaMotivo: string | null
   /** O link do último `travada` (o PR da correção, quando há); só na espera `travada`. */
   urlDaTrava: string | null
+  /** O desfecho do último `travada` (o orquestrador concluiu que não há plano); só na `travada`. */
+  desfecho: Desfecho | null
   esperaDesde: Date
   versaoDoDesenho: number
   etapaAtual: string
   rotuloDaEtapa: string
   descricao: string | null
   anexos: number
-  triagem: { tamanho: string; mexeEm: string; motivo: string; destino: string } | null
+  triagem: {
+    tamanho: string
+    mexeEm: string
+    motivo: string
+    destino: string
+    plano?: PlanoDaTriagem | null
+  } | null
 }
 
 export interface DecisaoDoRetrato {
@@ -87,6 +103,8 @@ export type RefDoItem =
       rotuloDaEtapa: string
       /** O PR da trava de correção (o Paulo pode mergear pelo cartão); `null` nas outras. */
       prDaTrava: number | null
+      /** Duplicada ou já resolvida: o item só encerra (nunca retoma); `null` nas outras. */
+      desfecho: Desfecho | null
     }
   | {
       tipo: 'issue'
@@ -114,6 +132,10 @@ export interface ItemDaPilha {
   desde: Date | null
   fatos: { rotulo: string; valor: string }[]
   relato: { resumo: string; href: string; externo: boolean } | null
+  /** O que foi pedido, nas palavras de quem pediu (a descrição da demanda), antes de qualquer análise. */
+  pedido?: string | null
+  /** O plano curto da triagem para uma decisão de produto. */
+  plano?: PlanoDaTriagem | null
   ref: RefDoItem
 }
 
@@ -165,6 +187,9 @@ const SO_NO_TESTE_QUE_FALHOU = ['entregar_parcial']
 export function respostasDoItem(
   item: Pick<ItemDaPilha, 'tipo' | 'ref'>,
 ): readonly { chave: string; rotulo: string }[] {
+  if (item.tipo === 'trava' && item.ref.tipo === 'demanda' && item.ref.desfecho) {
+    return [{ chave: 'encerrar', rotulo: `Encerrar como ${rotuloDoDesfecho(item.ref.desfecho)}` }]
+  }
   const testeFalhou = item.ref.tipo === 'demanda' && item.ref.espera === 'teste_falhou'
   return RESPOSTAS_DO_FLOW[item.tipo].filter(
     (r) => testeFalhou || !SO_NO_TESTE_QUE_FALHOU.includes(r.chave),
@@ -192,8 +217,32 @@ export function trechosComLink(texto: string): { texto: string; href?: string }[
   return trechos
 }
 
-/** O texto da trava no Decidir; no teste que falhou, diz o que cada botão faz. */
-export function textoDaTrava(espera: Espera, motivo: string | null): string {
+const NAO_HA_PLANO = 'Não há plano a fazer.'
+
+/** O que o orquestrador concluiu, com o caminho da outra demanda (vira link na conversa). */
+function textoDoDesfecho(d: Desfecho): string {
+  if (d.resultado === 'ja_resolvida') {
+    return `O orquestrador concluiu que o que esta demanda pede já está resolvido no repositório. ${NAO_HA_PLANO}`
+  }
+  if (!d.de) {
+    return `O orquestrador concluiu que esta demanda é duplicada de outra demanda. ${NAO_HA_PLANO}`
+  }
+  return (
+    `O orquestrador concluiu que esta demanda é ${rotuloDoDesfecho(d)}: o que ela pede já está feito lá. ${NAO_HA_PLANO}\n\n` +
+    `A outra demanda: /demandas/${d.de}`
+  )
+}
+
+/**
+ * O texto da trava no Decidir; no teste que falhou, diz o que cada botão faz; com desfecho, o que o
+ * orquestrador concluiu.
+ */
+export function textoDaTrava(
+  espera: Espera,
+  motivo: string | null,
+  desfecho: Desfecho | null = null,
+): string {
+  if (desfecho) return textoDoDesfecho(desfecho)
   const limpo = motivo?.trim() ?? ''
   if (espera === 'teste_falhou') {
     return `${limpo || 'O teste no navegador falhou.'}\n\n${BOTOES_DO_TESTE_QUE_FALHOU}`
@@ -337,6 +386,15 @@ function resumoDoRelato(d: DemandaEsperando): ItemDaPilha['relato'] {
   }
 }
 
+const LIMITE_DO_PEDIDO = 1500
+
+/** A descrição como foi escrita, cortada para caber no cartão; vazia vira `null`. */
+export function pedidoDaDemanda(descricao: string | null): string | null {
+  const t = (descricao ?? '').trim()
+  if (t === '') return null
+  return t.length <= LIMITE_DO_PEDIDO ? t : `${t.slice(0, LIMITE_DO_PEDIDO - 1).trimEnd()}…`
+}
+
 // A triagem grava a chave sem acento; a tela mostra a palavra.
 const ROTULO_DO_TAMANHO: Record<string, string> = {
   pequeno: 'pequeno',
@@ -364,6 +422,8 @@ function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): Item
     desde: d.esperaDesde,
     fatos,
     relato: resumoDoRelato(d),
+    pedido: pedidoDaDemanda(d.descricao),
+    plano: d.triagem?.plano ?? null,
     ref: {
       tipo: 'demanda',
       demandaId: d.id,
@@ -377,6 +437,7 @@ function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): Item
         d.espera === 'travada' && travaDeCorrecao(d.esperaMotivo)
           ? numeroDoPrDaTrava(d.urlDaTrava, d.repositorio)
           : null,
+      desfecho: d.espera === 'travada' ? d.desfecho : null,
     },
   }
 }

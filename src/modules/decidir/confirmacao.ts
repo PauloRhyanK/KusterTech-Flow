@@ -59,7 +59,15 @@ const ETAPA_MUDOU = 'A etapa da demanda mudou. Confira de novo.'
 const NAO_MERGEAVEL = 'O GitHub recusou o merge. Abra o PR para ver o motivo.'
 
 /** Os campos que o Flow preenche a partir do item; nunca voltam ao `validarCartao` como proposta. */
-const CAMPOS_DO_FLOW = ['versao', 'pr', 'numero', 'head', 'protegidos', 'etapa'] as const
+const CAMPOS_DO_FLOW = [
+  'versao',
+  'pr',
+  'numero',
+  'head',
+  'protegidos',
+  'etapa',
+  'desfecho',
+] as const
 
 /** O evento que cada efeito de demanda grava (para a recuperação ver se já passou). */
 const EVENTO_DO_EFEITO: Partial<Record<Cartao['acao'], string>> = {

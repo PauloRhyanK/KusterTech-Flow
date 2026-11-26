@@ -4,6 +4,7 @@ import {
   leituraVelha,
   type AvisoDaMaquina,
 } from '@/modules/oficina/model'
+import type { TipoRecurso } from '@/modules/infra/model'
 import type { AmostraBruta, ContainerBruto, SistemaBruto } from './contrato'
 
 export type SituacaoDoBeszel = 'nao_configurado' | 'sem_resposta' | 'recusado' | 'ok'
@@ -188,6 +189,11 @@ export function ligarAoCadastro<T extends MaquinaNoBeszel>(
 ): (T & { recursoId: string | null })[] {
   const porNome = new Map(recursos.map((r) => [r.identificadorExterno, r.id]))
   return ms.map((m) => ({ ...m, recursoId: porNome.get(m.nome) ?? null }))
+}
+
+// No inventário, o selo de métricas vai nas máquinas que poderiam ter agente: servidores e bancos.
+export function temSeloDeMetricas(tipo: TipoRecurso): boolean {
+  return tipo === 'SERVIDOR' || tipo === 'BANCO'
 }
 
 export function seloDeMetricas(

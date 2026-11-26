@@ -63,6 +63,9 @@ services:
       GLITCHTIP_DEMANDAS_POR_DIA: ${GLITCHTIP_DEMANDAS_POR_DIA:-}
       FLOW_BUSCAS_IA_POR_DIA: ${FLOW_BUSCAS_IA_POR_DIA:-}
       FLOW_BUSCAS_IA_TOKENS_DO_LOTE: ${FLOW_BUSCAS_IA_TOKENS_DO_LOTE:-}
+      GLITCHTIP_HORAS_SEM_ERRO: ${GLITCHTIP_HORAS_SEM_ERRO:-}
+      # Sistemas conectados (D83): a web cifra o token ao salvar e o worker o decifra para buscar.
+      FLOW_CHAVE_DOS_SEGREDOS: ${FLOW_CHAVE_DOS_SEGREDOS:-}
       FLOW_ARQUIVOS_DIR: /var/lib/flow/arquivos
     volumes:
       - flow_arquivos:/var/lib/flow/arquivos
@@ -95,6 +98,9 @@ services:
       GLITCHTIP_LIMIAR_EVENTOS: ${GLITCHTIP_LIMIAR_EVENTOS:-}
       GLITCHTIP_LIMIAR_HORAS: ${GLITCHTIP_LIMIAR_HORAS:-}
       GLITCHTIP_DEMANDAS_POR_DIA: ${GLITCHTIP_DEMANDAS_POR_DIA:-}
+      GLITCHTIP_HORAS_SEM_ERRO: ${GLITCHTIP_HORAS_SEM_ERRO:-}
+      # Sistemas conectados (D83): a web cifra o token ao salvar e o worker o decifra para buscar.
+      FLOW_CHAVE_DOS_SEGREDOS: ${FLOW_CHAVE_DOS_SEGREDOS:-}
       FLOW_ARQUIVOS_DIR: /var/lib/flow/arquivos
     volumes:
       - flow_arquivos:/var/lib/flow/arquivos

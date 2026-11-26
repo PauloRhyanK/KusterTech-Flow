@@ -84,7 +84,15 @@ class Base(unittest.TestCase):
         self.salvos = []
         self.mem = None
 
+    def eventos(self):
+        return getattr(self, "_eventos", [])
+
     def passo(self, cliente, *, modelos=None, projetos=None):
+        eventos = self._passo(cliente, modelos=modelos, projetos=projetos)
+        self._eventos = self.eventos() + list(eventos or [])
+        return eventos
+
+    def _passo(self, cliente, *, modelos=None, projetos=None):
         return atendente.passo(
             self.estado,
             cliente=cliente,
@@ -274,7 +282,7 @@ class TestesPasso(Base):
         self.assertEqual(self.despachos()[1]["chave_idempotencia"], atendente.nonce_do_motor(CONVERSA, NOVA, 0))
         self.assertEqual(self.atual()["responderA"], NOVA)
 
-    def test_resposta_fora_do_formato_refaz_uma_vez_com_o_motivo_e_depois_falha(self):
+    def test_resposta_fora_do_formato_refaz_duas_vezes_com_o_campo_e_depois_falha(self):
         run_id = self.despachar()
         self.responder(run_id, "sem bloco nenhum")
         cliente = ClienteFalso()
@@ -284,14 +292,24 @@ class TestesPasso(Base):
         segundo = self.despachos()[1]
         self.assertEqual(segundo["chave_idempotencia"], atendente.nonce_do_motor(CONVERSA, MENSAGEM, 1))
         self.assertIn(atendente.MOTIVO_FORMATO, segundo["prompt"])
-        self.assertEqual((self.atual()["tentativa"], self.atual()["motivo"], self.atual()["fase"]), (1, atendente.MOTIVO_FORMATO, "respondendo"))
+        self.assertIn("falta o bloco", segundo["prompt"])
+        self.assertEqual((self.atual()["tentativa"], self.atual()["fase"]), (1, "respondendo"))
+        self.assertIn("falta o bloco", self.atual()["motivo"])
+        self.responder(self.atual()["runId"], resposta(cartao={"acao": {"resposta": "x"}}))
+        self.passo(cliente)
+        self.assertEqual(cliente.enviados, [])
+        self.assertEqual(len(self.despachos()), 3)
+        self.assertIn("cartao.acao", self.despachos()[2]["prompt"])
         self.responder(self.atual()["runId"], "ainda fora")
         self.passo(cliente)
         ((_, corpo),) = cliente.enviados
         self.assertEqual(set(corpo), {"id", "emRespostaA", "falha"})
         self.assertEqual((corpo["emRespostaA"], corpo["falha"]), (MENSAGEM, "a resposta não veio no formato"))
-        self.assertEqual(len(self.despachos()), 2)
+        self.assertEqual(len(self.despachos()), 3)
         self.assertIsNone(self.atual())
+        falhas = [e for e in self.eventos() if e.get("evento") == "atendente_formato"]
+        self.assertEqual([e["tentativa"] for e in falhas], [0, 1, 2])
+        self.assertIn("cartao.acao", falhas[1]["campo"])
 
     def test_cartao_recusado_refaz_uma_vez_e_depois_envia_sem_cartao_com_id_novo(self):
         run_id = self.despachar()

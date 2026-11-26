@@ -23,6 +23,7 @@ import { aplicarEventoDeParte, conferirPartesDaEtapa, criarParteDeEntrada } from
 import { fecharDemandaSeNoAr } from './partes-no-ar'
 import { DESTINOS, NIVEIS, TIPOS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
+  retomadaComDesfecho,
   LIMITE_DA_DESCRICAO,
   LIMITE_DO_TITULO,
   descricaoDaFilha,
@@ -771,6 +772,24 @@ export async function retomarDemanda(
   exigirPermissao(sujeito, 'projetos.gerenciar')
   const r = dadosDaRetomada(resposta)
   if (!r.ok) throw new ErroDeDominio(r.motivo)
+  // O desfecho do orquestrador (duplicada, já resolvida) chega pelo último `travada`.
+  const atual = await db.demanda.findUnique({
+    where: { id: demandaId },
+    select: {
+      espera: true,
+      eventos: {
+        where: { tipo: 'travada' },
+        orderBy: { seq: 'desc' },
+        take: 1,
+        select: { dados: true },
+      },
+    },
+  })
+  const recusa = retomadaComDesfecho(
+    (atual?.espera ?? null) as Espera | null,
+    atual?.eventos[0]?.dados ?? null,
+  )
+  if (recusa) throw new ErroDeDominio(recusa)
   await decisaoDoPaulo(sujeito, demandaId, { tipo: 'retomada', dados: r.dados })
 }
 

@@ -88,6 +88,19 @@ export default async function PaginaConfiguracoes() {
             </span>
           </Link>
         )}
+        {podeGerenciarConfiguracoes && moduloAtivo('relatos') && (
+          <Link
+            href="/configuracoes/sistemas"
+            className="flex flex-col gap-1 rounded-padrao border border-border bg-surface p-5 transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          >
+            <span className="text-[15px] font-[600] leading-[1.4] text-text-primary">
+              Sistemas conectados
+            </span>
+            <span className="text-sm text-text-secondary">
+              Sistemas de onde o Flow busca os relatos dos usuários e devolve o andamento.
+            </span>
+          </Link>
+        )}
       </div>
 
       <section className="space-y-3">

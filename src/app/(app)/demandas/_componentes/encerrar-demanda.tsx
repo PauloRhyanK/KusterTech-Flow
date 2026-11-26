@@ -6,8 +6,14 @@ import { Button } from '@/components/ui/button'
 import { encerrarDemandaAction } from '../[id]/actions'
 
 // "Encerrar demanda" do Paulo, com um passo de confirmação: a demanda fica descartada e a
-// Fábrica para de trabalhar nela.
-export function EncerrarDemanda({ demandaId }: { demandaId: string }) {
+// Fábrica para de trabalhar nela. Na trava com desfecho, o rótulo diz o porquê.
+export function EncerrarDemanda({
+  demandaId,
+  rotulo = 'Encerrar demanda',
+}: {
+  demandaId: string
+  rotulo?: string
+}) {
   const [estado, enviar, pendente] = useActionState(encerrarDemandaAction, {})
   const [confirmando, setConfirmando] = useState(false)
   return (
@@ -31,7 +37,7 @@ export function EncerrarDemanda({ demandaId }: { demandaId: string }) {
         </form>
       ) : (
         <Button type="button" variant="outline" onClick={() => setConfirmando(true)}>
-          Encerrar demanda
+          {rotulo}
         </Button>
       )}
     </section>

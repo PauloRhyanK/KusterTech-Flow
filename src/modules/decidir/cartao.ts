@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ErroDeDominio } from '@/lib/erros'
 import { NIVEIS, TIPOS } from '@/modules/demandas/contrato'
-import type { Espera, Nivel, TipoDeDemanda } from '@/modules/demandas/model'
+import type { Desfecho, Espera, Nivel, TipoDeDemanda } from '@/modules/demandas/model'
 import { respostasDoItem, type ItemDaPilha, type TipoDeItem } from './model'
 
 export type Acao =
@@ -40,22 +40,39 @@ function esperaDo(item: ItemDaPilha): Espera | null {
   return item.ref.tipo === 'demanda' ? item.ref.espera : null
 }
 
-/** A ação vale para o item: está no tipo dele e cabe na espera da demanda. */
+function desfechoDo(item: ItemDaPilha): Desfecho | null {
+  return item.ref.tipo === 'demanda' ? item.ref.desfecho : null
+}
+
+/** Com desfecho (duplicada, já resolvida), a trava só encerra: retomar refaria a mesma conclusão. */
+export function cabeNoDesfecho(acao: Acao, desfecho: Desfecho | null): boolean {
+  return desfecho === null || acao === 'encerrar'
+}
+
+/** A ação vale para o item: está no tipo dele e cabe na espera e no desfecho da demanda. */
 function valeNoItem(item: ItemDaPilha, acao: Acao): boolean {
-  return ACOES_POR_TIPO[item.tipo].includes(acao) && cabeNaEspera(acao, esperaDo(item))
+  return (
+    ACOES_POR_TIPO[item.tipo].includes(acao) &&
+    cabeNaEspera(acao, esperaDo(item)) &&
+    cabeNoDesfecho(acao, desfechoDo(item))
+  )
 }
 
 /**
  * As ações que o item aceita agora: o merge só existe com o PR lido ao abrir; entregar o que
- * funciona, só no teste que falhou.
+ * funciona, só no teste que falhou; com desfecho, só encerrar.
  */
 export function acoesDoItem(
   tipo: TipoDeItem,
   contexto: ContextoDoItem,
   espera: Espera | null = null,
+  desfecho: Desfecho | null = null,
 ): Acao[] {
   return ACOES_POR_TIPO[tipo].filter(
-    (a) => (a !== 'aprovar_e_mergear' || contexto.pr !== null) && cabeNaEspera(a, espera),
+    (a) =>
+      (a !== 'aprovar_e_mergear' || contexto.pr !== null) &&
+      cabeNaEspera(a, espera) &&
+      cabeNoDesfecho(a, desfecho),
   )
 }
 
@@ -80,7 +97,7 @@ export type Cartao =
   | { acao: 'pedir_mudanca'; texto: string }
   | { acao: 'retomar'; resposta: string | null }
   | { acao: 'entregar_parcial' }
-  | { acao: 'encerrar' }
+  | { acao: 'encerrar'; desfecho?: Desfecho }
   | { acao: 'concluir'; etapa: string }
 
 export type EstadoDoCi = 'verde' | 'pendente' | 'vermelho' | 'ausente'
@@ -213,7 +230,12 @@ function montar(item: ItemDaPilha, contexto: ContextoDoItem, p: Proposta): Resul
       case 'entregar_parcial':
         return { ok: true, cartao: { acao: 'entregar_parcial' } }
       case 'encerrar':
-        return { ok: true, cartao: { acao: 'encerrar' } }
+        return {
+          ok: true,
+          cartao: ref.desfecho
+            ? { acao: 'encerrar', desfecho: ref.desfecho }
+            : { acao: 'encerrar' },
+        }
       case 'concluir':
         return { ok: true, cartao: { acao: 'concluir', etapa: ref.etapaAtual } }
       case 'aprovar_e_mergear':

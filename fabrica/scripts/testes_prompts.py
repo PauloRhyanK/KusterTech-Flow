@@ -985,6 +985,20 @@ class TriagemTest(unittest.TestCase):
         self.assertIn("(sem descrição)", texto)
         self.assertIn("(nenhum)", texto)
 
+    def test_prompt_triagem_acha_o_caso_antes_do_destino_e_nao_pergunta_fato_ao_paulo(self):
+        texto = prompts.prompt_triagem(demanda=DEMANDA)
+        for frase in (
+            "Num defeito, ache o caso concreto antes de escolher o destino",
+            "a hora, a tela e a versão do relato estão na descrição",
+            "comportamento esperado ou uso errado",
+            "responda em `resposta` o que dizer a quem relatou e use `orientada`",
+            "`decisao_do_paulo` é para escolha de produto, não para fato que falta",
+            "comece `motivo` com \"Falta investigar:\"",
+            "a consulta exata que responde",
+        ):
+            with self.subTest(frase=frase):
+                self.assertIn(frase, texto)
+
     def test_extrair_triagem_le_o_ultimo_bloco_valido(self):
         primeiro = triagem_valida(destino="urgente")
         ultimo = triagem_valida(destino="orientada", resposta="Configure em Ajustes.", tipo="ajuste")
@@ -1009,6 +1023,45 @@ class TriagemTest(unittest.TestCase):
         self.assertEqual(lido["impacto"]["podeQuebrar"], ["a"])
         self.assertNotIn("extra", lido)
         self.assertEqual(set(lido), {"tipo", "destino", "tamanho", "mexeEm", "risco", "dados", "impacto", "resposta", "motivo"})
+
+    def test_prompt_triagem_pede_plano_para_avaliar_em_linguagem_simples(self):
+        texto = prompts.prompt_triagem(demanda=DEMANDA)
+        for frase in (
+            '"plano"',
+            "o que a pessoa quer",
+            "o que mudaria nas telas",
+            "opções",
+            "conflitos",
+            "recomendacao",
+            "explique em linguagem simples",
+            "nome de arquivo não é argumento",
+            "use null",
+        ):
+            with self.subTest(frase=frase):
+                self.assertIn(frase, texto)
+
+    def test_extrair_triagem_le_o_plano_e_corta_nos_limites_do_flow(self):
+        plano = {
+            "pedido": "Quer um texto pronto para conversar com o lead.",
+            "muda": ["Meu dia: aba de sugestões"] * 10,
+            "opcoes": [{"nome": "Texto fixo", "tamanho": "pequeno", "descricao": "d" * 400, "extra": 1}] * 6,
+            "conflitos": [{"decisao": "IA só por botão (15/11)", "explicacao": "Gerar sozinho contraria."}],
+            "recomendacao": "Texto fixo.",
+        }
+        lido = prompts.extrair_triagem(bloco_triagem(triagem_valida(destino="decisao_do_paulo", tipo="ideia", plano=plano)))
+        self.assertEqual(lido["plano"]["pedido"], plano["pedido"])
+        self.assertEqual(len(lido["plano"]["muda"]), 8)
+        self.assertEqual(len(lido["plano"]["opcoes"]), 4)
+        self.assertEqual(len(lido["plano"]["opcoes"][0]["descricao"]), 300)
+        self.assertEqual(set(lido["plano"]["opcoes"][0]), {"nome", "tamanho", "descricao"})
+        self.assertEqual(lido["plano"]["conflitos"], plano["conflitos"])
+
+    def test_extrair_triagem_com_plano_nulo_ou_torto_segue_sem_o_plano(self):
+        for plano in (None, "texto", {"pedido": "x"}, {"pedido": "x", "muda": [], "opcoes": [{"nome": "a", "tamanho": "xl", "descricao": "b"}], "conflitos": [], "recomendacao": "r"}):
+            with self.subTest(plano=plano):
+                lido = prompts.extrair_triagem(bloco_triagem(triagem_valida(plano=plano)))
+                self.assertIsNotNone(lido)
+                self.assertNotIn("plano", lido)
 
     def test_extrair_triagem_corta_pelo_tamanho_em_utf16_como_o_flow(self):
         lido = prompts.extrair_triagem(bloco_triagem(triagem_valida(mexeEm="😀" * 50)))
@@ -1348,6 +1401,38 @@ class AtendenteTest(unittest.TestCase):
         for nome, texto in casos.items():
             with self.subTest(caso=nome):
                 self.assertIsNone(prompts.extrair_resposta_do_atendente(texto, ACOES_DE_PEDIDO))
+
+    def test_extrair_resposta_aceita_cartao_com_os_campos_dentro_de_acao(self):
+        """Caso real de 26/11 (R-0001): o agente pôs os campos dentro de `acao`; a ação é inequívoca."""
+        campos = {"destino": "lote_da_noite", "nivel": "aprovar_desenho", "tipoDeDemanda": "ajuste", "escopo": "Minha leitura", "resposta": "Anotado."}
+        for cartao in ({"acao": campos}, {"acao": {"destino": campos}}):
+            with self.subTest(cartao=cartao):
+                lido = prompts.extrair_resposta_do_atendente(bloco_atendente(resposta_valida(cartao=cartao)), ACOES_DE_PEDIDO)
+                self.assertEqual(lido["cartao"], {"acao": "destino", **campos})
+        # objeto que não aponta uma ação só continua recusado
+        ambiguo = {"acao": {"resposta": "x"}}
+        self.assertIsNone(prompts.extrair_resposta_do_atendente(bloco_atendente(resposta_valida(cartao=ambiguo)), ACOES_DE_PEDIDO))
+
+    def test_diagnostico_diz_qual_campo_falhou(self):
+        casos = {
+            "sem bloco": ("Entendi.", "falta o bloco"),
+            "json torto": (bloco_atendente("{ nada"), "JSON"),
+            "campos": (bloco_atendente({"mensagem": "oi", "respostasRapidas": []}), "cartao"),
+            "mensagem longa": (bloco_atendente(resposta_valida(mensagem="m" * 4001)), "mensagem"),
+            "rápida longa": (bloco_atendente(resposta_valida(respostasRapidas=["r" * 61])), "respostasRapidas"),
+            "acao objeto": (bloco_atendente(resposta_valida(cartao={"acao": {"resposta": "x"}})), "cartao.acao"),
+            "escopo longo": (bloco_atendente(resposta_valida(cartao={"acao": "destino", "destino": "urgente", "nivel": "vai_sozinho", "escopo": "e" * 501})), "cartao.escopo"),
+            "nivel fora": (bloco_atendente(resposta_valida(cartao={"acao": "destino", "destino": "urgente", "nivel": "talvez"})), "cartao.nivel"),
+        }
+        for nome, (texto, campo) in casos.items():
+            with self.subTest(caso=nome):
+                self.assertIn(campo, prompts.diagnosticar_resposta_do_atendente(texto, ACOES_DE_PEDIDO))
+        self.assertIsNone(prompts.diagnosticar_resposta_do_atendente(bloco_atendente(resposta_valida()), ACOES_DE_PEDIDO))
+
+    def test_prompt_atendente_mostra_o_cartao_plano_com_exemplo(self):
+        texto = prompts.prompt_atendente(conversa={"item": {"tipo": "pedido", "acoes": ACOES_DE_PEDIDO}, "mensagens": []})
+        self.assertIn('"acao" é o nome da ação, em texto', texto)
+        self.assertIn('{"acao": "destino", "destino": "lote_da_noite"', texto)
 
     def test_extrair_resposta_aceita_quebra_de_linha_e_tab_na_mensagem(self):
         lido = prompts.extrair_resposta_do_atendente(bloco_atendente(resposta_valida(mensagem="a\n\tb")), ACOES_DE_PEDIDO)

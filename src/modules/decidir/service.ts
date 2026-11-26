@@ -367,7 +367,11 @@ function mensagemDeAbertura(l: ItemLocalizado, leitura: Leitura): Abertura {
       return flow(`O desenho da versão ${versao} está pronto. Abra para conferir antes de aprovar.`)
     }
     case 'trava': {
-      const texto = textoDaTrava(demanda?.espera ?? 'travada', demanda?.esperaMotivo ?? null)
+      const texto = textoDaTrava(
+        demanda?.espera ?? 'travada',
+        demanda?.esperaMotivo ?? null,
+        demanda?.desfecho ?? null,
+      )
       return flow(
         leitura.prDaTrava
           ? `${texto}

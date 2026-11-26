@@ -146,6 +146,41 @@ describe('beszel / queries', () => {
     expect(cliente.containers).toHaveBeenCalledTimes(2)
   })
 
+  test('mudança no cadastro aparece sem esperar o cache do Beszel', async () => {
+    configurar()
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA] })
+    cliente.containers.mockResolvedValue({ ok: true, valor: [] })
+    expect((await obterMaquinasNoBeszel(admin, agora)).maquinas[0]!.recursoId).toBe('r1')
+    mockDb.recurso.findMany.mockResolvedValue([])
+    expect((await obterMaquinasNoBeszel(admin, depois(5))).maquinas[0]!.recursoId).toBeNull()
+    expect(cliente.sistemas).toHaveBeenCalledTimes(1)
+  })
+
+  test('dois sistemas com o mesmo nome: o detalhe usa o que responde', async () => {
+    configurar()
+    const parado = { ...sistema('bbbbbbbbbbbbbbb', 'vps-alfa'), status: 'down' }
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [parado, ALFA] })
+    cliente.containers.mockResolvedValue({ ok: true, valor: [] })
+    cliente.ultimaAmostra.mockResolvedValue({ ok: true, valor: null })
+    cliente.historico.mockResolvedValue({ ok: true, valor: [] })
+    const r = await obterDetalheNoBeszel(admin, 'vps-alfa', agora)
+    expect(r.detalhe?.sistemaId).toBe('aaaaaaaaaaaaaaa')
+  })
+
+  test('sistema que sai do Beszel perde o histórico guardado', async () => {
+    configurar()
+    cliente.containers.mockResolvedValue({ ok: true, valor: [] })
+    cliente.ultimaAmostra.mockResolvedValue({ ok: true, valor: null })
+    cliente.historico.mockResolvedValue({ ok: true, valor: [] })
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA, GAMA] })
+    await obterDetalheNoBeszel(admin, 'vps-gama', agora)
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA] })
+    await obterMaquinasNoBeszel(admin, depois(31))
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA, GAMA] })
+    await obterDetalheNoBeszel(admin, 'vps-gama', depois(62))
+    expect(cliente.historico).toHaveBeenCalledTimes(2)
+  })
+
   test('detalhe: nome que não existe no Beszel', async () => {
     configurar()
     cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA] })
