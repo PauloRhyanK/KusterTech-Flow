@@ -19,6 +19,11 @@ vi.mock('@/modules/erros/service', () => ({
   })),
 }))
 
+vi.mock('@/modules/relatos/worker', () => ({
+  buscarRelatosDosSistemas: vi.fn(async () => undefined),
+  enviarAndamentoDosRelatos: vi.fn(async () => undefined),
+}))
+
 vi.mock('@/modules/decidir/worker', () => ({
   arquivarConversasResolvidas: vi.fn(async () => 0),
   limparParciaisDeConversas: vi.fn(async () => 0),
@@ -33,7 +38,7 @@ import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem oito tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem dez tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -46,6 +51,20 @@ describe('tarefas do worker', () => {
       'marcar-partes-sem-publicacao',
       'decidir:arquivar',
       'buscar-erros-do-glitchtip',
+      'buscar-relatos',
+      'enviar-andamento',
+    ])
+  })
+  test('buscar-relatos e enviar-andamento são do módulo relatos e somem sem ele', () => {
+    const semRelatos = new Set(resolverModulosAtivos(undefined))
+    semRelatos.delete('relatos')
+    const nomes = criarTarefasDoCiclo({ ...fonte, ativos: semRelatos }).map((t) => t.nome)
+    expect(nomes).not.toContain('buscar-relatos')
+    expect(nomes).not.toContain('enviar-andamento')
+    const com = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) })
+    expect(com.filter((t) => t.modulo === 'relatos').map((t) => t.nome)).toEqual([
+      'buscar-relatos',
+      'enviar-andamento',
     ])
   })
 
@@ -126,7 +145,7 @@ describe('tarefas do worker', () => {
     )
   })
 
-  test('com todos os módulos ligados o ciclo tem as quinze tarefas na ordem original', () => {
+  test('com todos os módulos ligados o ciclo tem as dezessete tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
@@ -144,6 +163,8 @@ describe('tarefas do worker', () => {
       'marcar-partes-sem-publicacao',
       'decidir:arquivar',
       'buscar-erros-do-glitchtip',
+      'buscar-relatos',
+      'enviar-andamento',
     ])
   })
 
