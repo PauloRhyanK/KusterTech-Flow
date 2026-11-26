@@ -188,6 +188,43 @@ describe('cabeçalho da decisão', () => {
     )
   })
 
+  test('o que só serve no GitHub some: o comentário do nonce e os rodapés do despachante', () => {
+    const NONCE = '<!-- fabrica:nonce=ba1d6ae3abe94b1a971a37eb75ea5d56 -->'
+    expect(
+      corpoParaLeitura(
+        `Texto.\n\nFeche esta issue com um comentário para responder ao orquestrador.\n\n${NONCE}`,
+      ),
+    ).toBe('Texto.')
+    expect(
+      corpoParaLeitura(
+        `Texto.\n\nRevise e mergeie ou feche o PR https://github.com/d/c/pull/7: o merge é seu. Mergeado o PR, esta issue é fechada pelo despachante sem acordar o orquestrador. Se fechar o PR sem merge, feche também esta issue com um comentário dizendo o que fazer: ele volta para o orquestrador.\n\n${NONCE}`,
+      ),
+    ).toBe('Texto.')
+    // dentro de código o comentário é conteúdo
+    expect(corpoParaLeitura('```html\n<!-- fica -->\n```')).toBe('```html\n<!-- fica -->\n```')
+  })
+
+  test('a decisão de seed no formato antigo (Seed, Raia, PR, Head, Motivos) ganha rótulos e o PR vira link', () => {
+    const antigo =
+      'Seed: FLOW-b3bf\nRaia: executores-config\nPR: https://github.com/d/c/pull/209\nHead: 6667bc5c45691c471c5cc409d8be017ecd114a40\n\nMotivos:\n- PR parado há 194 min, mesmo depois de acordar o orquestrador\n\nFeche esta issue com um comentário para responder ao orquestrador.\n\n<!-- fabrica:nonce=ba1d -->'
+    expect(corpoParaLeitura(antigo)).toBe(
+      '**O que aconteceu:** A etapa `executores-config` parou e espera você.\n\n- PR parado há 194 min, mesmo depois de acordar o orquestrador\n\n**Onde olhar:** [PR #209](https://github.com/d/c/pull/209)\n\n<details><summary>Detalhes técnicos</summary>\n\nSeed: FLOW-b3bf\nRaia: executores-config\nHead: 6667bc5c45691c471c5cc409d8be017ecd114a40\n\n</details>',
+    )
+  })
+
+  test('a decisão de seed no formato novo do kit: pergunta no cabeçalho, texto simples e o técnico recolhido, sem rodapé', () => {
+    const corpo =
+      '# Mergear o PR #209 da etapa executores-config?\n\n**O que aconteceu:** A etapa `executores-config` terminou. O revisor aprovou e os testes passaram. O PR mexe em arquivos protegidos, e esses só você mergeia; a Fábrica não mergeia sozinha.\n\n**O que preciso de você:** Mergear o PR #209 no GitHub, ou dizer o que mudar.\n\n**Como responder:** Para aprovar, abra [o PR #209](https://github.com/d/c/pull/209) e mergeie.\n\n<details><summary>Detalhes técnicos</summary>\n\nSeed: FLOW-b3bf\nRaia: executores-config\nPR: https://github.com/d/c/pull/209\nHead: 6667bc5c\n\nMotivos:\n- toca arquivos protegidos: fabrica/scripts/executores.py\n\n</details>\n\nRevise e mergeie ou feche o PR https://github.com/d/c/pull/209: o merge é seu. Mergeado o PR, esta issue é fechada pelo despachante sem acordar o orquestrador.\n\n<!-- fabrica:nonce=ba1d -->'
+    expect(perguntaDoCorpo(corpo)).toBe('Mergear o PR #209 no GitHub, ou dizer o que mudar.')
+    const blocos = blocosDaMensagem(corpoParaLeitura(corpo))
+    expect(blocos.map((b) => b.tipo)).toEqual(['markdown', 'detalhes'])
+    const [texto, detalhes] = blocos as unknown as [{ texto: string }, { texto: string }]
+    expect(texto.texto).toContain('#### Como responder')
+    expect(texto.texto).not.toContain('Seed:')
+    expect(texto.texto).not.toContain('Revise e mergeie')
+    expect(detalhes.texto).toContain('- toca arquivos protegidos: fabrica/scripts/executores.py')
+  })
+
   test('corpo sem título nem pergunta sai igual', () => {
     expect(corpoParaLeitura('Só um texto.\n\n## Depois')).toBe('Só um texto.\n\n## Depois')
   })
