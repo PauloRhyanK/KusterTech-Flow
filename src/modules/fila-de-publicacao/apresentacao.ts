@@ -33,6 +33,10 @@ export interface PedidoDaLinha {
   verificandoDesde: Date | null
   /** O workflow terminou verde e o Flow está conferindo o site. */
   conferindoDesde?: Date | null
+  /** A execução do workflow, quando já disparada. */
+  execucaoUrl?: string | null
+  /** `conserto`: a correção de um conserto, que não se cancela pela fila. */
+  origem?: 'conserto' | 'outro'
 }
 
 export interface LinhaDaFila {
@@ -636,6 +640,10 @@ export function etapasDoPedido(
     },
     { chave: 'no_ar', rotulo: 'No ar', estado: 'pendente', detalhe: null },
   ]
+  // A trilha é monotônica: o que vem antes da etapa atual já passou, mesmo sem hora registrada.
+  const atual =
+    p.estado === 'verificando' ? 1 : p.estado === 'publicando' ? (conferindo ? 4 : 3) : 0
+  for (const e of etapas.slice(0, atual)) if (e.estado === 'pendente') e.estado = 'feita'
   if (falha) {
     const primeira = etapas.find((e) => e.estado !== 'feita')
     if (primeira) {
@@ -672,9 +680,12 @@ export function acoesDoPedido(
   ctx: { podeGerenciar: boolean; pausado: boolean },
 ): AcaoDoPedido[] {
   if (!ctx.podeGerenciar || p.estado !== 'na_fila') return []
-  return p.modo === 'imediato'
-    ? ['cancelar', 'mandar_para_lote']
-    : ['cancelar', 'mudar_para_imediato', 'publicar_agora']
+  const acoes: AcaoDoPedido[] =
+    p.modo === 'imediato'
+      ? ['cancelar', 'mandar_para_lote']
+      : ['cancelar', 'mudar_para_imediato', 'publicar_agora']
+  // a correção de um conserto só sai pelo próprio conserto
+  return p.origem === 'conserto' ? acoes.filter((a) => a !== 'cancelar') : acoes
 }
 
 export interface FiltrosDaFila {

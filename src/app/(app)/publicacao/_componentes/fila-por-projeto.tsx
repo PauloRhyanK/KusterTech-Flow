@@ -181,7 +181,7 @@ function LinhaDoProjeto({
             }}
             linha={linha}
             agora={agora}
-            podeGerenciar={false}
+            podeGerenciar={podeGerenciar}
             compacto
             falha={linha.ultimaFalha}
           />

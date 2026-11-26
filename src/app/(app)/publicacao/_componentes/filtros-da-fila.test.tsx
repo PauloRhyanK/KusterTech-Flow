@@ -9,6 +9,10 @@ const projetos = [
   { id: 'p2', nome: 'Beta' },
 ]
 
+function FilaFormDesconhecido() {
+  return <FiltrosDaFilaForm filtros={{ ...vazio, projeto: 'sumiu' }} projetos={projetos} />
+}
+
 describe('FiltrosDaFilaForm', () => {
   test('é um formulário GET com campos rotulados', () => {
     render(<FiltrosDaFilaForm filtros={vazio} projetos={projetos} />)
@@ -32,6 +36,12 @@ describe('FiltrosDaFilaForm', () => {
     expect(screen.getByLabelText('Estado')).toHaveValue('verificando')
     expect(screen.getByLabelText('Modo')).toHaveValue('lote')
     expect(screen.getByLabelText('Buscar')).toHaveValue('login')
+  })
+
+  test('projeto desconhecido continua selecionado, sem fingir "Todos"', () => {
+    render(<FilaFormDesconhecido />)
+    expect(screen.getByLabelText('Projeto')).toHaveValue('sumiu')
+    expect(screen.getByRole('option', { name: 'Projeto não encontrado' })).toHaveValue('sumiu')
   })
 
   test('Limpar só aparece com filtro ativo', () => {

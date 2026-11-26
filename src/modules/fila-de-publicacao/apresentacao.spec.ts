@@ -788,6 +788,11 @@ describe('etapasDoPedido', () => {
     expect(e[2]).toMatchObject({ estado: 'falhou', detalhe: 'lint quebrou' })
   })
 
+  test('publicando sem ter passado por verificando: as etapas anteriores ficam feitas', () => {
+    const e = etapasDoPedido(pedido({ estado: 'publicando', checks: null }), AGORA)
+    expect(estados(e)).toEqual(['feita', 'feita', 'feita', 'atual', 'pendente', 'pendente'])
+  })
+
   test('falha sem checks marca a primeira etapa não feita', () => {
     const e = etapasDoPedido(pedido({ commit: null }), AGORA, { motivo: null })
     expect(e[1]).toMatchObject({ estado: 'falhou', detalhe: null })
@@ -812,6 +817,13 @@ describe('acoesDoPedido', () => {
   })
   test('sem permissão: nenhuma', () => {
     expect(acoesDoPedido(pedido(), { ...ctx, podeGerenciar: false })).toEqual([])
+  })
+  test('pedido de um conserto: sem cancelar', () => {
+    expect(acoesDoPedido(pedido({ origem: 'conserto' }), ctx)).toEqual(['mandar_para_lote'])
+    expect(acoesDoPedido(pedido({ origem: 'conserto', modo: 'lote' }), ctx)).toEqual([
+      'mudar_para_imediato',
+      'publicar_agora',
+    ])
   })
 })
 

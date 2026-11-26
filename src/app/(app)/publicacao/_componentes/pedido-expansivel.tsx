@@ -58,7 +58,7 @@ export function PedidoExpansivel({
     pausado: Boolean(linha.configuracao?.pausado),
   })
   const idDoPainel = `pedido-${pedido.id}`
-  const execucaoUrl = falha?.execucaoUrl ?? null
+  const execucaoUrl = falha ? (falha.execucaoUrl ?? null) : (pedido.execucaoUrl ?? null)
   return (
     <div
       className={cn('rounded-md border border-border bg-surface', compacto ? 'text-xs' : 'text-sm')}
@@ -93,6 +93,9 @@ export function PedidoExpansivel({
               </a>
             )}
           </p>
+          {falha && podeGerenciar && (
+            <BotaoDePublicarAgora repositorioId={linha.repositorioId} rotulo="Tentar de novo" />
+          )}
           {acoes.length > 0 && (
             <div className="flex flex-wrap items-start gap-2">
               {acoes.map((a) =>

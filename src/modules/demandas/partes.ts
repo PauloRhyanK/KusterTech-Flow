@@ -37,6 +37,7 @@ export interface Parte extends ParteDeclarada {
 export const MOTIVOS = {
   publicacaoFalhou: 'Publicação falhou',
   publicacaoDispensada: 'Publicação dispensada',
+  publicacaoCancelada: 'Publicação cancelada',
   publicadaSemConferir: 'Publicada sem conferir o site',
   nuncaPublicada: 'Nunca foi publicada',
   consertando: 'Consertando a publicação',
@@ -191,7 +192,7 @@ export function resultadoDoPedido(p: {
         ? { estado: 'no_ar', motivo: null }
         : { estado: 'nao_chegou', motivo: MOTIVOS.publicadaSemConferir }
     case 'CANCELADO':
-      return { estado: 'nao_chegou', motivo: MOTIVOS.publicacaoFalhou }
+      return { estado: 'nao_chegou', motivo: p.motivo ?? MOTIVOS.publicacaoCancelada }
   }
 }
 

@@ -134,4 +134,52 @@ describe('PedidoExpansivel', () => {
     expect(itens[3]).toHaveTextContent('O deploy caiu')
     expect(itens[0]).toHaveTextContent('—')
   })
+
+  test('pedido em andamento mostra "Ver execução" na trilha', async () => {
+    montar(
+      pedido({
+        estado: 'publicando',
+        iniciadoEm: AGORA,
+        execucaoUrl: 'https://github.com/o/r/actions/runs/1',
+      }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Ajusta o rodapé/ }))
+    expect(screen.getByRole('link', { name: 'Ver execução' })).toHaveAttribute(
+      'href',
+      'https://github.com/o/r/actions/runs/1',
+    )
+  })
+
+  test('pedido de um conserto não oferece Cancelar', async () => {
+    montar(pedido({ origem: 'conserto' }))
+    await userEvent.click(screen.getByRole('button', { name: /Ajusta o rodapé/ }))
+    expect(screen.queryByRole('button', { name: 'Cancelar' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Publicar agora' })).toBeVisible()
+  })
+
+  test('falha com permissão mostra "Tentar de novo"; sem permissão, não', async () => {
+    const { unmount } = render(
+      <PedidoExpansivel
+        pedido={pedido({ estado: 'publicando' })}
+        linha={linha}
+        agora={AGORA}
+        podeGerenciar
+        falha={{ motivo: 'O deploy caiu' }}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Ajusta o rodapé/ }))
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeVisible()
+    unmount()
+    render(
+      <PedidoExpansivel
+        pedido={pedido({ estado: 'publicando' })}
+        linha={linha}
+        agora={AGORA}
+        podeGerenciar={false}
+        falha={{ motivo: 'O deploy caiu' }}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Ajusta o rodapé/ }))
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
+  })
 })

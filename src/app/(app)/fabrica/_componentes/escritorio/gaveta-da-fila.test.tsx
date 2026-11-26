@@ -198,6 +198,33 @@ describe('gaveta da fila', () => {
     )
   })
 
+  test('aba Publicação filtra por estado e por modo', async () => {
+    montar({
+      publicacao: {
+        linhas: [
+          linha('P1', 'Alfa'),
+          linha('P2', 'Beta', { ...pedido, id: 'p2', descricao: 'Troca o logo', modo: 'imediato' }),
+        ],
+        podeGerenciar: true,
+      },
+    })
+    await userEvent.click(screen.getByRole('tab', { name: 'Publicação' }))
+    await userEvent.selectOptions(screen.getByLabelText('Modo'), 'imediato')
+    expect(screen.queryByRole('button', { name: /Ajusta o rodapé/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Troca o logo/ })).toBeVisible()
+    await userEvent.selectOptions(screen.getByLabelText('Modo'), '')
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'publicando')
+    expect(screen.getByText('Nenhum pedido de publicação na fila')).toBeVisible()
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'na_fila')
+    expect(screen.getAllByRole('button', { name: /Ajusta o rodapé|Troca o logo/ })).toHaveLength(2)
+    expect(
+      within(screen.getByLabelText('Estado')).getByRole('option', { name: 'Verificando' }),
+    ).toHaveValue('verificando')
+    expect(within(screen.getByLabelText('Modo')).getByRole('option', { name: 'Lote' })).toHaveValue(
+      'lote',
+    )
+  })
+
   test('Tab no último controle volta ao primeiro e Shift+Tab no primeiro vai ao último', async () => {
     montar()
     const dialogo = screen.getByRole('dialog', { name: 'Fila' })

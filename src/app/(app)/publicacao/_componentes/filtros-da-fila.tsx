@@ -5,13 +5,13 @@ const CLASSE_CAMPO =
   'w-full rounded-compacto border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
 const CLASSE_ROTULO = 'block text-xs font-medium text-text-secondary'
 
-const ESTADOS = [
+export const ESTADOS_DA_FILA = [
   { valor: 'na_fila', rotulo: 'Na fila' },
   { valor: 'verificando', rotulo: 'Verificando' },
   { valor: 'publicando', rotulo: 'Publicando' },
 ] as const
 
-const MODOS = [
+export const MODOS_DA_FILA = [
   { valor: 'imediato', rotulo: 'Imediato' },
   { valor: 'lote', rotulo: 'Lote' },
 ] as const
@@ -23,6 +23,11 @@ interface FiltrosDaFilaFormProps {
 
 export function FiltrosDaFilaForm({ filtros, projetos }: FiltrosDaFilaFormProps) {
   const ativo = Boolean(filtros.projeto || filtros.estado || filtros.modo || filtros.busca)
+  // um projeto da URL que não está na fila continua selecionado, para a lista vazia fazer sentido
+  const desconhecido =
+    filtros.projeto !== null && !projetos.some((p) => p.id === filtros.projeto)
+      ? filtros.projeto
+      : null
   return (
     <form
       method="get"
@@ -42,6 +47,7 @@ export function FiltrosDaFilaForm({ filtros, projetos }: FiltrosDaFilaFormProps)
           className={CLASSE_CAMPO}
         >
           <option value="">Todos</option>
+          {desconhecido && <option value={desconhecido}>Projeto não encontrado</option>}
           {projetos.map((p) => (
             <option key={p.id} value={p.id}>
               {p.nome}
@@ -60,7 +66,7 @@ export function FiltrosDaFilaForm({ filtros, projetos }: FiltrosDaFilaFormProps)
           className={CLASSE_CAMPO}
         >
           <option value="">Todos</option>
-          {ESTADOS.map((e) => (
+          {ESTADOS_DA_FILA.map((e) => (
             <option key={e.valor} value={e.valor}>
               {e.rotulo}
             </option>
@@ -78,7 +84,7 @@ export function FiltrosDaFilaForm({ filtros, projetos }: FiltrosDaFilaFormProps)
           className={CLASSE_CAMPO}
         >
           <option value="">Todos</option>
-          {MODOS.map((m) => (
+          {MODOS_DA_FILA.map((m) => (
             <option key={m.valor} value={m.valor}>
               {m.rotulo}
             </option>

@@ -55,6 +55,8 @@ function pedidoDaLinha(p: {
   iniciadoEm: Date | null
   verificandoDesde: Date | null
   conferindoDesde: Date | null
+  execucaoUrl: string | null
+  consertoId: string | null
 }): PedidoDaLinha {
   return {
     id: p.id,
@@ -67,6 +69,8 @@ function pedidoDaLinha(p: {
     iniciadoEm: p.iniciadoEm,
     verificandoDesde: p.verificandoDesde,
     conferindoDesde: p.conferindoDesde,
+    execucaoUrl: p.execucaoUrl,
+    origem: p.consertoId ? 'conserto' : 'outro',
   }
 }
 

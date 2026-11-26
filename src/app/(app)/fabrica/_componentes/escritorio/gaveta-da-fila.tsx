@@ -4,13 +4,18 @@
 // (com o interruptor de urgência) e os pedidos de publicação (os mesmos da página /publicacao, em tamanho compacto).
 import Link from 'next/link'
 import { useActionState, useEffect, useRef, useState } from 'react'
+import { ESTADOS_DA_FILA, MODOS_DA_FILA } from '@/app/(app)/publicacao/_componentes/filtros-da-fila'
 import { PedidoExpansivel } from '@/app/(app)/publicacao/_componentes/pedido-expansivel'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
 import { CLASSE_DO_LINK } from '@/lib/ui/titulo-de-secao'
 import { ROTULO_DO_TIPO } from '@/modules/decidir/model'
 import { duracaoDaEspera } from '@/modules/demandas/model'
-import { filtrarLinhas, type LinhaDaFila } from '@/modules/fila-de-publicacao/apresentacao'
+import {
+  filtrarLinhas,
+  type FiltrosDaFila,
+  type LinhaDaFila,
+} from '@/modules/fila-de-publicacao/apresentacao'
 import type { ItemDaRecepcao } from '@/modules/fabrica/escritorio/model'
 import { alternarUrgenciaAction } from '../../actions'
 
@@ -178,14 +183,16 @@ function AbaPublicacao({
   agora: Date
 }) {
   const [projeto, setProjeto] = useState('')
+  const [estado, setEstado] = useState<FiltrosDaFila['estado']>(null)
+  const [modo, setModo] = useState<FiltrosDaFila['modo']>(null)
   const [busca, setBusca] = useState('')
   const projetos = [...new Map(linhas.map((l) => [l.projetoId, l.projeto])).entries()].sort(
     (a, b) => a[1].localeCompare(b[1], 'pt-BR'),
   )
   const visiveis = filtrarLinhas(linhas, {
     projeto: projeto || null,
-    estado: null,
-    modo: null,
+    estado,
+    modo,
     busca: busca.trim(),
   })
   const total = visiveis.reduce((n, l) => n + (l.publicando ? 1 : 0) + l.aguardando.length, 0)
@@ -203,6 +210,36 @@ function AbaPublicacao({
             {projetos.map(([id, nome]) => (
               <option key={id} value={id}>
                 {nome}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-text-secondary">
+          Estado
+          <select
+            className={CLASSE_DO_CAMPO}
+            value={estado ?? ''}
+            onChange={(e) => setEstado((e.target.value || null) as FiltrosDaFila['estado'])}
+          >
+            <option value="">Todos</option>
+            {ESTADOS_DA_FILA.map((e) => (
+              <option key={e.valor} value={e.valor}>
+                {e.rotulo}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-text-secondary">
+          Modo
+          <select
+            className={CLASSE_DO_CAMPO}
+            value={modo ?? ''}
+            onChange={(e) => setModo((e.target.value || null) as FiltrosDaFila['modo'])}
+          >
+            <option value="">Todos</option>
+            {MODOS_DA_FILA.map((m) => (
+              <option key={m.valor} value={m.valor}>
+                {m.rotulo}
               </option>
             ))}
           </select>

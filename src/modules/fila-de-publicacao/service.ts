@@ -196,6 +196,7 @@ async function alterarPedidoNaFila(
 
 const JA_EM_ANDAMENTO = 'Este pedido já está sendo publicado.'
 const JA_ENCERRADO = 'Este pedido já foi atendido ou cancelado.'
+// NA_FILA entra porque a recusa só chega aqui quando o worker já pegou o pedido (atendidoPorId).
 const EM_ANDAMENTO = new Set(['NA_FILA', 'VERIFICANDO', 'PUBLICANDO'])
 
 /** Troca o modo (imediato ou lote) de um pedido que ainda espera na fila. */
@@ -212,12 +213,23 @@ export async function mudarModoDoPedido(
   )
 }
 
-/** Cancela um pedido que ainda espera na fila. */
+const MOTIVO_DO_CANCELAMENTO = 'Cancelado pelo Paulo.'
+const PEDIDO_DO_CONSERTO = 'Este pedido faz parte de um conserto e não pode ser cancelado aqui.'
+
+/** Cancela um pedido que ainda espera na fila; a correção de um conserto não se cancela por aqui. */
 export async function cancelarPedido(sujeito: Sujeito, pedidoId: string): Promise<void> {
   exigirPermissao(sujeito, 'projetos.gerenciar')
 
-  await alterarPedidoNaFila(pedidoId, { estado: 'CANCELADO', concluidoEm: new Date() }, (estado) =>
-    EM_ANDAMENTO.has(estado) ? JA_EM_ANDAMENTO : JA_ENCERRADO,
+  const pedido = await db.pedidoDePublicacao.findUnique({
+    where: { id: pedidoId },
+    select: { consertoId: true },
+  })
+  if (pedido?.consertoId) throw new ErroDeDominio(PEDIDO_DO_CONSERTO)
+
+  await alterarPedidoNaFila(
+    pedidoId,
+    { estado: 'CANCELADO', motivo: MOTIVO_DO_CANCELAMENTO, concluidoEm: new Date() },
+    (estado) => (EM_ANDAMENTO.has(estado) ? JA_EM_ANDAMENTO : JA_ENCERRADO),
   )
 }
 

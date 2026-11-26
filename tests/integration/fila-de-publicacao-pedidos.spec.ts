@@ -84,6 +84,7 @@ describe('cancelarPedido', () => {
     const depois = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id: pedido.id } })
     expect(depois.estado).toBe('CANCELADO')
     expect(depois.concluidoEm).not.toBeNull()
+    expect(depois.motivo).toBe('Cancelado pelo Paulo.')
     await expect(cancelarPedido(admin, pedido.id)).rejects.toThrow(
       new ErroDeDominio('Este pedido já foi atendido ou cancelado.'),
     )
@@ -96,6 +97,35 @@ describe('cancelarPedido', () => {
       papeis: [{ papel: 'TESTADOR', clienteId: null }],
     }
     await expect(cancelarPedido(testador, pedido.id)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+  })
+
+  test('recusa o pedido de correção de um conserto e não mexe nele', async () => {
+    const falhou = await db.pedidoDePublicacao.create({
+      data: { repositorioId, commit: 'b'.repeat(40), modo: 'IMEDIATO', estado: 'FALHOU' },
+    })
+    const conserto = await db.pedidoDeConserto.create({
+      data: {
+        repositorioId,
+        pedidoId: falhou.id,
+        commit: 'b'.repeat(40),
+        trechoDoLog: 'erro',
+        estado: 'COM_PR',
+      },
+    })
+    const correcao = await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: 'c'.repeat(40),
+        modo: 'IMEDIATO',
+        estado: 'NA_FILA',
+        consertoId: conserto.id,
+      },
+    })
+    await expect(cancelarPedido(admin, correcao.id)).rejects.toThrow(
+      new ErroDeDominio('Este pedido faz parte de um conserto e não pode ser cancelado aqui.'),
+    )
+    const depois = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id: correcao.id } })
+    expect(depois).toMatchObject({ estado: 'NA_FILA', motivo: null, concluidoEm: null })
   })
 })
 

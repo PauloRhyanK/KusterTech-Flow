@@ -60,14 +60,20 @@ export function BotaoDeRedefinirNoAr({ repositorioId }: { repositorioId: string 
   )
 }
 
-export function BotaoDePublicarAgora({ repositorioId }: { repositorioId: string }) {
+export function BotaoDePublicarAgora({
+  repositorioId,
+  rotulo = 'Publicar agora',
+}: {
+  repositorioId: string
+  rotulo?: string
+}) {
   const [estado, publicar, pendente] = useActionState(publicarAgoraAction, {})
   return (
     <div className="space-y-2">
       <form action={publicar}>
         <input type="hidden" name="repositorioId" value={repositorioId} />
         <Button type="submit" variant="outline" size="sm" aria-busy={pendente} disabled={pendente}>
-          Publicar agora
+          {rotulo}
         </Button>
       </form>
       <MensagensDeEstado estado={estado} />
