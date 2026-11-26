@@ -26,7 +26,13 @@ const TITULO_DE_OPCOES = /^#{1,6}\s+opções\s*:?\s*$/i
 const RECOMENDADA = /recomendo[\s\S]{0,80}?opção\s+(\d{1,2})/i
 const ABRE_DETALHES = /<details>\s*(?:<summary>([\s\S]*?)<\/summary>)?/i
 const FECHA_DETALHES = /<\/details>/i
+// O fim que o despachante acrescenta ao corpo da issue: vale no GitHub, não no Decidir.
+const RODAPE_DO_DESPACHANTE =
+  /\n+PR: https:\/\/github\.com\/\S+\n+Feche esta issue com um comentário[^\n]*\s*$/
 const O_QUE_PRECISO = /^\*\*o que preciso de você:\*\*[ \t]*(.*)$/i
+
+/** A frase que vem depois de um rótulo começa com maiúscula, como frase que é. */
+const frase = (s: string) => s.charAt(0).toLocaleUpperCase('pt-BR') + s.slice(1)
 
 /** Chama `f` para cada linha, dizendo se ela está dentro de uma cerca de código. */
 function porLinha(texto: string, f: (linha: string, emCodigo: boolean, i: number) => void): void {
@@ -51,7 +57,7 @@ export function normalizarRotulos(texto: string): string {
     const m = !emCodigo && anterior.trim() === '' ? ROTULO_EM_NEGRITO.exec(linha) : null
     if (m) {
       saida.push(`#### ${m[1]!.trim()}`)
-      if (m[2]!.trim() !== '') saida.push('', m[2]!.trim())
+      if (m[2]!.trim() !== '') saida.push('', frase(m[2]!.trim()))
     } else saida.push(linha)
     anterior = linha
   })
@@ -85,7 +91,7 @@ function acharOpcoes(normalizado: string): ListaDeOpcoes | null {
         opcoes.push({
           numero: Number(item[1]),
           nome: item[2]!.trim(),
-          consequencia: item[3]!.trim(),
+          consequencia: frase(item[3]!.trim()),
           recomendada: Number(item[1]) === recomendada,
         })
         ate = j
@@ -186,7 +192,7 @@ export function perguntaDoCorpo(texto: string): string | null {
   porLinha(texto, (linha, emCodigo) => {
     if (achada !== null || emCodigo) return
     const m = O_QUE_PRECISO.exec(linha.trim())
-    if (m && m[1]!.trim() !== '') achada = m[1]!.trim()
+    if (m && m[1]!.trim() !== '') achada = frase(m[1]!.trim())
   })
   return achada
 }
@@ -208,6 +214,7 @@ export function corpoParaLeitura(texto: string): string {
   })
   return linhas
     .join('\n')
+    .replace(RODAPE_DO_DESPACHANTE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }

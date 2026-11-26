@@ -381,7 +381,7 @@ describe('TelaDecidir', () => {
       await vi.advanceTimersByTimeAsync(0)
     })
     expect(screen.getByRole('region', { name: 'O que preciso de você' })).toHaveTextContent(
-      'escolher a ordem.',
+      'Escolher a ordem.',
     )
 
     const opcao = screen.getByRole('button', { name: '1. Ordem alfabética' })

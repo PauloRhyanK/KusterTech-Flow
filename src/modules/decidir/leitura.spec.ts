@@ -32,7 +32,7 @@ PR #308, \`recebimento.test.ts:717\`.
 describe('normalizarRotulos', () => {
   test('rótulo em negrito no início do parágrafo vira título e parágrafo', () => {
     expect(normalizarRotulos('**O que aconteceu:** a ordem se perde.')).toBe(
-      '#### O que aconteceu\n\na ordem se perde.',
+      '#### O que aconteceu\n\nA ordem se perde.',
     )
   })
 
@@ -71,13 +71,13 @@ describe('blocosDaMensagem', () => {
         {
           numero: 1,
           nome: 'Ordem alfabética',
-          consequencia: 'fica pronto hoje.',
+          consequencia: 'Fica pronto hoje.',
           recomendada: true,
         },
         {
           numero: 2,
           nome: 'Ordem do formulário',
-          consequencia: 'custa mais meio dia.',
+          consequencia: 'Custa mais meio dia.',
           recomendada: false,
         },
       ],
@@ -129,8 +129,8 @@ describe('blocosDaMensagem', () => {
   test('a consequência pode continuar na linha de baixo', () => {
     const texto = '## Opções\n\n1. **A**: começa\n   e continua.\n2. **B** - outra.'
     expect(opcoesDaMensagem(texto)).toEqual([
-      { numero: 1, nome: 'A', consequencia: 'começa e continua.', recomendada: false },
-      { numero: 2, nome: 'B', consequencia: 'outra.', recomendada: false },
+      { numero: 1, nome: 'A', consequencia: 'Começa e continua.', recomendada: false },
+      { numero: 2, nome: 'B', consequencia: 'Outra.', recomendada: false },
     ])
   })
 })
@@ -163,7 +163,7 @@ describe('cabeçalho da decisão', () => {
   })
 
   test('a pergunta vem da linha "O que preciso de você"', () => {
-    expect(perguntaDoCorpo(PERGUNTA)).toBe('escolher a ordem dos campos extras.')
+    expect(perguntaDoCorpo(PERGUNTA)).toBe('Escolher a ordem dos campos extras.')
     expect(perguntaDoCorpo('Sem a linha.')).toBeNull()
     expect(perguntaDoCorpo('**O que preciso de você:**')).toBeNull()
   })
@@ -174,6 +174,16 @@ describe('cabeçalho da decisão', () => {
     expect(corpo).not.toContain('O que preciso de você')
     expect(corpo).not.toContain('# Em que ordem')
     expect(corpo).toContain('**Opções:**')
+  })
+
+  test('o rodapé que o despachante põe na issue (PR e "Feche esta issue") não aparece', () => {
+    const corpo = corpoParaLeitura(
+      'Qual banco?\n\nPR: https://github.com/dono/cliente/pull/90\n\nFeche esta issue com um comentário: ele volta para o orquestrador.',
+    )
+    expect(corpo).toBe('Qual banco?')
+    expect(corpoParaLeitura('PR: https://github.com/d/c/pull/1 no meio do texto.')).toBe(
+      'PR: https://github.com/d/c/pull/1 no meio do texto.',
+    )
   })
 
   test('corpo sem título nem pergunta sai igual', () => {

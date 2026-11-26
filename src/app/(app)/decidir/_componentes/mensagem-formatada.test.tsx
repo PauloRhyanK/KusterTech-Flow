@@ -107,7 +107,7 @@ describe('MensagemFormatada', () => {
     expect(cartoes).toHaveLength(2)
     expect(cartoes[0]).toHaveTextContent('Recomendada')
     expect(cartoes[0]).toHaveTextContent('1. Ordem alfabética')
-    expect(cartoes[0]).toHaveTextContent('fica pronto hoje.')
+    expect(cartoes[0]).toHaveTextContent('Fica pronto hoje.')
     expect(cartoes[1]).not.toHaveTextContent('Recomendada')
   })
 
