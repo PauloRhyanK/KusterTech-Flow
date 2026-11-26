@@ -1,0 +1,57 @@
+{
+  "feature": "fabrica-executores-fase-a",
+  "revisao": 2,
+  "base": "02757e09da18ee719093947233cfd1a2337ee39a",
+  "hash": "a614a10f6fc66bf4cba09369c999b5f892006206555ca3fedeacca7ba16e6ada",
+  "raias": {
+    "executores-config": {
+      "epico": "FLOW-3cd9",
+      "plano": "pl-e6f5",
+      "seeds": [
+        "FLOW-b3bf"
+      ]
+    },
+    "esgotados": {
+      "epico": "FLOW-43da",
+      "plano": "pl-aa33",
+      "seeds": [
+        "FLOW-fa64"
+      ]
+    },
+    "motor-roteador": {
+      "epico": "FLOW-1cd4",
+      "plano": "pl-2d58",
+      "seeds": [
+        "FLOW-c1aa"
+      ]
+    },
+    "toolstack": {
+      "epico": "FLOW-fc39",
+      "plano": "pl-3817",
+      "seeds": [
+        "FLOW-0734"
+      ]
+    },
+    "despachante-substituicao": {
+      "epico": "FLOW-019b",
+      "plano": "pl-e1b2",
+      "seeds": [
+        "FLOW-b965"
+      ]
+    },
+    "retrato-executor": {
+      "epico": "FLOW-33c5",
+      "plano": "pl-4967",
+      "seeds": [
+        "FLOW-98da"
+      ]
+    },
+    "painel-executor": {
+      "epico": "FLOW-a6be",
+      "plano": "pl-b81f",
+      "seeds": [
+        "FLOW-4d90"
+      ]
+    }
+  }
+}

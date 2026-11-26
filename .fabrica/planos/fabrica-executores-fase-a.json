@@ -1,0 +1,187 @@
+{
+  "versao": 1,
+  "faseAtual": "executores",
+  "fases": [
+    {
+      "id": "executores",
+      "raias": [
+        "executores-config",
+        "esgotados",
+        "motor-roteador",
+        "toolstack",
+        "despachante-substituicao",
+        "retrato-executor",
+        "painel-executor"
+      ]
+    }
+  ],
+  "raias": [
+    {
+      "id": "executores-config",
+      "papel": "backend",
+      "planoSeeds": "pl-e6f5",
+      "dependeDe": [],
+      "arquivos": [
+        "fabrica/scripts/executores.py",
+        "fabrica/scripts/testes_executores.py",
+        "fabrica/scripts/raias.py",
+        "fabrica/scripts/testes_raias.py"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "executores.normalizar aceita o formato antigo {agente, modelo} e devolve uma lista de um item na conta claude-principal",
+        "executores.normalizar recusa lista vazia, agente fora de claude-code/codex/antigravity e item repetido, com ValueError que nomeia o campo",
+        "executores.escolher devolve o primeiro item cujo par (agente, conta) não está no conjunto de indisponíveis, ou None",
+        "raias.validar_plano aceita o campo opcional executor na raia e recusa um executor inválido",
+        "Há testes unitários para cada critério acima e a suíte do kit passa"
+      ]
+    },
+    {
+      "id": "esgotados",
+      "papel": "backend",
+      "planoSeeds": "pl-aa33",
+      "dependeDe": [],
+      "arquivos": [
+        "fabrica/scripts/esgotados.py",
+        "fabrica/scripts/testes_esgotados.py"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "esgotados.marcar grava o par agente|conta com prazo padrão de 60 minutos quando nenhum horário é informado",
+        "Arquivo ausente ou ilegível vale como vazio em esgotados.ler, sem exceção",
+        "Duas gravações concorrentes de processos diferentes preservam as duas marcações",
+        "Entradas vencidas não aparecem em esgotados.vigentes",
+        "esgotados.retorno_da_cota extrai o horário de retorno de mensagens em minutos e em ISO, e devolve None para horário no passado ou a mais de 7 dias",
+        "Há testes unitários para cada critério acima e a suíte do kit passa"
+      ]
+    },
+    {
+      "id": "motor-roteador",
+      "papel": "backend",
+      "planoSeeds": "pl-2d58",
+      "dependeDe": [
+        "executores-config"
+      ],
+      "arquivos": [
+        "fabrica/scripts/motor_roteador.py",
+        "fabrica/scripts/testes_motor_roteador.py",
+        "fabrica/scripts/motor.py",
+        "fabrica/scripts/testes_motor.py",
+        "fabrica/scripts/motor_warren.py",
+        "fabrica/scripts/testes_motor_warren.py"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "despachar_plano e despachar_run do Protocol Motor aceitam conta opcional; MotorFalso registra a conta e MotorWarren a ignora",
+        "MotorRoteador devolve ids da conta padrão sem mudança e ids das outras contas como <conta>:<id>",
+        "Toda leitura por id prefixado vai ao motor da conta certa com o id original; id sem prefixo vai à conta padrão",
+        "Para conta não padrão, o projeto é traduzido pelo gitUrl; sem par, ou conta sem motor, levanta ContaIndisponivel (subclasse de RecusaDoMotor)",
+        "procurar_run acha um run em qualquer conta e devolve o id já prefixado",
+        "motor_roteador.do_ambiente(ambiente, motor_padrao, ler_token) devolve (MotorRoteador, tokens): sem FABRICA_CONTAS_FILE só a conta padrão; com o arquivo ({\"<conta>\": {\"api\", \"tokenFile\"}}) uma instância por conta, e os tokens de todas as contas na lista devolvida",
+        "Há testes com dois MotorFalso para cada critério acima e a suíte do kit passa"
+      ]
+    },
+    {
+      "id": "toolstack",
+      "papel": "backend",
+      "planoSeeds": "pl-3817",
+      "dependeDe": [
+        "executores-config"
+      ],
+      "arquivos": [
+        "fabrica/scripts/prompts.py",
+        "fabrica/scripts/testes_prompts.py",
+        "fabrica/scripts/instalar_maquina.py",
+        "fabrica/scripts/testes_instalar_maquina.py",
+        "fabrica/scripts/testes_instalar.py",
+        "fabrica/modelos/",
+        "fabrica/README.md"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "prompts.bloco_ferramentas lista só as ferramentas presentes, devolve texto vazio para lista vazia e recusa nome desconhecido",
+        "prompt_template_raia inclui o bloco quando recebe ferramentas, e continua igual ao de hoje quando não recebe",
+        "instalar_maquina grava <raiz>/ferramentas-presentes.json ({\"presentes\": [...]}) na raiz da Fábrica (a do coordenador, ~/fabrica) e instala o rtk quando falta",
+        "fabrica/modelos/config.json mantém agente, modelo, esforco e maxCustoUsd de cada papel e acrescenta executores (claude-principal e claude-reserva, mesmo modelo) e ferramentas por papel: superpowers e rtk em todos; ponytail em frontend, backend e fixer; playwright em frontend, ux-ui e qa; security-audit em seguranca; archify em arquiteto e produto; floorplan em arquiteto; um teste prova que executores.normalizar aceita todos os papéis",
+        "O README explica a lista de executores, o arquivo de contas, o arquivo de esgotados e o fim da pausa por cota",
+        "A suíte do kit passa"
+      ]
+    },
+    {
+      "id": "despachante-substituicao",
+      "papel": "backend",
+      "planoSeeds": "pl-e1b2",
+      "dependeDe": [
+        "executores-config",
+        "esgotados",
+        "motor-roteador",
+        "toolstack"
+      ],
+      "arquivos": [
+        "fabrica/scripts/despachante.py",
+        "fabrica/scripts/testes_despachante.py",
+        "fabrica/scripts/estado.py",
+        "fabrica/scripts/testes_estado.py"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "_validar_modelo devolve executores normalizados e ferramentas (nome fora de prompts.FERRAMENTAS é ConfigInvalida); o formato antigo de configuração continua válido",
+        "Cada despacho (raia, revisor, fixer, orquestrador) escolhe o primeiro executor disponível, passa a conta ao motor e grava o registro de executor no estado conforme o contrato do estado",
+        "O executor indicado na raia vence o do papel; par esgotado, agente sem motor e conta sem instância são pulados",
+        "Limite de uso em filho de raia, revisor, fixer ou orquestrador marca o par como esgotado (horário de esgotados.retorno_da_cota quando houver), registra a troca em estado.trocas, redespacha com o próximo sem gravar pausado=cota e sem gastar tentativa, e o briefing do novo executor manda continuar do que já está commitado na branch da raia",
+        "Com todos os executores de um papel esgotados, só as raias desse papel aguardam e voltam sozinhas no prazo; depois de 180 minutos abre uma única issue ao Paulo",
+        "Um estado.json antigo com pausado=cota é retomado sozinho no primeiro ciclo",
+        "Ferramenta declarada e ausente em FABRICA_FERRAMENTAS_FILE gera aviso e a raia é despachada sem ela; sem a variável ou sem o arquivo, nenhum aviso",
+        "Sem FABRICA_CONTAS_FILE o despachante funciona só com a conta padrão; com ele, usa motor_roteador.do_ambiente, e os tokens de todas as contas entram em segredos",
+        "Há teste para cada critério acima e a suíte do kit passa"
+      ]
+    },
+    {
+      "id": "retrato-executor",
+      "papel": "backend",
+      "planoSeeds": "pl-4967",
+      "dependeDe": [
+        "motor-roteador",
+        "painel-executor"
+      ],
+      "arquivos": [
+        "fabrica/scripts/retrato.py",
+        "fabrica/scripts/testes_retrato.py",
+        "fabrica/scripts/resumo_de_execucao.py",
+        "fabrica/scripts/testes_resumo_de_execucao.py",
+        "fabrica/scripts/coordenador.py",
+        "fabrica/scripts/testes_coordenador.py"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
+      "criteriosAceite": [
+        "Cada item de execucoes do retrato v2 traz agente, conta e substituiu ({agente, conta, motivo}), lidos do registro de executor do estado conforme o contrato do estado; nulos quando o estado não os tem (inclusive runs de demanda)",
+        "O retrato v2 traz contas: uma por par (agente, conta) distinto das listas de executores da configuração do kit (normalizadas por executores.normalizar), com esgotadaAte (ISO) se o par está vigente em esgotados, senão null; no máximo 12 itens",
+        "Um estado sem os campos novos continua gerando um retrato válido",
+        "Nenhum campo novo sai sem passar por redigir",
+        "O coordenador grava no plano.env FABRICA_ESGOTADOS_FILE e FABRICA_FERRAMENTAS_FILE (e FABRICA_CONTAS_FILE só quando <raiz>/contas.json existe), sem alterar VARIAVEIS_REPASSADAS; lê o mesmo arquivo de esgotados e o entrega a retrato.montar; arquivo ausente ou ilegível vale vazio",
+        "O coordenador usa motor_roteador.do_ambiente: eventos e estado de um run, e o cancelamento de um Plan Run, com id prefixado da conta reserva, vão à instância da conta certa",
+        "Há teste para cada critério acima e a suíte do kit passa"
+      ]
+    },
+    {
+      "id": "painel-executor",
+      "papel": "frontend",
+      "planoSeeds": "pl-b81f",
+      "dependeDe": [],
+      "arquivos": [
+        "src/modules/fabrica/",
+        "src/app/(app)/fabrica/",
+        "src/app/(app)/projetos/_componentes/desenvolvimento/"
+      ],
+      "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm db:generate && corepack pnpm exec prettier --check . '!.pnpm-store/**' && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test",
+      "criteriosAceite": [
+        "O contrato aceita retrato v2 sem os campos novos e com agente, conta, substituiu e contas; os campos novos são .optional() (contas sem .default), de modo que objetos RetratoV2 montados à mão em outros módulos continuam compilando",
+        "model.rotuloDoExecutor devolve Claude, Claude · reserva, Codex ou Antigravity, e null sem agente",
+        "model.contasEsgotadas não devolve conta com prazo vencido",
+        "A linha de cada execução mostra o rótulo do executor e um selo de troca quando substituiu existe",
+        "A página da Fábrica mostra uma linha por conta esgotada com o horário, e nada quando não há conta esgotada",
+        "Só tokens semânticos e componentes de src/lib/ui; há testes de contrato, de modelo e de componente; format, lint, typecheck e testes passam"
+      ]
+    }
+  ]
+}
