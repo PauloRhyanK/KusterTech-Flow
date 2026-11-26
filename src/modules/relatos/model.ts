@@ -60,6 +60,18 @@ export function textoSemNomes(texto: string, nomes: readonly string[]): string {
 
 const cortar = (t: string, max: number) => (t.length <= max ? t : `${t.slice(0, max - 1)}…`)
 
+// Saudação e frase de abertura não dizem o que foi pedido: o título pula essas linhas.
+const ABERTURA =
+  /^(oi+|ol[aá]|opa|e a[ií]|bom dia|boa tarde|boa noite|tudo bem|(quero|queria|vou|gostaria de) (acrescentar|sugerir|dar|deixar|mandar|fazer) (uma|um) (ideia|sugest[aã]o|pedido|relato)|tenho (uma|um) (ideia|sugest[aã]o|pedido))([\s,!.?:;]+(tudo bem|pessoal|gente|equipe))?[\s,!.?:;]*$/i
+
+function primeiraLinhaUtil(base: string): string {
+  const linhas = base
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+  return linhas.find((l) => !ABERTURA.test(l)) ?? linhas[0] ?? ''
+}
+
 export const ROTULO_DO_CANAL: Record<RelatoDoFio['canal'], string> = {
   sistema: 'sistema',
   whatsapp: 'WhatsApp',
@@ -85,11 +97,7 @@ export function demandaDoRelato(r: RelatoDoFio, nomeDoSistema: string): DemandaD
   const texto = r.texto.trim()
   const transcricao = r.transcricao?.trim() ?? ''
   const base = texto || transcricao
-  const primeira =
-    base
-      .split('\n')
-      .find((l) => l.trim() !== '')
-      ?.trim() ?? ''
+  const primeira = r.titulo?.trim() || primeiraLinhaUtil(base)
   const titulo = primeira
     ? cortar(limpo(primeira), LIMITE_DO_TITULO)
     : r.anexos.some((a) => a.tipo === 'audio')
@@ -97,7 +105,9 @@ export function demandaDoRelato(r: RelatoDoFio, nomeDoSistema: string): DemandaD
       : `Relato sem texto (${r.canal === 'whatsapp' ? 'WhatsApp' : nomeDoSistema})`
 
   const partes: string[] = []
-  if (texto) partes.push(limpo(texto))
+  if (r.resumo?.trim()) partes.push(`Resumo: ${limpo(r.resumo.trim())}`)
+  if (texto)
+    partes.push(r.resumo?.trim() ? `Nas palavras de quem pediu:\n${limpo(texto)}` : limpo(texto))
   if (transcricao && texto) partes.push(`Transcrição do áudio:\n${limpo(transcricao)}`)
   else if (transcricao) partes.push(limpo(transcricao))
   const origem = [`Pelo ${ROTULO_DO_CANAL[r.canal]} de ${nomeDoSistema}`]

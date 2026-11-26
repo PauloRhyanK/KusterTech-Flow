@@ -1,3 +1,4 @@
+import type { PlanoDaTriagem } from '@/modules/demandas/contrato'
 import type { Espera, Nivel, Origem, TipoDeDemanda } from '@/modules/demandas/model'
 import { formatarIdade } from '@/modules/inicio/model'
 
@@ -40,7 +41,13 @@ export interface DemandaEsperando {
   rotuloDaEtapa: string
   descricao: string | null
   anexos: number
-  triagem: { tamanho: string; mexeEm: string; motivo: string; destino: string } | null
+  triagem: {
+    tamanho: string
+    mexeEm: string
+    motivo: string
+    destino: string
+    plano?: PlanoDaTriagem | null
+  } | null
 }
 
 export interface DecisaoDoRetrato {
@@ -114,6 +121,10 @@ export interface ItemDaPilha {
   desde: Date | null
   fatos: { rotulo: string; valor: string }[]
   relato: { resumo: string; href: string; externo: boolean } | null
+  /** O que foi pedido, nas palavras de quem pediu (a descrição da demanda), antes de qualquer análise. */
+  pedido?: string | null
+  /** O plano curto da triagem para uma decisão de produto. */
+  plano?: PlanoDaTriagem | null
   ref: RefDoItem
 }
 
@@ -337,6 +348,15 @@ function resumoDoRelato(d: DemandaEsperando): ItemDaPilha['relato'] {
   }
 }
 
+const LIMITE_DO_PEDIDO = 1500
+
+/** A descrição como foi escrita, cortada para caber no cartão; vazia vira `null`. */
+export function pedidoDaDemanda(descricao: string | null): string | null {
+  const t = (descricao ?? '').trim()
+  if (t === '') return null
+  return t.length <= LIMITE_DO_PEDIDO ? t : `${t.slice(0, LIMITE_DO_PEDIDO - 1).trimEnd()}…`
+}
+
 // A triagem grava a chave sem acento; a tela mostra a palavra.
 const ROTULO_DO_TAMANHO: Record<string, string> = {
   pequeno: 'pequeno',
@@ -364,6 +384,8 @@ function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): Item
     desde: d.esperaDesde,
     fatos,
     relato: resumoDoRelato(d),
+    pedido: pedidoDaDemanda(d.descricao),
+    plano: d.triagem?.plano ?? null,
     ref: {
       tipo: 'demanda',
       demandaId: d.id,

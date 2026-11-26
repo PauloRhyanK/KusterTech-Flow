@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  pedidoDaDemanda,
   amanhaAsSeis,
   chaveDaDemanda,
   chaveDaIssue,
@@ -92,6 +93,40 @@ describe('tipoDaDecisao', () => {
       'decisao_da_fabrica',
     )
     expect(tipoDaDecisao('Pausa: x')).toBe('decisao_da_fabrica')
+  })
+})
+
+describe('pedido e plano no cartão', () => {
+  it('o cartão do pedido traz a descrição como foi escrita e o plano da triagem', () => {
+    const plano = {
+      pedido: 'Quer um texto pronto para conversar com o lead.',
+      muda: ['Meu dia: aba de sugestões'],
+      opcoes: [
+        { nome: 'Texto fixo', tamanho: 'pequeno' as const, descricao: 'Escrito pela equipe.' },
+      ],
+      conflitos: [],
+      recomendacao: 'Texto fixo.',
+    }
+    const base = demanda()
+    const { itens } = pilha({
+      demandas: [
+        demanda({
+          descricao: 'Vi que a aba sugere ações.\n\nPelo WhatsApp de Sistema Alfa · ticket R-0001',
+          triagem: { ...base.triagem!, plano },
+        }),
+      ],
+    })
+    expect(itens[0]!.pedido).toBe(
+      'Vi que a aba sugere ações.\n\nPelo WhatsApp de Sistema Alfa · ticket R-0001',
+    )
+    expect(itens[0]!.plano).toEqual(plano)
+  })
+
+  it('pedidoDaDemanda: vazia → null; longa é cortada com reticências', () => {
+    expect(pedidoDaDemanda('  ')).toBeNull()
+    const longa = pedidoDaDemanda('x'.repeat(3000))!
+    expect(longa).toHaveLength(1500)
+    expect(longa.endsWith('…')).toBe(true)
   })
 })
 

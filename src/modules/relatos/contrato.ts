@@ -57,6 +57,9 @@ export const relatoDoFioSchema = z.object({
   canal: z.enum(['sistema', 'whatsapp']),
   resultado: z.enum(['segue', 'orientado']),
   ticket: opcional(z.string().max(40)),
+  /** Título e resumo escritos pelo sistema; opcionais (o Flow.ia de 20/11 ainda não os manda). */
+  titulo: opcional(z.string().trim().max(200)),
+  resumo: opcional(z.string().trim().max(4000)),
   /** Sugestão do sistema; a classificação que vale é a da triagem. */
   tipo: opcional(z.string().max(40)),
   autor: autorSchema,

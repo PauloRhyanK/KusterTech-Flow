@@ -95,6 +95,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
             mexeEm: triagem.data.mexeEm,
             motivo: triagem.data.motivo,
             destino: triagem.data.destino,
+            plano: triagem.data.plano ?? null,
           }
         : null,
     }
