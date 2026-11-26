@@ -134,9 +134,17 @@ test('período: 30 dias deixa a antiga de fora; tudo traz no ar antiga e orienta
   await demanda('Orientada antiga', alfa, { encerrada: 'orientada', atualizadaEm: diasAtras(90) })
 
   expect(await titulos({ periodo: '30d' })).toEqual(['Recente'])
+  // Aberta e parada há 60 dias: o período não a esconde.
+  await demanda('Parada no cliente', alfa, {
+    espera: 'aprovar_desenho',
+    esperaDesde: diasAtras(59),
+    atualizadaEm: diasAtras(59),
+  })
+  expect(await titulos({ periodo: '30d' })).toEqual(['Recente', 'Parada no cliente'])
   const tudo = await obterListaDeDemandas(admin, null, AGORA, filtros({ periodo: 'tudo' }))
   expect(tudo.tabela!.linhas.map((l) => [l.titulo, l.estadoDaTabela])).toEqual([
     ['Recente', 'a_caminho'],
+    ['Parada no cliente', 'espera_voce'],
     ['No ar antiga', 'no_ar'],
     ['Orientada antiga', 'encerrada'],
   ])

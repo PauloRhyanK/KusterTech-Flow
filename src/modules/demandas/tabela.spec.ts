@@ -111,6 +111,11 @@ describe('linhaDaTabela', () => {
   })
 })
 
+test('entregue antiga (antes das partes) não finge estar andando', () => {
+  const l = linhaDaTabela(demanda({ encerrada: 'entregue', etapaAtual: 'entregue' }), AGORA)
+  expect(l.estado).toEqual({ texto: 'Entregue', tom: 'neutro' })
+})
+
 describe('ordenarPorEstado', () => {
   const l = (id: string, estadoDaTabela: LinhaDaTabela['estadoDaTabela']) =>
     ({ id, estadoDaTabela }) as LinhaDaTabela

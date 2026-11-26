@@ -111,7 +111,7 @@ export function TabelaDeDemandas({
         {n} {n === 1 ? 'demanda' : 'demandas'}
         {tabela.truncada && (
           <span className="ml-2 text-atencao">
-            Mostrando as 200 mais recentes. Refine os filtros.
+            Mostrando só as 200 primeiras nesta ordem. Refine os filtros.
           </span>
         )}
       </p>

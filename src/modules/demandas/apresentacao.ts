@@ -411,6 +411,8 @@ export function linhaDaTabela(d: DemandaNaTabela, agora: Date): LinhaDaTabela {
   const linha = linhaDe(d, estado === 'encerrada' ? 'orientadas_hoje' : estado, agora)
   return {
     ...linha,
+    // Entregue antes das partes existirem: o marco diria "Entregando", que já passou.
+    estado: d.encerrada === 'entregue' ? { texto: 'Entregue', tom: 'neutro' } : linha.estado,
     idade: semHa(formatarIdade(d.atualizadaEm, agora)),
     cliente: primeiroEMais(d.clientes),
     repositorio: primeiroEMais(d.repositorios.map((r) => r.slice(r.lastIndexOf('/') + 1))),

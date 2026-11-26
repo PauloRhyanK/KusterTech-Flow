@@ -66,7 +66,7 @@ describe('TabelaDeDemandas', () => {
         .getAttribute('href'),
     ).toBe('/demandas/a')
     expect(within(tabela).getByText('Alfa +2')).toBeInTheDocument()
-    expect(screen.queryByText(/Mostrando as 200/)).toBeNull()
+    expect(screen.queryByText(/Mostrando só as 200/)).toBeNull()
   })
 
   test('uma demanda no singular; truncada avisa', () => {
@@ -78,7 +78,7 @@ describe('TabelaDeDemandas', () => {
     )
     expect(screen.getByText('1 demanda')).toBeInTheDocument()
     expect(
-      screen.getByText('Mostrando as 200 mais recentes. Refine os filtros.'),
+      screen.getByText('Mostrando só as 200 primeiras nesta ordem. Refine os filtros.'),
     ).toBeInTheDocument()
   })
 

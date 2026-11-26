@@ -296,12 +296,20 @@ const ONDE_DO_ESTADO: Record<EstadoDaTabela, object> = {
   encerrada: { encerrada: { in: ['orientada', 'descartada', 'entregue'] } },
 }
 
-/** O `where` da tabela: cada filtro escolhido vira uma condição; o período corta pela última atualização. */
+/** O `where` da tabela: cada filtro escolhido vira uma condição; o período corta as encerradas pela última atualização. */
 function ondeDaTabela(f: FiltrosDaTabela, agora: Date) {
   const dias = DIAS_DO_PERIODO[f.periodo]
   return {
     AND: [
-      dias === null ? {} : { atualizadaEm: { gte: new Date(agora.getTime() - dias * DIA_MS) } },
+      // O período corta só as encerradas: aberta parada há meses é justamente o que se procura.
+      dias === null
+        ? {}
+        : {
+            OR: [
+              { encerrada: null },
+              { atualizadaEm: { gte: new Date(agora.getTime() - dias * DIA_MS) } },
+            ],
+          },
       f.cliente ? { projeto: { clientes: { some: { clienteId: f.cliente } } } } : {},
       f.projeto ? { projetoId: f.projeto } : {},
       f.repositorio

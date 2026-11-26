@@ -14,7 +14,7 @@
 
 - Os quatro quadros do topo contam sempre o período padrão (30 dias), qualquer que seja o filtro.
 - Sem filtro de tabela na URL: a tela é idêntica à de hoje (grupos, `?destino=` incluso).
-- Teto de 200 linhas; acima disso, o aviso "Mostrando as 200 mais recentes. Refine os filtros."
+- Teto de 200 linhas; acima disso, o aviso "Mostrando só as 200 primeiras nesta ordem. Refine os filtros."
 - Período: `30d` (padrão), `90d`, `tudo`, aplicado sobre `atualizadaEm`.
 - Ordem padrão: `atualizada`, `desc`.
 - Só tokens semânticos; nada de hex nem cor literal do Tailwind.
@@ -161,7 +161,7 @@
 
 - [ ] **Step 1: Escrever os testes de componente**
   - Barra: `<form method="get" action="/demandas">` com selects rotulados Cliente, Projeto, Repositório, Tipo, Estado, Período (opção vazia "Todos" exceto Período), campo de busca "Buscar no título", select "Ordenar por" (Atualizada, Criada, Demanda, Estado), botão "Filtrar"; valores atuais vêm selecionados; `sentido` atual em input hidden; link "Limpar" para `/demandas` só quando `ativa`. Envolta em `<details>` com `<summary>Filtros</summary>` aberto por padrão no desktop (`open` + classe que esconde o summary em `md:`).
-  - Tabela: cabeçalhos Demanda, Cliente, Repositório, Partes, Trilho, Estado, Atualizada; Demanda/Estado/Atualizada são links de ordem com `aria-sort` na coluna ativa; clicar na ativa inverte o sentido (`hrefDaOrdem` preserva os outros filtros); cada linha leva a `/demandas/<id>`; contagem "12 demandas" / "1 demanda"; com `truncada` mostra "Mostrando as 200 mais recentes. Refine os filtros."; sem linhas mostra `EstadoVazio` "Nenhuma demanda neste filtro" com ação Limpar.
+  - Tabela: cabeçalhos Demanda, Cliente, Repositório, Partes, Trilho, Estado, Atualizada; Demanda/Estado/Atualizada são links de ordem com `aria-sort` na coluna ativa; clicar na ativa inverte o sentido (`hrefDaOrdem` preserva os outros filtros); cada linha leva a `/demandas/<id>`; contagem "12 demandas" / "1 demanda"; com `truncada` mostra "Mostrando só as 200 primeiras nesta ordem. Refine os filtros."; sem linhas mostra `EstadoVazio` "Nenhuma demanda neste filtro" com ação Limpar.
   - Celular: a lista empilhada (`Linha`) aparece em `md:hidden` e a `<table>` em `hidden md:table`.
 - [ ] **Step 2: Rodar e ver falhar** — `pnpm vitest run "src/app/(app)/demandas/_componentes"`.
 - [ ] **Step 3: Implementar** componentes e a página: `const params = await searchParams`; `const tabela = ehModoTabela(params) ? lerFiltrosDaTabela(params) : null`; barra sempre visível abaixo dos quadros; com `tabela` renderiza `TabelaDeDemandas` no lugar de `ListaDeDemandas` e esconde o link "← Todas as demandas" (o "Limpar" cumpre o papel). Selects nativos com o mesmo estilo do campo de busca de `projetos/page.tsx`.
