@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   MODELO_PADRAO,
+  desfechoDaTrava,
+  retomadaComDesfecho,
+  rotuloDoDesfecho,
   LIMITE_DA_DESCRICAO,
   LIMITE_DO_TITULO,
   compararNaFila,
@@ -287,5 +290,60 @@ describe('demanda filha da entrega parcial', () => {
     const d = descricaoDaFilha('y'.repeat(LIMITE_DA_DESCRICAO), 'd1')
     expect(d).toHaveLength(LIMITE_DA_DESCRICAO)
     expect(d.endsWith('…\n\nDemanda original: /demandas/d1')).toBe(true)
+  })
+})
+
+describe('desfechoDaTrava', () => {
+  const OUTRA = '7b7ba4b8-1111-4222-8333-444444444444'
+
+  test('lê o desfecho dos dados do último travada', () => {
+    expect(
+      desfechoDaTrava({ motivo: 'm', url: null, desfecho: { resultado: 'duplicada', de: OUTRA } }),
+    ).toEqual({
+      resultado: 'duplicada',
+      de: OUTRA,
+    })
+    expect(
+      desfechoDaTrava({ motivo: 'm', desfecho: { resultado: 'ja_resolvida', de: null } }),
+    ).toEqual({
+      resultado: 'ja_resolvida',
+      de: null,
+    })
+  })
+
+  test('sem desfecho, nulo ou torto: null; o de que não é uuid vira null', () => {
+    expect(desfechoDaTrava({ motivo: 'm', url: null })).toBeNull()
+    expect(desfechoDaTrava(null)).toBeNull()
+    expect(desfechoDaTrava({ desfecho: { resultado: 'outro', de: null } })).toBeNull()
+    expect(desfechoDaTrava({ desfecho: 'duplicada' })).toBeNull()
+    expect(desfechoDaTrava({ desfecho: { resultado: 'duplicada', de: '../x' } })).toEqual({
+      resultado: 'duplicada',
+      de: null,
+    })
+  })
+
+  test('rotuloDoDesfecho: duplicada da outra (id curto), de outra demanda ou já resolvida', () => {
+    expect(rotuloDoDesfecho({ resultado: 'duplicada', de: OUTRA })).toBe('duplicada da 7b7ba4b8')
+    expect(rotuloDoDesfecho({ resultado: 'duplicada', de: null })).toBe(
+      'duplicada de outra demanda',
+    )
+    expect(rotuloDoDesfecho({ resultado: 'ja_resolvida', de: null })).toBe('já resolvida')
+  })
+})
+
+describe('retomadaComDesfecho', () => {
+  const desfecho = { motivo: 'm', url: null, desfecho: { resultado: 'ja_resolvida', de: null } }
+
+  test('na trava com desfecho, a retomada é recusada com o porquê', () => {
+    expect(retomadaComDesfecho('travada', desfecho)).toBe(
+      'O orquestrador concluiu que não há plano a fazer: encerre a demanda em vez de retomar.',
+    )
+  })
+
+  test('sem desfecho, fora da trava ou sem evento: a retomada segue', () => {
+    expect(retomadaComDesfecho('travada', { motivo: 'm', url: null })).toBeNull()
+    expect(retomadaComDesfecho('travada', null)).toBeNull()
+    expect(retomadaComDesfecho('teste_falhou', desfecho)).toBeNull()
+    expect(retomadaComDesfecho(null, desfecho)).toBeNull()
   })
 })

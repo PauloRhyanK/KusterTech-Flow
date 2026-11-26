@@ -38,6 +38,7 @@ import { fraseDaDemanda, grupoAteOAr } from './partes'
 import { comoParte } from './partes-service'
 import { cabecalhosDoArquivo, lerArquivo } from './arquivos'
 import {
+  desfechoDaTrava,
   type Destino,
   type EstadoDaTabela,
   type EtapaDefinida,
@@ -558,6 +559,7 @@ export async function obterPaginaDaDemanda(
               ? { texto: textoDoAjuste, em: ajuste.em }
               : null,
           urlDaTrava: typeof urlDaTrava === 'string' ? urlDaTrava : null,
+          desfecho: desfechoDaTrava(trava?.dados),
           etapaAtual: d.etapaAtual,
           etapas,
         },

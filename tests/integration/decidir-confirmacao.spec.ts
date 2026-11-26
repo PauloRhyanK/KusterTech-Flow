@@ -15,6 +15,7 @@ import {
   entregarOQueFunciona,
   guardarArquivo,
   registrarEvento,
+  retomarDemanda,
 } from '@/modules/demandas/service'
 import type { Espera } from '@/modules/demandas/model'
 import { ErroDeIntegracao } from '@/modules/github/erros'
@@ -399,6 +400,44 @@ describe('decidir / confirmação (integração)', () => {
     const d = await db.demanda.findUniqueOrThrow({ where: { id } })
     expect(d).toMatchObject({ espera: 'aprovar_desenho', versaoDoDesenho: 3 })
     expect(await db.eventoDaDemanda.count({ where: { demandaId: id, origem: 'paulo' } })).toBe(0)
+  })
+
+  test('trava com desfecho (duplicada): retomar é recusado no service e no cartão; encerrar leva o desfecho', async () => {
+    const outra = await novaDemanda('A original')
+    const id = await novaDemanda('A duplicada')
+    expect((await daFabrica(id, triagem('fila_de_agentes'))).resultado).toBe('aplicado')
+    const t = await daFabrica(id, {
+      tipo: 'travada',
+      ator: 'fabrica',
+      dados: {
+        motivo: 'o orquestrador concluiu que a demanda é duplicada: não há plano a fazer',
+        url: null,
+        desfecho: { resultado: 'duplicada', de: outra },
+      },
+    })
+    expect(t.resultado).toBe('aplicado')
+    const chave = await chaveAtual(id)
+
+    // A tela aberta antes do desfecho ainda mostra Retomar: o service recusa.
+    await expect(retomarDemanda(admin, id)).rejects.toThrow(
+      'O orquestrador concluiu que não há plano a fazer: encerre a demanda em vez de retomar.',
+    )
+    await expect(abrirComCartao(chave, { acao: 'retomar' })).rejects.toThrow(
+      'Esta ação não vale para este item.',
+    )
+    expect(await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'retomada' } })).toBe(0)
+
+    const r = await abrirComCartao(chave, { acao: 'encerrar' })
+    expect(
+      (await db.cartaoDeFecho.findUniqueOrThrow({ where: { id: r.cartaoId } })).conteudo,
+    ).toEqual({
+      acao: 'encerrar',
+      desfecho: { resultado: 'duplicada', de: outra },
+    })
+    expect((await confirmarCartao(admin, r.cartaoId, AGORA, { fonte: null })).resultado).toBe(
+      'confirmado',
+    )
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).encerrada).toBe('descartada')
   })
 
   test('trava: retomar com resposta chama retomarDemanda; encerrar chama encerrarDemanda', async () => {

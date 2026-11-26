@@ -40,6 +40,7 @@ function item(n: number): ItemDaPilha {
       etapaAtual: 'triagem',
       rotuloDaEtapa: 'Triagem',
       prDaTrava: null,
+      desfecho: null,
     },
   }
 }
