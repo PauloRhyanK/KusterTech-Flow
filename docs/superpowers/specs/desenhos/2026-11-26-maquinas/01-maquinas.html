@@ -1,0 +1,322 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KusterTech Flow — Máquinas com o Beszel (desenho 26/11)</title><style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;--informacao:#2d6be4;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:720px}
+  .tela.cel.on{display:block;max-width:390px;min-height:0}
+  aside.menu{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}.logo span{color:#72d9c3}
+  aside.menu small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside.menu a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside.menu a.on{background:#1a2338;color:#e8efff}
+  aside.menu a i{width:6px;height:6px;border-radius:50%;background:#34445f}aside.menu a.on i{background:#72d9c3}
+  main{padding:26px 32px 36px;min-width:0}
+  .cel main{padding:16px}
+  h1{font-size:24px;margin:0 0 6px;letter-spacing:-.02em;font-weight:650}
+  .trilha{font-size:12.5px;color:var(--text-tertiary);margin-bottom:4px}
+  .sub1{color:var(--text-secondary);font-size:13px;margin-bottom:18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);font-weight:600;margin:22px 0 8px}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .selo{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:999px;padding:2px 10px;background:var(--surface-subtle);color:var(--text-secondary)}
+  .selo.at{background:#fbf3e8;color:var(--atencao)} .selo.er{background:#fbf0f0;color:var(--erro)}
+  .ponto{width:8px;height:8px;border-radius:50%;background:var(--neutro);flex:none}
+  .ponto.at{background:var(--atencao)} .ponto.er{background:var(--erro)} .ponto.off{background:transparent;border:1.5px solid var(--text-tertiary)}
+  /* barras */
+  .b{height:6px;border-radius:999px;background:var(--surface-subtle);overflow:hidden}
+  .b i{display:block;height:100%;background:var(--informacao);border-radius:999px}
+  .b.at i{background:var(--atencao)}
+  /* cartões das máquinas */
+  .grade{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .maq{padding:14px 16px;display:block;color:inherit;text-decoration:none}
+  .maq:hover{border-color:var(--border-strong)}
+  .maq .topo{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .maq .nome{font-weight:600;font-size:15px}
+  .maq .quando{margin-left:auto;font-size:11.5px;color:var(--text-tertiary)}
+  .med{display:grid;grid-template-columns:52px minmax(0,1fr) 44px;align-items:center;gap:8px;font-size:12.5px;margin-top:7px}
+  .med span:first-child{color:var(--text-secondary)} .med b{font-weight:600;text-align:right}
+  .med.at b{color:var(--atencao)}
+  .maq .pe{display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);border-top:1px solid var(--border);margin-top:12px;padding-top:9px}
+  .maq.mudo{opacity:.85} .maq.mudo .msg{font-size:13px;color:var(--text-secondary);padding:18px 0 6px}
+  /* lista do inventário */
+  .lista .l{display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--border)}
+  .lista .l:first-child{border-top:0}
+  .lista .l .n{font-weight:550}.lista .l .c{font-size:12.5px;color:var(--text-tertiary)}
+  .lista .l .d{margin-left:auto}
+  /* detalhe */
+  .quatro{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .q{padding:14px 16px}
+  .q .r{font-size:12.5px;color:var(--text-secondary)}
+  .q .v{font-size:26px;font-weight:650;letter-spacing:-.02em;margin:6px 0 2px}
+  .q .v small{font-size:13px;font-weight:400;color:var(--text-secondary);margin-left:4px;letter-spacing:0}
+  .q .b{margin:8px 0 8px}
+  .q .nt{font-size:12px;color:var(--text-tertiary)}
+  .duas{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;margin-top:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-size:11.5px;text-align:left;color:var(--text-tertiary);font-weight:500;padding:9px 16px;border-bottom:1px solid var(--border)}
+  td{padding:9px 16px;border-top:1px solid var(--border)}
+  tr:first-child td{border-top:0}
+  td.num,th.num{text-align:right}
+  .hist{padding:14px 16px;display:grid;gap:14px}
+  .hist .h{display:grid;grid-template-columns:70px minmax(0,1fr) 54px;gap:10px;align-items:center;font-size:12.5px}
+  .hist .h span:first-child{color:var(--text-secondary)} .hist .h b{text-align:right;font-weight:600}
+  .hist svg{width:100%;height:34px;display:block}
+  .hist .eixo{display:flex;justify-content:space-between;font-size:11px;color:var(--text-tertiary);padding-left:80px;padding-right:64px}
+  .lado{padding:14px 16px;font-size:13px}
+  .lado dl{margin:0}.lado .p{display:flex;justify-content:space-between;border-top:1px solid var(--border);padding:7px 0}
+  .lado .p:first-child{border-top:0} .lado dt{color:var(--text-secondary)}
+  .aviso{background:#fbf3e8;border:1px solid #efdcc0;border-radius:var(--r);padding:11px 16px;margin-bottom:16px;font-size:13px;color:var(--text-secondary)}
+  .aviso b{color:var(--atencao)}
+  /* início */
+  .inicio{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}
+  .fantasma{border:2px dashed var(--border-strong);border-radius:var(--r);display:grid;place-items:center;color:var(--text-tertiary);font-size:13px}
+  .mini .lm{display:grid;grid-template-columns:14px minmax(0,1fr) 46px 46px 46px;gap:8px;align-items:center;padding:9px 14px;border-top:1px solid var(--border);font-size:13px}
+  .mini .lm:first-of-type{border-top:0}
+  .mini .lm.cab{font-size:11px;color:var(--text-tertiary);padding-top:10px;padding-bottom:6px;border-top:0}
+  .mini .lm b{text-align:right;font-weight:550;font-variant-numeric:tabular-nums}
+  .mini .lm b.at{color:var(--atencao)} .mini .lm .x{grid-column:3/6;text-align:right;font-size:12px;color:var(--text-tertiary)}
+  .mini .rod{padding:9px 14px;border-top:1px solid var(--border);font-size:12.5px;display:flex;justify-content:space-between;color:var(--text-tertiary)}
+  .mini .rod a{color:var(--text-link);text-decoration:none}
+  .legenda{max-width:1280px;margin:0 auto 30px;font-size:12.5px;color:var(--text-secondary);padding:0 8px}
+  .legenda li{margin:3px 0}
+  /* celular */
+  .cel .grade{grid-template-columns:1fr}
+  .cel .quatro{grid-template-columns:1fr 1fr}
+  .cel .duas{grid-template-columns:1fr}
+  .cel .q .v{font-size:22px}
+  .cel .esconde{display:none}
+</style></head><body>
+<div class="barra">
+  <b>Máquinas · desenho</b>
+  <button class="on" data-t="t1">Início</button>
+  <button data-t="t2">Máquinas</button>
+  <button data-t="t3">Uma VPS</button>
+  <button data-t="t4">Beszel sem resposta</button>
+  <button data-t="t5">Celular</button>
+  <span class="nota">Nomes de VPS fictícios (o repositório é público)</span>
+</div>
+
+<!-- 1. Início: o quadro "Oficina" vira "Máquinas" -->
+<section class="tela on" id="t1">
+  <aside class="menu">
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a class="on"><i></i>Início</a><a><i></i>Demandas</a><a><i></i>Fábrica</a><a><i></i>Decidir</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <h1>Início</h1>
+    <div class="sub1">&nbsp;</div>
+    <div class="inicio">
+      <div style="display:grid;gap:16px">
+        <div class="fantasma" style="height:150px">Espera você (sem mudança)</div>
+        <div class="fantasma" style="height:220px">Fábrica agora (sem mudança)</div>
+        <div class="fantasma" style="height:160px">Atividade (sem mudança)</div>
+      </div>
+      <div>
+        <h2 style="margin-top:0">Máquinas</h2>
+        <div class="cartao mini">
+          <div class="lm cab"><span></span><span></span><b>CPU</b><b>Mem.</b><b>Disco</b></div>
+          <div class="lm"><i class="ponto"></i><span>oficina</span><b>9%</b><b>55%</b><b>45%</b></div>
+          <div class="lm"><i class="ponto at"></i><span>vps-alfa</span><b>3%</b><b>63%</b><b class="at">86%</b></div>
+          <div class="lm"><i class="ponto"></i><span>vps-beta</span><b>13%</b><b>50%</b><b>31%</b></div>
+          <div class="lm"><i class="ponto off"></i><span style="color:var(--text-secondary)">vps-gama</span><span class="x">sem resposta há 12 min</span></div>
+          <div class="rod"><span>Beszel · leitura de há 40 s</span><a href="#">Ver máquinas</a></div>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--text-tertiary)">A última limpeza da oficina sai daqui e fica na página da oficina.</div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- 2. Máquinas: resumo no topo, inventário embaixo -->
+<section class="tela" id="t2">
+  <aside class="menu">
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a><i></i>Demandas</a><a><i></i>Fábrica</a><a><i></i>Decidir</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a class="on"><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <div style="display:flex;align-items:center"><h1>Máquinas</h1><span style="margin-left:auto;background:var(--action);color:#fff;border-radius:var(--rc);padding:7px 14px;font-size:13px">Cadastrar máquina</span></div>
+    <div class="sub1">4 acompanhadas pelo Beszel · leitura de há 40 s</div>
+
+    <div class="grade">
+      <a class="cartao maq" href="#">
+        <div class="topo"><i class="ponto"></i><span class="nome">oficina</span><span class="quando">ligada há 2 dias</span></div>
+        <div class="med"><span>CPU</span><div class="b"><i style="width:9%"></i></div><b>9%</b></div>
+        <div class="med"><span>Memória</span><div class="b"><i style="width:55%"></i></div><b>55%</b></div>
+        <div class="med"><span>Disco</span><div class="b"><i style="width:45%"></i></div><b>45%</b></div>
+        <div class="pe"><span>11 contêineres</span><span>↓ 1,9 MB/s</span></div>
+      </a>
+      <a class="cartao maq" href="#">
+        <div class="topo"><i class="ponto at"></i><span class="nome">vps-alfa</span><span class="quando">ligada há 13 dias</span></div>
+        <div class="med"><span>CPU</span><div class="b"><i style="width:3%"></i></div><b>3%</b></div>
+        <div class="med"><span>Memória</span><div class="b"><i style="width:63%"></i></div><b>63%</b></div>
+        <div class="med at"><span>Disco</span><div class="b at"><i style="width:86%"></i></div><b>86%</b></div>
+        <div class="pe"><span>6 contêineres</span><span>↓ 4 KB/s</span></div>
+      </a>
+      <a class="cartao maq" href="#">
+        <div class="topo"><i class="ponto"></i><span class="nome">vps-beta</span><span class="quando">ligada há 17 dias</span></div>
+        <div class="med"><span>CPU</span><div class="b"><i style="width:13%"></i></div><b>13%</b></div>
+        <div class="med"><span>Memória</span><div class="b"><i style="width:50%"></i></div><b>50%</b></div>
+        <div class="med"><span>Disco</span><div class="b"><i style="width:31%"></i></div><b>31%</b></div>
+        <div class="pe"><span>7 contêineres</span><span>↓ 63 KB/s</span></div>
+      </a>
+      <a class="cartao maq mudo" href="#">
+        <div class="topo"><i class="ponto off"></i><span class="nome">vps-gama</span><span class="quando">—</span></div>
+        <div class="msg"><span class="selo at">Sem resposta há 12 min</span></div>
+        <div style="font-size:12.5px;color:var(--text-tertiary)">Última leitura: CPU 4% · memória 33% · disco 9%</div>
+        <div class="pe"><span>—</span><span></span></div>
+      </a>
+    </div>
+
+    <h2>Inventário</h2>
+    <div class="cartao lista">
+      <div class="l"><div><div class="n">oficina</div><div class="c">Servidor · 1 projeto</div></div><span class="d selo">Beszel</span></div>
+      <div class="l"><div><div class="n">vps-alfa</div><div class="c">Servidor · 1 projeto</div></div><span class="d selo">Beszel</span></div>
+      <div class="l"><div><div class="n">vps-beta</div><div class="c">Servidor · 2 projetos</div></div><span class="d selo">Beszel</span></div>
+      <div class="l"><div><div class="n">vps-gama</div><div class="c">Servidor · 2 projetos</div></div><span class="d selo">Beszel</span></div>
+      <div class="l"><div><div class="n">droplet-delta</div><div class="c">Servidor · DigitalOcean · 1 projeto</div></div><span class="d selo">Sem métricas</span></div>
+      <div class="l"><div><div class="n">Postgres gerenciado</div><div class="c">Banco · DigitalOcean · 1 projeto</div></div><span class="d selo">Sem métricas</span></div>
+    </div>
+  </main>
+</section>
+
+<!-- 3. Detalhe de uma VPS -->
+<section class="tela" id="t3">
+  <aside class="menu">
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a><i></i>Demandas</a><a><i></i>Fábrica</a><a><i></i>Decidir</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a class="on"><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <div class="trilha">Máquinas › vps-alfa</div>
+    <h1>vps-alfa</h1>
+    <div class="sub1"><span class="selo">Servidor</span> Ligada há 13 dias · <span class="selo">Leitura de há 40 s</span></div>
+
+    <div class="aviso"><b>Disco em 86%</b>, acima do limite de 80%.</div>
+
+    <div class="quatro">
+      <div class="cartao q"><div class="r">CPU</div><div class="v">3%</div><div class="b"><i style="width:3%"></i></div><div class="nt">Carga 0,09 · 0,06 · 0,01 · 2 núcleos</div></div>
+      <div class="cartao q"><div class="r">Memória</div><div class="v">0,6 GB<small>de 1 GB</small></div><div class="b"><i style="width:63%"></i></div><div class="nt">Swap 140 MB de 2 GB</div></div>
+      <div class="cartao q"><div class="r">Disco</div><div class="v">3,4 GB<small>livres de 24 GB</small></div><div class="b at"><i style="width:86%"></i></div><div class="nt">86% em uso</div></div>
+      <div class="cartao q"><div class="r">Rede</div><div class="v">4 KB/s<small>recebendo</small></div><div class="nt" style="margin-top:22px">Enviando 0,2 KB/s</div></div>
+    </div>
+
+    <div class="duas">
+      <div>
+        <h2>Contêineres · 6 no ar</h2>
+        <div class="cartao">
+          <table>
+            <thead><tr><th>Nome</th><th class="num">CPU</th><th class="num">Memória</th><th class="esconde">Desde</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">app-web-1</td><td class="num">2,3%</td><td class="num">212 MB</td><td class="esconde">2 semanas</td><td><span class="selo">No ar</span></td></tr>
+              <tr><td class="mono">app-postgres-1</td><td class="num">2,3%</td><td class="num">116 MB</td><td class="esconde">2 semanas</td><td><span class="selo">No ar · saudável</span></td></tr>
+              <tr><td class="mono">app-storage-1</td><td class="num">0,4%</td><td class="num">107 MB</td><td class="esconde">2 semanas</td><td><span class="selo">No ar</span></td></tr>
+              <tr><td class="mono">app-servidor-1</td><td class="num">0,2%</td><td class="num">75 MB</td><td class="esconde">2 semanas</td><td><span class="selo">No ar</span></td></tr>
+              <tr><td class="mono">app-caddy-1</td><td class="num">0%</td><td class="num">18 MB</td><td class="esconde">2 semanas</td><td><span class="selo">No ar</span></td></tr>
+              <tr><td class="mono">beszel-agent-1</td><td class="num">0%</td><td class="num">7 MB</td><td class="esconde">1 dia</td><td><span class="selo">No ar</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Últimas 24 horas</h2>
+        <div class="cartao hist">
+          <div class="h"><span>CPU</span><svg viewBox="0 0 300 34" preserveAspectRatio="none"><polyline fill="none" stroke="var(--informacao)" stroke-width="1.5" points="0,30 20,29 40,28 60,30 80,22 100,29 120,30 140,26 160,29 180,12 200,28 220,29 240,30 260,27 280,29 300,30"/></svg><b>3%</b></div>
+          <div class="h"><span>Memória</span><svg viewBox="0 0 300 34" preserveAspectRatio="none"><polyline fill="none" stroke="var(--informacao)" stroke-width="1.5" points="0,16 30,15 60,14 90,15 120,13 150,14 180,12 210,13 240,12 270,13 300,12"/></svg><b>63%</b></div>
+          <div class="h"><span>Disco</span><svg viewBox="0 0 300 34" preserveAspectRatio="none"><polyline fill="none" stroke="var(--atencao)" stroke-width="1.5" points="0,9 50,9 100,8 150,8 200,7 250,6 300,6"/></svg><b>86%</b></div>
+          <div class="h"><span>Rede ↓</span><svg viewBox="0 0 300 34" preserveAspectRatio="none"><polyline fill="none" stroke="var(--informacao)" stroke-width="1.5" points="0,30 20,28 40,25 60,30 80,18 100,29 120,26 140,30 160,22 180,28 200,30 220,24 240,29 260,30 280,27 300,29"/></svg><b>4 KB/s</b></div>
+          <div class="eixo"><span>ontem 14h</span><span>20h</span><span>02h</span><span>08h</span><span>agora</span></div>
+        </div>
+      </div>
+      <div>
+        <h2>Cadastro</h2>
+        <div class="cartao lado"><dl>
+          <div class="p"><dt>Provedor</dt><dd>Locaweb</dd></div>
+          <div class="p"><dt>Projetos</dt><dd>app-vendas</dd></div>
+          <div class="p"><dt>No Beszel como</dt><dd class="mono">vps-alfa</dd></div>
+        </dl></div>
+        <div style="margin-top:12px;font-size:12.5px"><a href="#" style="color:var(--text-link);text-decoration:none">Abrir no Beszel ↗</a></div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- 4. Beszel sem resposta -->
+<section class="tela" id="t4">
+  <aside class="menu">
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a><i></i>Demandas</a><a><i></i>Fábrica</a><a><i></i>Decidir</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a class="on"><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <div style="display:flex;align-items:center"><h1>Máquinas</h1><span style="margin-left:auto;background:var(--action);color:#fff;border-radius:var(--rc);padding:7px 14px;font-size:13px">Cadastrar máquina</span></div>
+    <div class="sub1"><span class="selo at">Beszel sem resposta</span> As métricas voltam quando ele responder; o inventário segue abaixo.</div>
+    <h2>Inventário</h2>
+    <div class="cartao lista">
+      <div class="l"><div><div class="n">oficina</div><div class="c">Servidor · 1 projeto</div></div><span class="d selo">Sem dados</span></div>
+      <div class="l"><div><div class="n">vps-alfa</div><div class="c">Servidor · 1 projeto</div></div><span class="d selo">Sem dados</span></div>
+      <div class="l"><div><div class="n">vps-beta</div><div class="c">Servidor · 2 projetos</div></div><span class="d selo">Sem dados</span></div>
+    </div>
+    <ul style="margin-top:22px;font-size:12.5px;color:var(--text-secondary)">
+      <li>Beszel não configurado (sem endereço ou usuário no <span class="mono">.env</span>): a tela fica como hoje, só com o inventário, e o selo diz “Métricas não configuradas”.</li>
+      <li>Usuário recusado pelo Beszel: o selo diz “Beszel recusou o acesso”.</li>
+      <li>No Início, o quadro Máquinas mostra uma linha só com o selo.</li>
+    </ul>
+  </main>
+</section>
+
+<!-- 5. Celular -->
+<section class="tela cel" id="t5">
+  <main>
+    <h1>Máquinas</h1>
+    <div class="sub1">4 acompanhadas · leitura de há 40 s</div>
+    <div class="grade">
+      <a class="cartao maq" href="#">
+        <div class="topo"><i class="ponto at"></i><span class="nome">vps-alfa</span><span class="quando">ligada há 13 dias</span></div>
+        <div class="med"><span>CPU</span><div class="b"><i style="width:3%"></i></div><b>3%</b></div>
+        <div class="med"><span>Memória</span><div class="b"><i style="width:63%"></i></div><b>63%</b></div>
+        <div class="med at"><span>Disco</span><div class="b at"><i style="width:86%"></i></div><b>86%</b></div>
+        <div class="pe"><span>6 contêineres</span><span>↓ 4 KB/s</span></div>
+      </a>
+      <a class="cartao maq" href="#">
+        <div class="topo"><i class="ponto"></i><span class="nome">oficina</span><span class="quando">ligada há 2 dias</span></div>
+        <div class="med"><span>CPU</span><div class="b"><i style="width:9%"></i></div><b>9%</b></div>
+        <div class="med"><span>Memória</span><div class="b"><i style="width:55%"></i></div><b>55%</b></div>
+        <div class="med"><span>Disco</span><div class="b"><i style="width:45%"></i></div><b>45%</b></div>
+        <div class="pe"><span>11 contêineres</span><span>↓ 1,9 MB/s</span></div>
+      </a>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-top:10px">No celular, as máquinas com atenção vêm primeiro.</div>
+  </main>
+</section>
+
+<div class="legenda"><ul>
+  <li><b>Fonte:</b> o Beszel que roda na oficina. O Flow só lê; nada é gravado no Beszel.</li>
+  <li><b>Cores:</b> sem verde (invariante 9). Ponto cinza = lendo; laranja = atenção (disco &gt; 80% ou memória &gt; 90%); vazado = sem resposta do agente ou leitura com mais de 5 min.</li>
+  <li><b>Oficina:</b> a página dela continua com o painel atual (limpezas, disco por dono, Fábrica). Os números do resumo vêm do Beszel para comparar as máquinas pela mesma régua.</li>
+  <li><b>Ligação:</b> uma máquina do cadastro aparece com métricas quando o “identificador externo” dela é o nome do sistema no Beszel.</li>
+</ul></div>
+
+<script>
+document.querySelectorAll('.barra button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.barra button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.tela').forEach(t=>t.classList.toggle('on',t.id===b.dataset.t));
+});
+</script>
+</body></html>
