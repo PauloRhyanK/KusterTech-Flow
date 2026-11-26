@@ -849,6 +849,40 @@ describe('filtros da fila', () => {
     expect(filtrarLinhas([A, B], { ...vazio, projeto: 'P2' })).toEqual([B])
     expect(filtrarLinhas([A, B], { ...vazio, busca: 'nada' })).toEqual([])
   })
+
+  test('estado e modo reduzem os pedidos da linha aos que casam', () => {
+    const L = linha({
+      projetoId: 'P3',
+      rotulo: 'Gama',
+      publicando: pedido({ id: 'pub', estado: 'publicando', modo: 'imediato' }),
+      aguardando: [pedido({ id: 'x', modo: 'lote' }), pedido({ id: 'y', modo: 'imediato' })],
+    })
+    const [so] = filtrarLinhas([L], { ...vazio, modo: 'lote' })
+    expect(so?.publicando).toBeNull()
+    expect(so?.aguardando.map((p) => p.id)).toEqual(['x'])
+    const [pub] = filtrarLinhas([L], { ...vazio, estado: 'publicando' })
+    expect(pub?.publicando?.id).toBe('pub')
+    expect(pub?.aguardando).toEqual([])
+    expect(filtrarLinhas([L], { ...vazio, estado: 'verificando' })).toEqual([])
+  })
+
+  test('busca por texto de pedido reduz; busca no rótulo mantém todos os pedidos', () => {
+    const L = linha({
+      rotulo: 'Gama',
+      aguardando: [pedido({ id: 'x', descricao: 'Corrige PDF' }), pedido({ id: 'y' })],
+    })
+    expect(filtrarLinhas([L], { ...vazio, busca: 'pdf' })[0]?.aguardando.map((p) => p.id)).toEqual([
+      'x',
+    ])
+    expect(filtrarLinhas([L], { ...vazio, busca: 'gama' })[0]?.aguardando).toHaveLength(2)
+  })
+
+  test('linha sem pedidos some com estado/modo, mas fica só com projeto ou rótulo', () => {
+    const V = linha({ projetoId: 'P9', rotulo: 'Vazia', publicando: null, aguardando: [] })
+    expect(filtrarLinhas([V], { ...vazio, modo: 'lote' })).toEqual([])
+    expect(filtrarLinhas([V], { ...vazio, projeto: 'P9' })).toEqual([V])
+    expect(filtrarLinhas([V], { ...vazio, busca: 'vazia' })).toEqual([V])
+  })
 })
 
 describe('etapasDaFalha', () => {

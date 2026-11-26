@@ -10,7 +10,7 @@ import { obterTelaDePublicacao } from '@/modules/fila-de-publicacao/queries'
 import { BotaoDaPausaGeral } from './_componentes/botoes-da-publicacao'
 import { FaixaDeEspera } from './_componentes/faixa-de-espera'
 import { FiltrosDaFilaForm } from './_componentes/filtros-da-fila'
-import { FilaPorProjeto } from './_componentes/fila-por-projeto'
+import { FilaFiltrada } from './_componentes/fila-filtrada'
 import { QuadrosDaPublicacao } from './_componentes/quadros-da-publicacao'
 import { UltimoLote } from './_componentes/ultimo-lote'
 import { VemAiDaFabrica } from './_componentes/vem-ai-da-fabrica'
@@ -50,11 +50,6 @@ export default async function PaginaDaPublicacao({
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
   const filtrando = Boolean(filtros.projeto || filtros.estado || filtros.modo || filtros.busca)
   const linhas = filtrarLinhas(tela.linhas, filtros)
-  const totalDePedidos = linhas.reduce(
-    (n, l) => n + (l.publicando ? 1 : 0) + l.aguardando.length,
-    0,
-  )
-
   return (
     <div className="space-y-6">
       <CabecalhoDePagina
@@ -67,14 +62,8 @@ export default async function PaginaDaPublicacao({
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_270px]">
         <div className="min-w-0 space-y-6">
           <FiltrosDaFilaForm filtros={filtros} projetos={projetos} />
-          {filtrando && (
-            <p role="status" className="text-sm text-text-secondary">
-              {totalDePedidos === 0
-                ? 'Nenhum pedido com esses filtros'
-                : `${totalDePedidos} ${totalDePedidos === 1 ? 'pedido' : 'pedidos'}`}
-            </p>
-          )}
-          <FilaPorProjeto
+          <FilaFiltrada
+            filtrando={filtrando}
             linhas={linhas}
             agora={agora}
             pausaGeral={tela.pausaGeral}

@@ -705,20 +705,24 @@ export function lerFiltrosDaFila(
 
 export function filtrarLinhas(linhas: readonly LinhaDaFila[], f: FiltrosDaFila): LinhaDaFila[] {
   const busca = f.busca.toLowerCase()
-  return linhas.filter((l) => {
-    if (f.projeto && l.projetoId !== f.projeto) return false
+  const contem = (t: string) => t.toLowerCase().includes(busca)
+  const porEstadoEModo = (p: PedidoDaLinha) =>
+    (!f.estado || p.estado === f.estado) && (!f.modo || p.modo === f.modo)
+  const resultado: LinhaDaFila[] = []
+  for (const l of linhas) {
+    if (f.projeto && l.projetoId !== f.projeto) continue
+    // Busca no rótulo da linha mantém todos os pedidos dela; senão, só os que casam.
+    const casaRotulo = busca !== '' && contem(l.rotulo)
+    const casaBusca = (p: PedidoDaLinha) =>
+      busca === '' || casaRotulo || contem(p.descricao ?? '') || contem(sha7(p.commit))
+    const mantem = (p: PedidoDaLinha) => porEstadoEModo(p) && casaBusca(p)
+    const publicando = l.publicando && mantem(l.publicando) ? l.publicando : null
+    const aguardando = l.aguardando.filter(mantem)
+    const sobrou = publicando !== null || aguardando.length > 0
     if (f.estado || f.modo) {
-      const pedidos = [...(l.publicando ? [l.publicando] : []), ...l.aguardando]
-      if (
-        !pedidos.some((p) => (!f.estado || p.estado === f.estado) && (!f.modo || p.modo === f.modo))
-      )
-        return false
-    }
-    if (busca) {
-      const pedidos = [...(l.publicando ? [l.publicando] : []), ...l.aguardando]
-      const textos = [l.rotulo, ...pedidos.flatMap((p) => [p.descricao ?? '', sha7(p.commit)])]
-      if (!textos.some((t) => t.toLowerCase().includes(busca))) return false
-    }
-    return true
-  })
+      if (!sobrou) continue
+    } else if (busca !== '' && !casaRotulo && !sobrou) continue
+    resultado.push({ ...l, publicando, aguardando })
+  }
+  return resultado
 }
