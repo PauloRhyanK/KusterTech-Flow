@@ -77,7 +77,7 @@ O Flow guarda o cursor por sistema. Relato repetido (mesmo `id`) não duplica de
 - **Tela Decidir:** ideias e pedidos de usuário entram na pilha, com o nome e o papel de quem pediu e quantos já pediram algo parecido.
 - **Resposta:** quando a demanda muda de estado, ou quando o Paulo confirma uma resposta, o Flow envia o andamento ao sistema de origem, que avisa o usuário pelo canal em que ele relatou.
 
-"Quantos já pediram" é a contagem de relatos ligados à mesma demanda. Juntar relatos parecidos é proposta do agente de triagem, confirmada pelo Paulo.
+"Quantos já pediram" é a contagem de relatos ligados à mesma demanda. Juntar relatos parecidos é proposta do agente de triagem, confirmada pelo Paulo, e a triagem cruzada (D84) é quem a executa.
 
 ## 6. Os quatro destinos
 

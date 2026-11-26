@@ -60,6 +60,9 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   destravada: ['fabrica'],
   teste: ['fabrica'],
   entregue: ['fabrica'],
+  juntar: ['fabrica'],
+  ligar_erros: ['fabrica'],
+  dividir: ['fabrica'],
   partes_planejadas: ['fabrica'],
   parte_planejada: ['fabrica'],
   parte_feita: ['fabrica'],
@@ -134,6 +137,15 @@ export function aplicarEvento(
         return aceita({ ...base, espera: 'decidir_destino', esperaMotivo: d.motivo })
       }
       return concluir(base)
+    }
+    case 'juntar': {
+      if (atual.marco !== 'recebida' || estado.espera !== null) return naoE('recebida')
+      return aceita({ ...estado, encerrada: 'juntada', espera: null, esperaMotivo: null })
+    }
+    case 'ligar_erros':
+    case 'dividir': {
+      if (atual.marco !== 'recebida' || estado.espera !== null) return naoE('recebida')
+      return aceita(estado)
     }
     case 'triagem_falhou': {
       if (atual.marco !== 'recebida') return naoE('recebida')

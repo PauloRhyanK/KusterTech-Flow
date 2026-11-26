@@ -1134,6 +1134,8 @@ model Demanda {
   entregueEm       DateTime?
   naoChegouDesde   DateTime?
   noArEm           DateTime?
+  juntadaEmId      String?
+  divididaDeId     String?
   criadaEm         DateTime              @default(now())
   atualizadaEm     DateTime              @updatedAt
   projeto          Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
@@ -1148,10 +1150,16 @@ model Demanda {
   consertos        PedidoDeConserto[]
   erros            ErroDoGlitchTip[]     @relation("ErroDaDemanda")
   relatos          Relato[]
+  juntadaEm        Demanda?              @relation("Juntada", fields: [juntadaEmId], references: [id], onDelete: SetNull)
+  juntadas         Demanda[]             @relation("Juntada")
+  divididaDe       Demanda?              @relation("Dividida", fields: [divididaDeId], references: [id], onDelete: SetNull)
+  divisoes         Demanda[]             @relation("Dividida")
 
   @@unique([fonteId, chaveDaFonte])
   @@index([encerrada, espera])
   @@index([projetoId, criadaEm])
+  @@index([juntadaEmId])
+  @@index([divididaDeId])
 }
 
 model EventoDaDemanda {

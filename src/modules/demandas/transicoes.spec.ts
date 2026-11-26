@@ -87,6 +87,46 @@ describe('triagem', () => {
   })
 })
 
+describe('triagem cruzada', () => {
+  const juntar = { tipo: 'juntar', dados: { em: A, motivo: 'igual' } } as EventoAplicavel
+  const ligar = { tipo: 'ligar_erros', dados: { erros: [A], motivo: 'igual' } } as EventoAplicavel
+  const parte = { titulo: 'P', descricao: 'D', tipo: 'ajuste' as const }
+  const dividir = {
+    tipo: 'dividir',
+    dados: { partes: [parte, parte], motivo: 'dois' },
+  } as EventoAplicavel
+
+  test('juntar na recebida encerra como juntada', () => {
+    const e = ok(ap(est(), juntar, 'fabrica'))
+    expect(e.encerrada).toBe('juntada')
+    expect(e.espera).toBeNull()
+    expect(e.esperaMotivo).toBeNull()
+  })
+  test('juntar depois da triagem é recusado', () => {
+    expect(recusa(ap(est({ etapaAtual: 'planejada' }), juntar, 'fabrica'))).toBe(
+      'A etapa atual não é recebida.',
+    )
+  })
+  test('juntar, ligar_erros e dividir com espera são recusados', () => {
+    const parada = est({ espera: 'decidir_destino' })
+    for (const e of [juntar, ligar, dividir]) expect(ap(parada, e, 'fabrica').ok).toBe(false)
+  })
+  test('ligar_erros e dividir na recebida não mudam o estado', () => {
+    expect(ok(ap(est(), ligar, 'fabrica'))).toEqual(est())
+    expect(ok(ap(est(), dividir, 'fabrica'))).toEqual(est())
+  })
+  test('ligar_erros e dividir depois da triagem são recusados', () => {
+    const depois = est({ etapaAtual: 'planejada' })
+    expect(recusa(ap(depois, ligar, 'fabrica'))).toBe('A etapa atual não é recebida.')
+    expect(recusa(ap(depois, dividir, 'fabrica'))).toBe('A etapa atual não é recebida.')
+  })
+  test('só a Fábrica manda estes eventos', () => {
+    for (const e of [juntar, ligar, dividir]) {
+      expect(recusa(ap(est(), e, 'paulo'))).toBe('Este evento não pode vir deste ator.')
+    }
+  })
+})
+
 describe('destino_decidido', () => {
   const decisao = (destino: 'urgente' | 'orientada') =>
     ({ tipo: 'destino_decidido', dados: { destino } }) as EventoAplicavel
