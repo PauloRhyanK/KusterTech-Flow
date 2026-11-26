@@ -42,6 +42,8 @@ export const s = {
   teto: 'esc-teto',
   telaLinha: 'esc-tela-linha',
   titulo: 'esc-titulo',
+  textos: 'esc-textos',
+  repo: 'esc-repo',
   toldo: 'esc-toldo',
   vapor: 'esc-vapor',
   vidro: 'esc-vidro',

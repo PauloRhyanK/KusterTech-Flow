@@ -15,7 +15,7 @@ import { Detalhe, type Selecao } from './detalhe'
 import { EsperasDoPaulo } from './esperas-do-paulo'
 import { Mapa } from './mapa'
 import { PlanoDaEntrega, textoDosTotais } from './plano-da-entrega'
-import { Predio, textoDaEspera } from './predio'
+import { Predio, origemDoAndar, textoDaEspera } from './predio'
 import { SalaDeGestao } from './sala-de-gestao'
 import { TelaDoAgente } from './tela-do-agente'
 
@@ -111,6 +111,7 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
               }`}
             >
               <b className="block text-sm text-text-primary">{a.titulo}</b>
+              <span className="block text-xs text-text-secondary">{origemDoAndar(a)}</span>
               <span className="text-xs text-text-secondary">
                 {textoDosTotais(a.fases)}
                 {a.esperaPaulo ? ` · ${textoDaEspera(a)}` : ''}
@@ -136,7 +137,10 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
           {andar ? (
             <>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="text-lg font-semibold text-text-primary">{andar.titulo}</h2>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold text-text-primary">{andar.titulo}</h2>
+                  <p className="text-xs text-text-secondary">{origemDoAndar(andar)}</p>
+                </div>
                 <Contadores
                   contagem={contarEstados(andar.agentes)}
                   filtro={filtro}

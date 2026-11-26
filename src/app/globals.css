@@ -597,8 +597,21 @@ body,
     700 10px 'Courier New',
     monospace;
 }
-.esc-titulo {
+.esc-textos {
+  display: flex;
+  min-width: 0;
   flex: 1;
+  flex-direction: column;
+}
+.esc-repo {
+  overflow: hidden;
+  color: var(--pixel-madeira-escura);
+  font-size: 9px;
+  opacity: 0.75;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.esc-titulo {
   overflow: hidden;
   color: var(--pixel-madeira-escura);
   font-size: 11px;

@@ -17,10 +17,14 @@ export interface PredioProps {
   onSelecionar: (planoId: string) => void
 }
 
+export function origemDoAndar(andar: Pick<Andar, 'projeto' | 'repositorio'>): string {
+  return andar.projeto ? `${andar.projeto} · ${andar.repositorio}` : andar.repositorio
+}
+
 function rotulo(andar: Andar, numero: number): string {
   const [feitas, total] = andar.progresso.partes
   const partes = `${feitas} de ${total} partes entregues`
-  return `${numero}º andar: ${andar.titulo}, ${partes}${andar.esperaPaulo ? `, ${textoDaEspera(andar)}` : ''}`
+  return `${numero}º andar: ${andar.titulo} (${origemDoAndar(andar)}), ${partes}${andar.esperaPaulo ? `, ${textoDaEspera(andar)}` : ''}`
 }
 
 export function textoDaEspera(andar: Pick<Andar, 'esperando'>): string {
@@ -87,7 +91,12 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
                   {andar.semAgentes && <span className={s.zz}>z</span>}
                   <span className={s.info}>
                     <span className={s.numero}>{numero}º</span>
-                    <span className={s.titulo}>{andar.titulo}</span>
+                    <span className={s.textos}>
+                      <span className={s.titulo}>{andar.titulo}</span>
+                      <span className={s.repo} title={origemDoAndar(andar)}>
+                        {origemDoAndar(andar)}
+                      </span>
+                    </span>
                     <span className={s.barrinha}>
                       <i style={{ width: `${pct}%` }} />
                     </span>
