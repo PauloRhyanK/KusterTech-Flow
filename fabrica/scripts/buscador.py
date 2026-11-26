@@ -153,8 +153,11 @@ def _prompt_da_etapa_1(busca):
     return (
         "Pedido do Paulo: %s\n\n"
         "Abaixo, uma ficha por demanda (JSON). Escolha até %d demandas que tratam do pedido, no todo ou em parte, "
-        "da mais para a menos relevante, e ponha os ids em `candidatas`. Se nenhuma tratar, deixe `candidatas` "
-        "vazia e explique em `resumo`, em uma ou duas frases.\n\nFichas:\n%s"
+        "da mais para a menos relevante, e ponha os ids em `candidatas`. O Paulo quer saber também o que já cobre "
+        "só um pedaço do pedido: inclua toda demanda que faça parte do caminho (mesmo canal, mesma tela, mesmo "
+        "fluxo ou a mesma peça que o pedido precisaria). Na dúvida, inclua: a etapa seguinte confere o texto "
+        "completo. Só deixe `candidatas` vazia se nenhuma ficha tiver relação; aí explique em `resumo`, em uma ou "
+        "duas frases, citando títulos e nunca ids.\n\nFichas:\n%s"
     ) % (busca["pergunta"], busca["candidatas"], fichas)
 
 
@@ -163,8 +166,9 @@ def _prompt_da_etapa_2(busca, textos):
     return (
         "Pedido do Paulo: %s\n\nTexto completo das demandas candidatas:\n\n%s\n\n"
         "Para cada candidata que de fato trata do pedido, devolva em `itens` o id (`demandaId`), a relevância "
-        "(alta: resolve o pedido; media: cobre parte; baixa: só tangencia) e o motivo em uma frase. Em `resumo`, "
-        "responda em até três frases: já existe algo assim? quais demandas tratam disso? o que ainda falta?"
+        "(alta: resolve o pedido; media: cobre parte dele; baixa: só uma peça ou a mesma área) e o motivo em uma "
+        "frase, dizendo que parte do pedido ela cobre. Em `resumo`, responda em até três frases, citando títulos e "
+        "nunca ids: já existe algo assim? o que já está coberto e por qual demanda? o que ainda falta?"
     ) % (busca["pergunta"], blocos)
 
 
