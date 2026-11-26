@@ -54,7 +54,7 @@ Sem `BESZEL_URL`, `BESZEL_USUARIO` ou `BESZEL_SENHA`, nada é lido. As telas fic
 ### 4.2 O que muda na oficina (fora do repositório)
 
 1. **Hub:** no `~devops/monitoramento/compose.yaml`, o comando do `beszel` passa de `--http 127.0.0.1:18090` para `--http 0.0.0.0:18090`. A Tailscale Serve continua apontando para `127.0.0.1:18090` e segue funcionando.
-2. **ufw:** entra a regra `allow from 172.16.0.0/12 to any port 18090 proto tcp`, que libera só as redes Docker da oficina. Antes da troca, é preciso confirmar com `ufw status verbose` que a política padrão de entrada é `deny`. Assim a rede local (192.168.0.0/24) continua sem acesso.
+2. **ufw:** entra a regra `allow from <sub-rede de kustertech-flow_default> to any port 18090 proto tcp`, que libera só a rede do Flow; as redes `fabrica-verif-*`, onde roda código dos agentes, ficam de fora. A política padrão de entrada da oficina é `deny` (conferido em 26/11), então a rede local continua sem acesso.
 3. **Contêiner `web`:** o `docker-compose.oficina.yml` do repositório ganha `extra_hosts: ['host.docker.internal:host-gateway']` e as variáveis `BESZEL_*`. O atualizador troca só a imagem, então esse arquivo é copiado de novo para `~devops/flow` e o Flow sobe com o comando do guia, como foi feito com o GlitchTip.
 4. **Usuário no Beszel (o Paulo faz na tela do Beszel):**
    - criar um usuário com papel `readonly`;
