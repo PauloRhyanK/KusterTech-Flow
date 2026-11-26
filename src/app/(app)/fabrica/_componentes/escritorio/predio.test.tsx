@@ -8,7 +8,13 @@ describe('prédio da Fábrica', () => {
   test('andar que espera o Paulo tem sirenes e aria-label com "espera você"', () => {
     const e = escritorioDeTeste(undefined, 'aprovar_desenho')
     const { container } = render(
-      <Predio andares={e.andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />,
+      <Predio
+        andares={e.andares}
+        recepcao={[]}
+        selecionado={null}
+        onSelecionar={() => {}}
+        onAbrirFila={() => {}}
+      />,
     )
     expect(
       screen.getByRole('button', { name: /1º andar: Suporte por IA no CRM.*espera você/ }),
@@ -17,7 +23,15 @@ describe('prédio da Fábrica', () => {
   })
 
   test('sem andares mostra o estado vazio "nenhuma demanda andando"', () => {
-    render(<Predio andares={[]} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
+    render(
+      <Predio
+        andares={[]}
+        recepcao={[]}
+        selecionado={null}
+        onSelecionar={() => {}}
+        onAbrirFila={() => {}}
+      />,
+    )
     expect(screen.getByText('nenhuma demanda andando')).toBeInTheDocument()
   })
 
@@ -29,7 +43,13 @@ describe('prédio da Fábrica', () => {
       titulo: `Demanda ${i}`,
     }))
     const { container } = render(
-      <Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />,
+      <Predio
+        andares={andares}
+        recepcao={[]}
+        selecionado={null}
+        onSelecionar={() => {}}
+        onAbrirFila={() => {}}
+      />,
     )
     expect(screen.getAllByRole('button', { name: /andar:/ })).toHaveLength(12)
     expect(container.querySelector('[data-rolagem]')).not.toBeNull()
@@ -57,6 +77,7 @@ describe('prédio da Fábrica', () => {
         ]}
         selecionado={null}
         onSelecionar={onSelecionar}
+        onAbrirFila={() => {}}
       />,
     )
     expect(screen.getByText(/RECEPÇÃO · 1 na fila/)).toBeInTheDocument()
@@ -81,7 +102,15 @@ describe('prédio da Fábrica', () => {
       },
       { ...base, planoId: 'novo', titulo: 'Novo', esperaPaulo: false, esperando: null },
     ]
-    render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
+    render(
+      <Predio
+        andares={andares}
+        recepcao={[]}
+        selecionado={null}
+        onSelecionar={() => {}}
+        onAbrirFila={() => {}}
+      />,
+    )
     const nomes = screen
       .getAllByRole('button', { name: /andar:/ })
       .map((b) => b.getAttribute('aria-label'))
@@ -120,7 +149,15 @@ describe('prédio da Fábrica', () => {
       },
       { ...base, planoId: 'd', titulo: 'Andando', esperaPaulo: false, esperando: null },
     ]
-    render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
+    render(
+      <Predio
+        andares={andares}
+        recepcao={[]}
+        selecionado={null}
+        onSelecionar={() => {}}
+        onAbrirFila={() => {}}
+      />,
+    )
     const nomes = screen
       .getAllByRole('button', { name: /andar:/ })
       .map((b) => b.getAttribute('aria-label'))
@@ -162,8 +199,27 @@ describe('prédio da Fábrica', () => {
         ]}
         selecionado={null}
         onSelecionar={() => {}}
+        onAbrirFila={() => {}}
       />,
     )
     expect(screen.getByText(/RECEPÇÃO · 2 na fila · 1 espera você/)).toBeInTheDocument()
+  })
+
+  test('a recepção é um botão que abre a fila', () => {
+    const onAbrirFila = vi.fn()
+    render(
+      <Predio
+        andares={[]}
+        recepcao={[]}
+        selecionado={null}
+        onSelecionar={() => {}}
+        onAbrirFila={onAbrirFila}
+      />,
+    )
+    const botao = screen.getByRole('button', { name: /RECEPÇÃO · 0 na fila/ })
+    expect(botao).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(botao).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(botao)
+    expect(onAbrirFila).toHaveBeenCalled()
   })
 })

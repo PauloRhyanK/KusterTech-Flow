@@ -2,7 +2,7 @@
 
 // O escritório da Fábrica: prédio à esquerda, o mapa e o plano do andar escolhido no centro, o detalhe à direita.
 // No celular, uma lista simples de andares (sem o mapa).
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { DadosDaGestao } from '@/modules/fabrica/escritorio/gestao'
 import type { DadosDoEscritorio as DadosDaPagina } from '@/modules/fabrica/escritorio/queries'
 import {
@@ -14,6 +14,7 @@ import {
 import { Contadores } from './contadores'
 import { Detalhe, type Selecao } from './detalhe'
 import { EsperasDoPaulo } from './esperas-do-paulo'
+import { GavetaDaFila } from './gaveta-da-fila'
 import { Mapa } from './mapa'
 import { PlanoDaEntrega, textoDosTotais } from './plano-da-entrega'
 import { Predio, origemDoAndar, textoDaEspera } from './predio'
@@ -33,7 +34,7 @@ export interface EscritorioProps {
 /** Guarda só as chaves: o conteúdo é lido do retrato atual a cada render, para a ficha não envelhecer. */
 type Escolha = { tipo: 'agente'; id: string } | { tipo: 'parte'; raia: string; fase: string } | null
 
-export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioProps) {
+export function Escritorio({ escritorio, gestao, publicacao, agora, tecnico }: EscritorioProps) {
   const { andares, recepcao, esperas, formatoAntigo } = escritorio
   // abre no andar que espera o Paulo há mais tempo
   const primeiro =
@@ -44,6 +45,12 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
   const [selecao, setSelecao] = useState<Escolha>(null)
   const [tela, setTela] = useState<string | null>(null)
   const [gestaoAberta, setGestaoAberta] = useState(false)
+  const [filaAberta, setFilaAberta] = useState(false)
+  // o botão da recepção, para devolver o foco ao fechar a gaveta (alguns navegadores não focam o botão ao clicar)
+  const gatilhoDaFila = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!filaAberta) gatilhoDaFila.current?.focus()
+  }, [filaAberta])
   const [filtro, setFiltro] = useState<Grupo | null>(null)
   const [realce, setRealce] = useState<string | null>(null)
   const andar =
@@ -128,6 +135,11 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
         <Predio
           andares={andares}
           recepcao={recepcao}
+          filaAberta={filaAberta}
+          onAbrirFila={(gatilho) => {
+            gatilhoDaFila.current = gatilho
+            setFilaAberta(true)
+          }}
           selecionado={andar?.planoId ?? null}
           onSelecionar={(id) => {
             setPlanoId(id)
@@ -185,6 +197,14 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
       {/* detalhes técnicos em linha: no celular sempre; na tela grande, só sem demanda (senão ficam na sala de gestão) */}
       <div className={andares.length === 0 ? undefined : 'md:hidden'}>{tecnico}</div>
 
+      {filaAberta && (
+        <GavetaDaFila
+          recepcao={recepcao}
+          publicacao={publicacao}
+          agora={agoraData}
+          onFechar={() => setFilaAberta(false)}
+        />
+      )}
       <TelaDoAgente
         agente={agenteDaTela}
         parte={parteDaTela}
