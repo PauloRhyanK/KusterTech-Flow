@@ -4,6 +4,7 @@
 // No celular, uma lista simples de andares (sem o mapa).
 import { type ReactNode, useState } from 'react'
 import type { DadosDaGestao } from '@/modules/fabrica/escritorio/gestao'
+import type { DadosDoEscritorio as DadosDaPagina } from '@/modules/fabrica/escritorio/queries'
 import {
   contarEstados,
   type Escritorio as DadosDoEscritorio,
@@ -22,6 +23,8 @@ import { TelaDoAgente } from './tela-do-agente'
 export interface EscritorioProps {
   escritorio: DadosDoEscritorio
   gestao: Record<string, DadosDaGestao>
+  /** fila de publicação para a gaveta; null sem o módulo */
+  publicacao: DadosDaPagina['publicacao']
   /** ISO do instante da leitura no servidor */
   agora: string
   tecnico: ReactNode

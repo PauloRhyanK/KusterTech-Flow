@@ -48,6 +48,11 @@ describe('prédio da Fábrica', () => {
             repositorio: 'a/b',
             esperaPaulo: false,
             esperando: null,
+            tipo: 'ajuste',
+            projeto: null,
+            urgente: false,
+            criadaEm: new Date(0),
+            podeAlternarUrgencia: false,
           },
         ]}
         selecionado={null}
@@ -62,7 +67,18 @@ describe('prédio da Fábrica', () => {
   test('o andar que espera o Paulo vem primeiro, mesmo sendo o mais antigo', () => {
     const base = escritorioDeTeste().andares[0]!
     const andares = [
-      { ...base, planoId: 'velho', titulo: 'Velho', esperaPaulo: true, esperando: null },
+      {
+        ...base,
+        planoId: 'velho',
+        titulo: 'Velho',
+        esperaPaulo: true,
+        esperando: null,
+        tipo: 'ajuste',
+        projeto: null,
+        urgente: false,
+        criadaEm: new Date(0),
+        podeAlternarUrgencia: false,
+      },
       { ...base, planoId: 'novo', titulo: 'Novo', esperaPaulo: false, esperando: null },
     ]
     render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
@@ -90,7 +106,18 @@ describe('prédio da Fábrica', () => {
         esperaPaulo: true,
         esperando: { minutos: 200, longa: true },
       },
-      { ...base, planoId: 'c', titulo: 'Decisão', esperaPaulo: true, esperando: null },
+      {
+        ...base,
+        planoId: 'c',
+        titulo: 'Decisão',
+        esperaPaulo: true,
+        esperando: null,
+        tipo: 'ajuste',
+        projeto: null,
+        urgente: false,
+        criadaEm: new Date(0),
+        podeAlternarUrgencia: false,
+      },
       { ...base, planoId: 'd', titulo: 'Andando', esperaPaulo: false, esperando: null },
     ]
     render(<Predio andares={andares} recepcao={[]} selecionado={null} onSelecionar={() => {}} />)
@@ -108,8 +135,30 @@ describe('prédio da Fábrica', () => {
       <Predio
         andares={[]}
         recepcao={[
-          { demandaId: 'a', titulo: 'A', repositorio: 'a/b', esperaPaulo: true, esperando: null },
-          { demandaId: 'b', titulo: 'B', repositorio: 'a/b', esperaPaulo: false, esperando: null },
+          {
+            demandaId: 'a',
+            titulo: 'A',
+            repositorio: 'a/b',
+            esperaPaulo: true,
+            esperando: null,
+            tipo: 'ajuste',
+            projeto: null,
+            urgente: false,
+            criadaEm: new Date(0),
+            podeAlternarUrgencia: false,
+          },
+          {
+            demandaId: 'b',
+            titulo: 'B',
+            repositorio: 'a/b',
+            esperaPaulo: false,
+            esperando: null,
+            tipo: 'ajuste',
+            projeto: null,
+            urgente: false,
+            criadaEm: new Date(0),
+            podeAlternarUrgencia: false,
+          },
         ]}
         selecionado={null}
         onSelecionar={() => {}}

@@ -78,6 +78,11 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
 }
 
 /** O destino já é o pedido: o service trata como idempotente (nenhum evento gravado). */
+/** A urgência só se alterna com destino já decidido para a fila de agentes, urgente ou lote da noite. */
+export function destinoAceitaUrgencia(destino: Destino | null): boolean {
+  return destino !== null && destino !== 'decisao_do_paulo'
+}
+
 export const URGENCIA_SEM_MUDANCA = 'A demanda já está com esta urgência.'
 
 const SEM_VERSAO = 'O desenho ainda não tem versão para aprovar.'
@@ -326,7 +331,7 @@ export function aplicarEvento(
       return concluir(estado)
     // `destino_decidido` só vale em `decidir_destino` e conclui a etapa; a urgência vale em qualquer etapa aberta.
     case 'urgencia_alterada': {
-      if (estado.destino === null || estado.destino === 'decisao_do_paulo') {
+      if (!destinoAceitaUrgencia(estado.destino)) {
         return recusa('A demanda ainda não tem destino; decida o destino primeiro.')
       }
       const ehUrgente = estado.destino === 'urgente'

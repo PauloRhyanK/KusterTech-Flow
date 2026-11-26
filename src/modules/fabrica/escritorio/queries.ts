@@ -1,7 +1,9 @@
 // Dados da tela do escritório da Fábrica: retrato, demandas abertas, títulos das seeds, histórico e gestão.
 import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import { type EtapaDefinida, inicioDaEspera } from '@/modules/demandas/model'
+import { moduloAtivo } from '@/lib/modulos'
+import { type Destino, type EtapaDefinida, inicioDaEspera } from '@/modules/demandas/model'
+import { obterTelaDePublicacao, type TelaDePublicacao } from '@/modules/fila-de-publicacao/queries'
 import { obterRetratoMaisRecente, type RetratoRecebido } from '../queries'
 import { type DadosDaGestao, montarGestao } from './gestao'
 import { gastoPorPlano, lerHistorico, lerLinhasDosPlanos } from './intervalos'
@@ -11,6 +13,8 @@ export interface DadosDoEscritorio {
   escritorio: Escritorio
   gestao: Record<string, DadosDaGestao>
   recebido: RetratoRecebido | null
+  /** fila de publicação para a gaveta; null sem o módulo ou sem leitura */
+  publicacao: { linhas: TelaDePublicacao['linhas']; podeGerenciar: boolean } | null
 }
 
 const minutos = (de: Date, ate: Date) =>
@@ -31,6 +35,8 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
       esperaDesde: true,
       atualizadaEm: true,
       criadaEm: true,
+      tipo: true,
+      destino: true,
       repositorio: { select: { nomeCompleto: true } },
       projeto: { select: { nome: true } },
     },
@@ -44,6 +50,9 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
       (d.etapas as unknown as EtapaDefinida[]).find((e) => e.chave === d.etapaAtual)?.marco ?? null,
     espera: d.espera,
     esperaDesde: inicioDaEspera(d),
+    tipo: d.tipo ? d.tipo.toLowerCase() : null,
+    destino: d.destino ? (d.destino.toLowerCase() as Destino) : null,
+    criadaEm: d.criadaEm,
   }))
 
   const retrato = recebido?.retrato
@@ -103,5 +112,9 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
       })
     }
   }
-  return { escritorio, gestao, recebido }
+  const tela = moduloAtivo('fila-de-publicacao')
+    ? await obterTelaDePublicacao(sujeito, agora)
+    : null
+  const publicacao = tela ? { linhas: tela.linhas, podeGerenciar: tela.podeGerenciar } : null
+  return { escritorio, gestao, recebido, publicacao }
 }

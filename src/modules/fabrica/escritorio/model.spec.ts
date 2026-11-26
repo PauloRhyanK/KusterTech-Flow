@@ -32,6 +32,9 @@ function demanda(sobrepor: Partial<DemandaDaTela> = {}): DemandaDaTela {
     marco: 'desenvolvida',
     espera: null,
     esperaDesde: null,
+    tipo: 'melhoria',
+    destino: 'fila_de_agentes',
+    criadaEm: new Date('2026-11-20T00:00:00Z'),
     ...sobrepor,
   }
 }
@@ -114,6 +117,11 @@ describe('escritório: recepção e formato antigo', () => {
         repositorio: 'PauloRhyanK/CAISv2',
         esperaPaulo: false,
         esperando: null,
+        tipo: 'melhoria',
+        projeto: null,
+        urgente: false,
+        criadaEm: new Date('2026-11-20T00:00:00Z'),
+        podeAlternarUrgencia: true,
       },
     ])
   })
@@ -565,3 +573,47 @@ test('contarEstados agrupa falha e sem notícias como trabalhando', () =>
       { estado: 'chamando' },
     ]),
   ).toEqual({ trabalhando: 2, livre: 1, chamando: 1 }))
+
+describe('recepção com tipo, projeto e urgência', () => {
+  const recepcaoDe = (demandas: DemandaDaTela[]) =>
+    montarEscritorio({ recebido: null, demandas, titulos: {}, historico: [] }, AGORA).recepcao
+
+  test('traz tipo, projeto, urgência e criadaEm', () => {
+    const criadaEm = new Date('2026-11-19T10:00:00Z')
+    const [item] = recepcaoDe([
+      demanda({ marco: 'recebida', projeto: 'CAIS', tipo: 'bug', destino: 'urgente', criadaEm }),
+    ])
+    expect(item).toMatchObject({ tipo: 'bug', projeto: 'CAIS', urgente: true, criadaEm })
+  })
+
+  test('urgente primeiro, depois a mais antiga', () => {
+    const r = recepcaoDe([
+      demanda({ id: 'nova', marco: 'recebida', criadaEm: new Date('2026-11-22T00:00:00Z') }),
+      demanda({ id: 'velha', marco: 'recebida', criadaEm: new Date('2026-11-18T00:00:00Z') }),
+      demanda({
+        id: 'urg',
+        marco: 'recebida',
+        destino: 'urgente',
+        criadaEm: new Date('2026-11-23T00:00:00Z'),
+      }),
+    ])
+    expect(r.map((i) => i.demandaId)).toEqual(['urg', 'velha', 'nova'])
+  })
+
+  test('podeAlternarUrgencia só com destino de fila, urgente ou lote', () => {
+    const r = recepcaoDe([
+      demanda({ id: 'a', marco: 'recebida', destino: 'fila_de_agentes' }),
+      demanda({ id: 'b', marco: 'recebida', destino: 'urgente' }),
+      demanda({ id: 'c', marco: 'recebida', destino: 'lote_da_noite' }),
+      demanda({ id: 'd', marco: 'recebida', destino: 'decisao_do_paulo' }),
+      demanda({ id: 'e', marco: 'recebida', destino: null }),
+    ])
+    expect(r.map((i) => [i.demandaId, i.podeAlternarUrgencia])).toEqual([
+      ['b', true],
+      ['a', true],
+      ['c', true],
+      ['d', false],
+      ['e', false],
+    ])
+  })
+})

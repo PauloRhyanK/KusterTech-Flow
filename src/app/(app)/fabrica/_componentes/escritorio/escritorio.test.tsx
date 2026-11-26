@@ -5,7 +5,13 @@ import { AGORA, escritorioDeTeste } from './teste-dados'
 
 function montar(dados = escritorioDeTeste()) {
   return (
-    <Escritorio escritorio={dados} gestao={{}} agora={AGORA.toISOString()} tecnico={<i>tec</i>} />
+    <Escritorio
+      escritorio={dados}
+      gestao={{}}
+      publicacao={null}
+      agora={AGORA.toISOString()}
+      tecnico={<i>tec</i>}
+    />
   )
 }
 
