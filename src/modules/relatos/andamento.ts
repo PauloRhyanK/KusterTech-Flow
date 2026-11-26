@@ -16,7 +16,8 @@ import {
 import { alvoDoSistema } from './sistemas'
 
 const DIA_MS = 24 * 60 * 60_000
-const ENVIOS_POR_CICLO = 50
+// O sistema limita 120 pedidos por minuto por token; com o tique de 30 s, 40 envios + as buscas cabem.
+const ENVIOS_POR_CICLO = 40
 
 /** Varre os relatos `segue` com demanda e enfileira o próximo aviso automático de cada um. */
 export async function enfileirarAutomaticos(agora: Date): Promise<number> {
