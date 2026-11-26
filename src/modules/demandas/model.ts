@@ -467,3 +467,15 @@ export function rotuloDoDesfecho(d: Desfecho): string {
   if (d.resultado === 'ja_resolvida') return 'já resolvida'
   return d.de ? `duplicada da ${d.de.slice(0, 8)}` : 'duplicada de outra demanda'
 }
+
+/**
+ * A retomada de uma trava com desfecho refaria a mesma conclusão (e pagaria outra rodada): o
+ * service recusa com o porquê, mesmo vindo de uma tela aberta antes do desfecho chegar.
+ */
+export function retomadaComDesfecho(
+  espera: Espera | null,
+  dadosDaUltimaTrava: unknown,
+): string | null {
+  if (espera !== 'travada' || desfechoDaTrava(dadosDaUltimaTrava) === null) return null
+  return 'O orquestrador concluiu que não há plano a fazer: encerre a demanda em vez de retomar.'
+}

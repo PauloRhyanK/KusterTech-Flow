@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   MODELO_PADRAO,
   desfechoDaTrava,
+  retomadaComDesfecho,
   rotuloDoDesfecho,
   LIMITE_DA_DESCRICAO,
   LIMITE_DO_TITULO,
@@ -327,5 +328,22 @@ describe('desfechoDaTrava', () => {
       'duplicada de outra demanda',
     )
     expect(rotuloDoDesfecho({ resultado: 'ja_resolvida', de: null })).toBe('já resolvida')
+  })
+})
+
+describe('retomadaComDesfecho', () => {
+  const desfecho = { motivo: 'm', url: null, desfecho: { resultado: 'ja_resolvida', de: null } }
+
+  test('na trava com desfecho, a retomada é recusada com o porquê', () => {
+    expect(retomadaComDesfecho('travada', desfecho)).toBe(
+      'O orquestrador concluiu que não há plano a fazer: encerre a demanda em vez de retomar.',
+    )
+  })
+
+  test('sem desfecho, fora da trava ou sem evento: a retomada segue', () => {
+    expect(retomadaComDesfecho('travada', { motivo: 'm', url: null })).toBeNull()
+    expect(retomadaComDesfecho('travada', null)).toBeNull()
+    expect(retomadaComDesfecho('teste_falhou', desfecho)).toBeNull()
+    expect(retomadaComDesfecho(null, desfecho)).toBeNull()
   })
 })

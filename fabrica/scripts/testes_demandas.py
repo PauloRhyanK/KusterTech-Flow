@@ -949,12 +949,18 @@ class TestesPlano(BasePasso):
                 self.assertEqual(evento["dados"]["motivo"], "o orquestrador concluiu que a demanda é duplicada de outra: não há plano a fazer")
 
     def test_cobertura_sem_desfecho_ou_com_desfecho_desconhecido_segue_sem_plano(self):
-        for cabecalho in ("", "resultado: outro\n", "resultado: Duplicada\n"):
+        for cabecalho in ("", "resultado: outro\n", "resultado: duplicadas\n"):
             with self.subTest(cabecalho=cabecalho):
                 self.setUp()
                 self.concluir_sem_plano(cabecalho)
                 (evento,) = self.saida()
                 self.assertEqual(evento["dados"], {"motivo": "o PR não traz o plano %s" % CAMINHO, "url": PR})
+
+    def test_desfecho_entre_aspas_com_maiuscula_ou_bom_vale(self):
+        self.assertEqual(
+            demandas.desfecho_da_cobertura('\ufeff---\nresultado: "Duplicada"\nde: \'%s\'\n---\n' % OUTRO.upper(), ID),
+            {"resultado": "duplicada", "de": OUTRO},
+        )
 
     def test_desfecho_fora_do_cabecalho_nao_vale(self):
         run_id = self.planejar()

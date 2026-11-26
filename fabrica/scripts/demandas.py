@@ -958,7 +958,7 @@ def desfecho_da_cobertura(texto, demanda_id: str) -> dict | None:
 
     O `de` só vale como o uuid completo de outra demanda; fora disso vai None (o Flow encerra sem o link).
     """
-    linhas = (texto if isinstance(texto, str) else "").splitlines()
+    linhas = (texto if isinstance(texto, str) else "").lstrip("\ufeff").splitlines()
     if not linhas or linhas[0].strip() != "---":
         return None
     campos = {}
@@ -967,7 +967,8 @@ def desfecho_da_cobertura(texto, demanda_id: str) -> dict | None:
             break
         chave, sep, valor = linha.partition(":")
         if sep:
-            campos[chave.strip()] = valor.split("#", 1)[0].strip()  # o exemplo do roteiro comenta as linhas
+            # o exemplo do roteiro comenta as linhas; aspas (YAML) e caixa não mudam o valor
+            campos[chave.strip().lower()] = valor.split("#", 1)[0].strip().strip("\"'").strip().lower()
     else:
         return None
     resultado = campos.get("resultado")
