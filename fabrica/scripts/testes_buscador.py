@@ -175,6 +175,15 @@ class TestesPasso(Base):
         self.assertEqual(eventos[0]["evento"], "erro")
 
 
+class TestesLigado(unittest.TestCase):
+    def test_ligado_com_modelo_e_sem_o_flow_ter_negado_a_rota_na_ultima_hora(self):
+        self.assertTrue(buscador.ligado({}, MODELOS, AGORA))
+        self.assertFalse(buscador.ligado({}, {}, AGORA))
+        negou = {"buscador": {"atual": None, "semRotaEm": "2026-11-26T17:30:00Z"}}
+        self.assertFalse(buscador.ligado(negou, MODELOS, AGORA))
+        self.assertTrue(buscador.ligado(negou, MODELOS, AGORA + datetime.timedelta(minutes=31)))
+
+
 class TestesRodarClaude(unittest.TestCase):
     def executar(self, stdout="", erro=None, codigo=0):
         chamadas = []

@@ -242,6 +242,15 @@ def _enviar(secao, cliente, salvar):
     return [{"evento": "buscador_respondida", "buscaId": atual["buscaId"], "resultado": resultado}]
 
 
+def ligado(estado, modelos, agora) -> bool:
+    """Vale rodar entre ciclos? Com o modelo configurado e sem o Flow ter dito, na última hora, que não tem a rota."""
+    if _modelo(modelos) is None:
+        return False
+    secao = estado.get("buscador") if isinstance(estado.get("buscador"), dict) else {}
+    desde = _instante(secao.get("semRotaEm"))
+    return desde is None or (agora - desde).total_seconds() >= REVER_FLOW_SEM_BUSCAS_S
+
+
 def passo(estado, *, cliente, modelos, agora, salvar, chamar=rodar_claude):
     """Um passo do buscador. Nunca levanta: avisos, erros e respostas viram eventos."""
     secao = estado.get("buscador")
