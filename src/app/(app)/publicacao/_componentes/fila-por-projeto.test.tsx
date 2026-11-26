@@ -80,6 +80,7 @@ describe('FilaPorProjeto', () => {
               modo: 'imediato',
               estado: 'publicando',
               checks: 'sucesso',
+              criadoEm: minutos(-5),
               iniciadoEm: minutos(-2),
               verificandoDesde: null,
             },

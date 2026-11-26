@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import {
+  acoesDoPedido,
   avisosDaPublicacao,
   colunaDeEstado,
+  etapasDoPedido,
+  filtrarLinhas,
   itensDoUltimoLote,
+  lerFiltrosDaFila,
   montarResumoDaPublicacao,
   noArDaLinha,
   oQueEstaNoAr,
@@ -29,6 +33,7 @@ function pedido(extra: Partial<PedidoDaLinha> = {}): PedidoDaLinha {
     modo: 'imediato',
     estado: 'na_fila',
     checks: null,
+    criadoEm: minutos(-10),
     iniciadoEm: null,
     verificandoDesde: null,
     ...extra,
@@ -714,5 +719,133 @@ test('colunaDeEstado: workflow verde e o site sendo conferido → "Conferindo o 
     tipo: 'texto',
     texto: 'Conferindo o site',
     tom: 'secundario',
+  })
+})
+
+describe('etapasDoPedido', () => {
+  const estados = (e: ReturnType<typeof etapasDoPedido>) => e.map((x) => x.estado)
+
+  test('pedido recém-criado: fila feita e o resto pendente', () => {
+    const e = etapasDoPedido(pedido(), AGORA)
+    expect(e.map((x) => x.chave)).toEqual([
+      'fila',
+      'verificando',
+      'ci',
+      'deploy',
+      'versao',
+      'no_ar',
+    ])
+    expect(estados(e)).toEqual([
+      'feita',
+      'pendente',
+      'pendente',
+      'pendente',
+      'pendente',
+      'pendente',
+    ])
+    expect(e.every((x, i) => i === 0 || x.detalhe === null)).toBe(true)
+  })
+
+  test('verificando: etapa atual e checks pendentes', () => {
+    const e = etapasDoPedido(
+      pedido({ estado: 'verificando', verificandoDesde: minutos(-1), checks: 'pendente' }),
+      AGORA,
+    )
+    expect(e[1]).toMatchObject({ estado: 'atual' })
+    expect(e[1]!.detalhe).toBe('11:59')
+    expect(e[2]!.estado).toBe('atual')
+    expect(e[2]!.detalhe).toBeTruthy()
+  })
+
+  test('publicando com checks verdes: deploy atual', () => {
+    const e = etapasDoPedido(
+      pedido({ estado: 'publicando', checks: 'sucesso', verificandoDesde: minutos(-5) }),
+      AGORA,
+    )
+    expect(estados(e)).toEqual(['feita', 'feita', 'feita', 'atual', 'pendente', 'pendente'])
+  })
+
+  test('conferindo: deploy feito e versão atual', () => {
+    const e = etapasDoPedido(
+      pedido({
+        estado: 'publicando',
+        checks: 'sem_checks',
+        verificandoDesde: minutos(-5),
+        conferindoDesde: minutos(-1),
+      }),
+      AGORA,
+    )
+    expect(estados(e)).toEqual(['feita', 'feita', 'feita', 'feita', 'atual', 'pendente'])
+  })
+
+  test('checks com falha e motivo: ci falhou com o motivo', () => {
+    const e = etapasDoPedido(
+      pedido({ estado: 'publicando', checks: 'falha', verificandoDesde: minutos(-5) }),
+      AGORA,
+      { motivo: 'lint quebrou' },
+    )
+    expect(e[2]).toMatchObject({ estado: 'falhou', detalhe: 'lint quebrou' })
+  })
+
+  test('falha sem checks marca a primeira etapa não feita', () => {
+    const e = etapasDoPedido(pedido({ commit: null }), AGORA, { motivo: null })
+    expect(e[1]).toMatchObject({ estado: 'falhou', detalhe: null })
+  })
+})
+
+describe('acoesDoPedido', () => {
+  const ctx = { podeGerenciar: true, pausado: false }
+  test('imediato na fila', () => {
+    expect(acoesDoPedido(pedido(), ctx)).toEqual(['cancelar', 'mandar_para_lote'])
+  })
+  test('lote na fila', () => {
+    expect(acoesDoPedido(pedido({ modo: 'lote' }), ctx)).toEqual([
+      'cancelar',
+      'mudar_para_imediato',
+      'publicar_agora',
+    ])
+  })
+  test('verificando ou publicando: nenhuma', () => {
+    expect(acoesDoPedido(pedido({ estado: 'verificando' }), ctx)).toEqual([])
+    expect(acoesDoPedido(pedido({ estado: 'publicando' }), ctx)).toEqual([])
+  })
+  test('sem permissão: nenhuma', () => {
+    expect(acoesDoPedido(pedido(), { ...ctx, podeGerenciar: false })).toEqual([])
+  })
+})
+
+describe('filtros da fila', () => {
+  test('valor inválido vira null e a busca é aparada', () => {
+    expect(
+      lerFiltrosDaFila({ estado: 'xyz', modo: 'lote', busca: '  ' + 'a'.repeat(100) }),
+    ).toEqual({
+      projeto: null,
+      estado: null,
+      modo: 'lote',
+      busca: 'a'.repeat(80),
+    })
+    expect(lerFiltrosDaFila({ projeto: ['P2', 'P3'] }).projeto).toBe('P2')
+  })
+
+  const A = linha({ repositorioId: 'a', projetoId: 'P1', rotulo: 'Alfa', aguardando: [pedido()] })
+  const B = linha({
+    repositorioId: 'b',
+    projetoId: 'P2',
+    rotulo: 'Beta',
+    aguardando: [pedido({ id: 'p2', modo: 'lote', descricao: 'Corrige PDF' })],
+  })
+  const vazio = { projeto: null, estado: null, modo: null, busca: '' } as const
+
+  test('por modo', () => {
+    expect(filtrarLinhas([A, B], { ...vazio, modo: 'lote' })).toEqual([B])
+  })
+  test('por busca, sem diferenciar maiúsculas', () => {
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'pdf' })).toEqual([B])
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'ALFA' })).toEqual([A])
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'aaaaaaa' })).toEqual([A, B])
+  })
+  test('só projeto e sem resultado', () => {
+    expect(filtrarLinhas([A, B], { ...vazio, projeto: 'P2' })).toEqual([B])
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'nada' })).toEqual([])
   })
 })

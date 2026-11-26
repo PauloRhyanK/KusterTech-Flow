@@ -51,6 +51,7 @@ function pedidoDaLinha(p: {
   modo: 'IMEDIATO' | 'LOTE'
   estado: string
   checks: ResumoDeChecks | null
+  criadoEm: Date
   iniciadoEm: Date | null
   verificandoDesde: Date | null
   conferindoDesde: Date | null
@@ -62,6 +63,7 @@ function pedidoDaLinha(p: {
     modo: p.modo.toLowerCase() as ModoDePublicacao,
     estado: p.estado.toLowerCase() as PedidoDaLinha['estado'],
     checks: checksDe(p.checks),
+    criadoEm: p.criadoEm,
     iniciadoEm: p.iniciadoEm,
     verificandoDesde: p.verificandoDesde,
     conferindoDesde: p.conferindoDesde,

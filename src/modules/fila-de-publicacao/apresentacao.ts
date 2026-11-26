@@ -28,6 +28,7 @@ export interface PedidoDaLinha {
   modo: ModoDePublicacao
   estado: 'na_fila' | 'verificando' | 'publicando'
   checks: ChecksDoPedido
+  criadoEm: Date
   iniciadoEm: Date | null
   verificandoDesde: Date | null
   /** O workflow terminou verde e o Flow está conferindo o site. */
@@ -572,4 +573,134 @@ export function avisosDaPublicacao(
   return linhas
     .flatMap((l) => avisosDaLinha(l, agora))
     .sort((a, b) => peso[a.tom] - peso[b.tom] || a.desde.getTime() - b.desde.getTime())
+}
+
+export type EstadoDaEtapa = 'feita' | 'atual' | 'pendente' | 'falhou'
+
+export interface EtapaDaTrilha {
+  chave: 'fila' | 'verificando' | 'ci' | 'deploy' | 'versao' | 'no_ar'
+  rotulo: string
+  estado: EstadoDaEtapa
+  detalhe: string | null
+}
+
+const ROTULO_DOS_CHECKS: Record<NonNullable<ChecksDoPedido>, string> = {
+  sucesso: 'checks verdes',
+  sem_checks: 'sem checks',
+  pendente: 'checks rodando',
+  falha: 'checks falharam',
+}
+
+/** As seis etapas da publicação de um pedido; `falha` marca a primeira etapa não feita como falhou. */
+export function etapasDoPedido(
+  p: PedidoDaLinha,
+  agora: Date,
+  falha?: { motivo?: string | null } | null,
+): EtapaDaTrilha[] {
+  void agora
+  const hora = (d: Date | null | undefined) => (d ? horaLocal(d) : null)
+  const conferindo = Boolean(p.conferindoDesde)
+  const checksOk = p.checks === 'sucesso' || p.checks === 'sem_checks'
+  const ci: EstadoDaEtapa = checksOk
+    ? 'feita'
+    : p.checks === 'falha'
+      ? 'falhou'
+      : p.checks === 'pendente'
+        ? 'atual'
+        : 'pendente'
+  const etapas: EtapaDaTrilha[] = [
+    { chave: 'fila', rotulo: 'Na fila', estado: 'feita', detalhe: hora(p.criadoEm) },
+    {
+      chave: 'verificando',
+      rotulo: 'Verificando',
+      estado: p.estado === 'verificando' ? 'atual' : p.verificandoDesde ? 'feita' : 'pendente',
+      detalhe: hora(p.verificandoDesde),
+    },
+    {
+      chave: 'ci',
+      rotulo: 'Checks',
+      estado: ci,
+      detalhe: p.checks ? ROTULO_DOS_CHECKS[p.checks] : null,
+    },
+    {
+      chave: 'deploy',
+      rotulo: 'Publicando',
+      estado: conferindo ? 'feita' : p.estado === 'publicando' ? 'atual' : 'pendente',
+      detalhe: hora(p.iniciadoEm),
+    },
+    {
+      chave: 'versao',
+      rotulo: 'Conferindo o site',
+      estado: conferindo ? 'atual' : 'pendente',
+      detalhe: hora(p.conferindoDesde),
+    },
+    { chave: 'no_ar', rotulo: 'No ar', estado: 'pendente', detalhe: null },
+  ]
+  if (falha) {
+    const primeira = etapas.find((e) => e.estado !== 'feita')
+    if (primeira) {
+      primeira.estado = 'falhou'
+      primeira.detalhe = falha.motivo ?? null
+    }
+  }
+  return etapas
+}
+
+export type AcaoDoPedido =
+  'publicar_agora' | 'mandar_para_lote' | 'mudar_para_imediato' | 'cancelar'
+
+export function acoesDoPedido(
+  p: PedidoDaLinha,
+  ctx: { podeGerenciar: boolean; pausado: boolean },
+): AcaoDoPedido[] {
+  if (!ctx.podeGerenciar || p.estado !== 'na_fila') return []
+  return p.modo === 'imediato'
+    ? ['cancelar', 'mandar_para_lote']
+    : ['cancelar', 'mudar_para_imediato', 'publicar_agora']
+}
+
+export interface FiltrosDaFila {
+  projeto: string | null
+  estado: 'na_fila' | 'verificando' | 'publicando' | null
+  modo: 'imediato' | 'lote' | null
+  busca: string
+}
+
+function primeiro(v: string | string[] | undefined): string | null {
+  const x = Array.isArray(v) ? v[0] : v
+  return x === undefined || x === '' ? null : x
+}
+
+export function lerFiltrosDaFila(
+  params: Record<string, string | string[] | undefined>,
+): FiltrosDaFila {
+  const estado = primeiro(params.estado)
+  const modo = primeiro(params.modo)
+  return {
+    projeto: primeiro(params.projeto),
+    estado:
+      estado === 'na_fila' || estado === 'verificando' || estado === 'publicando' ? estado : null,
+    modo: modo === 'imediato' || modo === 'lote' ? modo : null,
+    busca: (primeiro(params.busca) ?? '').trim().slice(0, 80),
+  }
+}
+
+export function filtrarLinhas(linhas: readonly LinhaDaFila[], f: FiltrosDaFila): LinhaDaFila[] {
+  const busca = f.busca.toLowerCase()
+  return linhas.filter((l) => {
+    if (f.projeto && l.projetoId !== f.projeto) return false
+    if (f.estado || f.modo) {
+      const pedidos = [...(l.publicando ? [l.publicando] : []), ...l.aguardando]
+      if (
+        !pedidos.some((p) => (!f.estado || p.estado === f.estado) && (!f.modo || p.modo === f.modo))
+      )
+        return false
+    }
+    if (busca) {
+      const pedidos = [...(l.publicando ? [l.publicando] : []), ...l.aguardando]
+      const textos = [l.rotulo, ...pedidos.flatMap((p) => [p.descricao ?? '', sha7(p.commit)])]
+      if (!textos.some((t) => t.toLowerCase().includes(busca))) return false
+    }
+    return true
+  })
 }
