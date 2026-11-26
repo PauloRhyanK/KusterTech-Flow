@@ -1,7 +1,7 @@
 # Triagem cruzada: erros e relatos do mesmo problema numa demanda só
 
 **Data:** 26/11/2026
-**Estado:** desenho aprovado pelo Paulo na conversa em 26/11/2026; aguardando a revisão deste arquivo e do desenho
+**Estado:** aprovada pelo Paulo em 26/11/2026 (conversa, este arquivo e o desenho)
 **Desenho de referência:** [`desenhos/2026-11-26-triagem-cruzada/01-evidencias.html`](desenhos/2026-11-26-triagem-cruzada/01-evidencias.html)
 **Altera:** [Relatos de usuários](2026-11-19-relatos-de-usuarios-design.md), seção 5 ("juntar relatos parecidos é proposta do agente de triagem, confirmada pelo Paulo"), e o limite diário da [triagem dos erros](2026-11-26-erros-triagem-design.md), item 5
 **Depende de:** Demandas (produto 3), Erros do GlitchTip (D81) e Relatos (D83)
@@ -61,11 +61,11 @@ O agente só pode juntar o que conhece. Por isso, enquanto a demanda espera a tr
 - **Erros:** até 15 do mesmo projeto, sem demanda, não resolvidos, "em observação" ou "na espera", do último evento mais recente para o mais antigo.
 - Os títulos e resumos já estão mascarados (os erros pela máscara da D81, os relatos sem nome de pessoa), então nada de novo vai à Fábrica.
 - Fora da triagem, `candidatas` é `null`, para não pesar a resposta.
-- `candidatasDe(...)`, em `src/modules/demandas/model.ts`, é a função pura que filtra, ordena e corta. A consulta fica em `queries.ts`.
+- `candidatasDe(...)` é a função pura que filtra, ordena e corta. Ela fica em `src/modules/demandas/cruzada.ts`, que guarda as regras puras desta spec, como `partes.ts` guarda as das partes. Os efeitos ficam em `cruzada-service.ts`.
 
 ## 5. Contrato: três eventos novos
 
-Os três entram em `eventosComuns` (`src/modules/demandas/contrato.ts`), nos contratos 1 e 2. Cada um é validado no servidor por uma função pura que devolve "aplica" ou "recusa com motivo". A recusa responde **409**, e a Fábrica segue com a triagem normal (seção 9).
+Os três entram em `eventosComuns` (`src/modules/demandas/contrato.ts`), nos contratos 1 e 2. Cada um é validado no servidor por uma função pura que devolve "aplica" ou "recusa com motivo". A recusa responde **422** (`recusado`, com o motivo), como as outras recusas da recepção; o 409 continua reservado para o mesmo `id` com conteúdo diferente. Depois de uma recusa, a Fábrica segue com a triagem normal (seção 9).
 
 ### 5.1 `juntar`
 
@@ -88,7 +88,7 @@ Esse evento vem **no lugar** da triagem da demanda nova (B), que entra na demand
 2. B fica encerrada como `juntada` (novo valor de `Encerramento`), com `juntadaEmId = A`.
 3. B ganha o evento `juntada`, com `{ em, motivo, relatos: [ids], erros: [ids] }`. Essa lista é o que permite desfazer.
 4. A ganha o evento `evidencia_ligada`, com `{ de: B, motivo, relatos: n, erros: n }`. Ele vai à Fábrica como os outros eventos, mas não dispara nova triagem de A.
-5. Para cada relato que mudou de demanda, o Flow enfileira o andamento atual de A. A caixa de saída já evita aviso repetido (único por relato e estado). B fica sem relatos, então não manda "recusado" a ninguém.
+5. O andamento não precisa de código novo. A tarefa `enfileirarAutomaticos` lê o estado da demanda de cada relato, então, no ciclo seguinte, quem relatou recebe o estado de A, que nunca volta para trás nem se repete (`proximoAndamento`). B fica sem relatos, então não manda "recusado" a ninguém.
 
 ### 5.2 `ligar_erros`
 
@@ -130,7 +130,7 @@ Liga de 1 a 10 erros sem demanda a esta demanda. Ele pode vir antes da triagem, 
 
 ## 6. Limites
 
-- **Divisão:** no máximo `DEMANDAS_POR_DIVISAO_POR_DIA` demandas novas (padrão 5) nas últimas 24 h, somando todos os projetos. A conta usa os eventos `veio_de`. Um pedido que passa do teto é recusado inteiro com 409, e o motivo é "teto de divisões do dia".
+- **Divisão:** no máximo `DEMANDAS_POR_DIVISAO_POR_DIA` demandas novas (padrão 5) nas últimas 24 h, somando todos os projetos. A conta usa os eventos `veio_de`. Um pedido que passa do teto é recusado inteiro com 422, e o motivo é "teto de divisões do dia".
 - **GlitchTip:** a conta de `GLITCHTIP_DEMANDAS_POR_DIA` deixa de contar as demandas encerradas como `juntada`. Uma junção devolve a vaga, e um erro "na espera" pode entrar no ciclo seguinte.
 - **Juntar e ligar erros** não têm teto, porque reduzem demandas.
 
@@ -144,7 +144,7 @@ Há um botão **Separar** na faixa da demanda juntada e no grupo correspondente 
 2. B reabre: `encerrada` e `juntadaEmId` voltam a nulo, e B fica na etapa inicial, sem triagem.
 3. As duas demandas ganham o evento `separada`. O de B leva `{ de: A }`, que é o que a seção 4 e a 5.1 usam para nunca mais juntar B em A.
 4. B volta para a Fábrica (o evento entra no fluxo) e passa por uma triagem nova.
-5. Os relatos que voltaram recebem o andamento atual de B.
+5. Os relatos que voltaram recebem o andamento de B pelo mesmo `enfileirarAutomaticos`.
 
 **Não pode separar:**
 
@@ -185,7 +185,8 @@ Em `fabrica/scripts`:
   2. depois `juntar`, que encerra o caso,
   3. ou `dividir` seguido de `triagem`,
   4. ou só `triagem`.
-- **Recusa:** um 409 em `juntar` faz mandar a `triagem` normal. Um 409 em `dividir` ou em `ligar_erros` segue sem eles e acrescenta o motivo da recusa ao motivo da triagem.
+- **A resposta traz sempre a triagem completa.** Os campos novos são extras, para que a Fábrica sempre tenha a triagem normal para cair.
+- **Recusa (422):** a caixa de saída já tira o item recusado e marca `precisa_ressincronizar`. Na ressincronização, a demanda que ainda espera a triagem depois de um `juntar` recusado recebe a triagem guardada, uma vez só. Um `dividir` ou `ligar_erros` recusado não precisa de nada, porque a triagem enfileirada depois dele é aplicada.
 
 ## 10. Dados
 
@@ -201,16 +202,16 @@ Os eventos novos não precisam de tabela: entram em `EventoDaDemanda`. Nenhum da
 
 | Situação | O que acontece |
 | --- | --- |
-| A foi encerrada ou foi ao ar entre a busca e o `juntar` | 409; a Fábrica manda a triagem normal |
-| Dois `juntar` cruzados (B em A e A em B) | a trava de eventos serializa; o segundo vê o destino juntado e recebe 409 |
-| `ligar_erros` com um erro que ganhou demanda nesse meio-tempo | 409 no evento todo; a triagem segue sem ele |
-| Teto de divisões cheio | 409; a demanda fica inteira e a triagem segue |
+| A foi encerrada ou foi ao ar entre a busca e o `juntar` | 422; a Fábrica manda a triagem normal |
+| Dois `juntar` cruzados (B em A e A em B) | a trava de eventos serializa; o segundo vê o destino juntado e recebe 422 |
+| `ligar_erros` com um erro que ganhou demanda nesse meio-tempo | 422 no evento todo; a triagem segue sem ele |
+| Teto de divisões cheio | 422; a demanda fica inteira e a triagem segue |
 | Evento repetido (mesmo `id`) | como hoje: o `idExterno` único torna a repetição inofensiva |
 | Separar com A no ar | o botão não aparece; o service recusa se for chamado |
 
 ## 12. Testes
 
-- **Unitários (`model.spec.ts`):**
+- **Unitários (`cruzada.spec.ts`):**
   - `candidatasDe`: projeto, encerradas, no ar, 30 dias, separadas, corte em 15 e ordem;
   - as validações de `juntar`, `ligar_erros` e `dividir`, cada linha da seção 5 e cada linha da tabela de falhas;
   - o teto de divisões na janela de 24 h;
@@ -219,7 +220,7 @@ Os eventos novos não precisam de tabela: entram em `EventoDaDemanda`. Nenhum da
   - a contagem de pessoas para o Decidir.
 - **Contrato (`contrato.spec.ts`):** os três eventos válidos e inválidos (tamanhos, 2 a 4 partes, 1 a 10 erros).
 - **Integração:**
-  - a recepção de cada evento com o banco: efeitos, 409 e repetição;
+  - a recepção de cada evento com o banco: efeitos, 422 e repetição;
   - `juntar` move relatos e erros e enfileira o andamento;
   - Separar devolve as evidências e reabre;
   - `dividir` cria as novas, que aparecem no `GET` com `criada`;
@@ -228,7 +229,7 @@ Os eventos novos não precisam de tabela: entram em `EventoDaDemanda`. Nenhum da
   - o prompt com candidatas;
   - a leitura dos campos novos;
   - a ordem de envio;
-  - a volta para a triagem normal depois de um 409.
+  - a volta para a triagem normal depois de um 422.
 - **Componente (`*.test.tsx`):** o bloco Evidências com grupos, vazio e celular; a faixa da juntada.
 - **Navegador (D74):** demanda com evidências e demanda juntada, no desktop e no celular, com capturas comparadas ao desenho.
 
