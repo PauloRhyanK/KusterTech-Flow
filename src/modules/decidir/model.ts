@@ -41,6 +41,8 @@ export interface DemandaEsperando {
   rotuloDaEtapa: string
   descricao: string | null
   anexos: number
+  /** Autores distintos dos relatos ligados à demanda (`pessoasQueRelataram`). */
+  pessoas: number
   triagem: {
     tamanho: string
     mexeEm: string
@@ -372,6 +374,7 @@ function itemDaDemanda(d: DemandaEsperando, tipo: TipoDeItem, agora: Date): Item
           { rotulo: 'Mexe em', valor: d.triagem.mexeEm },
         ]
       : []
+  if (d.pessoas > 1) fatos.push({ rotulo: 'Relataram', valor: `${d.pessoas} pessoas` })
   const rotuloDoTipo = d.tipo ? ROTULO_DO_TIPO[d.tipo] : 'Sem tipo ainda'
   return {
     chave: chaveDaDemanda(d.id, d.espera, d.esperaDesde),

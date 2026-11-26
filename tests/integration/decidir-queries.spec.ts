@@ -237,6 +237,34 @@ describe('obterPilha', () => {
     expect(await contarPilha(admin, AGORA)).toBe(5)
   })
 
+  test('o pedido conta os autores distintos dos relatos ligados ("Relataram")', async () => {
+    const { pedido } = await montarCenario()
+    const sistema = await db.sistemaConectado.create({
+      data: { nome: 'Sistema', url: 'https://s.exemplo.com/v1', projetoId, repositorioId },
+    })
+    const relato = (autor: string) =>
+      db.relato.create({
+        data: {
+          sistemaId: sistema.id,
+          idExterno: randomUUID(),
+          resultado: 'SEGUE',
+          canal: 'SISTEMA',
+          em: AGORA,
+          autorIdExterno: autor,
+          autorNome: 'Pessoa',
+          autorPapel: 'atendente',
+          texto: 'não funciona',
+          demandaId: pedido,
+        },
+      })
+    await relato('a')
+    await relato('a')
+    await relato('b')
+    const pilha = await obterPilha(admin, AGORA)
+    const item = pilha.itens.find((i) => i.tipo === 'pedido')!
+    expect(item.fatos).toContainEqual({ rotulo: 'Relataram', valor: '2 pessoas' })
+  })
+
   test('conversa aberta aparece em conversas; item guardado sai de itens e vai para guardados', async () => {
     const { pedido } = await montarCenario()
     const chave = await chaveAtual(pedido)

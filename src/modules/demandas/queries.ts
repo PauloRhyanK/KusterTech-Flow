@@ -19,6 +19,8 @@ import {
   quemFez,
   textoDaOrdem,
   textoDoEvento,
+  EVENTOS_FORA_DO_HISTORICO,
+  montarEvidencias,
   trilhoDaDemanda,
   avisoDeFabricaSemBuscar,
   demandasQueVemAi,
@@ -33,11 +35,15 @@ import {
   type TelaDeDemandas,
   type ExtrasDasPartes,
   type TriagemDaDemanda,
+  type Evidencias,
+  type JuntadaEm,
+  type JuntadaNaEvidencia,
 } from './apresentacao'
 import { fraseDaDemanda, grupoAteOAr } from './partes'
 import {
   JANELA_DAS_CANDIDATAS_DIAS,
   candidatasDe,
+  podeSeparar,
   separadasDe,
   type Candidatas,
   type DemandaCandidataLinha,
@@ -305,7 +311,7 @@ const ONDE_DO_ESTADO: Record<EstadoDaTabela, object> = {
   nao_chegou: { encerrada: null, espera: null, naoChegouDesde: { not: null } },
   a_caminho: { encerrada: null, espera: null, naoChegouDesde: null },
   no_ar: { encerrada: 'no_ar' },
-  encerrada: { encerrada: { in: ['orientada', 'descartada', 'entregue'] } },
+  encerrada: { encerrada: { in: ['orientada', 'descartada', 'entregue', 'juntada'] } },
 }
 
 /** O `where` da tabela: cada filtro escolhido vira uma condição; o período corta as encerradas pela última atualização. */
@@ -470,6 +476,7 @@ export async function obterPaginaDaDemanda(
         },
       },
       eventos: {
+        where: { tipo: { notIn: [...EVENTOS_FORA_DO_HISTORICO] } },
         orderBy: { seq: 'desc' },
         take: LIMITE_DO_HISTORICO,
         select: { seq: true, tipo: true, origem: true, dados: true, em: true },
@@ -557,6 +564,9 @@ export async function obterPaginaDaDemanda(
 
   const triagem = d.triagem as unknown as TriagemDaDemanda | null
   const podeAgir = autorizar(sujeito, 'projetos.gerenciar')
+  const evidencias = await evidenciasDaDemanda(d.id, d.noArEm, podeAgir)
+  const juntadaEm = await juntadaEmDaDemanda(d, podeAgir)
+  const titulos = await titulosCitados(d.eventos)
   const faixa = d.encerrada
     ? null
     : faixaDaEspera(
@@ -588,7 +598,9 @@ export async function obterPaginaDaDemanda(
     titulo: d.titulo,
     subtitulo: fechada
       ? d.projeto.nome
-      : `${d.projeto.nome} · aberta ${formatarIdade(d.criadaEm, agora)}`,
+      : d.encerrada === 'juntada'
+        ? `${d.projeto.nome} · encerrada: juntada`
+        : `${d.projeto.nome} · aberta ${formatarIdade(d.criadaEm, agora)}`,
     entrega: entregue
       ? cabecalhoDaEntrega(publicacao, agora)
       : d.encerrada === 'no_ar'
@@ -619,14 +631,166 @@ export async function obterPaginaDaDemanda(
     temTela: d.temTela,
     historico: d.eventos.map((e) => ({
       id: String(e.seq),
-      evento: textoDoEvento(e.tipo, e.dados),
+      evento: textoDoEvento(e.tipo, e.dados, titulos),
       quem: quemFez(e.origem),
       quando: e.em,
     })),
     podeAgir,
     descartada: d.encerrada === 'descartada',
     podeEncerrar: podeAgir && d.encerrada === null,
+    evidencias,
+    juntadaEm,
   }
+}
+
+const idsDaLista = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+const campo = (dados: unknown, nome: string): unknown =>
+  typeof dados === 'object' && dados !== null ? (dados as Record<string, unknown>)[nome] : undefined
+
+/** Relatos e erros ligados à demanda, agrupados pela origem (desta, juntada de B, ligado). */
+async function evidenciasDaDemanda(
+  demandaId: string,
+  noArEm: Date | null,
+  podeAgir: boolean,
+): Promise<Evidencias | null> {
+  const [relatos, erros] = await Promise.all([
+    // Nunca o nome do autor: o bloco mostra o papel.
+    db.relato.findMany({
+      where: { demandaId },
+      select: {
+        id: true,
+        texto: true,
+        transcricao: true,
+        autorPapel: true,
+        canal: true,
+        assunto: true,
+        em: true,
+        sinais: true,
+      },
+    }),
+    db.erroDoGlitchTip.findMany({
+      where: { demandaId },
+      select: {
+        id: true,
+        issueId: true,
+        titulo: true,
+        onde: true,
+        eventos: true,
+        usuarios: true,
+        ultimoEm: true,
+        link: true,
+      },
+    }),
+  ])
+  if (relatos.length === 0 && erros.length === 0) return null
+
+  const [juntadas, ligados] = await Promise.all([
+    db.demanda.findMany({
+      where: { juntadaEmId: demandaId },
+      select: { id: true, titulo: true, encerrada: true, juntadaEmId: true },
+    }),
+    db.eventoDaDemanda.findMany({
+      where: { demandaId, tipo: 'erro-ligado', origem: 'fabrica' },
+      select: { dados: true },
+    }),
+  ])
+  const eventosDasJuntadas =
+    juntadas.length > 0
+      ? await db.eventoDaDemanda.findMany({
+          where: { demandaId: { in: juntadas.map((b) => b.id) }, tipo: 'juntada' },
+          orderBy: { seq: 'desc' },
+          select: { demandaId: true, dados: true, em: true },
+        })
+      : []
+  const porJuntada = juntadas.flatMap((b): JuntadaNaEvidencia[] => {
+    // O `juntada` mais recente de B com destino nesta demanda.
+    const ev = eventosDasJuntadas.find(
+      (e) => e.demandaId === b.id && campo(e.dados, 'em') === demandaId,
+    )
+    if (!ev) return []
+    const motivo = campo(ev.dados, 'motivo')
+    return [
+      {
+        de: { id: b.id, titulo: b.titulo },
+        em: ev.em,
+        motivo: typeof motivo === 'string' ? motivo : '',
+        relatos: idsDaLista(campo(ev.dados, 'relatos')),
+        erros: idsDaLista(campo(ev.dados, 'erros')),
+        podeSeparar: podeAgir && podeSeparar(b, { noArEm }),
+      },
+    ]
+  })
+
+  return montarEvidencias({
+    demandaId,
+    relatos: relatos.map((r) => ({
+      id: r.id,
+      texto: r.texto,
+      transcricao: r.transcricao,
+      papel: r.autorPapel,
+      canal: r.canal,
+      tela: r.assunto,
+      em: r.em,
+      sinais: r.sinais,
+    })),
+    erros,
+    juntadas: porJuntada,
+    ligadosPelaTriagem: ligados
+      .map((e) => campo(e.dados, 'issueId'))
+      .filter((x): x is string => typeof x === 'string'),
+  })
+}
+
+/** A demanda juntada: destino, motivo e quantos relatos foram junto (do último `juntada`). */
+async function juntadaEmDaDemanda(
+  b: { id: string; encerrada: string | null; juntadaEmId: string | null },
+  podeAgir: boolean,
+): Promise<JuntadaEm | null> {
+  if (b.encerrada !== 'juntada' || b.juntadaEmId === null) return null
+  const [a, eventos] = await Promise.all([
+    db.demanda.findUnique({
+      where: { id: b.juntadaEmId },
+      select: { id: true, titulo: true, noArEm: true },
+    }),
+    db.eventoDaDemanda.findMany({
+      where: { demandaId: b.id, tipo: 'juntada' },
+      orderBy: { seq: 'desc' },
+      select: { dados: true },
+    }),
+  ])
+  if (!a) return null
+  const ev = eventos.find((e) => campo(e.dados, 'em') === a.id)
+  const motivo = campo(ev?.dados, 'motivo')
+  return {
+    id: a.id,
+    titulo: a.titulo,
+    motivo: typeof motivo === 'string' ? motivo : '',
+    relatos: idsDaLista(campo(ev?.dados, 'relatos')).length,
+    podeSeparar: podeAgir && podeSeparar(b, a),
+  }
+}
+
+/** Os títulos das demandas citadas pela história (`juntada.em`, `evidencia_ligada.de`). */
+async function titulosCitados(
+  eventos: readonly { tipo: string; dados: unknown }[],
+): Promise<Record<string, string>> {
+  const ids = new Set<string>()
+  for (const e of eventos) {
+    const id =
+      e.tipo === 'juntada'
+        ? campo(e.dados, 'em')
+        : e.tipo === 'evidencia_ligada'
+          ? campo(e.dados, 'de')
+          : undefined
+    if (typeof id === 'string' && UUID.test(id)) ids.add(id)
+  }
+  if (ids.size === 0) return {}
+  const linhas = await db.demanda.findMany({
+    where: { id: { in: [...ids] } },
+    select: { id: true, titulo: true },
+  })
+  return Object.fromEntries(linhas.map((l) => [l.id, l.titulo]))
 }
 
 /**

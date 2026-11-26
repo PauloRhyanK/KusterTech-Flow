@@ -9,6 +9,8 @@ import { db } from '@/lib/db'
 import { gravarArquivo } from '@/modules/demandas/arquivos'
 import { MODELO_PADRAO } from '@/modules/demandas/model'
 import { obterPaginaDaDemanda } from '@/modules/demandas/queries'
+import { receberEventoDaFabrica } from '@/modules/demandas/recepcao-fabrica'
+import { criarFonteDaFabrica } from '@/modules/fabrica/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
 
@@ -399,4 +401,139 @@ test('podeEncerrar só para quem gerencia e só com a demanda aberta', async () 
   })
   const entregue = await demanda('Entregue', { encerrada: 'entregue', espera: null })
   expect((await obterPaginaDaDemanda(admin, entregue.id, AGORA))?.podeEncerrar).toBe(false)
+})
+
+test('triagem cruzada: Evidências de A batem com o ligar_erros e o juntar da Fábrica; B mostra a faixa', async () => {
+  const { token } = await criarFonteDaFabrica(admin, 'Fábrica')
+  const sistema = await db.sistemaConectado.create({
+    data: { nome: 'Sistema Alfa', url: 'https://alfa.exemplo.com/v1', projetoId, repositorioId },
+  })
+  // As duas esperam a triagem: é nela que a Fábrica liga erros e junta.
+  const naTriagem = {
+    etapaAtual: 'recebida',
+    concluidas: [],
+    espera: null,
+    esperaDesde: null,
+    destino: null,
+    tipo: null,
+  }
+  const a = await demanda('Fechar pedido falha', naTriagem)
+  const b = await demanda('Pedido não fecha', naTriagem)
+  let n = 0
+  const relato = (demandaId: string, o: Record<string, unknown> = {}) =>
+    db.relato.create({
+      data: {
+        sistemaId: sistema.id,
+        idExterno: randomUUID(),
+        resultado: 'SEGUE',
+        canal: 'SISTEMA',
+        em: minutos(n++),
+        autorIdExterno: randomUUID(),
+        autorNome: 'Fulana Secreta',
+        autorPapel: 'Vendedora',
+        texto: 'Cliquei em fechar pedido e a tela ficou branca',
+        assunto: 'Pedidos',
+        demandaId,
+        ...o,
+      } as never,
+    })
+  const erro = (demandaId: string | null, issueId: string) =>
+    db.erroDoGlitchTip.create({
+      data: {
+        issueId,
+        projetoGlitchTip: 'app',
+        repositorioId,
+        titulo: `TypeError ${issueId}`,
+        onde: 'pedidos/fechar.ts in calcularTotal',
+        nivel: 'error',
+        link: `https://glitchtip.exemplo.com/issues/${issueId}`,
+        eventos: 48,
+        usuarios: 9,
+        primeiroEm: minutos(-120),
+        ultimoEm: minutos(-60),
+        demandaId,
+      },
+    })
+  const reforco = {
+    tipo: 'reforco',
+    autor: { id: 'x', nome: 'Outro Nome', papel: 'Caixa' },
+    texto: '',
+    em: AGORA.toISOString(),
+  }
+  const rA = await relato(a.id, { sinais: [reforco, reforco] })
+  const rB = await relato(b.id, {
+    canal: 'WHATSAPP',
+    autorPapel: 'Gerente',
+    texto: null,
+    transcricao: 'Pedido não fecha',
+  })
+  const eB = await erro(b.id, '701')
+  const eLivre = await erro(null, '702')
+
+  const pedir = (demandaId: string, tipo: string, dados: unknown) => {
+    const texto = JSON.stringify({ id: randomUUID(), em: '2026-11-20T15:00:00Z', tipo, dados })
+    const autorizacao = `Bearer ${token}`
+    return receberEventoDaFabrica(autorizacao, demandaId, {
+      authorization: autorizacao,
+      contentType: 'application/json',
+      contentLength: String(Buffer.byteLength(texto)),
+      corpo: async () => texto,
+    })
+  }
+  const ligou = await pedir(a.id, 'ligar_erros', { erros: [eLivre.id], motivo: 'a tela branca' })
+  expect(ligou.status, JSON.stringify(ligou.corpo ?? ligou)).toBe(201)
+  expect((await pedir(b.id, 'juntar', { em: a.id, motivo: 'mesma falha sem itens' })).status).toBe(
+    201,
+  )
+
+  const pa = (await obterPaginaDaDemanda(admin, a.id, AGORA))!
+  expect(pa.juntadaEm).toBeNull()
+  const ev = pa.evidencias!
+  expect({ erros: ev.erros, relatos: ev.relatos, reforcos: ev.reforcos }).toEqual({
+    erros: 2,
+    relatos: 2,
+    reforcos: 2,
+  })
+  expect(ev.grupos.map((g) => [g.tipo, g.itens.map((i) => i.id)])).toEqual([
+    ['desta', [rA.id]],
+    ['juntada', [rB.id, eB.id]],
+    ['ligado', [eLivre.id]],
+  ])
+  const juntada = ev.grupos[1]!
+  expect(juntada.de).toMatchObject({
+    id: b.id,
+    titulo: 'Pedido não fecha',
+    motivo: 'mesma falha sem itens',
+  })
+  expect(juntada.podeSeparar).toBe(true)
+  expect(juntada.itens[0]).toMatchObject({
+    tipo: 'relato',
+    trecho: 'Pedido não fecha',
+    papel: 'Gerente',
+    canal: 'WhatsApp',
+    href: `/demandas/${b.id}#relato-${rB.id}`,
+  })
+  // Nunca o nome de quem relatou (nem de quem reforçou).
+  expect(JSON.stringify(pa.evidencias)).not.toMatch(/Fulana|Outro Nome/)
+
+  const textos = pa.historico.map((h) => h.evento)
+  expect(textos).toContain('A triagem juntou "Pedido não fecha": mesma falha sem itens')
+  expect(textos).toContain('A triagem ligou o erro "TypeError 702": a tela branca')
+  expect(textos).not.toContain('ligar_erros')
+
+  const pb = (await obterPaginaDaDemanda(admin, b.id, AGORA))!
+  expect(pb.juntadaEm).toEqual({
+    id: a.id,
+    titulo: 'Fechar pedido falha',
+    motivo: 'mesma falha sem itens',
+    relatos: 1,
+    podeSeparar: true,
+  })
+  expect(pb.subtitulo).toBe('Projeto Alfa · encerrada: juntada')
+  expect(pb.evidencias).toBeNull()
+  const textosB = pb.historico.map((h) => h.evento)
+  expect(textosB).toContain(
+    'Juntada pela triagem a "Fechar pedido falha" (1 relatos e 1 erros foram junto)',
+  )
+  expect(textosB).not.toContain('juntar')
 })

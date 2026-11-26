@@ -8,6 +8,8 @@ import { obterPaginaDaDemanda } from '@/modules/demandas/queries'
 import { CanvasDoDesenho } from '../_componentes/canvas-do-desenho'
 import { EncerrarDemanda } from '../_componentes/encerrar-demanda'
 import { EntregaLadoALado } from '../_componentes/entrega-lado-a-lado'
+import { EvidenciasDaDemanda } from '../_componentes/evidencias-da-demanda'
+import { FaixaDaJuntada } from '../_componentes/faixa-da-juntada'
 import { FaixaDaEspera } from '../_componentes/faixa-da-espera'
 import { FaixaDoQueFalta } from '../_componentes/faixa-do-que-falta'
 import { HistoricoDaDemanda } from '../_componentes/historico-da-demanda'
@@ -34,29 +36,47 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
   }
 
   const { id } = await params
-  const p = await obterPaginaDaDemanda(sessao.sujeito, id, new Date())
+  const agora = new Date()
+  const p = await obterPaginaDaDemanda(sessao.sujeito, id, agora)
   if (!p) notFound()
+
+  const cabecalho = (
+    <header className="space-y-1.5">
+      <Link href="/demandas" className="block text-[13px] text-text-link hover:underline">
+        <span aria-hidden="true">← </span>Demandas
+      </Link>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="min-w-0 text-[21px] font-[650] leading-[1.25] tracking-[-0.02em] text-text-primary md:text-2xl">
+          {p.titulo}
+        </h1>
+        <span className="text-[13px] text-text-tertiary">{p.subtitulo}</span>
+        {p.entrega && (
+          <span className="ml-auto inline-flex items-center rounded-[6px] border border-sucesso/30 bg-tonal-sucesso px-2.5 py-0.5 text-[12.5px] font-[600] text-sucesso">
+            {p.entrega}
+          </span>
+        )}
+      </div>
+    </header>
+  )
+
+  // A demanda juntada pela triagem não tem trabalho: a faixa leva à demanda de destino.
+  if (p.juntadaEm) {
+    return (
+      <div className="space-y-5">
+        {cabecalho}
+        <FaixaDaJuntada demandaId={p.id} juntadaEm={p.juntadaEm} />
+        <HistoricoDaDemanda eventos={p.historico} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5">
-      <header className="space-y-1.5">
-        <Link href="/demandas" className="block text-[13px] text-text-link hover:underline">
-          <span aria-hidden="true">← </span>Demandas
-        </Link>
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="min-w-0 text-[21px] font-[650] leading-[1.25] tracking-[-0.02em] text-text-primary md:text-2xl">
-            {p.titulo}
-          </h1>
-          <span className="text-[13px] text-text-tertiary">{p.subtitulo}</span>
-          {p.entrega && (
-            <span className="ml-auto inline-flex items-center rounded-[6px] border border-sucesso/30 bg-tonal-sucesso px-2.5 py-0.5 text-[12.5px] font-[600] text-sucesso">
-              {p.entrega}
-            </span>
-          )}
-        </div>
-      </header>
+      {cabecalho}
 
       <TrilhoAteOAr grande pontos={p.trilho} />
+
+      <EvidenciasDaDemanda evidencias={p.evidencias} agora={agora} />
 
       {p.descartada && (
         <p
