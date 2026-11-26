@@ -59,6 +59,19 @@ export function proximaPagina(link: string | null): string | null {
   return null
 }
 
+/**
+ * O token só vai ao endereço configurado (D81: só https): da URL do `next` aproveita só o caminho e
+ * o cursor, mesmo quando o GlitchTip atrás de um proxy devolve `http://` ou outro host.
+ */
+function noEnderecoConfigurado(config: Configuracao, proxima: string): string | null {
+  try {
+    const u = new URL(proxima, config.url)
+    return new URL(`${u.pathname}${u.search}`, config.url).toString()
+  } catch {
+    return null
+  }
+}
+
 type Resposta = { ok: true; corpo: unknown; link: string | null; status: number } | Falha
 
 async function pedir(config: Configuracao, url: string, buscar: Buscar): Promise<Resposta> {
@@ -111,7 +124,8 @@ export async function listarIssues(
       if (issue) issues.push(issue)
       else tortas += 1
     }
-    url = proximaPagina(r.link)
+    const proxima = proximaPagina(r.link)
+    url = proxima === null ? null : noEnderecoConfigurado(config, proxima)
   }
   return { ok: true, issues, tortas }
 }

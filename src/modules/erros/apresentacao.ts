@@ -189,3 +189,11 @@ export function montarQuadro(
     avisos,
   }
 }
+
+/** A aba Erros da Fábrica: conta os novos e os que voltaram, e avisa quando a leitura está velha. */
+export function rotuloDaAba(q: QuadroDeErros): { rotulo: string; contador: number } {
+  return {
+    rotulo: q.leitura.velha ? 'Erros · sem leitura' : 'Erros',
+    contador: q.contagem.novo + q.contagem.voltou,
+  }
+}

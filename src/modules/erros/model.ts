@@ -180,6 +180,7 @@ const TELEFONE = /(?<![\w+])(?:\+?55[\s-]?)?\(?\d{2}\)?[\s-]?9?\d{4}[\s-]?\d{4}(
 /** E-mail, CPF/CNPJ e telefone saem antes de o texto virar demanda (invariante 10). */
 export function mascarar(texto: string): string {
   return texto
+    .replaceAll('\u0000', '')
     .replace(EMAIL, '[e-mail]')
     .replace(CNPJ, '[documento]')
     .replace(CPF, '[documento]')

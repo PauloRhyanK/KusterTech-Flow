@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { MODELO_PADRAO } from '@/modules/demandas/model'
-import { type ErroComDemanda, montarQuadro } from './apresentacao'
+import { type ErroComDemanda, montarQuadro, rotuloDaAba } from './apresentacao'
 
 const agora = new Date('2026-11-26T15:30:00.000Z')
 const MIN = 60_000
@@ -121,5 +121,25 @@ describe('montarQuadro', () => {
     const q = montarQuadro({ configurado: false, erros: [], leituras: [], slugs: [] }, agora)
     expect(q.configurado).toBe(false)
     expect(q.leitura.velha).toBe(false)
+  })
+
+  test('nunca lido com falha traz o motivo', () => {
+    const q = quadro([], {
+      leituras: [
+        { ...lido('app-vendas', null), ultimaFalhaEm: antes(MIN), motivo: 'token recusado' },
+      ],
+    })
+    expect(q.leitura).toEqual({ ultimoSucessoEm: null, velha: true, motivo: 'token recusado' })
+  })
+})
+
+describe('rotuloDaAba', () => {
+  test('conta novos e os que voltaram', () => {
+    const q = quadro([erro('a'), erro('b', { demandaAnteriorId: 'd0' })])
+    expect(rotuloDaAba(q)).toEqual({ rotulo: 'Erros', contador: 2 })
+  })
+  test('leitura velha marca a aba', () => {
+    const q = quadro([], { leituras: [lido('app-vendas', antes(31 * MIN))] })
+    expect(rotuloDaAba(q).rotulo).toBe('Erros · sem leitura')
   })
 })

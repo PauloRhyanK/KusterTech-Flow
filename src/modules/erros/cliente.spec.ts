@@ -112,6 +112,22 @@ describe('listarIssues', () => {
     expect(r.ok && r.issues.map((i) => i.id)).toEqual(['1', '2', '3'])
   })
 
+  test('a próxima página fica sempre no endereço configurado, em https', async () => {
+    const pagina = (n: number, next: string) => () =>
+      json([item({ id: String(n) })], { link: link(next, true) })
+    const { buscar, chamadas } = buscarFalso([
+      pagina(1, 'http://erros.exemplo.com/api/0/projects/minha-org/app-vendas/issues/?cursor=a'),
+      pagina(2, 'https://outro.exemplo.net/api/0/projects/minha-org/app-vendas/issues/?cursor=b'),
+      () => json([item({ id: '3' })]),
+    ])
+    await listarIssues(config, 'app-vendas', buscar)
+    expect(chamadas.map((c) => c.url)).toEqual([
+      PRIMEIRA,
+      'https://erros.exemplo.com/api/0/projects/minha-org/app-vendas/issues/?cursor=a',
+      'https://erros.exemplo.com/api/0/projects/minha-org/app-vendas/issues/?cursor=b',
+    ])
+  })
+
   test('item torto é pulado e contado', async () => {
     const { buscar } = buscarFalso([
       () => json([item({ id: undefined }), item({ lastSeen: 'ontem' }), item({ id: '9' })]),

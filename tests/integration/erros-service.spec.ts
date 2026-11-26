@@ -258,6 +258,32 @@ describe('buscarErrosDoGlitchTip', () => {
     expect(await db.erroDoGlitchTip.count()).toBe(0)
   })
 
+  test('uma issue que falha ao gravar não para as outras', async () => {
+    const { buscar } = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([
+          issue('1', { permalink: `${BASE}/minha-org/issues/1\u0000` }),
+          issue('2', { lastSeen: new Date(agora.getTime() - 5 * MIN).toISOString() }),
+        ]),
+    })
+    const resumo = await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    expect(resumo).toMatchObject({ abertas: 1, falhas: 1 })
+    expect(await db.erroDoGlitchTip.findUnique({ where: { issueId: '2' } })).not.toBeNull()
+    const leitura = await db.leituraDoGlitchTip.findUniqueOrThrow({
+      where: { projetoGlitchTip: 'app-vendas' },
+    })
+    expect(leitura.ultimoSucessoEm).toEqual(agora)
+  })
+
+  test('byte nulo no título não impede a demanda', async () => {
+    const { buscar } = glitchtip({
+      [LISTA('app-vendas')]: () => json([issue('1', { title: 'falhou\u0000aqui' })]),
+    })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const demanda = await db.demanda.findFirstOrThrow()
+    expect(demanda.titulo).toBe('Erro: falhouaqui')
+  })
+
   test('não configurado não chama o GlitchTip', async () => {
     const { buscar, chamadas } = glitchtip({})
     const resumo = await buscarErrosDoGlitchTip(agora, { env: {}, buscar })

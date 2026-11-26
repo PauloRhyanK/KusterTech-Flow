@@ -28,7 +28,9 @@ const CHIPS: { estado: Exclude<EstadoNoQuadro, 'corrigido'>; texto: string }[] =
 
 function textoDaLeitura(q: QuadroDeErros, agora: Date): string {
   const { ultimoSucessoEm, motivo } = q.leitura
-  if (ultimoSucessoEm === null) return 'o GlitchTip ainda não foi lido'
+  if (ultimoSucessoEm === null) {
+    return motivo ? `o GlitchTip não respondeu ainda (${motivo})` : 'o GlitchTip ainda não foi lido'
+  }
   const idade = formatarIdade(ultimoSucessoEm, agora)
   if (!q.leitura.velha) return `GlitchTip lido ${idade}`
   return `o GlitchTip não responde ${idade}${motivo ? ` (${motivo})` : ''}`

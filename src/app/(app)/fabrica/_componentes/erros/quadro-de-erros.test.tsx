@@ -122,6 +122,19 @@ describe('Erros no ar', () => {
     expect(screen.getByText('o GlitchTip ainda não foi lido')).toBeInTheDocument()
   })
 
+  test('nunca lido, com falha, mostra o motivo', () => {
+    render(
+      <ErrosNoAr
+        quadro={quadro({
+          linhas: [],
+          leitura: { ultimoSucessoEm: null, velha: true, motivo: 'token recusado' },
+        })}
+        agora={agora}
+      />,
+    )
+    expect(screen.getByText('o GlitchTip não respondeu ainda (token recusado)')).toBeInTheDocument()
+  })
+
   test('não configurado', () => {
     render(<ErrosNoAr quadro={quadro({ configurado: false, linhas: [] })} agora={agora} />)
     expect(screen.getByText('GlitchTip não configurado')).toBeInTheDocument()

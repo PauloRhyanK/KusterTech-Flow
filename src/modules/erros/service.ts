@@ -24,6 +24,8 @@ import {
 
 const HORA_MS = 60 * 60_000
 const CONFERIDOS_POR_CICLO = 50
+// A espera pela trava do projeto conta no tempo da transação (padrão do Prisma: 5 s).
+const TRANSACAO = { maxWait: 15_000, timeout: 15_000 }
 
 export interface ResumoDaBusca {
   projetos: number
@@ -123,12 +125,28 @@ async function lerProjeto(
     .filter((i) => entra(i, agora))
     .sort((a, b) => b.ultimoEm.getTime() - a.ultimoEm.getTime())
   for (const issue of entram) {
-    const r = await processarIssue(
-      issue,
-      projeto.slug,
-      { id: repositorio.id, projetoId: repositorio.projetoId! },
-      agora,
-    )
+    let r: Resultado
+    try {
+      r = await processarIssue(
+        issue,
+        projeto.slug,
+        { id: repositorio.id, projetoId: repositorio.projetoId! },
+        agora,
+      )
+    } catch (err) {
+      // Spec seção 9: a issue fica como está e a próxima leitura tenta de novo; as outras seguem.
+      resumo.falhas += 1
+      log.error(
+        {
+          tarefa: 'buscar-erros-do-glitchtip',
+          projeto: projeto.slug,
+          issue: issue.id,
+          erro: resumirErroParaLog(err),
+        },
+        'issue do GlitchTip não gravada',
+      )
+      continue
+    }
     if (r === 'aberta') resumo.abertas += 1
     else if (r === 'voltou') {
       resumo.abertas += 1
@@ -259,7 +277,7 @@ function processarIssue(
       return 'voltou'
     }
     return 'aberta'
-  })
+  }, TRANSACAO)
 }
 
 async function travarProjeto(tx: Prisma.TransactionClient, slug: string): Promise<void> {
