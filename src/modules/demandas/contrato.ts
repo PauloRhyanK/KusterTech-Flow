@@ -64,6 +64,29 @@ export const impactoSchema = z.strictObject({
   caminhoProtegido: z.boolean(),
 })
 
+/**
+ * O plano curto que a triagem traz quando a demanda pede decisão de produto (ideia, função nova ou
+ * destino `decisao_do_paulo`): o que a pessoa quer, o que mudaria nas telas, as opções com tamanho,
+ * os conflitos com decisões vigentes em linguagem simples e a recomendação. Opcional: um kit antigo
+ * não o manda.
+ */
+export const planoDaTriagemSchema = z.strictObject({
+  pedido: texto2000,
+  muda: z.array(texto300).max(8),
+  opcoes: z
+    .array(
+      z.strictObject({
+        nome: texto80,
+        tamanho: z.enum(['pequeno', 'medio', 'grande']),
+        descricao: texto300,
+      }),
+    )
+    .max(4),
+  conflitos: z.array(z.strictObject({ decisao: texto200, explicacao: texto300 })).max(5),
+  recomendacao: texto300,
+})
+export type PlanoDaTriagem = z.infer<typeof planoDaTriagemSchema>
+
 export const triagemSchema = z.strictObject({
   tipo: z.enum(TIPOS),
   destino: z.enum(DESTINOS),
@@ -74,6 +97,7 @@ export const triagemSchema = z.strictObject({
   impacto: impactoSchema,
   resposta: texto4000.nullable(),
   motivo: texto300,
+  plano: planoDaTriagemSchema.nullable().optional(),
 })
 
 const evento = <T extends string, D extends z.ZodType>(tipo: T, dados: D) =>
