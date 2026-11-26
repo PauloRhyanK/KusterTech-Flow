@@ -148,7 +148,7 @@ function Containers({
             <thead>
               <tr>
                 <th className={CABECALHO}>Nome</th>
-                <th className={CABECALHO_NUMERICO}>CPU</th>
+                <th className={`${CABECALHO_NUMERICO} hidden sm:table-cell`}>CPU</th>
                 <th className={CABECALHO_NUMERICO}>Memória</th>
                 <th className={`${CABECALHO} hidden sm:table-cell`}>Desde</th>
                 <th className={CABECALHO}>Estado</th>
@@ -163,7 +163,7 @@ function Containers({
                     <td className={`${CELULA} font-mono text-[12.5px] [overflow-wrap:anywhere]`}>
                       {c.nome}
                     </td>
-                    <td className={CELULA_NUMERICA}>
+                    <td className={`${CELULA_NUMERICA} hidden sm:table-cell`}>
                       {c.cpuPct === null ? '—' : `${decimal(Math.round(c.cpuPct * 10) / 10)}%`}
                     </td>
                     <td className={CELULA_NUMERICA}>
