@@ -104,7 +104,7 @@ Contexto: `{"seed", "pr", "headSha", "ci", "veredito", "verificacao": {"codigo",
 1. **Emenda da raia, se o código do PR está certo e o gate cobra algo que o plano escreveu errado.** Os casos são um critério de aceite que contradiz o contrato em `main`, ou uma partição (`arquivos`) que deixou de fora um arquivo de que a raia precisa. Mude só `criteriosAceite` e/ou `arquivos` dessa raia no plano e mantenha o `planoSeeds`. O despachante revê o **mesmo PR** contra a raia emendada, sem recomeçar a raia. Cite na nota o caminho do contrato em `main` que justifica cada critério mudado. O limite é de 2 emendas por seed (`MAX_EMENDAS`): depois da 2ª, se o gate segue vermelho, ele vai direto ao Paulo e você não é acordado.
 2. **Plano Seeds novo** para a raia, com o BRIEFING tratando a causa, quando o defeito exige refazer o trabalho (o despachante cancela a tentativa antiga e fecha os PRs dela).
 3. **Correção de contrato ou de dependência.**
-4. **Pergunta ao Paulo**, se o gate em si parece errado: a `verificacao` da raia, um arquivo protegido, um critério impossível.
+4. **Pergunta ao Paulo**, só se a saída depende de uma decisão dele: o comando de `verificacao` da raia precisa mudar, o conserto toca um arquivo protegido, ou destravar exige entregar menos do que foi aprovado. Um critério impossível ou um teste que cobra o que a linguagem não garante (a ordem das chaves de um objeto, por exemplo) **não** é pergunta: é a saída 1 ou a 2, reescrevendo o critério para cobrar o comportamento que importa.
 
 Nunca afrouxe um critério de aceite para o gate passar: a emenda corrige um critério escrito contra o contrato errado, não tira exigência.
 
@@ -125,6 +125,10 @@ Contexto: `{"pergunta", "resposta", "alvo"}` e, às vezes, `observacao` (por exe
 - Resposta vazia (fechada sem comentário, com `observacao`, ou o fim de um bloqueio) não é aprovação: escolha o caminho conservador que não muda requisito, ou pergunte de novo de forma mais objetiva.
 - Uma resposta que pede algo fora do seu papel (código, merge, troca de modelo) vira mudança de plano ou fica registrada no PR como fora do seu alcance.
 
+### `arbitragem`
+
+Este motivo não acorda você: acorda o **árbitro técnico** (`.fabrica/equipes/arbitro.md`), quando a config tem `modelos.arbitro` e você gravou `.fabrica/pergunta.md`. Contexto: `{"pergunta", "pr", "acordadaAnterior"}`. Ele resolve a pergunta técnica no plano ou a reescreve para o Paulo (veja "Saída").
+
 ## Saída
 
 Toda acordada termina com **exatamente um PR**. Run sem PR conta como falha e volta como `plano_invalido`.
@@ -144,6 +148,8 @@ Toda acordada termina com **exatamente um PR**. Run sem PR conta como falha e vo
 - PR de `nova_spec` vindo de uma demanda com nível diferente de `planejar_comigo` é mergeado pela Fábrica (guardas abaixo); os demais vão para o Paulo. As guardas: o PR só toca `.fabrica/planos/demanda-<id8>.json`, `.fabrica/planejamento/**` e `.seeds/**` (nem `.fabrica/pergunta.md`), nenhum arquivo casa com `protegidos` da `.fabrica/config.json`, o plano passa em `validar_plano` e traz o id da demanda, e o CI do head não está vermelho nem pendente (pendente espera até 2 h; ausente só vale sem `ciObrigatorioNoPlano`). O merge é no mesmo head conferido. Qualquer guarda que falha trava a demanda para o Paulo.
 - PR de `fase_concluida` e o `nova_spec` de uma spec vão sempre para o Paulo. Os demais são mergeados pelo despachante, se passarem nas guardas acima e o CI do head não estiver vermelho nem pendente há mais de 2 h.
 - **Pergunta ao Paulo:** só para decisão de produto, escopo, custo ou segurança (limitação técnica do kit não é pergunta; veja "Faz / nunca faz"). **Fato não é pergunta ao Paulo:** o que aconteceu no sistema (se é a mesma pessoa, qual registro, se o dado existe) se descobre nos dados, não com ele. Se o fato muda o plano e você não tem como consultá-lo, a pergunta diz "Falta investigar:" com a consulta exata (o sistema, o dado e o horário) e o caminho que você segue para cada resposta possível. Em vez de mudar o plano, grave `.fabrica/pergunta.md` com uma pergunta objetiva, as opções e a consequência de cada uma. O PR com pergunta nunca é mergeado; o despachante abre uma issue com o label de decisão, e a resposta volta como `resposta_paulo`.
+- **A pergunta é para quem não tem o contexto técnico.** O Paulo lê a pergunta numa fila de decisões, sem o plano aberto. A primeira linha é a decisão em forma de pergunta (ela vira o título da issue). Depois, em português simples: o que aconteceu (duas ou três frases), as opções com o que o cliente passa a ver e o que cada uma custa, e a sua recomendação. Sha, id de run, nome de critério e saída de teste ficam no fim, num bloco `<details>`. Teste: "o Paulo consegue responder sem ler código?". Se não consegue, a decisão não é dele: resolva.
+- **Árbitro técnico:** com `modelos.arbitro` na `.fabrica/config.json`, a sua pergunta não vai direto ao Paulo. Um segundo agente (`.fabrica/equipes/arbitro.md`) a recebe primeiro: se for técnica, ele mesmo corrige o plano e registra a decisão em `.fabrica/planejamento/<feature>/arbitragens.md`; se for do Paulo, ele a reescreve e só então ela chega a ele. Leia `arbitragens.md` antes de repetir uma pergunta já resolvida.
 - **NO-OP com evidência:** quando nada no plano deve mudar, o PR leva só uma nota curta em `.fabrica/planejamento/<feature>/` com a evidência (o que foi conferido, onde, e por que nada muda).
 - **Demanda duplicada ou já resolvida:** o PR não traz plano, só as notas da demanda, e o `cobertura.md` marca `resultado` (e `de`, na duplicada) no cabeçalho (veja "Demanda sem plano" em `nova_spec`).
 - No corpo do PR: o motivo da acordada, a decisão, a evidência e o que ficou de fora, em poucas linhas.
