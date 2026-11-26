@@ -775,6 +775,34 @@ describe('processarFilaDePublicacao', () => {
     expect(f.disparos.map((d) => d.entradas.commit)).toEqual([M4])
   })
 
+  test('commit null que espera a vez segue main: dispara a cabeça do momento do disparo', async () => {
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { pausado: true },
+    })
+    const daCabeca = await pedir(portalId, null)
+    const escolhido = await pedir(portalId, M3)
+    await ciclo()
+    expect((await pedido(daCabeca)).commit).toBe(M4)
+
+    f.avancarMain(PORTAL, M5)
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { pausado: false },
+    })
+    await ciclo(minutos(1))
+    const p = await pedido(daCabeca)
+    expect(p.commit).toBe(M5)
+    expect(p.estado).toBe('PUBLICANDO')
+    expect(f.disparos.map((d) => d.entradas.commit)).toEqual([M5])
+    // O commit escolhido por quem pediu não muda; o M5 o contém e o atende.
+    expect(await pedido(escolhido)).toMatchObject({
+      commit: M3,
+      estado: 'PUBLICANDO',
+      atendidoPorId: daCabeca,
+    })
+  })
+
   test('sem fonte → nada do GitHub roda, sem erro', async () => {
     const id = await pedir(portalId, M2)
     const r = await processarFilaDePublicacao(null, AGORA)

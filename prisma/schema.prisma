@@ -922,6 +922,8 @@ model PedidoDePublicacao {
   id               String                     @id @default(uuid())
   repositorioId    String
   commit           String?
+  // Pedido sem commit ("a ponta de main"): o worker troca o commit pela cabeça de main até o disparo.
+  segueMain        Boolean                    @default(false)
   modo             ModoDePublicacao
   descricao        String?
   fonteId          String?
