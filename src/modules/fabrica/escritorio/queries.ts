@@ -32,12 +32,14 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
       atualizadaEm: true,
       criadaEm: true,
       repositorio: { select: { nomeCompleto: true } },
+      projeto: { select: { nome: true } },
     },
   })
   const demandas: DemandaDaTela[] = linhas.map((d) => ({
     id: d.id,
     titulo: d.titulo,
     repositorio: d.repositorio.nomeCompleto,
+    projeto: d.projeto.nome,
     marco:
       (d.etapas as unknown as EtapaDefinida[]).find((e) => e.chave === d.etapaAtual)?.marco ?? null,
     espera: d.espera,

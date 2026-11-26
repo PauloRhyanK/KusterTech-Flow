@@ -64,4 +64,27 @@ describe('EntregaLadoALado', () => {
     expect(screen.queryByRole('heading', { name: 'Desenho aprovado' })).toBeNull()
     expect(screen.getByRole('img', { name: 'Captura no desktop' })).toBeInTheDocument()
   })
+
+  test('o desenho abre em tela cheia e cada captura abre em tamanho real em outra aba', () => {
+    render(
+      <EntregaLadoALado
+        demandaId={ID}
+        desenho={DESENHO}
+        temTela
+        capturas={CAPTURAS}
+        capturasApagadasEm={null}
+      />,
+    )
+    expect(screen.getByRole('link', { name: /Abrir em tela cheia/ })).toHaveAttribute(
+      'href',
+      `/demandas/${ID}/desenho`,
+    )
+    const desktop = screen.getByRole('link', { name: 'Abrir a captura no desktop em tamanho real' })
+    expect(desktop).toHaveAttribute('href', `/demandas/${ID}/arquivos/${CAPTURAS[0]!.id}`)
+    expect(desktop).toHaveAttribute('target', '_blank')
+    expect(desktop).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(
+      screen.getByRole('link', { name: 'Abrir a captura no celular em tamanho real' }),
+    ).toBeInTheDocument()
+  })
 })

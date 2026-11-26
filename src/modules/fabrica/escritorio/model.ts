@@ -15,6 +15,8 @@ export interface DemandaDaTela {
   id: string
   titulo: string
   repositorio: string
+  /** nome do projeto da demanda */
+  projeto?: string | null
   /** marco da etapa atual; null quando a etapa é do Paulo (fora dos seis marcos) */
   marco: Marco | null
   espera: string | null
@@ -98,6 +100,8 @@ export interface Andar {
   demandaId: string | null
   titulo: string
   repositorio: string
+  /** projeto de onde vem a demanda; null quando o andar não tem demanda */
+  projeto: string | null
   esperaPaulo: boolean
   /** há quanto tempo a demanda do andar espera o Paulo; null sem espera da demanda */
   esperando: TempoDeEspera | null
@@ -461,6 +465,7 @@ function montarAndar(
     demandaId: plano.demanda,
     titulo: demanda?.titulo ?? plano.feature,
     repositorio: demanda?.repositorio ?? plano.repo,
+    projeto: demanda?.projeto ?? null,
     esperaPaulo,
     esperando: esperandoDesde(demanda, agora),
     semAgentes: agentes.every((a) => a.runId === null),

@@ -80,6 +80,7 @@ describe('escritório / queries', () => {
       atualizadaEm: new Date('2026-11-21T04:05:00Z'),
       criadaEm: new Date('2026-11-20T00:00:00Z'),
       repositorio: { nomeCompleto: 'a/b' },
+      projeto: { nome: 'Proj' },
     })
     mockDb.demanda.findMany.mockResolvedValue([
       linha('com-coluna', new Date('2026-11-21T02:05:00Z')),

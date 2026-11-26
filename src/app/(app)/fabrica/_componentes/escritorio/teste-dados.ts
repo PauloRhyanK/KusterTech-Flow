@@ -23,6 +23,7 @@ export function escritorioDeTeste(
           id: DEMANDA,
           titulo: 'Suporte por IA no CRM',
           repositorio: 'PauloRhyanK/CAISv2',
+          projeto: 'CAIS v2',
           marco: 'desenvolvida',
           espera,
           esperaDesde: espera === null ? null : (esperaDesde ?? AGORA),
