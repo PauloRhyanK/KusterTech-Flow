@@ -1,7 +1,12 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ItemDaPilha } from '@/modules/decidir/model'
-import { abrirItemAcao, confirmarCartaoAcao } from '../actions'
+import {
+  abrirItemAcao,
+  confirmarCartaoAcao,
+  enviarMensagemAcao,
+  responderRapidoAcao,
+} from '../actions'
 import { TelaDecidir } from './tela-decidir'
 
 const { roteador } = vi.hoisted(() => ({ roteador: { refresh: vi.fn(), replace: vi.fn() } }))
@@ -332,6 +337,68 @@ describe('TelaDecidir', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(abrirItemAcao).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('decisão da Fábrica: o cabeçalho usa a frase do corpo; o toque numa opção envia a resposta e pede o cartão, uma vez só', async () => {
+    const decisao: ItemDaPilha = {
+      ...item(9),
+      chave: 'issue:kustertech-exemplo/alfa:42',
+      tipo: 'decisao_da_fabrica',
+      titulo: 'Em que ordem?',
+      pergunta: 'Em que ordem?',
+      ref: {
+        tipo: 'issue',
+        url: 'https://github.com/kustertech-exemplo/alfa/issues/42',
+        repositorio: 'kustertech-exemplo/alfa',
+        numero: 42,
+      } as ItemDaPilha['ref'],
+    }
+    const texto =
+      '# Em que ordem?\n\n**O que preciso de você:** escolher a ordem.\n\n**Opções:**\n\n1. **Ordem alfabética** — pronto hoje.\n2. **Ordem do formulário** — mais meio dia.'
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify(corpo({ mensagens: [{ ...corpo().mensagens[0]!, texto }] })), {
+          status: 200,
+        }),
+    )
+    let liberar: (v: object) => void = () => {}
+    vi.mocked(enviarMensagemAcao).mockImplementationOnce(
+      () => new Promise((resolve) => (liberar = resolve)),
+    )
+    vi.mocked(enviarMensagemAcao).mockClear()
+    vi.mocked(responderRapidoAcao).mockClear()
+
+    render(
+      <TelaDecidir
+        itens={[decisao]}
+        guardados={[]}
+        conversas={{ [decisao.chave]: 'conv-9' }}
+        inicial={decisao.chave}
+        podeAgir
+      />,
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(screen.getByRole('region', { name: 'O que preciso de você' })).toHaveTextContent(
+      'escolher a ordem.',
+    )
+
+    const opcao = screen.getByRole('button', { name: '1. Ordem alfabética' })
+    fireEvent.click(opcao)
+    fireEvent.click(opcao)
+    expect(enviarMensagemAcao).toHaveBeenCalledTimes(1)
+    const form = vi.mocked(enviarMensagemAcao).mock.calls[0]![0] as FormData
+    expect(form.get('texto')).toBe('1. Ordem alfabética')
+    expect(responderRapidoAcao).not.toHaveBeenCalled()
+
+    await act(async () => {
+      liberar({})
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(responderRapidoAcao).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(responderRapidoAcao).mock.calls[0]![0]).toBe('conv-9')
+    expect(vi.mocked(responderRapidoAcao).mock.calls[0]![2]).toBe('responder_com_mensagem')
   })
 
   test('pilha vazia mostra "Nada esperando por você." com "Voltar ao Início"', () => {

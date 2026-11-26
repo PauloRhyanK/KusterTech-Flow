@@ -34,6 +34,14 @@ const PEDIDO: ItemDaPilha = {
 }
 
 describe('CabecalhoDoItem', () => {
+  test('a pergunta lida da mensagem vale no lugar da do item; sem ela, fica a do item', () => {
+    const { rerender } = render(<CabecalhoDoItem item={PEDIDO} pergunta="Escolher a ordem." />)
+    const destaque = () => screen.getByRole('region', { name: 'O que preciso de você' })
+    expect(within(destaque()).getByText('Escolher a ordem.')).toBeInTheDocument()
+    rerender(<CabecalhoDoItem item={PEDIDO} pergunta={null} />)
+    expect(within(destaque()).getByText(PEDIDO.pergunta)).toBeInTheDocument()
+  })
+
   test('CabecalhoDoItem mostra a linha, o título, "O QUE PRECISO DE VOCÊ" com a pergunta, até três fatos e o relato recolhido; texto com <img onerror> aparece literal', () => {
     const { container } = render(<CabecalhoDoItem item={PEDIDO} />)
     expect(screen.getByText('Ideia · Usuário · há 2 h')).toBeInTheDocument()
