@@ -23,24 +23,28 @@ const minutos = (de: Date, ate: Date) =>
 export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<DadosDoEscritorio> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
 
-  const recebido = await obterRetratoMaisRecente(sujeito)
-  const linhas = await db.demanda.findMany({
-    where: { encerrada: null },
-    select: {
-      id: true,
-      titulo: true,
-      etapas: true,
-      etapaAtual: true,
-      espera: true,
-      esperaDesde: true,
-      atualizadaEm: true,
-      criadaEm: true,
-      tipo: true,
-      destino: true,
-      repositorio: { select: { nomeCompleto: true } },
-      projeto: { select: { nome: true } },
-    },
-  })
+  // a fila de publicação não depende do resto: lê junto com o retrato e as demandas
+  const [recebido, linhas, tela] = await Promise.all([
+    obterRetratoMaisRecente(sujeito),
+    db.demanda.findMany({
+      where: { encerrada: null },
+      select: {
+        id: true,
+        titulo: true,
+        etapas: true,
+        etapaAtual: true,
+        espera: true,
+        esperaDesde: true,
+        atualizadaEm: true,
+        criadaEm: true,
+        tipo: true,
+        destino: true,
+        repositorio: { select: { nomeCompleto: true } },
+        projeto: { select: { nome: true } },
+      },
+    }),
+    moduloAtivo('fila-de-publicacao') ? obterTelaDePublicacao(sujeito, agora) : null,
+  ])
   const demandas: DemandaDaTela[] = linhas.map((d) => ({
     id: d.id,
     titulo: d.titulo,
@@ -112,9 +116,6 @@ export async function obterEscritorio(sujeito: Sujeito, agora: Date): Promise<Da
       })
     }
   }
-  const tela = moduloAtivo('fila-de-publicacao')
-    ? await obterTelaDePublicacao(sujeito, agora)
-    : null
   const publicacao = tela ? { linhas: tela.linhas, podeGerenciar: tela.podeGerenciar } : null
   return { escritorio, gestao, recebido, publicacao }
 }
