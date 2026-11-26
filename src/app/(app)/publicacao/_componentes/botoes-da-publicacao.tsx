@@ -4,7 +4,14 @@ import { useActionState } from 'react'
 import { BotaoDeConfirmacao } from '@/app/(app)/clientes/_componentes/botao-de-confirmacao'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
-import { definirPausaGeralAction, redefinirNoArAction, retomarFilaAction } from '../actions'
+import {
+  cancelarPedidoAction,
+  definirPausaGeralAction,
+  mudarModoDoPedidoAction,
+  publicarAgoraAction,
+  redefinirNoArAction,
+  retomarFilaAction,
+} from '../actions'
 
 export function BotaoDaPausaGeral({ pausada }: { pausada: boolean }) {
   const [estado, definir, pendente] = useActionState(definirPausaGeralAction, {})
@@ -49,6 +56,58 @@ export function BotaoDeRedefinirNoAr({ repositorioId }: { repositorioId: string 
         classeDoBotao="h-auto whitespace-normal py-1 text-left"
       />
       <MensagensDeEstado estado={{ erro: estado.erro }} />
+    </div>
+  )
+}
+
+export function BotaoDePublicarAgora({ repositorioId }: { repositorioId: string }) {
+  const [estado, publicar, pendente] = useActionState(publicarAgoraAction, {})
+  return (
+    <div className="space-y-2">
+      <form action={publicar}>
+        <input type="hidden" name="repositorioId" value={repositorioId} />
+        <Button type="submit" variant="outline" size="sm" aria-busy={pendente} disabled={pendente}>
+          Publicar agora
+        </Button>
+      </form>
+      <MensagensDeEstado estado={estado} />
+    </div>
+  )
+}
+
+export function BotaoDeMudarModo({
+  pedidoId,
+  modo,
+}: {
+  pedidoId: string
+  modo: 'imediato' | 'lote'
+}) {
+  const [estado, mudar, pendente] = useActionState(mudarModoDoPedidoAction, {})
+  return (
+    <div className="space-y-2">
+      <form action={mudar}>
+        <input type="hidden" name="pedidoId" value={pedidoId} />
+        <input type="hidden" name="modo" value={modo} />
+        <Button type="submit" variant="outline" size="sm" aria-busy={pendente} disabled={pendente}>
+          {modo === 'imediato' ? 'Mudar para imediato' : 'Mandar para o lote'}
+        </Button>
+      </form>
+      <MensagensDeEstado estado={estado} />
+    </div>
+  )
+}
+
+export function BotaoDeCancelarPedido({ pedidoId }: { pedidoId: string }) {
+  const [estado, cancelar, pendente] = useActionState(cancelarPedidoAction, {})
+  return (
+    <div className="space-y-2">
+      <form action={cancelar}>
+        <input type="hidden" name="pedidoId" value={pedidoId} />
+        <Button type="submit" variant="outline" size="sm" aria-busy={pendente} disabled={pendente}>
+          Cancelar
+        </Button>
+      </form>
+      <MensagensDeEstado estado={estado} />
     </div>
   )
 }
