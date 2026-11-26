@@ -10,6 +10,7 @@ import { gravarArquivo } from '@/modules/demandas/arquivos'
 import { MODELO_PADRAO } from '@/modules/demandas/model'
 import { obterPaginaDaDemanda } from '@/modules/demandas/queries'
 import { receberEventoDaFabrica } from '@/modules/demandas/recepcao-fabrica'
+import { separarDemanda } from '@/modules/demandas/cruzada-service'
 import { criarFonteDaFabrica } from '@/modules/fabrica/service'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { limparBanco } from './banco-de-teste'
@@ -536,4 +537,11 @@ test('triagem cruzada: Evidências de A batem com o ligar_erros e o juntar da F�
     'Juntada pela triagem a "Fechar pedido falha" (1 relato e 1 erro foram junto)',
   )
   expect(textosB).not.toContain('juntar')
+
+  // Separar: a história das duas cita a outra pelo título.
+  await separarDemanda(admin, b.id, AGORA)
+  const separadaA = (await obterPaginaDaDemanda(admin, a.id, AGORA))!.historico.map((h) => h.evento)
+  expect(separadaA).toContain('O Paulo separou "Pedido não fecha" desta demanda')
+  const separadaB = (await obterPaginaDaDemanda(admin, b.id, AGORA))!.historico.map((h) => h.evento)
+  expect(separadaB).toContain('Separada de "Fechar pedido falha"')
 })

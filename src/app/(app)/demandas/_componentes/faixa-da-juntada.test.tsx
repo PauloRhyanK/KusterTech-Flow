@@ -48,4 +48,16 @@ describe('FaixaDaJuntada', () => {
     rerender(<FaixaDaJuntada demandaId={B} juntadaEm={{ ...juntadaEm, relatos: 0 }} />)
     expect(screen.getByRole('region', { name: /Juntada a/ })).not.toHaveTextContent('relato')
   })
+
+  test('motivo que já termina em pontuação não ganha outro ponto', () => {
+    for (const motivo of ['mesma falha.', 'mesma falha!', 'mesma falha?', 'mesma falha…']) {
+      const { unmount } = render(
+        <FaixaDaJuntada demandaId={B} juntadaEm={{ ...juntadaEm, motivo, relatos: 0 }} />,
+      )
+      expect(screen.getByText(/A triagem viu o mesmo problema/).textContent).toBe(
+        `A triagem viu o mesmo problema: ${motivo}`,
+      )
+      unmount()
+    }
+  })
 })

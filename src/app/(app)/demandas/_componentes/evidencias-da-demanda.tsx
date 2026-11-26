@@ -43,7 +43,7 @@ export function BotaoSeparar({ demandaJuntadaId }: { demandaJuntadaId: string })
 
 function CabecalhoDoGrupo({ grupo }: { grupo: GrupoDeEvidencia }) {
   if (grupo.tipo === 'desta') return <>Desta demanda</>
-  if (grupo.tipo === 'ligado') return <>Ligado pela triagem (estava em observação no GlitchTip)</>
+  if (grupo.tipo === 'ligado') return <>Ligado pela triagem (estava sem demanda no GlitchTip)</>
   const de = grupo.de!
   return (
     <>

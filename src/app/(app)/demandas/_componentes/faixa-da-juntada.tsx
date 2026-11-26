@@ -9,6 +9,11 @@ function fraseDosRelatos(n: number): string | null {
     : `Os ${n} relatos desta demanda estão lá, e quem relatou recebe o andamento de lá.`
 }
 
+/** O motivo com ponto final, sem dobrar a pontuação que ele já traz. */
+function comPonto(motivo: string): string {
+  return /[.!?…]$/.test(motivo.trimEnd()) ? motivo.trimEnd() : `${motivo}.`
+}
+
 /** A demanda juntada pela triagem: o destino, o motivo e Separar, no lugar do conteúdo de trabalho. */
 export function FaixaDaJuntada({
   demandaId,
@@ -38,7 +43,8 @@ export function FaixaDaJuntada({
           </Link>
         </h2>
         <p className="text-[13px] text-text-secondary">
-          A triagem viu o mesmo problema: {juntadaEm.motivo}.{relatos && ` ${relatos}`}
+          A triagem viu o mesmo problema: {comPonto(juntadaEm.motivo)}
+          {relatos && ` ${relatos}`}
         </p>
       </div>
       {juntadaEm.podeSeparar && <BotaoSeparar demandaJuntadaId={demandaId} />}

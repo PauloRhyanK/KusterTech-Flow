@@ -775,7 +775,7 @@ async function juntadaEmDaDemanda(
   }
 }
 
-/** Os títulos das demandas citadas pela história (`juntada.em`, `evidencia_ligada.de`). */
+/** Os títulos das demandas citadas pela história (`juntada.em`, `evidencia_ligada.de`, `separada`). */
 async function titulosCitados(
   eventos: readonly { tipo: string; dados: unknown }[],
 ): Promise<Record<string, string>> {
@@ -786,7 +786,9 @@ async function titulosCitados(
         ? campo(e.dados, 'em')
         : e.tipo === 'evidencia_ligada'
           ? campo(e.dados, 'de')
-          : undefined
+          : e.tipo === 'separada'
+            ? (campo(e.dados, 'de') ?? campo(e.dados, 'separou'))
+            : undefined
     if (typeof id === 'string' && UUID.test(id)) ids.add(id)
   }
   if (ids.size === 0) return {}

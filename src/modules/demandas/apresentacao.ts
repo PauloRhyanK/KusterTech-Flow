@@ -1002,7 +1002,7 @@ function oQueFoiJunto(relatos: number, erros: number): string {
 
 /**
  * O texto de um evento na história. `titulos` traz os títulos das demandas citadas pelo id
- * (`juntada.em`, `evidencia_ligada.de`); sem o título, o texto diz "outra demanda".
+ * (`juntada.em`, `evidencia_ligada.de`, `separada.de`/`separou`); sem o título, o texto diz "outra demanda".
  */
 export function textoDoEvento(
   tipo: string,
@@ -1020,6 +1020,10 @@ export function textoDoEvento(
   }
   if (tipo === 'evidencia_ligada')
     return `A triagem juntou ${outra(d.de)}: ${String(d.motivo ?? '')}`
+  if (tipo === 'separada' && d.separou !== undefined) {
+    return `O Paulo separou ${outra(d.separou)} desta demanda`
+  }
+  if (tipo === 'separada' && d.de !== undefined) return `Separada de ${outra(d.de)}`
   if (tipo === 'dividida') {
     return `A triagem dividiu em ${qtd(d.novas) + 1} demandas: ${String(d.motivo ?? '')}`
   }

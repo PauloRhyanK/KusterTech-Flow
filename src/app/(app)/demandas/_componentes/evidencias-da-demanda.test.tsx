@@ -84,7 +84,9 @@ describe('EvidenciasDaDemanda', () => {
       `/demandas/${B}`,
     )
     expect(screen.getByText(/mesma falha sem itens/)).toBeInTheDocument()
-    expect(screen.getByText(/Ligado pela triagem/)).toBeInTheDocument()
+    expect(
+      screen.getByText('Ligado pela triagem (estava sem demanda no GlitchTip)'),
+    ).toBeInTheDocument()
   })
 
   test('relato: trecho entre aspas, papel, canal e tela; "Ver relato"', () => {

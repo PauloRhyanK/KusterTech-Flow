@@ -892,8 +892,16 @@ describe('triagem cruzada: textos da história', () => {
       'A triagem dividiu em 3 demandas: dois problemas',
     )
     expect(textoDoEvento('veio_de', { de: 'a1' })).toBe('Veio da divisão de outra demanda')
-    expect(textoDoEvento('separada', { de: 'a1' })).toBe('Separada pelo Paulo')
-    expect(textoDoEvento('separada', { separou: 'b1' })).toBe('Separada pelo Paulo')
+    expect(textoDoEvento('separada', { de: 'a1' }, titulos)).toBe(
+      'Separada de "Fechar pedido falha"',
+    )
+    expect(textoDoEvento('separada', { separou: 'b1' }, titulos)).toBe(
+      'O Paulo separou "Pedido não fecha" desta demanda',
+    )
+    expect(textoDoEvento('separada', { de: 'x' })).toBe('Separada de outra demanda')
+    expect(textoDoEvento('separada', { separou: 'x' })).toBe(
+      'O Paulo separou outra demanda desta demanda',
+    )
   })
 
   test('juntada: plural certo, sem as partes zeradas e sem parênteses quando nada foi', () => {
