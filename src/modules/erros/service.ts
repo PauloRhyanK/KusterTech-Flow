@@ -338,6 +338,8 @@ function abertasNoDia(tx: Prisma.TransactionClient, agora: Date): Promise<number
       demanda: {
         origem: 'GLITCHTIP',
         OR: [{ encerrada: null }, { encerrada: { not: 'juntada' } }],
+        // As partes de uma divisão vêm da triagem, não do GlitchTip: não ocupam a vaga do dia.
+        divididaDeId: null,
       },
     },
   })
@@ -360,20 +362,17 @@ async function abrirParaOErro(
     usuarioId?: string
   },
 ): Promise<string> {
+  // Os parecidos ficam travados até o commit; os que um `ligar_erros` da triagem está ligando
+  // (linha já travada por ele) ficam de fora, sem espera: a descrição lista só os que vêm junto.
   const parecidos =
     e.anterior || e.grupo === ''
       ? []
-      : await tx.erroDoGlitchTip.findMany({
-          where: {
-            projetoGlitchTip: e.slug,
-            grupo: e.grupo,
-            issueId: { not: e.issue.id },
-            demandaId: null,
-            resolvidoEm: null,
-          },
-          select: { issueId: true, titulo: true, link: true },
-          orderBy: { ultimoEm: 'desc' },
-        })
+      : await tx.$queryRaw<{ issueId: string; titulo: string; link: string }[]>`
+          SELECT "issueId", "titulo", "link" FROM "ErroDoGlitchTip"
+          WHERE "projetoGlitchTip" = ${e.slug} AND "grupo" = ${e.grupo}
+            AND "issueId" <> ${e.issue.id} AND "demandaId" IS NULL AND "resolvidoEm" IS NULL
+          ORDER BY "ultimoEm" DESC
+          FOR UPDATE SKIP LOCKED`
   const aberta = await abrirDemanda(
     tx,
     {
@@ -399,7 +398,11 @@ async function abrirParaOErro(
   })
   if (parecidos.length > 0) {
     await tx.erroDoGlitchTip.updateMany({
-      where: { issueId: { in: parecidos.map((p) => p.issueId) } },
+      where: {
+        issueId: { in: parecidos.map((p) => p.issueId) },
+        demandaId: null,
+        resolvidoEm: null,
+      },
       data: { demandaId: aberta.id, esperaDesde: null },
     })
   }
