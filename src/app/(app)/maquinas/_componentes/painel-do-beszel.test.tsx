@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DetalheNoBeszel } from '@/modules/beszel/model'
 import { PainelDoBeszel } from './painel-do-beszel'
 
@@ -124,6 +124,27 @@ describe('PainelDoBeszel', () => {
     expect(within(quadro('CPU')).getByText('Última leitura, há 12 min')).toBeInTheDocument()
     expect(screen.getByText('Contêineres · última leitura')).toBeInTheDocument()
     expect(screen.queryByText(/^No ar/)).toBeNull()
+  })
+
+  it('dois contêineres com o mesmo nome aparecem os dois, sem chave repetida', () => {
+    const erro = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const repetido = {
+      nome: 'app-web-1',
+      cpuPct: 1,
+      memoriaBytes: 10 * MB,
+      desde: '1 dia',
+      saude: 'sem_checagem' as const,
+    }
+    render(
+      <PainelDoBeszel
+        detalhe={detalhe({ containersDetalhe: [repetido, { ...repetido, cpuPct: 2 }] })}
+        agora={AGORA}
+        link={null}
+      />,
+    )
+    expect(screen.getAllByText('app-web-1')).toHaveLength(2)
+    expect(erro.mock.calls.flat().join(' ')).not.toMatch(/same key/)
+    erro.mockRestore()
   })
 
   it('sem histórico ainda', () => {
