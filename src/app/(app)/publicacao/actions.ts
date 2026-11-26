@@ -151,8 +151,10 @@ export async function publicarAgoraAction(
   try {
     const resultado = await publicarAgora(sessao.sujeito, parse.data.repositorioId)
     revalidarFila()
-    if (resultado.estado === 'na_fila') return { sucesso: 'Publicação pedida.' }
-    return { erro: resultado.motivo ?? MENSAGEM_GENERICA }
+    if (resultado.estado === 'recusado') return { erro: resultado.motivo ?? MENSAGEM_GENERICA }
+    // Um segundo clique é dispensado: não é erro.
+    if (resultado.estado === 'dispensado') return { sucesso: `Nada a fazer: ${resultado.motivo}.` }
+    return { sucesso: 'Publicação pedida.' }
   } catch (erro) {
     return traduzirErro(erro, 'pedir a publicação')
   }

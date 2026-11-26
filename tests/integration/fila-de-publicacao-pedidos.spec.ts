@@ -10,7 +10,10 @@ const PORTAL = 'kustertech-exemplo/portal'
 let admin: Sujeito
 let repositorioId: string
 
-async function criarPedido(estado: 'NA_FILA' | 'VERIFICANDO', atendidoPorId: string | null = null) {
+async function criarPedido(
+  estado: 'NA_FILA' | 'VERIFICANDO' | 'PUBLICANDO',
+  atendidoPorId: string | null = null,
+) {
   return db.pedidoDePublicacao.create({
     data: { repositorioId, commit: 'a'.repeat(40), modo: 'LOTE', estado, atendidoPorId },
   })
@@ -93,5 +96,26 @@ describe('cancelarPedido', () => {
       papeis: [{ papel: 'TESTADOR', clienteId: null }],
     }
     await expect(cancelarPedido(testador, pedido.id)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+  })
+})
+
+describe('pedido que o worker já pegou', () => {
+  test('recusa NA_FILA com atendidoPorId preenchido', async () => {
+    const pedido = await criarPedido('NA_FILA', 'worker-1')
+    await expect(cancelarPedido(admin, pedido.id)).rejects.toBeInstanceOf(ErroDeDominio)
+    await expect(mudarModoDoPedido(admin, pedido.id, 'imediato')).rejects.toBeInstanceOf(
+      ErroDeDominio,
+    )
+    const depois = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id: pedido.id } })
+    expect(depois).toMatchObject({ estado: 'NA_FILA', modo: 'LOTE', concluidoEm: null })
+  })
+
+  test('recusa PUBLICANDO', async () => {
+    const pedido = await criarPedido('PUBLICANDO')
+    const mensagem = new ErroDeDominio('Este pedido já está sendo publicado.')
+    await expect(cancelarPedido(admin, pedido.id)).rejects.toThrow(mensagem)
+    await expect(mudarModoDoPedido(admin, pedido.id, 'imediato')).rejects.toThrow(mensagem)
+    const depois = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id: pedido.id } })
+    expect(depois.estado).toBe('PUBLICANDO')
   })
 })
