@@ -155,10 +155,11 @@ function Containers({
               </tr>
             </thead>
             <tbody>
-              {containers.map((c) => {
+              {containers.map((c, i) => {
                 const saude = SAUDE[c.saude]
                 return (
-                  <tr key={c.nome}>
+                  // O nome pode se repetir (dois projetos do compose com o mesmo nome de serviço).
+                  <tr key={`${i}-${c.nome}`}>
                     <td className={`${CELULA} font-mono text-[12.5px] [overflow-wrap:anywhere]`}>
                       {c.nome}
                     </td>
