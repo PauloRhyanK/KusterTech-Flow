@@ -123,6 +123,54 @@ describe('PainelDaFabrica', () => {
     expect(screen.getByText('Vagas reduzidas por falta de memória')).toBeInTheDocument()
   })
 
+  test('em secao="avisos", as arbitragens aparecem como "Resolvido sem você", com o que travou, o que foi decidido e o PR; sem arbitragem, a seção não aparece', () => {
+    const sem = render(
+      <PainelDaFabrica secao="avisos" permitido retrato={retratoRecebido()} agora={AGORA} />,
+    )
+    expect(screen.queryByRole('region', { name: 'Resolvido sem você' })).toBeNull()
+    sem.unmount()
+
+    const recebido = retratoRecebido()
+    recebido.retrato.arbitragens = [
+      {
+        em: '2026-11-03T21:00:00Z',
+        repo: 'dono/cliente',
+        feature: 'Login',
+        assunto: 'Teste cobrava a ordem das chaves',
+        travou: 'Um teste exigia uma ordem que a linguagem não garante.',
+        decidido: 'O teste confere o conteúdo, não a ordem.',
+        muda: 'Nada.',
+        prUrl: 'https://github.com/dono/cliente/pull/95',
+      },
+      {
+        em: '2026-11-02T10:00:00Z',
+        repo: 'dono/outro',
+        feature: 'Cobrança',
+        assunto: 'Duas etapas editavam o mesmo arquivo',
+        travou: null,
+        decidido: null,
+        muda: null,
+        prUrl: null,
+      },
+    ]
+    render(<PainelDaFabrica secao="avisos" permitido retrato={recebido} agora={AGORA} />)
+    const secao = screen.getByRole('region', { name: 'Resolvido sem você' })
+    const itens = within(secao).getAllByRole('listitem')
+    expect(itens).toHaveLength(2)
+    expect(itens[0]).toHaveTextContent('Teste cobrava a ordem das chaves')
+    expect(itens[0]).toHaveTextContent('dono/cliente · Login')
+    expect(itens[0]).toHaveTextContent('O que travou')
+    expect(itens[0]).toHaveTextContent('O teste confere o conteúdo, não a ordem.')
+    expect(itens[0]).toHaveTextContent('Muda para o produto')
+    expect(within(itens[0]!).getByRole('link', { name: /Ver o PR/ })).toHaveAttribute(
+      'href',
+      'https://github.com/dono/cliente/pull/95',
+    )
+    expect(itens[1]).toHaveTextContent('Duas etapas editavam o mesmo arquivo')
+    expect(within(itens[1]!).queryByRole('link')).toBeNull()
+    expect(itens[1]).not.toHaveTextContent('O que travou')
+  })
+
   test('em secao="planos" não renderiza "Avisos"', () => {
     render(<PainelDaFabrica secao="planos" permitido retrato={retratoRecebido()} agora={AGORA} />)
 

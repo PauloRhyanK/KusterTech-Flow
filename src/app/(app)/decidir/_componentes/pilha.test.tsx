@@ -34,6 +34,26 @@ function item(n: number, extra: Partial<ItemDaPilha> = {}): ItemDaPilha {
 const SETE = [1, 2, 3, 4, 5, 6, 7].map((n) => item(n))
 
 describe('Pilha', () => {
+  test('com decisões resolvidas sem o Paulo na semana, mostra a contagem com link para os avisos da Fábrica; com zero, nada', () => {
+    const props = {
+      itens: SETE,
+      atual: 0,
+      guardados: [],
+      onEscolher: vi.fn(),
+      onTrazerDeVolta: vi.fn(),
+    }
+    const sem = render(<Pilha {...props} />)
+    expect(screen.queryByText(/sem você/)).toBeNull()
+    sem.unmount()
+
+    render(<Pilha {...props} resolvidasSemVoce={2} />)
+    expect(screen.getByText(/A Fábrica resolveu 2 sem você nesta semana\./)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Ver o que foi decidido/ })).toHaveAttribute(
+      'href',
+      '/fabrica/avisos',
+    )
+  })
+
   test('Pilha mostra "3 de 7 · faltam 5", a barra de progresso e marca o item atual com aria-current', () => {
     const onEscolher = vi.fn()
     render(

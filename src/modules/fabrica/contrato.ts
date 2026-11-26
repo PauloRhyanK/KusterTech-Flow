@@ -7,6 +7,7 @@ export const LIMITES = {
   fases: 20,
   raias: 50,
   consertos: 20,
+  arbitragens: 20,
   /** título de decisão, aviso e `pausado` */
   textoLongo: 300,
   /** demais textos */
@@ -92,6 +93,18 @@ const conserto = z.strictObject({
   em: instante,
 })
 
+// O que o árbitro técnico resolveu sem chamar o Paulo (`arbitragens` do estado de cada plano).
+const arbitragem = z.strictObject({
+  em: instante,
+  repo: texto,
+  feature: texto,
+  assunto: textoLongo,
+  travou: textoLongo.nullable(),
+  decidido: textoLongo.nullable(),
+  muda: textoLongo.nullable(),
+  prUrl: urlGithub.nullable(),
+})
+
 export const retratoV1Schema = z.strictObject({
   versao: z.literal(1),
   geradoEm: instante,
@@ -109,6 +122,8 @@ export const retratoV1Schema = z.strictObject({
   avisos: z.array(z.strictObject({ em: instante, mensagem: textoLongo })).max(LIMITES.avisos),
   /** Opcional: o coordenador sem consertos (ou o antigo) manda o v1 de sempre. */
   consertos: z.array(conserto).max(LIMITES.consertos).optional(),
+  /** Opcional: só vem quando o árbitro técnico resolveu algo; o kit antigo não manda. */
+  arbitragens: z.array(arbitragem).max(LIMITES.arbitragens).optional(),
 })
 
 export type RetratoV1 = z.infer<typeof retratoV1Schema>

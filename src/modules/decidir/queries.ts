@@ -4,6 +4,7 @@ import { log } from '@/lib/log'
 import { moduloAtivo } from '@/lib/modulos'
 import { podeVerVisaoGlobal } from '@/modules/clientes/model'
 import type { Retrato } from '@/modules/fabrica/contrato'
+import { resolvidasNaSemana } from '@/modules/fabrica/model'
 import { lerRetratoMaisRecente, obterRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { avisosParaODecidir } from '@/modules/fila-de-publicacao/queries'
 import { resumirErroParaLog } from '@/modules/github/model'
@@ -242,6 +243,8 @@ export interface PilhaDoDecidir {
   guardados: ItemDaPilha[]
   /** Chave do item → id da conversa aberta dele. */
   conversas: Record<string, string>
+  /** Perguntas técnicas que a Fábrica resolveu sozinha nos últimos 7 dias (do último retrato). */
+  resolvidasSemVoce: number
 }
 
 /** A pilha do Paulo: o que espera resposta (demandas e decisões do último retrato), na ordem do model. */
@@ -300,7 +303,12 @@ export async function obterPilha(sujeito: Sujeito, agora: Date): Promise<PilhaDo
   for (const c of linhas) {
     if (c.encerradaEm === null && naPilha.has(c.chave)) conversas[c.chave] = c.id
   }
-  return { itens, guardados, conversas }
+  return {
+    itens,
+    guardados,
+    conversas,
+    resolvidasSemVoce: resolvidasNaSemana(recebido?.retrato.arbitragens, agora),
+  }
 }
 
 /** O número do menu; `null` sem permissão, sem o módulo ou com falha de leitura (nunca quebra o layout). */

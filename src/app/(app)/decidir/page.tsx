@@ -38,6 +38,7 @@ export default async function PaginaDoDecidir({
       conversas={pilha.conversas}
       inicial={inicial}
       podeAgir={autorizar(sessao.sujeito, 'projetos.gerenciar')}
+      resolvidasSemVoce={pilha.resolvidasSemVoce}
     />
   )
 }

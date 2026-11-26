@@ -179,6 +179,39 @@ describe('contrato do retrato v1', () => {
 
 const cloneV2 = () => structuredClone(exemploV2) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
+describe('arbitragens no retrato', () => {
+  const ARBITRAGEM = {
+    em: '2026-11-03T21:00:00Z',
+    repo: 'dono/cliente',
+    feature: 'Login',
+    assunto: 'Teste cobrava a ordem das chaves',
+    travou: 'Um teste exigia uma ordem que a linguagem não garante.',
+    decidido: 'O teste confere o conteúdo, não a ordem.',
+    muda: 'Nada.',
+    prUrl: 'https://github.com/dono/cliente/pull/95',
+  }
+
+  test('sem o campo continua válido; com o campo, v1 e v2 aceitam, inclusive com os textos nulos', () => {
+    expect(retratoV1Schema.safeParse(exemplo).success).toBe(true)
+    const nula = { ...ARBITRAGEM, travou: null, decidido: null, muda: null, prUrl: null }
+    expect(retratoV1Schema.safeParse({ ...clone(), arbitragens: [ARBITRAGEM, nula] }).success).toBe(
+      true,
+    )
+    expect(
+      retratoV2Schema.safeParse({ ...structuredClone(exemploV2), arbitragens: [ARBITRAGEM] })
+        .success,
+    ).toBe(true)
+  })
+
+  test('recusa campo desconhecido, PR fora do GitHub, assunto vazio e mais de 20', () => {
+    const com = (a: object[]) => retratoV1Schema.safeParse({ ...clone(), arbitragens: a }).success
+    expect(com([{ ...ARBITRAGEM, corpo: 'x' }])).toBe(false)
+    expect(com([{ ...ARBITRAGEM, prUrl: 'https://fora.example/1' }])).toBe(false)
+    expect(com([{ ...ARBITRAGEM, assunto: '' }])).toBe(false)
+    expect(com(Array.from({ length: LIMITES.arbitragens + 1 }, () => ARBITRAGEM))).toBe(false)
+  })
+})
+
 describe('contrato do retrato v2 (escritório da Fábrica)', () => {
   test('o exemplo v2 passa no esquema v2 e na união', () => {
     expect(retratoV2Schema.safeParse(exemploV2).success).toBe(true)

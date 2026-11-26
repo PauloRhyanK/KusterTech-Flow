@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'vitest'
 import {
+  contasEsgotadas,
   decidirGravacaoDoRetrato,
   extrairTokenDaFabrica,
   hashDoTokenDaFabrica,
   LIMITE_DO_CORPO_DO_RETRATO,
   minutosDeAtraso,
-  PREFIXO_DO_TOKEN_DA_FABRICA,
-  contasEsgotadas,
   planosEmCurso,
+  PREFIXO_DO_TOKEN_DA_FABRICA,
+  resolvidasNaSemana,
   resumirPlano,
   retratoDesatualizado,
   rotuloDoExecutor,
@@ -190,5 +191,20 @@ describe('fabrica / executor e contas', () => {
 
   test('contasEsgotadas sem o campo contas devolve vazio', () => {
     expect(contasEsgotadas({} as RetratoV2, AGORA)).toEqual([])
+  })
+})
+
+describe('resolvidasNaSemana', () => {
+  const agora = new Date('2026-11-26T12:00:00Z')
+  const em = (iso: string) => ({ em: iso })
+
+  test('conta só as arbitragens dos últimos 7 dias; sem o campo, zero', () => {
+    expect(resolvidasNaSemana(undefined, agora)).toBe(0)
+    expect(
+      resolvidasNaSemana(
+        [em('2026-11-26T11:00:00Z'), em('2026-11-19T12:00:01Z'), em('2026-11-19T11:59:59Z')],
+        agora,
+      ),
+    ).toBe(2)
   })
 })

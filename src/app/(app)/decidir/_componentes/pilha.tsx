@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -78,6 +79,7 @@ export function Pilha({
   onEscolher,
   onTrazerDeVolta,
   pendente = false,
+  resolvidasSemVoce = 0,
 }: {
   itens: readonly ItemDaPilha[]
   atual: number
@@ -85,6 +87,8 @@ export function Pilha({
   onEscolher: (indice: number) => void
   onTrazerDeVolta: (chave: string) => void
   pendente?: boolean
+  /** Perguntas técnicas que a Fábrica resolveu sozinha nos últimos 7 dias. */
+  resolvidasSemVoce?: number
 }) {
   const total = itens.length
   const texto = textoDaPosicao(atual + 1, total)
@@ -121,6 +125,17 @@ export function Pilha({
         ))}
       </ol>
       <Guardados guardados={guardados} onTrazerDeVolta={onTrazerDeVolta} pendente={pendente} />
+      {resolvidasSemVoce > 0 && (
+        <p className="mt-3.5 border-t border-border pt-3 text-[12.5px] leading-snug text-text-secondary">
+          {`A Fábrica resolveu ${resolvidasSemVoce} sem você nesta semana. `}
+          <Link
+            href="/fabrica/avisos"
+            className="font-[600] text-text-link underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+          >
+            Ver o que foi decidido →
+          </Link>
+        </p>
+      )}
     </nav>
   )
 }
