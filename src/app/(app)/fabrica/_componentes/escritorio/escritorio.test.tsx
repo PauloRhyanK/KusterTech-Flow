@@ -53,16 +53,3 @@ test('sem espera, a faixa "Esperando você" não aparece', () => {
   render(montar())
   expect(screen.queryByRole('region', { name: 'Esperando você' })).toBeNull()
 })
-
-test('o quadro de erros aparece logo depois das esperas do Paulo', () => {
-  render(
-    <Escritorio
-      escritorio={escritorioDeTeste()}
-      gestao={{}}
-      agora={AGORA.toISOString()}
-      tecnico={<i>tec</i>}
-      erros={<section aria-label="Erros no ar">quadro</section>}
-    />,
-  )
-  expect(screen.getByRole('region', { name: 'Erros no ar' })).toBeInTheDocument()
-})

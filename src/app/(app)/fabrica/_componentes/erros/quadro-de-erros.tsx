@@ -104,7 +104,8 @@ export function ErrosNoAr({ quadro: q, agora }: { quadro: QuadroDeErros; agora: 
   const visiveis = q.linhas.slice(0, VISIVEIS)
   const resto = q.linhas.slice(VISIVEIS)
   return (
-    <section aria-labelledby="erros-no-ar" className="space-y-2">
+    // Grade com minmax(0,1fr): os títulos com `truncate` não alargam a coluna principal da página.
+    <section aria-labelledby="erros-no-ar" className="grid grid-cols-[minmax(0,1fr)] gap-2">
       {q.configurado && velha ? (
         <p className="rounded-padrao border border-atencao/30 bg-tonal-atencao px-4 py-3 text-sm text-text-secondary">
           <b className="text-atencao">Espera você: </b>

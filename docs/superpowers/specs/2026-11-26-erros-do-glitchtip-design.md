@@ -9,7 +9,7 @@
 
 Os sistemas em produção mandam os erros ao GlitchTip pelo SDK do Sentry. Hoje um erro novo só é visto se alguém abrir o GlitchTip. O Paulo quer que todo erro novo vire uma demanda na Fábrica sozinho, que a página Fábrica mostre os erros sendo atualizados, e abrir o GlitchTip só para ver detalhes.
 
-**Sucesso é:** um erro novo dispara num sistema; em poucos minutos ele aparece no quadro "Erros no ar" da página Fábrica, com uma demanda aberta que a Fábrica pega na busca seguinte; o quadro acompanha a contagem e o estado da correção; se o erro voltar depois de a correção ir ao ar, abre uma demanda nova ligada à anterior.
+**Sucesso é:** um erro novo dispara num sistema; em poucos minutos ele aparece no quadro "Erros no ar" da aba Erros da página Fábrica, com uma demanda aberta que a Fábrica pega na busca seguinte; o quadro acompanha a contagem e o estado da correção; se o erro voltar depois de a correção ir ao ar, abre uma demanda nova ligada à anterior.
 
 ## 2. O que o Paulo disse e o que é premissa
 
@@ -20,7 +20,7 @@ Os sistemas em produção mandam os erros ao GlitchTip pelo SDK do Sentry. Hoje 
 - Todo erro novo de nível error ou fatal vira demanda, com teto por projeto por hora.
 - O mapa entre projeto do GlitchTip e repositório fica no `.env` da oficina, sem tela.
 - A demanda entra no nível padrão do projeto; a triagem da Fábrica decide o destino.
-- Quem busca é o worker do Flow; a visualização fica na página Fábrica.
+- Quem busca é o worker do Flow; a visualização fica numa aba própria, **Erros**, da página Fábrica (26/11: no escritório fica só o que está sendo trabalhado, a demanda de correção).
 
 **Premissas:**
 
@@ -125,13 +125,12 @@ Nada de dados de usuário final é guardado: só contagens.
 
 Desenho aprovado: [`01-erros.html`](desenhos/2026-11-26-erros/01-erros.html).
 
-- Quadro **Erros no ar** na página Fábrica, entre "Espera você" e o escritório, visível com `desenvolvimento.ler` e o módulo `erros` ativo.
+- Aba **Erros** na página Fábrica (`/fabrica/erros`), ao lado de Escritório e Avisos, com o quadro **Erros no ar**; visível com `desenvolvimento.ler` e o módulo `erros` ativo (sem o módulo, a aba some e a rota dá 404). O contador da aba soma os erros novos e os que voltaram. O escritório não muda: a correção aparece nele como qualquer demanda.
 - Cabeçalho: os números por estado (novo, em correção, voltou, na espera) e "GlitchTip lido há N min".
 - Linha: bolinha do nível (fatal com halo), título, projeto e onde (mono), barrinhas, eventos, usuários e último evento, estado com uma linha de detalhe, e os links "Demanda" e "Detalhes ↗" (a issue no GlitchTip, em nova aba, com `rel="noopener noreferrer"`).
 - Vazio: "Nenhum erro aberto nos N projetos lidos" e o link para os corrigidos dos últimos 7 dias.
 - Falha: sem leitura com sucesso há mais de 30 min, o cabeçalho diz em vermelho há quanto tempo e por quê, e "Espera você" ganha o item "O GlitchTip não responde há N min (motivo)". Os números ficam com "até a última leitura".
 - Celular: a mesma lista, sem barrinhas, com estado e volume numa linha.
-- A página atualiza como hoje (o componente `Atualizar` da página Fábrica).
 
 ## 9. Falhas
 
