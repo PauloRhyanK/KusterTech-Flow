@@ -28,7 +28,7 @@ export type Espera =
   | 'teste_falhou'
 
 /** `descartada`: o Paulo encerrou a demanda antes do fim (a Fábrica para de trabalhar nela). */
-export type Encerramento = 'entregue' | 'no_ar' | 'orientada' | 'descartada'
+export type Encerramento = 'entregue' | 'no_ar' | 'orientada' | 'descartada' | 'juntada'
 
 export interface EstadoDaDemanda {
   etapaAtual: string

@@ -114,6 +114,7 @@ describe('rotuloDoEstado', () => {
       tom: 'erro',
     })
     expect(r({})).toEqual({ texto: 'Triagem', tom: 'neutro' })
+    expect(r({ encerrada: 'juntada' })).toEqual({ texto: 'Juntada', tom: 'neutro' })
     expect(r({ etapaAtual: 'planejada' }).texto).toBe('Planejando')
     expect(r({ etapaAtual: 'desenho' }).texto).toBe('Desenhando')
     expect(r({ etapaAtual: 'desenvolvida' }).texto).toBe('Desenvolvendo')

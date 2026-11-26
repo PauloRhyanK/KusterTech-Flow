@@ -161,6 +161,7 @@ export function rotuloDoEstado(d: DemandaNaLista): { texto: string; tom: TomDaDe
   }
   if (d.encerrada === 'orientada') return { texto: 'Orientada', tom: 'neutro' }
   if (d.encerrada === 'descartada') return { texto: 'Encerrada', tom: 'neutro' }
+  if (d.encerrada === 'juntada') return { texto: 'Juntada', tom: 'neutro' }
   const marco = etapa?.marco ?? null
   if (marco === 'recebida') return { texto: TEXTO_DO_MARCO.recebida, tom: 'neutro' }
   if (marco === null) return { texto: `Em ${rotulo}`, tom: 'execucao' }
