@@ -5,6 +5,7 @@ import {
   aposFalha,
   avaliarPedido,
   classificarChegada,
+  commitQueSegueMain,
   contarPublicacoesAusentes,
   decidirConferencia,
   decidirConserto,
@@ -135,6 +136,24 @@ describe('classificarChegada', () => {
     expect(classificarChegada({ ...ok, pendentes: [{ id: 'p1', commit: sha('c') }] })).toEqual({
       resultado: 'aceito',
     })
+  })
+})
+
+describe('commitQueSegueMain', () => {
+  test('pedido sem commit (ainda não resolvido) pega a cabeça de main', () => {
+    expect(commitQueSegueMain({ commit: null, segueMain: false }, 'c2')).toBe('c2')
+  })
+
+  test('pedido que segue main e ficou para trás passa para a cabeça nova', () => {
+    expect(commitQueSegueMain({ commit: 'c1', segueMain: true }, 'c2')).toBe('c2')
+  })
+
+  test('pedido que segue main já na cabeça não muda', () => {
+    expect(commitQueSegueMain({ commit: 'c2', segueMain: true }, 'c2')).toBeNull()
+  })
+
+  test('pedido com commit escolhido por quem pediu nunca muda', () => {
+    expect(commitQueSegueMain({ commit: 'c1', segueMain: false }, 'c2')).toBeNull()
   })
 })
 

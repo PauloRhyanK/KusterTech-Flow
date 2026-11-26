@@ -22,6 +22,7 @@ import { avancarConsertosComPr, desistirNaParte } from './consertos'
 import {
   aposFalha,
   avaliarPedido,
+  commitQueSegueMain,
   contarPublicacoesAusentes,
   decidirConferencia,
   decidirConserto,
@@ -422,26 +423,42 @@ class CicloDoRepositorio {
     })
   }
 
-  /** Passo 2: "Publicar agora" pede a cabeça de main sem saber qual é. */
+  /**
+   * Passo 2: o pedido sem commit ("Publicar agora", Fábrica) vale a cabeça de main e a segue até o
+   * disparo: um pedido que esperou a vez não publica a cabeça de quando chegou.
+   */
   private async resolverCommits() {
-    const semCommit = await db.pedidoDePublicacao.findMany({
-      where: { repositorioId: this.repo.id, estado: { in: [...EM_ESPERA] }, commit: null },
-      select: { id: true },
+    const daCabeca = await db.pedidoDePublicacao.findMany({
+      where: {
+        repositorioId: this.repo.id,
+        estado: { in: [...EM_ESPERA] },
+        atendidoPorId: null,
+        OR: [{ commit: null }, { segueMain: true }],
+      },
+      select: { id: true, commit: true, segueMain: true },
     })
-    if (semCommit.length === 0) return
+    if (daCabeca.length === 0) return
     const { sha } = await this.lerCabeca()
+    const trocas = daCabeca.filter((p) => commitQueSegueMain(p, sha) !== null)
+    if (trocas.length === 0) return
+    const mudam = trocas.map((p) => p.id)
     await comTrava(this.repo.id, async (tx) => {
-      const ids = semCommit.map((p) => p.id)
+      // Revalidado sob a trava: só o que ainda espera a vez muda; a verificação e os checks recomeçam.
       await tx.pedidoDePublicacao.updateMany({
-        where: { id: { in: ids }, commit: null },
-        data: { commit: sha },
+        where: {
+          id: { in: mudam },
+          estado: { in: [...EM_ESPERA] },
+          atendidoPorId: null,
+          OR: [{ commit: null }, { segueMain: true }],
+        },
+        data: { commit: sha, segueMain: true, verificadoContra: null, checks: null },
       })
-      // As partes ligadas a esses pedidos (kit v1, que pede sem commit) herdam o commit resolvido,
-      // num SAVEPOINT: a falha do lado das demandas não desfaz o commit do pedido.
+      // As partes ligadas a esses pedidos (kit v1, que pede sem commit) acompanham o commit, num
+      // SAVEPOINT: a falha do lado das demandas não desfaz o commit do pedido.
       if (!moduloAtivo('demandas')) return
       await tx.$executeRaw`SAVEPOINT commit_das_partes`
       try {
-        await herdarCommitDosPedidos(tx, ids, sha)
+        await herdarCommitDosPedidos(tx, trocas, sha)
         await tx.$executeRaw`RELEASE SAVEPOINT commit_das_partes`
       } catch (erro) {
         await tx.$executeRaw`ROLLBACK TO SAVEPOINT commit_das_partes`

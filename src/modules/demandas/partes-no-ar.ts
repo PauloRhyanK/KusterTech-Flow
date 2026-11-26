@@ -345,21 +345,25 @@ export async function ligarCorrecaoNaParte(
   await tx.parteDaDemanda.update({ where: { id: parte.id }, data: { pedidoId: correcaoId } })
 }
 
-/** O worker resolveu o commit de pedidos sem commit: as partes ligadas a eles o herdam. */
+/**
+ * O worker resolveu ou moveu o commit de pedidos que seguem main: as partes ligadas a eles herdam o
+ * commit novo quando estavam sem commit ou com o anterior do pedido (o que um push forçado pode ter
+ * apagado de main). O commit escolhido para a parte, diferente do do pedido, fica.
+ */
 export async function herdarCommitDosPedidos(
   tx: Tx,
-  pedidoIds: readonly string[],
+  pedidos: readonly { id: string; commit: string | null }[],
   commit: string,
 ): Promise<void> {
-  if (pedidoIds.length === 0) return
-  const partes = await tx.parteDaDemanda.findMany({
-    where: { pedidoId: { in: [...pedidoIds] }, commitAlvo: null },
-    select: { demandaId: true },
-  })
+  if (pedidos.length === 0) return
+  const onde = {
+    OR: pedidos.map((p) => ({
+      pedidoId: p.id,
+      OR: [{ commitAlvo: null }, ...(p.commit ? [{ commitAlvo: p.commit }] : [])],
+    })),
+  }
+  const partes = await tx.parteDaDemanda.findMany({ where: onde, select: { demandaId: true } })
   if (partes.length === 0) return
   await travarDemandas(tx, [...new Set(partes.map((p) => p.demandaId))])
-  await tx.parteDaDemanda.updateMany({
-    where: { pedidoId: { in: [...pedidoIds] }, commitAlvo: null },
-    data: { commitAlvo: commit },
-  })
+  await tx.parteDaDemanda.updateMany({ where: onde, data: { commitAlvo: commit } })
 }
