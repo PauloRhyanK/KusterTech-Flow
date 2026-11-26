@@ -20,8 +20,9 @@ export interface MaquinaNoBeszel {
   memPct: number | null
   discoPct: number | null
   carga: [number, number, number] | null
+  // Rede nos dois sentidos (info.bb). Contêineres: null quando o Beszel não os informou agora.
   redeBytesS: number | null
-  containers: number
+  containers: number | null
 }
 
 export type SaudeDoContainer = 'sem_checagem' | 'iniciando' | 'saudavel' | 'com_falha'
@@ -65,7 +66,11 @@ export function dataDoBeszel(texto: string): Date {
 
 const ouNulo = (n: number | undefined): number | null => (n === undefined ? null : n)
 
-export function paraMaquina(s: SistemaBruto, containers: number, agora: Date): MaquinaNoBeszel {
+export function paraMaquina(
+  s: SistemaBruto,
+  containers: number | null,
+  agora: Date,
+): MaquinaNoBeszel {
   const info = s.info ?? {}
   const lidaEm = dataDoBeszel(s.updated)
   const la = info.la

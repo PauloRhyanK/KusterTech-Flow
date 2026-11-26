@@ -78,8 +78,14 @@ function Cartao({ m, agora, ordem }: { m: Maquina; agora: Date; ordem: number })
           <Medida rotulo="Memória" valor={m.memPct} limite={LIMITES_DA_OFICINA.memoriaUsoPct} />
           <Medida rotulo="Disco" valor={m.discoPct} limite={LIMITES_DA_OFICINA.discoUsoPct} />
           <div className="mt-3 flex justify-between border-t border-border pt-2.5 text-[12px] text-text-secondary">
-            <span>{m.containers === 1 ? '1 contêiner' : `${m.containers} contêineres`}</span>
-            {m.redeBytesS !== null && <span>{`↓ ${formatarTaxa(m.redeBytesS)}`}</span>}
+            <span>
+              {m.containers === null
+                ? '— contêineres'
+                : m.containers === 1
+                  ? '1 contêiner'
+                  : `${m.containers} contêineres`}
+            </span>
+            {m.redeBytesS !== null && <span>{`rede ${formatarTaxa(m.redeBytesS)}`}</span>}
           </div>
         </>
       )}

@@ -41,7 +41,8 @@ function Quadro({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   )
 }
 
-function Cpu({ d }: { d: DetalheNoBeszel }) {
+// `antiga`: a máquina não responde; a nota diz de quando é o valor.
+function Cpu({ d, antiga }: { d: DetalheNoBeszel; antiga: string | null }) {
   if (d.cpuPct === null) return <QuadroDeMetrica rotulo="CPU" valor={null} />
   const partes: string[] = []
   if (d.carga) partes.push(`Carga ${d.carga.map(decimal).join(' · ')}`)
@@ -51,12 +52,12 @@ function Cpu({ d }: { d: DetalheNoBeszel }) {
       rotulo="CPU"
       valor={pct(d.cpuPct)}
       barra={{ pct: d.cpuPct, tom: 'informacao' }}
-      nota={partes.length > 0 ? partes.join(' · ') : undefined}
+      nota={antiga ?? (partes.length > 0 ? partes.join(' · ') : undefined)}
     />
   )
 }
 
-function Memoria({ d }: { d: DetalheNoBeszel }) {
+function Memoria({ d, antiga }: { d: DetalheNoBeszel; antiga: string | null }) {
   const m = d.memoria
   if (!m) return <QuadroDeMetrica rotulo="Memória" valor={null} />
   const uso = m.totalBytes > 0 ? (m.usadaBytes / m.totalBytes) * 100 : 0
@@ -67,15 +68,16 @@ function Memoria({ d }: { d: DetalheNoBeszel }) {
       complemento={`de ${formatarBytes(m.totalBytes)}`}
       barra={{ pct: uso, tom: uso > LIMITES_DA_OFICINA.memoriaUsoPct ? 'atencao' : 'informacao' }}
       nota={
-        m.swapTotalBytes > 0
+        antiga ??
+        (m.swapTotalBytes > 0
           ? `Swap ${formatarBytes(m.swapUsadaBytes)} de ${formatarBytes(m.swapTotalBytes)}`
-          : undefined
+          : undefined)
       }
     />
   )
 }
 
-function Disco({ d }: { d: DetalheNoBeszel }) {
+function Disco({ d, antiga }: { d: DetalheNoBeszel; antiga: string | null }) {
   const disco = d.disco
   if (!disco) return <QuadroDeMetrica rotulo="Disco" valor={null} />
   const uso = disco.totalBytes > 0 ? (disco.usadoBytes / disco.totalBytes) * 100 : 0
@@ -85,19 +87,19 @@ function Disco({ d }: { d: DetalheNoBeszel }) {
       valor={formatarBytes(Math.max(0, disco.totalBytes - disco.usadoBytes))}
       complemento={`livres de ${formatarBytes(disco.totalBytes)}`}
       barra={{ pct: uso, tom: uso > LIMITES_DA_OFICINA.discoUsoPct ? 'atencao' : 'informacao' }}
-      nota={`${pct(uso)} em uso`}
+      nota={antiga ?? `${pct(uso)} em uso`}
     />
   )
 }
 
-function Rede({ d }: { d: DetalheNoBeszel }) {
+function Rede({ d, antiga }: { d: DetalheNoBeszel; antiga: string | null }) {
   if (!d.rede) return <QuadroDeMetrica rotulo="Rede" valor={null} />
   return (
     <QuadroDeMetrica
       rotulo="Rede"
       valor={formatarTaxa(d.rede.recebendoBytesS)}
       complemento="recebendo"
-      nota={`Enviando ${formatarTaxa(d.rede.enviandoBytesS)}`}
+      nota={antiga ?? `Enviando ${formatarTaxa(d.rede.enviandoBytesS)}`}
       className="[&>p:last-child]:!mt-3.5"
     />
   )
@@ -110,10 +112,32 @@ const SAUDE: Record<ContainerNoBeszel['saude'], { sufixo: string; tom: 'neutro' 
   com_falha: { sufixo: ' · com falha', tom: 'erro' },
 }
 
-function Containers({ containers }: { containers: ContainerNoBeszel[] }) {
+function Containers({
+  containers,
+  ultimaLeitura,
+}: {
+  // null: o Beszel não informou os contêineres nesta leitura.
+  containers: ContainerNoBeszel[] | null
+  // A máquina não responde: a lista é a da última leitura, sem afirmar "No ar".
+  ultimaLeitura: boolean
+}) {
+  if (containers === null) {
+    return (
+      <section aria-labelledby="titulo-containers-beszel">
+        <TituloDeSecao id="titulo-containers-beszel">Contêineres</TituloDeSecao>
+        <p className={`${CLASSE_DO_CARTAO} p-4 text-sm text-text-secondary`}>
+          O Beszel não informou os contêineres agora.
+        </p>
+      </section>
+    )
+  }
   return (
     <section aria-labelledby="titulo-containers-beszel">
-      <TituloDeSecao id="titulo-containers-beszel">{`Contêineres · ${containers.length} no ar`}</TituloDeSecao>
+      <TituloDeSecao id="titulo-containers-beszel">
+        {ultimaLeitura
+          ? 'Contêineres · última leitura'
+          : `Contêineres · ${containers.length} no ar`}
+      </TituloDeSecao>
       {containers.length === 0 ? (
         <p className={`${CLASSE_DO_CARTAO} p-4 text-sm text-text-secondary`}>
           Nenhum contêiner informado pelo Beszel.
@@ -148,9 +172,15 @@ function Containers({ containers }: { containers: ContainerNoBeszel[] }) {
                       {c.desde ?? '—'}
                     </td>
                     <td className={CELULA}>
-                      <BadgeDeEstado tom={saude.tom} className="whitespace-nowrap">
-                        {`No ar${saude.sufixo}`}
-                      </BadgeDeEstado>
+                      {ultimaLeitura ? (
+                        <BadgeDeEstado tom="neutro" className="whitespace-nowrap">
+                          Sem resposta
+                        </BadgeDeEstado>
+                      ) : (
+                        <BadgeDeEstado tom={saude.tom} className="whitespace-nowrap">
+                          {`No ar${saude.sufixo}`}
+                        </BadgeDeEstado>
+                      )}
                     </td>
                   </tr>
                 )
@@ -246,6 +276,8 @@ function Historico({
 // Painel de uma máquina lida pelo Beszel (D82). Recebe o detalhe pronto: não lê rede nem banco.
 export function PainelDoBeszel({ detalhe, agora, link, principal, lateral }: PainelDoBeszelProps) {
   const { tom, texto } = apresentarMaquina(detalhe, agora)
+  const antiga =
+    tom === 'sem_resposta' ? `Última leitura, há ${idadeCurta(detalhe.lidaEm, agora)}` : null
   const ligada =
     detalhe.ligadaHaS === null
       ? null
@@ -265,23 +297,26 @@ export function PainelDoBeszel({ detalhe, agora, link, principal, lateral }: Pai
         <FaixaDeAtencao avisos={avisosDoBeszel(detalhe)} />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Quadro rotulo="CPU">
-            <Cpu d={detalhe} />
+            <Cpu d={detalhe} antiga={antiga} />
           </Quadro>
           <Quadro rotulo="Memória">
-            <Memoria d={detalhe} />
+            <Memoria d={detalhe} antiga={antiga} />
           </Quadro>
           <Quadro rotulo="Disco">
-            <Disco d={detalhe} />
+            <Disco d={detalhe} antiga={antiga} />
           </Quadro>
           <Quadro rotulo="Rede">
-            <Rede d={detalhe} />
+            <Rede d={detalhe} antiga={antiga} />
           </Quadro>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-6">
-          <Containers containers={detalhe.containersDetalhe} />
+          <Containers
+            containers={detalhe.containers === null ? null : detalhe.containersDetalhe}
+            ultimaLeitura={tom === 'sem_resposta'}
+          />
           <Historico historico={detalhe.historico} d={detalhe} agora={agora} />
           {principal}
         </div>

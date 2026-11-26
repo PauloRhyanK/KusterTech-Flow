@@ -13,6 +13,8 @@ import {
 } from './model'
 
 const CACHE_RESUMO_MS = 30_000
+// A falha também fica guardada, mas pouco: com o hub pendurado, cada página esperaria 3 s.
+const CACHE_FALHA_MS = 10_000
 const CACHE_AMOSTRA_MS = 30_000
 const CACHE_HISTORICO_MS = 5 * 60_000
 const DIA_MS = 86_400_000
@@ -38,17 +40,24 @@ export type ResumoDoBeszel = {
 interface Lido {
   em: number
   maquinas: ResumoDoBeszel['maquinas']
-  containers: ContainerBruto[]
+  // null quando a leitura dos contêineres falhou.
+  containers: ContainerBruto[] | null
 }
+
+type Leitura = { situacao: SituacaoDoBeszel; lido: Lido | null }
 
 let cliente: { chave: string; cliente: ClienteDoBeszel } | null = null
 let resumo: Lido | null = null
+let falha: { em: number; situacao: SituacaoDoBeszel } | null = null
+let emAndamento: Promise<Leitura> | null = null
 const amostras = new Map<string, { em: number; amostra: AmostraBruta | null }>()
 const historicos = new Map<string, { em: number; historico: AmostraBruta[] }>()
 
 export function limparCacheDoBeszel(): void {
   cliente = null
   resumo = null
+  falha = null
+  emAndamento = null
   amostras.clear()
   historicos.clear()
 }
@@ -63,18 +72,28 @@ function clienteDe(config: ConfiguracaoDoBeszel): ClienteDoBeszel {
 const valido = (em: number, agora: Date, ms: number) =>
   agora.getTime() - em >= 0 && agora.getTime() - em < ms
 
-async function lerResumo(
-  config: ConfiguracaoDoBeszel,
-  agora: Date,
-): Promise<{ situacao: SituacaoDoBeszel; lido: Lido | null }> {
+async function lerResumo(config: ConfiguracaoDoBeszel, agora: Date): Promise<Leitura> {
   if (resumo && valido(resumo.em, agora, CACHE_RESUMO_MS)) return { situacao: 'ok', lido: resumo }
+  if (falha && valido(falha.em, agora, CACHE_FALHA_MS))
+    return { situacao: falha.situacao, lido: null }
+  // Pedidos ao mesmo tempo dividem a mesma leitura.
+  emAndamento ??= buscarResumo(config, agora).finally(() => {
+    emAndamento = null
+  })
+  return emAndamento
+}
+
+async function buscarResumo(config: ConfiguracaoDoBeszel, agora: Date): Promise<Leitura> {
   const c = clienteDe(config)
   const [sistemas, containers] = await Promise.all([c.sistemas(), c.containers()])
-  if (!sistemas.ok) return { situacao: sistemas.motivo, lido: null }
+  if (!sistemas.ok) {
+    falha = { em: agora.getTime(), situacao: sistemas.motivo }
+    return { situacao: sistemas.motivo, lido: null }
+  }
 
-  const lista = containers.ok ? containers.valor : []
+  const lista = containers.ok ? containers.valor : null
   const porSistema = new Map<string, number>()
-  for (const ct of lista) porSistema.set(ct.system, (porSistema.get(ct.system) ?? 0) + 1)
+  for (const ct of lista ?? []) porSistema.set(ct.system, (porSistema.get(ct.system) ?? 0) + 1)
 
   const recursos = await db.recurso.findMany({
     where: { arquivadoEm: null, identificadorExterno: { not: null } },
@@ -82,7 +101,9 @@ async function lerResumo(
   })
   const maquinas = ordenarMaquinas(
     ligarAoCadastro(
-      sistemas.valor.map((s) => paraMaquina(s, porSistema.get(s.id) ?? 0, agora)),
+      sistemas.valor.map((s) =>
+        paraMaquina(s, lista === null ? null : (porSistema.get(s.id) ?? 0), agora),
+      ),
       recursos.flatMap((r) =>
         r.identificadorExterno ? [{ id: r.id, identificadorExterno: r.identificadorExterno }] : [],
       ),
@@ -91,8 +112,11 @@ async function lerResumo(
     agora,
     'cadastro',
   )
-  resumo = { em: agora.getTime(), maquinas, containers: lista }
-  return { situacao: 'ok', lido: resumo }
+  const lido: Lido = { em: agora.getTime(), maquinas, containers: lista }
+  falha = null
+  // Leitura parcial (sem contêineres) não fica guardada: a próxima página tenta de novo.
+  resumo = lista === null ? null : lido
+  return { situacao: 'ok', lido }
 }
 
 export async function obterMaquinasNoBeszel(
@@ -144,7 +168,7 @@ export async function obterDetalheNoBeszel(
     detalhe: paraDetalhe(
       maquina,
       amostra.ok ? amostra.valor : null,
-      lido.containers.filter((ct) => ct.system === id),
+      (lido.containers ?? []).filter((ct) => ct.system === id),
       historico.ok ? historico.valor : [],
     ),
   }

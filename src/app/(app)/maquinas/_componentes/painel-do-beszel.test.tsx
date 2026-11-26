@@ -120,6 +120,10 @@ describe('PainelDoBeszel', () => {
     )
     expect(screen.getByText('Sem resposta há 12 min')).toBeInTheDocument()
     expect(screen.queryByText(/acima do limite/)).toBeNull()
+    // Sem resposta, nada se afirma como atual (invariante 9).
+    expect(within(quadro('CPU')).getByText('Última leitura, há 12 min')).toBeInTheDocument()
+    expect(screen.getByText('Contêineres · última leitura')).toBeInTheDocument()
+    expect(screen.queryByText(/^No ar/)).toBeNull()
   })
 
   it('sem histórico ainda', () => {

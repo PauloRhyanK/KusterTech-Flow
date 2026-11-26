@@ -57,9 +57,9 @@ describe('CartoesDasMaquinas', () => {
     expect(within(alfa).getByText('ligada há 13 dias')).toBeInTheDocument()
     expect(within(alfa).getByText('86%')).toHaveClass('text-atencao')
     expect(within(alfa).getByText('6 contêineres')).toBeInTheDocument()
-    expect(within(alfa).getByText('↓ 4 KB/s')).toBeInTheDocument()
+    expect(within(alfa).getByText('rede 4 KB/s')).toBeInTheDocument()
     expect(
-      within(screen.getByRole('link', { name: /oficina/ })).getByText('↓ 1,9 MB/s'),
+      within(screen.getByRole('link', { name: /oficina/ })).getByText('rede 1,9 MB/s'),
     ).toBeInTheDocument()
   })
 
@@ -81,6 +81,11 @@ describe('CartoesDasMaquinas', () => {
     )
     expect(screen.getByText('Sem resposta há 12 min')).toBeInTheDocument()
     expect(screen.getByText('Última leitura: CPU 4% · memória 33% · disco 9%')).toBeInTheDocument()
+  })
+
+  it('contagem de contêineres desconhecida vira travessão', () => {
+    render(<CartoesDasMaquinas resumo={resumo([maquina({ containers: null })])} agora={AGORA} />)
+    expect(screen.getByText('— contêineres')).toBeInTheDocument()
   })
 
   it('máquina fora do cadastro não tem link e ganha o selo', () => {

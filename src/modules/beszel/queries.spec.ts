@@ -92,7 +92,7 @@ describe('beszel / queries', () => {
     cliente.containers.mockResolvedValue({ ok: false, motivo: 'sem_resposta' })
     const r = await obterMaquinasNoBeszel(admin, agora)
     expect(r.situacao).toBe('ok')
-    expect(r.maquinas[0]!.containers).toBe(0)
+    expect(r.maquinas[0]!.containers).toBeNull()
   })
 
   test('recusa vira situação, sem máquinas', async () => {
@@ -106,7 +106,7 @@ describe('beszel / queries', () => {
     })
   })
 
-  test('cache de 30 s; falha não entra no cache', async () => {
+  test('cache de 30 s para a leitura boa', async () => {
     configurar()
     cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA] })
     cliente.containers.mockResolvedValue({ ok: true, valor: [] })
@@ -115,12 +115,35 @@ describe('beszel / queries', () => {
     expect(cliente.sistemas).toHaveBeenCalledTimes(1)
     await obterMaquinasNoBeszel(admin, depois(31))
     expect(cliente.sistemas).toHaveBeenCalledTimes(2)
+  })
 
+  test('falha fica 10 s guardada: o Beszel pendurado não segura cada página', async () => {
+    configurar()
     cliente.sistemas.mockResolvedValue({ ok: false, motivo: 'sem_resposta' })
-    limparCacheDoBeszel()
-    await obterMaquinasNoBeszel(admin, depois(40))
-    await obterMaquinasNoBeszel(admin, depois(41))
-    expect(cliente.sistemas).toHaveBeenCalledTimes(4)
+    cliente.containers.mockResolvedValue({ ok: false, motivo: 'sem_resposta' })
+    expect((await obterMaquinasNoBeszel(admin, agora)).situacao).toBe('sem_resposta')
+    expect((await obterMaquinasNoBeszel(admin, depois(5))).situacao).toBe('sem_resposta')
+    expect(cliente.sistemas).toHaveBeenCalledTimes(1)
+    await obterMaquinasNoBeszel(admin, depois(11))
+    expect(cliente.sistemas).toHaveBeenCalledTimes(2)
+  })
+
+  test('pedidos ao mesmo tempo dividem uma única leitura', async () => {
+    configurar()
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA] })
+    cliente.containers.mockResolvedValue({ ok: true, valor: [] })
+    await Promise.all([obterMaquinasNoBeszel(admin, agora), obterMaquinasNoBeszel(admin, agora)])
+    expect(cliente.sistemas).toHaveBeenCalledTimes(1)
+  })
+
+  test('contêineres com falha não ficam guardados como zero', async () => {
+    configurar()
+    cliente.sistemas.mockResolvedValue({ ok: true, valor: [ALFA] })
+    cliente.containers.mockResolvedValue({ ok: false, motivo: 'sem_resposta' })
+    const r = await obterMaquinasNoBeszel(admin, agora)
+    expect(r.maquinas[0]!.containers).toBeNull()
+    await obterMaquinasNoBeszel(admin, depois(15))
+    expect(cliente.containers).toHaveBeenCalledTimes(2)
   })
 
   test('detalhe: nome que não existe no Beszel', async () => {
