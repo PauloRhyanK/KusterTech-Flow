@@ -646,6 +646,24 @@ export function etapasDoPedido(
   return etapas
 }
 
+/** A trilha de uma publicação que falhou sem pedido ativo: sem horas inventadas, a falha em "Publicando". */
+export function etapasDaFalha(falha?: { motivo?: string | null } | null): EtapaDaTrilha[] {
+  const base: Array<[EtapaDaTrilha['chave'], string, EstadoDaEtapa]> = [
+    ['fila', 'Na fila', 'feita'],
+    ['verificando', 'Verificando', 'feita'],
+    ['ci', 'Checks', 'feita'],
+    ['deploy', 'Publicando', 'falhou'],
+    ['versao', 'Conferindo o site', 'pendente'],
+    ['no_ar', 'No ar', 'pendente'],
+  ]
+  return base.map(([chave, rotulo, estado]) => ({
+    chave,
+    rotulo,
+    estado,
+    detalhe: chave === 'deploy' ? (falha?.motivo ?? null) : null,
+  }))
+}
+
 export type AcaoDoPedido =
   'publicar_agora' | 'mandar_para_lote' | 'mudar_para_imediato' | 'cancelar'
 

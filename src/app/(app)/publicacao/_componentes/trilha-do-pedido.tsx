@@ -33,7 +33,7 @@ export function TrilhaDoPedido({ etapas }: { etapas: EtapaDaTrilha[] }) {
             {e.rotulo}
             <span className="sr-only">{`: ${TEXTO_DO_ESTADO[e.estado]}`}</span>
           </span>
-          {e.detalhe && <span className="text-xs text-text-secondary">{e.detalhe}</span>}
+          <span className="text-xs text-text-secondary">{e.detalhe ?? '—'}</span>
         </li>
       ))}
     </ol>

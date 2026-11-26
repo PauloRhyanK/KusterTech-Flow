@@ -3,6 +3,7 @@ import {
   acoesDoPedido,
   avisosDaPublicacao,
   colunaDeEstado,
+  etapasDaFalha,
   etapasDoPedido,
   filtrarLinhas,
   itensDoUltimoLote,
@@ -847,5 +848,20 @@ describe('filtros da fila', () => {
   test('só projeto e sem resultado', () => {
     expect(filtrarLinhas([A, B], { ...vazio, projeto: 'P2' })).toEqual([B])
     expect(filtrarLinhas([A, B], { ...vazio, busca: 'nada' })).toEqual([])
+  })
+})
+
+describe('etapasDaFalha', () => {
+  test('marca só a publicação como falhou, sem horas inventadas', () => {
+    const e = etapasDaFalha({ motivo: 'O deploy caiu' })
+    expect(e.map((x) => x.estado)).toEqual([
+      'feita',
+      'feita',
+      'feita',
+      'falhou',
+      'pendente',
+      'pendente',
+    ])
+    expect(e.map((x) => x.detalhe)).toEqual([null, null, null, 'O deploy caiu', null, null])
   })
 })

@@ -107,4 +107,31 @@ describe('PedidoExpansivel', () => {
     expect(screen.getByText(/falhou/)).toBeInTheDocument()
     expect(screen.getByText('O deploy caiu')).toBeVisible()
   })
+
+  test('sem commit, sem checks e sem link mostra "—" e não quebra', async () => {
+    montar(pedido({ commit: null, descricao: null, checks: null }))
+    await userEvent.click(screen.getByRole('button', { name: /main/ }))
+    expect(screen.getAllByText('—').length).toBeGreaterThan(1)
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  test('a falha cai em Publicando, sem horas inventadas', async () => {
+    render(
+      <PedidoExpansivel
+        pedido={pedido({ estado: 'publicando' })}
+        linha={linha}
+        agora={AGORA}
+        podeGerenciar={false}
+        falha={{ motivo: 'O deploy caiu' }}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Ajusta o rodapé/ }))
+    const itens = within(screen.getByRole('list', { name: 'Etapas da publicação' })).getAllByRole(
+      'listitem',
+    )
+    expect(itens[2]).toHaveTextContent('Checks: feita')
+    expect(itens[3]).toHaveTextContent('Publicando: falhou')
+    expect(itens[3]).toHaveTextContent('O deploy caiu')
+    expect(itens[0]).toHaveTextContent('—')
+  })
 })

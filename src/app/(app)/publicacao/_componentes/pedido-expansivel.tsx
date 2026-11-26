@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import {
   acoesDoPedido,
+  etapasDaFalha,
   etapasDoPedido,
   sha7,
   type LinhaDaFila,
@@ -82,10 +83,10 @@ export function PedidoExpansivel({
       </button>
       {aberto && (
         <div id={idDoPainel} className="space-y-3 border-t border-border px-3 py-3">
-          <TrilhaDoPedido etapas={etapasDoPedido(pedido, agora, falha)} />
+          <TrilhaDoPedido etapas={falha ? etapasDaFalha(falha) : etapasDoPedido(pedido, agora)} />
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
             <span className="font-mono">{sha7(pedido.commit)}</span>
-            {pedido.checks && <span>{ROTULO_DOS_CHECKS[pedido.checks]}</span>}
+            <span>{pedido.checks ? ROTULO_DOS_CHECKS[pedido.checks] : '—'}</span>
             {execucaoUrl && (
               <a href={execucaoUrl} target="_blank" rel="noreferrer" className={CLASSE_DO_LINK}>
                 Ver execução
