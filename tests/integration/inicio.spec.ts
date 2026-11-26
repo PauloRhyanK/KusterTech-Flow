@@ -84,7 +84,11 @@ test('com um retrato com uma decisão e um repositório indisponível, obterInic
     ],
   })
   expect(inicio.cadastro).toEqual({ clientes: 0, projetos: 1, repositorios: 1, maquinas: 0 })
-  expect(inicio.oficina).toBeNull()
+  // Sem o Beszel configurado e sem a pasta da oficina, o quadro Máquinas não aparece.
+  expect(inicio.maquinas).toEqual({
+    beszel: { situacao: 'nao_configurado', lidaEm: null, maquinas: [] },
+    oficina: null,
+  })
   expect(inicio.seusProjetos).toBeNull()
 })
 

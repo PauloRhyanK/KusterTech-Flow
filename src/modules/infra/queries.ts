@@ -38,6 +38,7 @@ export interface RecursoNaLista {
   tipo: TipoRecurso
   hospedadoEm: { id: string; nome: string } | null
   totalDeProjetos: number
+  identificadorExterno: string | null
   provedor: string | null
   endereco: string | null
   especificacao: string | null
@@ -52,6 +53,7 @@ const SELECT_DA_LISTA = {
   nome: true,
   tipo: true,
   arquivadoEm: true,
+  identificadorExterno: true,
   provedor: true,
   endereco: true,
   especificacao: true,
@@ -67,6 +69,7 @@ function paraRecursoNaLista(r: LinhaDeRecurso): RecursoNaLista {
     tipo: r.tipo,
     hospedadoEm: r.hospedadoEm,
     totalDeProjetos: r._count.projetos,
+    identificadorExterno: r.identificadorExterno,
     provedor: r.provedor,
     endereco: r.endereco,
     especificacao: r.especificacao,

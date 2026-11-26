@@ -128,7 +128,7 @@ test('com um retrato com plano ativo e decisão, o admin vê a decisão resumida
   await capturar(page, projeto, 'inicio-admin-escuro.png')
 })
 
-test('testador de cliente não vê "Fábrica agora" nem o quadro da oficina, e vê "Seus projetos"', async ({
+test('testador de cliente não vê "Fábrica agora" nem o quadro das máquinas, e vê "Seus projetos"', async ({
   page,
   request,
 }, testInfo) => {
@@ -157,7 +157,7 @@ test('testador de cliente não vê "Fábrica agora" nem o quadro da oficina, e v
   await expect(titulo(page, 'Espera você')).toBeVisible()
   await expect(titulo(page, 'Seus projetos')).toBeVisible()
   await expect(titulo(page, 'Fábrica agora')).toHaveCount(0)
-  await expect(titulo(page, 'Oficina')).toHaveCount(0)
+  await expect(titulo(page, 'Máquinas')).toHaveCount(0)
   await expect(titulo(page, 'Cadastro')).toHaveCount(0)
   await expect(page.getByText('Homologar o painel da Fábrica')).toHaveCount(0)
 

@@ -84,6 +84,8 @@ test('admin cadastra servidor com provedor e custo e container hospedado nele pe
   await expect(hospedados.getByRole('link', { name: nomeContainer })).toBeVisible()
 
   await page.goto('/maquinas')
+  // Sem Beszel no CI: a página diz que as métricas não estão configuradas.
+  await expect(page.getByText('Métricas não configuradas')).toBeVisible()
   const inventario = page.getByRole('list', { name: 'Inventário de recursos' })
   const linha = inventario.locator('li', { hasText: nomeContainer })
   await expect(linha).toContainText(`Container · Hospedado em ${nomeServidor} · 1 projeto`)

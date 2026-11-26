@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 
-const { erroLog, obterRetrato, obterLeitura, obterPilha } = vi.hoisted(() => ({
+const { erroLog, obterRetrato, obterLeitura, obterPilha, obterBeszel } = vi.hoisted(() => ({
   obterPilha: vi.fn(),
+  obterBeszel: vi.fn(),
   erroLog: vi.fn(),
   obterRetrato: vi.fn(),
   obterLeitura: vi.fn(),
@@ -22,6 +23,8 @@ vi.mock('@/modules/oficina/queries', () => ({
   obterLeituraDaMaquinaLocal: obterLeitura,
   maquinaLocalConfigurada: () => 'oficina',
 }))
+
+vi.mock('@/modules/beszel/queries', () => ({ obterMaquinasNoBeszel: obterBeszel }))
 
 vi.mock('@/lib/db', () => ({
   db: {
@@ -51,6 +54,7 @@ const AGORA = new Date('2026-11-19T12:00:00Z')
 
 beforeEach(() => {
   vi.clearAllMocks()
+  obterBeszel.mockResolvedValue({ situacao: 'nao_configurado', lidaEm: null, maquinas: [] })
   obterRetrato.mockResolvedValue(null)
   obterLeitura.mockResolvedValue(null)
   obterPilha.mockResolvedValue({ itens: [], guardados: [], conversas: {} })
@@ -73,7 +77,7 @@ describe('obterInicio', () => {
     expect(inicio).toMatchObject({
       escopo: 'cliente',
       fabrica: null,
-      oficina: null,
+      maquinas: null,
       cadastro: null,
     })
     expect(inicio.seusProjetos?.indicadores[0]).toMatchObject({
@@ -129,7 +133,8 @@ describe('obterInicio', () => {
     expect(obterRetrato).not.toHaveBeenCalled()
     expect(obterLeitura).not.toHaveBeenCalled()
     expect(db.recurso.findUnique).not.toHaveBeenCalled()
-    expect(inicio).toMatchObject({ fabrica: null, oficina: null })
+    expect(inicio).toMatchObject({ fabrica: null, maquinas: null })
+    expect(obterBeszel).not.toHaveBeenCalled()
   })
 
   it('com homologacao congelada, db.homologacaoItem não é consultado', async () => {
@@ -148,9 +153,19 @@ describe('obterInicio', () => {
     const inicio = await obterInicio(ADMIN, AGORA)
 
     expect(inicio.espera.fontesComFalha).toEqual(['aviso-da-oficina'])
-    expect(inicio.oficina).toBeNull()
+    expect(inicio.maquinas?.oficina).toBeNull()
     expect(inicio.cadastro).toEqual({ clientes: 0, projetos: 0, repositorios: 0, maquinas: 0 })
     expect(erroLog).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(erroLog.mock.calls)).not.toContain('segredo-xyz')
+  })
+
+  it('Beszel fora não entra em Espera você e vira falha só no quadro Máquinas', async () => {
+    obterBeszel.mockRejectedValue(new Error('segredo-xyz'))
+
+    const inicio = await obterInicio(ADMIN, AGORA)
+
+    expect(inicio.espera.fontesComFalha).toEqual([])
+    expect(inicio.maquinas?.beszel).toBe('falha')
     expect(JSON.stringify(erroLog.mock.calls)).not.toContain('segredo-xyz')
   })
 
