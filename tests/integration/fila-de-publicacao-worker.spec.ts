@@ -1357,6 +1357,41 @@ describe('partes da demanda', () => {
     expect(await lerDemanda(d.id)).toMatchObject({ encerrada: 'no_ar', noArEm: minutos(2) })
   })
 
+  test('kit v1: a parte acompanha o pedido que segue main enquanto ele espera a vez', async () => {
+    await db.configuracaoDePublicacao.update({
+      where: { repositorioId: portalId },
+      data: { pausado: true },
+    })
+    const d = await demandaNoAr(portalId, 'entregue')
+    const entrada = await db.parteDaDemanda.create({
+      data: {
+        demandaId: d.id,
+        repositorioId: portalId,
+        chave: 'portal',
+        ordem: 1,
+        estado: 'EM_CURSO',
+      },
+    })
+    const chegada = await registrarChegada(
+      portalId,
+      { usuarioId },
+      { modo: 'imediato' },
+      d.id,
+      { modoPadrao: 'IMEDIATO', baseRedefinidaEm: null },
+      AGORA,
+      entrada.id,
+    )
+    if (chegada.tipo !== 'criado') throw new Error('pedido não criado')
+    await ciclo()
+    expect((await lerParte(entrada.id)).commitAlvo).toBe(M4)
+
+    // Push forçado: a cabeça nova não contém M4; a parte segue o pedido, não fica no commit apagado.
+    f.avancarMain(PORTAL, R1)
+    await ciclo(minutos(1))
+    expect((await pedido(chegada.id)).commit).toBe(R1)
+    expect((await lerParte(entrada.id)).commitAlvo).toBe(R1)
+  })
+
   test('pedido antigo da parte que termina não move a parte do pedido novo', async () => {
     await publicar(portalId, PORTAL, M3, AGORA)
     const d = await demandaNoAr(portalId)

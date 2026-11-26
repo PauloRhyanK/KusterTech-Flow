@@ -439,8 +439,9 @@ class CicloDoRepositorio {
     })
     if (daCabeca.length === 0) return
     const { sha } = await this.lerCabeca()
-    const mudam = daCabeca.filter((p) => commitQueSegueMain(p, sha) !== null).map((p) => p.id)
-    if (mudam.length === 0) return
+    const trocas = daCabeca.filter((p) => commitQueSegueMain(p, sha) !== null)
+    if (trocas.length === 0) return
+    const mudam = trocas.map((p) => p.id)
     await comTrava(this.repo.id, async (tx) => {
       // Revalidado sob a trava: só o que ainda espera a vez muda; a verificação e os checks recomeçam.
       await tx.pedidoDePublicacao.updateMany({
@@ -452,13 +453,12 @@ class CicloDoRepositorio {
         },
         data: { commit: sha, segueMain: true, verificadoContra: null, checks: null },
       })
-      // As partes ligadas a esses pedidos (kit v1, que pede sem commit) herdam o primeiro commit
-      // resolvido, num SAVEPOINT: a falha do lado das demandas não desfaz o commit do pedido. A cabeça
-      // seguinte contém esse commit, então a parte fecha quando ela for ao ar.
+      // As partes ligadas a esses pedidos (kit v1, que pede sem commit) acompanham o commit, num
+      // SAVEPOINT: a falha do lado das demandas não desfaz o commit do pedido.
       if (!moduloAtivo('demandas')) return
       await tx.$executeRaw`SAVEPOINT commit_das_partes`
       try {
-        await herdarCommitDosPedidos(tx, mudam, sha)
+        await herdarCommitDosPedidos(tx, trocas, sha)
         await tx.$executeRaw`RELEASE SAVEPOINT commit_das_partes`
       } catch (erro) {
         await tx.$executeRaw`ROLLBACK TO SAVEPOINT commit_das_partes`
