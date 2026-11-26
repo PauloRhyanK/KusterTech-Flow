@@ -10,7 +10,7 @@ import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
-import { seloDeMetricas } from '@/modules/beszel/model'
+import { seloDeMetricas, temSeloDeMetricas } from '@/modules/beszel/model'
 import { obterMaquinasNoBeszel, type ResumoDoBeszel } from '@/modules/beszel/queries'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { rotuloDoTipo } from '@/modules/infra/model'
@@ -90,10 +90,10 @@ export default async function PaginaMaquinas({ searchParams }: PaginaMaquinasPro
       nome: r.nome,
       href: `/maquinas/${r.id}`,
       contexto: partes.join(' · '),
-      // Selo de métricas só nos servidores e só com o Beszel respondendo.
+      // Selo de métricas nos servidores e bancos, só com o Beszel respondendo.
       estado: r.situacao ? (
         <BadgeDeEstado tom={r.situacao.tom}>{r.situacao.texto}</BadgeDeEstado>
-      ) : comBeszel && r.tipo === 'SERVIDOR' ? (
+      ) : comBeszel && temSeloDeMetricas(r.tipo) ? (
         <BadgeDeEstado tom="neutro">
           {seloDeMetricas(r.identificadorExterno, nomesNoBeszel)}
         </BadgeDeEstado>

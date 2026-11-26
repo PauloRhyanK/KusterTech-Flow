@@ -10,6 +10,7 @@ import {
   paraDetalhe,
   paraMaquina,
   seloDeMetricas,
+  temSeloDeMetricas,
   type MaquinaNoBeszel,
 } from './model'
 
@@ -212,6 +213,16 @@ describe('ligarAoCadastro e seloDeMetricas', () => {
     expect(seloDeMetricas('vps-alfa', nomes)).toBe('Beszel')
     expect(seloDeMetricas('vps-zeta', nomes)).toBe('Sem métricas')
     expect(seloDeMetricas(null, nomes)).toBe('Sem métricas')
+  })
+})
+
+describe('temSeloDeMetricas', () => {
+  it('servidores e bancos levam o selo; contêiner, storage e outro não', () => {
+    expect(temSeloDeMetricas('SERVIDOR')).toBe(true)
+    expect(temSeloDeMetricas('BANCO')).toBe(true)
+    expect(temSeloDeMetricas('CONTAINER')).toBe(false)
+    expect(temSeloDeMetricas('STORAGE')).toBe(false)
+    expect(temSeloDeMetricas('OUTRO')).toBe(false)
   })
 })
 
