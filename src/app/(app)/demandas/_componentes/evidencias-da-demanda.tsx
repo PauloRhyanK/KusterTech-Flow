@@ -47,7 +47,10 @@ function CabecalhoDoGrupo({ grupo }: { grupo: GrupoDeEvidencia }) {
   const de = grupo.de!
   return (
     <>
-      <span className="min-w-0">
+      <span
+        data-testid="cabecalho-da-juntada"
+        className="min-w-0 flex-1 basis-[200px] wrap-anywhere"
+      >
         Juntada de{' '}
         <Link href={`/demandas/${de.id}`} className="text-text-link hover:underline">
           &quot;{de.titulo}&quot;
@@ -65,7 +68,8 @@ function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
   const painel = useId()
   return (
     <>
-      <div className="flex flex-wrap items-start gap-x-2.5 gap-y-1 md:flex-nowrap md:items-center md:gap-3.5">
+      {/* Abaixo de lg, volume e ação descem para baixo do texto: a linha nunca alarga a página. */}
+      <div className="flex min-w-0 flex-wrap items-start gap-x-2.5 gap-y-1 lg:flex-nowrap lg:items-center lg:gap-3.5">
         <span
           aria-hidden="true"
           className={cn(
@@ -75,10 +79,13 @@ function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
         >
           {relato ? 'R' : 'E'}
         </span>
-        <div className="min-w-0 flex-1 basis-[calc(100%-36px)] md:basis-auto">
+        <div
+          data-testid="texto-da-linha"
+          className="min-w-0 flex-1 basis-[calc(100%-36px)] lg:basis-0"
+        >
           {relato ? (
             <>
-              <p className="font-[550] text-text-primary md:truncate">
+              <p className="font-[550] text-text-primary wrap-anywhere lg:truncate">
                 {item.trecho ? `"${item.trecho}"` : 'Relato sem texto'}
               </p>
               <p className="mt-0.5 truncate text-xs text-text-tertiary">
@@ -94,7 +101,9 @@ function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
             </>
           ) : (
             <>
-              <p className="font-[550] text-text-primary md:truncate">{item.titulo}</p>
+              <p className="font-[550] text-text-primary wrap-anywhere lg:truncate">
+                {item.titulo}
+              </p>
               {item.onde && (
                 <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-tertiary">
                   {item.onde}
@@ -103,7 +112,7 @@ function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
             </>
           )}
         </div>
-        <div className="ml-8 text-xs text-text-secondary md:ml-0 md:w-[190px] md:shrink-0 md:text-right">
+        <div className="ml-8 text-xs text-text-secondary lg:ml-0 lg:w-[190px] lg:shrink-0 lg:text-right">
           {relato ? (
             item.reforcos > 0 ? (
               <>
@@ -122,7 +131,7 @@ function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
             </>
           )}
         </div>
-        <div className="ml-auto text-[12.5px] md:w-[90px] md:shrink-0 md:text-right">
+        <div className="ml-auto text-[12.5px] lg:w-[90px] lg:shrink-0 lg:text-right">
           {relato ? (
             <button
               type="button"
@@ -148,9 +157,9 @@ function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
       {relato && aberto && (
         <div
           id={painel}
-          className="ml-8 mt-2 space-y-1 rounded-compacto bg-surface-subtle px-3 py-2 text-[13px] text-text-secondary"
+          className="ml-8 mt-2 min-w-0 space-y-1 rounded-compacto bg-surface-subtle px-3 py-2 text-[13px] text-text-secondary"
         >
-          <p className="whitespace-pre-line text-text-primary">
+          <p className="whitespace-pre-line text-text-primary wrap-anywhere">
             {item.texto || 'Relato sem texto.'}
           </p>
           {item.anexos > 0 && (
@@ -185,7 +194,12 @@ export function EvidenciasDaDemanda({
   )
 
   return (
-    <section aria-labelledby={id} className={cn(CLASSE_DO_CARTAO, 'overflow-hidden')}>
+    // `contain: inline-size`: o texto truncado (nowrap) não entra na largura mínima do `main`,
+    // então o bloco acompanha a largura da página em vez de alargá-la.
+    <section
+      aria-labelledby={id}
+      className={cn(CLASSE_DO_CARTAO, 'min-w-0 overflow-hidden [contain:inline-size]')}
+    >
       <div className="flex flex-wrap items-center gap-2.5 border-b border-border px-4 py-3">
         <h2 id={id} className="text-[15px] font-[650] text-text-primary">
           Evidências

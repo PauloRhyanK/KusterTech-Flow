@@ -157,6 +157,25 @@ describe('EvidenciasDaDemanda', () => {
     expect(screen.queryByRole('button', { name: /Ver as/ })).not.toBeInTheDocument()
   })
 
+  test('o bloco nunca alarga a página: texto encolhe e trunca, colunas descem abaixo de lg', () => {
+    render(<EvidenciasDaDemanda evidencias={evidencias()} agora={AGORA} />)
+    const bloco = screen.getByRole('region', { name: 'Evidências' })
+    expect(bloco).toHaveClass('min-w-0', '[contain:inline-size]')
+    for (const texto of screen.getAllByTestId('texto-da-linha')) {
+      expect(texto).toHaveClass('min-w-0', 'flex-1')
+      expect(texto.parentElement).toHaveClass('min-w-0', 'flex-wrap', 'lg:flex-nowrap')
+      const [titulo, sub] = Array.from(texto.children)
+      expect(titulo).toHaveClass('wrap-anywhere', 'lg:truncate')
+      expect(sub).toHaveClass('truncate')
+      // As colunas fixas só valem de lg para cima.
+      const volume = texto.nextElementSibling!
+      expect(volume.className).toMatch(/\blg:w-\[190px\]/)
+      expect(volume.className).not.toMatch(/(^|\s)(md:)?w-\[190px\]/)
+    }
+    expect(screen.getByTestId('cabecalho-da-juntada')).toHaveClass('min-w-0', 'wrap-anywhere')
+    expect(screen.getByTestId('cabecalho-da-juntada').parentElement).toHaveClass('flex-wrap')
+  })
+
   test('até 3 itens: sem "Ver as"', () => {
     render(
       <EvidenciasDaDemanda
