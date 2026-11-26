@@ -334,7 +334,11 @@ function abertasNoDia(tx: Prisma.TransactionClient, agora: Date): Promise<number
     where: {
       tipo: 'criada',
       em: { gt: new Date(agora.getTime() - DIA_MS) },
-      demanda: { origem: 'GLITCHTIP' },
+      // `NOT` sozinho descartaria as demandas sem encerramento (NULL), por isso o `OR`.
+      demanda: {
+        origem: 'GLITCHTIP',
+        OR: [{ encerrada: null }, { encerrada: { not: 'juntada' } }],
+      },
     },
   })
 }

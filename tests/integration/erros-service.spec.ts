@@ -153,6 +153,27 @@ describe('buscarErrosDoGlitchTip', () => {
     expect(await db.demanda.count()).toBe(5)
   })
 
+  test('demanda juntada devolve a vaga do dia', async () => {
+    const lista = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        issue(String(i + 1), {
+          lastSeen: new Date(agora.getTime() - (i + 1) * MIN).toISOString(),
+        }),
+      )
+    let issues = lista(3)
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json(issues) })
+    const primeiro = await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    expect(primeiro).toMatchObject({ abertas: 3, naEspera: 0 })
+    const uma = await db.demanda.findFirstOrThrow({ orderBy: { criadaEm: 'asc' } })
+    await db.demanda.update({ where: { id: uma.id }, data: { encerrada: 'juntada' } })
+    issues = lista(4)
+    const depois = await buscarErrosDoGlitchTip(new Date(agora.getTime() + MIN), {
+      env: env(),
+      buscar,
+    })
+    expect(depois).toMatchObject({ abertas: 1, naEspera: 0 })
+  })
+
   test('erro passageiro fica em observação, sem demanda', async () => {
     const { buscar } = glitchtip({
       [LISTA('app-vendas')]: () => json([issue('17', { count: '3' })]),

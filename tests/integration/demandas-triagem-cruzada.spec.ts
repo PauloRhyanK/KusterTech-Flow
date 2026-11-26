@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
-import { receberEventoDaFabrica } from '@/modules/demandas/recepcao-fabrica'
+import {
+  buscarDemandasParaAFabrica,
+  receberEventoDaFabrica,
+} from '@/modules/demandas/recepcao-fabrica'
 import type { Buscar } from '@/modules/erros/cliente'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
 import { abrirDemanda } from '@/modules/demandas/service'
@@ -436,5 +439,100 @@ describe('dividir', () => {
     expect(await eventosDe(z, 'dividir')).toHaveLength(0)
     expect(await eventosDe(z, 'dividida')).toHaveLength(0)
     expect(await db.eventoDaDemanda.count({ where: { tipo: 'veio_de' } })).toBe(4)
+  })
+})
+
+describe('candidatas no GET da Fábrica', () => {
+  type Linha = {
+    id: string
+    candidatas: {
+      demandas: { id: string; relatos: number; erros: number; etapa: string }[]
+      erros: { id: string; estado: string }[]
+    } | null
+  }
+  const buscar = async (contrato: 1 | 2 = 1) => {
+    const r = await buscarDemandasParaAFabrica(`Bearer ${token}`, null, new Date(), contrato)
+    expect(r.status).toBe(200)
+    return (r.corpo as { demandas: Linha[] }).demandas
+  }
+
+  test('traz as abertas do mesmo projeto, os erros em observação e as contagens', async () => {
+    const a = await novaDemanda('Demanda A')
+    const b = await novaDemanda('Demanda B')
+    await novoRelato(a)
+    await novoErro(a)
+    const outro = await db.projeto.create({
+      data: { nome: 'Projeto Beta', nomeNormalizado: 'projeto beta' },
+    })
+    githubId += 1
+    const repoOutro = await db.repositorioGitHub.create({
+      data: {
+        githubId: BigInt(githubId),
+        instalacaoId: BigInt(1),
+        nomeCompleto: `kustertech-exemplo/beta-${githubId}`,
+        urlHtml: `https://github.com/kustertech-exemplo/beta-${githubId}`,
+        privado: true,
+        catalogadoEm: AGORA,
+        projetoId: outro.id,
+      },
+    })
+    const { id: deOutro } = await db.$transaction((tx) =>
+      abrirDemanda(
+        tx,
+        {
+          projetoId: outro.id,
+          repositorioId: repoOutro.id,
+          titulo: 'Demanda de outro projeto',
+          descricao: null,
+          tipo: null,
+          nivel: 'vai_sozinho',
+          temTela: true,
+          origem: 'usuario',
+          usuarioId: admin.usuarioId,
+        },
+        new Date(),
+      ),
+    )
+    const erro = await novoErro(null)
+    await novoErro(null, { esperaDesde: AGORA })
+
+    for (const contrato of [1, 2] as const) {
+      const linha = (await buscar(contrato)).find((d) => d.id === b)!
+      const ids = linha.candidatas!.demandas.map((d) => d.id)
+      expect(ids).toContain(a)
+      expect(ids).not.toContain(deOutro)
+      expect(ids).not.toContain(b)
+      const daA = linha.candidatas!.demandas.find((d) => d.id === a)!
+      expect(daA).toMatchObject({ relatos: 1, erros: 1, etapa: 'recebida' })
+      expect(linha.candidatas!.erros.map((e) => e.estado).sort()).toEqual([
+        'em_observacao',
+        'na_espera',
+      ])
+      expect(linha.candidatas!.erros.map((e) => e.id)).toContain(erro)
+    }
+  })
+
+  test('depois da triagem, candidatas vem null', async () => {
+    const b = await novaDemanda('Demanda B')
+    expect((await pedirEvento(b, triagem())).status).toBe(201)
+    const linha = (await buscar()).find((d) => d.id === b)!
+    expect(linha).toHaveProperty('candidatas', null)
+  })
+
+  test('uma demanda separada de A não traz A', async () => {
+    const a = await novaDemanda('Demanda A')
+    const b = await novaDemanda('Demanda B')
+    await db.eventoDaDemanda.create({
+      data: {
+        idExterno: randomUUID(),
+        demandaId: b,
+        tipo: 'separada',
+        origem: 'flow',
+        em: AGORA,
+        dados: { de: a },
+      },
+    })
+    const linha = (await buscar()).find((d) => d.id === b)!
+    expect(linha.candidatas!.demandas.map((d) => d.id)).not.toContain(a)
   })
 })
