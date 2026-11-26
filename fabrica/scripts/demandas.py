@@ -1186,6 +1186,7 @@ class _Passo:
                 self.seguir_correcao_sem_ci(id_, it, demanda)
                 self.adotar_plano_da_sessao(id_, it, demanda)
                 self.seguir_desenvolvimento(id_, it, demanda)
+                self.reabrir_separada(id_, it)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
                 if acao == "aguardar_envio":
                     continue  # o retrato está atrasado: decide de novo quando a saída esvaziar
@@ -1244,6 +1245,31 @@ class _Passo:
             it.pop("retryEsperado", None)
             self.salvar()
             self.eventos.append({"evento": "demanda_triagem_superada", "id": id_})
+
+    def reabrir_separada(self, id_: str, it: dict) -> None:
+        """O Paulo separou a demanda antes de o kit ver a junção: ela volta `recebida`, sem triagem, e é triada de novo.
+
+        Só com retrato novo (`recebida`: o guardado é o de antes da junção), nada da demanda na caixa de saída, sem
+        ressincronização pendente (a recusa do `juntar` segue por `ressincronizar`) e com a triagem local terminada.
+        O sinal é o `juntando` (ainda sem recusa) ou o evento `separada` no retrato.
+        """
+        novo = it.get("recebida")
+        if not isinstance(novo, dict) or not _ainda_na_triagem(novo):
+            return
+        if it.get("precisa_ressincronizar") or tem_pendente(self.estado, id_):
+            return
+        if it.get("fase") != "triando" or it.get("runId"):
+            return
+        separada = any(isinstance(e, dict) and e.get("tipo") == "separada" for e in novo.get("eventos") or [])
+        if not separada and not (it.get("juntando") and not it.get("juntarRecusado")):
+            return
+        for campo in ("juntando", "juntarRecusado", "triagem", "triagemRecusada"):
+            it.pop(campo, None)
+        # tentativa nova: a chave de idempotência da triagem anterior devolveria o run antigo
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(fase="nova", alvo=None, tentativa=tentativa + 1)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_separada", "id": id_})
 
     def ressincronizar(self, id_: str, it: dict, demanda: dict) -> None:
         """Um evento da demanda saiu da caixa sem o Flow aplicar: refaz a fase local pelo retrato.

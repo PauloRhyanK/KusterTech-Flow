@@ -845,6 +845,36 @@ class TestesTriagemCruzada(BasePasso):
         self.assertNotIn("triagem_falhou", self.tipos())
         self.assertNotIn("triagem", self.tipos())
 
+    def test_separada_antes_de_o_kit_ver_a_juntada_e_triada_de_novo(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR, "ligarErros": LIGAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", "aplicado"), self.raiz, salvar=lambda: None)
+        # o Paulo separou antes da busca: o retrato volta `recebida`, sem triagem, com o `separada`
+        separada = {"id": "s1", "tipo": "separada", "origem": "paulo", "em": AGORA, "dados": {"de": DEMANDA_A}}
+        self.passo(ClienteDeBusca(pagina(retrato(candidatas=CANDIDATAS, eventos=[separada]), cursor="2")))
+        self.assertEqual(len(self.despachos()), 2)  # uma triagem nova
+        it = self.item()
+        self.assertEqual(it.get("alvo"), "triando")
+        self.assertEqual(it["nonce"], demandas.nonce_do_motor(ID, "triagem", 1))
+        self.assertNotEqual(self.despachos()[1]["chave_idempotencia"], self.despachos()[0]["chave_idempotencia"])
+        for campo in ("juntando", "juntarRecusado", "triagem"):
+            self.assertNotIn(campo, it)
+        self.assertEqual(self.saida(), [])
+
+    def test_juntando_com_o_retrato_antigo_nao_tria_de_novo(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado"), self.raiz, salvar=lambda: None)
+        # nenhuma mudança nova no Flow: o retrato guardado é o de antes da junção
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertTrue(self.item()["juntando"])
+
+    def test_juntando_com_o_juntar_na_saida_espera_o_envio(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR}))
+        separada = {"id": "s1", "tipo": "separada", "origem": "paulo", "em": AGORA, "dados": {"de": DEMANDA_A}}
+        self.passo(ClienteDeBusca(pagina(retrato(candidatas=CANDIDATAS, eventos=[separada]), cursor="2")))
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual(self.tipos(), ["juntar"])
+
     def test_juntar_aplicado_encerra_o_item_como_juntada(self):
         self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR}))
         demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado"), self.raiz, salvar=lambda: None)
