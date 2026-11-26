@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import {
+  anexosDaPergunta,
   blocosDaMensagem,
+  imagensCitadas,
   corpoParaLeitura,
   normalizarRotulos,
   opcoesDaMensagem,
@@ -188,5 +190,47 @@ describe('cabeçalho da decisão', () => {
 
   test('corpo sem título nem pergunta sai igual', () => {
     expect(corpoParaLeitura('Só um texto.\n\n## Depois')).toBe('Só um texto.\n\n## Depois')
+  })
+})
+
+describe('anexosDaPergunta', () => {
+  const PASTA = '.fabrica/planejamento/lead/anexos'
+
+  test('só imagens da pasta anexos do planejamento, com o tipo pela extensão, em ordem', () => {
+    expect(
+      anexosDaPergunta([
+        '.fabrica/pergunta.md',
+        `${PASTA}/fluxo.svg`,
+        `${PASTA}/Tela-1.PNG`,
+        `${PASTA}/foto.jpeg`,
+        `${PASTA}/b.webp`,
+        `${PASTA}/pagina.html`,
+        `${PASTA}/sub/x.png`,
+        `${PASTA}/com espaço.png`,
+        'src/anexos/x.png',
+        '.fabrica/planejamento/lead/x.png',
+      ]),
+    ).toEqual([
+      { caminho: `${PASTA}/Tela-1.PNG`, nome: 'Tela-1.PNG', conteudo: 'image/png' },
+      { caminho: `${PASTA}/b.webp`, nome: 'b.webp', conteudo: 'image/webp' },
+      { caminho: `${PASTA}/fluxo.svg`, nome: 'fluxo.svg', conteudo: 'image/svg+xml' },
+      { caminho: `${PASTA}/foto.jpeg`, nome: 'foto.jpeg', conteudo: 'image/jpeg' },
+    ])
+  })
+
+  test('no máximo 6 arquivos', () => {
+    const muitos = Array.from({ length: 9 }, (_, i) => `${PASTA}/a${i}.png`)
+    expect(anexosDaPergunta(muitos)).toHaveLength(6)
+  })
+})
+
+describe('imagensCitadas', () => {
+  test('o nome do arquivo das imagens de caminho relativo; endereço de fora e código ficam de fora', () => {
+    expect(
+      imagensCitadas(
+        'Veja ![o fluxo](anexos/fluxo.svg) e ![tela](tela.png).\n\n![fora](https://fora.example/x.png)\n\n```\n![no codigo](anexos/c.png)\n```',
+      ),
+    ).toEqual(['fluxo.svg', 'tela.png'])
+    expect(imagensCitadas('sem imagem')).toEqual([])
   })
 })

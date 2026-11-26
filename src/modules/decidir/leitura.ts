@@ -218,3 +218,46 @@ export function corpoParaLeitura(texto: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
+
+// ---------------------------------------------------------------------------------------------
+// Arquivos que o agente manda junto da pergunta (no PR dela)
+
+export const MAXIMO_DE_ANEXOS_DA_PERGUNTA = 6
+
+const ANEXO_DA_PERGUNTA = /^\.fabrica\/planejamento\/[^/]+\/anexos\/([A-Za-z0-9._-]{1,100})$/
+const TIPO_PELA_EXTENSAO: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+}
+
+/** Dos arquivos do PR da pergunta, as imagens em `.fabrica/planejamento/<feature>/anexos/`. */
+export function anexosDaPergunta(
+  arquivos: readonly string[],
+): { caminho: string; nome: string; conteudo: string }[] {
+  const achados: { caminho: string; nome: string; conteudo: string }[] = []
+  for (const caminho of [...arquivos].sort()) {
+    const nome = ANEXO_DA_PERGUNTA.exec(caminho)?.[1]
+    const conteudo = nome ? TIPO_PELA_EXTENSAO[nome.split('.').pop()!.toLowerCase()] : undefined
+    if (nome && conteudo) achados.push({ caminho, nome, conteudo })
+  }
+  return achados.slice(0, MAXIMO_DE_ANEXOS_DA_PERGUNTA)
+}
+
+const IMAGEM_DE_MARKDOWN = /!\[[^\]\n]*\]\(([^)\s]+)\)/g
+
+/** O nome do arquivo de cada imagem de markdown com caminho relativo (`![x](anexos/fluxo.svg)`). */
+export function imagensCitadas(texto: string): string[] {
+  const nomes: string[] = []
+  porLinha(texto, (linha, emCodigo) => {
+    if (emCodigo) return
+    for (const m of linha.matchAll(IMAGEM_DE_MARKDOWN)) {
+      const src = m[1]!
+      if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) continue
+      nomes.push(src.split('/').pop()!)
+    }
+  })
+  return nomes
+}

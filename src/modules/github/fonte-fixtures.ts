@@ -60,7 +60,7 @@ import pulls_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mob
 import deployments_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/deployments.json'
 import statuses_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/deployment-statuses.json'
 import comparacoes_automacao_mobile from './fixtures/kustertech-exemplo__automacao-mobile/comparacoes.json'
-import { ARQUIVOS } from './fixtures/arquivos'
+import { ARQUIVOS, BINARIOS } from './fixtures/arquivos'
 import instalacoes from './fixtures/instalacoes.json'
 import repositorios from './fixtures/repositorios.json'
 
@@ -263,6 +263,11 @@ export function criarFonteFixtures(relogio: () => Date = () => new Date()): Font
     async lerArquivo(repo, caminho) {
       dados(repo)
       return ARQUIVOS[repo.nomeCompleto]?.[caminho] ?? null
+    },
+    async lerArquivoBinario(repo, caminho) {
+      dados(repo)
+      const texto = BINARIOS[repo.nomeCompleto]?.[caminho]
+      return texto === undefined ? null : new TextEncoder().encode(texto)
     },
     async lerCabecaDoBranchPadrao(repo) {
       const cabeca = dados(repo).cabeca

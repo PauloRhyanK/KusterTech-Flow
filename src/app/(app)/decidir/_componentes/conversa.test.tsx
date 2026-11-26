@@ -211,6 +211,28 @@ describe('Conversa', () => {
     expect(onOpcao).not.toHaveBeenCalled()
   })
 
+  test('Conversa: o anexo que o texto cita aparece uma vez só, no lugar da citação; o não citado vem depois do texto', () => {
+    renderizar({
+      mensagens: [
+        mensagem({
+          id: 'f1',
+          autor: 'flow',
+          texto: 'Veja o fluxo:\n\n![O caminho](anexos/fluxo.svg)\n\nFim.',
+          anexos: [
+            { id: 'a1', nome: 'fluxo.svg' },
+            { id: 'a2', nome: 'tela.png' },
+          ],
+        }),
+      ],
+    })
+    expect(screen.getAllByRole('img').map((i) => i.getAttribute('src'))).toEqual([
+      '/decidir/anexos/a1',
+      '/decidir/anexos/a2',
+    ])
+    expect(screen.getByRole('img', { name: 'O caminho' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'tela.png' })).toBeInTheDocument()
+  })
+
   test('Conversa: atendente parado há 5 min troca o aviso', () => {
     renderizar({ aguardaAgenteDesde: segundos(90), atendenteBuscouEm: segundos(300) })
     expect(

@@ -447,6 +447,51 @@ export function criarFonteApp(
       return texto
     },
 
+    async lerArquivoBinario(repo, caminho, ref): Promise<Uint8Array | null> {
+      if (
+        !/^[A-Za-z0-9._/-]{1,300}$/.test(caminho) ||
+        caminho.split('/').includes('..') ||
+        !/^[0-9a-f]{40}$/.test(ref)
+      ) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      const token = await tokenDaInstalacao(repo.instalacaoId)
+      const segmentos = caminho.split('/').map(encodeURIComponent).join('/')
+      let resposta: Response
+      try {
+        resposta = await fetchImpl(
+          `${apiUrl}${caminhoDoRepo(repo)}/contents/${segmentos}?ref=${ref}`,
+          {
+            method: 'GET',
+            signal: sinal(),
+            headers: {
+              Accept: 'application/vnd.github.raw+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        )
+      } catch {
+        throw new ErroDeIntegracao('rede')
+      }
+      if (resposta.status === 404) return null
+      if (!resposta.ok) throw await falhaDe(resposta)
+      const declarado = resposta.headers.get('content-length')
+      if (declarado !== null && Number(declarado) > TAMANHO_MAXIMO_ARQUIVO) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      let bytes: Uint8Array
+      try {
+        bytes = new Uint8Array(await resposta.arrayBuffer())
+      } catch (e) {
+        throw new ErroDeIntegracao(tempoEsgotado(e) ? 'rede' : 'resposta-invalida')
+      }
+      if (bytes.byteLength > TAMANHO_MAXIMO_ARQUIVO) {
+        throw new ErroDeIntegracao('resposta-invalida')
+      }
+      return bytes
+    },
+
     async lerCabecaDoBranchPadrao(repo) {
       const token = await tokenDaInstalacao(repo.instalacaoId)
       const { corpo: r } = await chamar('GET', `${apiUrl}${caminhoDoRepo(repo)}`, token)

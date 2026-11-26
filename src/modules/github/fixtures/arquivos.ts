@@ -89,3 +89,27 @@ export const ARQUIVOS: Record<string, Record<string, string>> = {
     '.seeds/plans.jsonl': unir(plano),
   },
 }
+
+// Arquivos lidos por `lerArquivoBinario` (qualquer commit): o desenho que acompanha a pergunta 43.
+const FLUXO_DOS_CAMPOS = [
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 150" font-family="sans-serif" font-size="13">',
+  '<rect width="760" height="150" fill="#f5f7fa"/>',
+  ...['Formulário', 'Recebimento', 'Normalização', 'Ficha do lead'].map((nome, i) => {
+    const x = 20 + i * 185
+    const seta =
+      i < 3
+        ? `<path d="M${x + 150} 75 h31" stroke="#607083"/><path d="M${x + 181} 75 l-7 -4 v8 z" fill="#607083"/>`
+        : ''
+    const borda = nome === 'Recebimento' ? '#a96011' : '#c6d2dc'
+    return `<rect x="${x}" y="50" width="150" height="50" rx="8" fill="#ffffff" stroke="${borda}"/><text x="${x + 75}" y="80" text-anchor="middle" fill="#172033">${nome}</text>${seta}`
+  }),
+  '<text x="280" y="125" text-anchor="middle" fill="#a96011" font-size="11">a ordem se perde aqui</text>',
+  '<script>document.title = "script do svg rodou"</script>',
+  '</svg>',
+].join('')
+
+export const BINARIOS: Record<string, Record<string, string>> = {
+  'kustertech-exemplo/portal': {
+    '.fabrica/planejamento/lead-de-formulario-na-ficha/anexos/fluxo.svg': FLUXO_DOS_CAMPOS,
+  },
+}

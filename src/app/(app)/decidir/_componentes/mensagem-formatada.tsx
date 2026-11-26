@@ -1,13 +1,14 @@
 'use client'
 
 import Link from 'next/link'
-import { isValidElement, type ReactNode } from 'react'
+import { isValidElement, useMemo, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { blocosDaMensagem, type OpcaoDaMensagem } from '@/modules/decidir/leitura'
 import { trechosComLink } from '@/modules/decidir/model'
 import { Diagrama } from './diagrama'
+import { MiniaturaDoAnexo } from './visor-ampliado'
 
 const ROTULO =
   'mb-1 mt-4 text-[11px] font-bold uppercase tracking-[0.08em] text-text-tertiary first:mt-0'
@@ -49,7 +50,31 @@ function Ancora({
   )
 }
 
-const componentes = (internos: boolean): Components => ({
+export interface AnexoDaMensagem {
+  id: string
+  nome: string
+}
+
+const SEM_ANEXOS: readonly AnexoDaMensagem[] = []
+
+/** O anexo que a imagem de caminho relativo cita, pelo nome do arquivo (`anexos/fluxo.svg`). */
+function anexoCitado(src: unknown, anexos: readonly AnexoDaMensagem[]): AnexoDaMensagem | null {
+  if (typeof src !== 'string' || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/'))
+    return null
+  const nome = src.split('/').pop()
+  return anexos.find((a) => a.nome === nome) ?? null
+}
+
+// Imagem de fora nunca é carregada na sessão do Paulo: vira link.
+function imagemDeFora(src: unknown, alt: unknown): ReactNode {
+  return (
+    <Ancora href={typeof src === 'string' ? src : undefined} internos={false}>
+      {typeof alt === 'string' && alt ? alt : 'Abrir imagem'}
+    </Ancora>
+  )
+}
+
+const componentes = (internos: boolean, anexos: readonly AnexoDaMensagem[]): Components => ({
   h1: Rotulo,
   h2: Rotulo,
   h3: Rotulo,
@@ -57,18 +82,25 @@ const componentes = (internos: boolean): Components => ({
   h5: Rotulo,
   h6: Rotulo,
   // As quebras de linha de uma mensagem simples continuam valendo (como no texto puro).
-  p: ({ children }) => <p className="my-2 whitespace-pre-line break-words">{children}</p>,
+  p: ({ node, children }) => {
+    // A imagem anexada vira uma figura, que não cabe dentro de um parágrafo.
+    const unico = node?.children.length === 1 ? node.children[0] : null
+    if (unico?.type === 'element' && unico.tagName === 'img') {
+      if (anexoCitado(unico.properties.src, anexos)) return <>{children}</>
+    }
+    return <p className="my-2 whitespace-pre-line break-words">{children}</p>
+  },
   a: ({ href, children }) => (
     <Ancora href={href} internos={internos}>
       {children}
     </Ancora>
   ),
-  // Imagem de fora nunca é carregada na sessão do Paulo: vira link.
-  img: ({ src, alt }) => (
-    <Ancora href={typeof src === 'string' ? src : undefined} internos={false}>
-      {alt || 'Abrir imagem'}
-    </Ancora>
-  ),
+  img: ({ src, alt }) => {
+    const anexo = anexoCitado(src, anexos)
+    if (anexo)
+      return <MiniaturaDoAnexo id={anexo.id} nome={anexo.nome} legenda={alt || undefined} />
+    return imagemDeFora(src, alt)
+  },
   ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
   li: ({ children }) => <li className="break-words">{children}</li>,
@@ -116,9 +148,6 @@ const componentes = (internos: boolean): Components => ({
   ),
 })
 
-const COM_LINKS_INTERNOS = componentes(true)
-const SEM_LINKS_INTERNOS = componentes(false)
-
 /** O caminho solto de uma demanda (`/demandas/<id>`), que o Flow escreve em texto puro, vira link. */
 function comLinksInternos(texto: string): string {
   return trechosComLink(texto)
@@ -126,13 +155,19 @@ function comLinksInternos(texto: string): string {
     .join('')
 }
 
-function Texto({ texto, internos }: { texto: string; internos: boolean }) {
+function Texto({
+  texto,
+  internos,
+  anexos,
+}: {
+  texto: string
+  internos: boolean
+  anexos: readonly AnexoDaMensagem[]
+}) {
+  const mapa = useMemo(() => componentes(internos, anexos), [internos, anexos])
   return (
     <div className="[&>:first-child]:mt-0 [&>:last-child]:mb-0">
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        components={internos ? COM_LINKS_INTERNOS : SEM_LINKS_INTERNOS}
-      >
+      <Markdown remarkPlugins={[remarkGfm]} components={mapa}>
         {internos ? comLinksInternos(texto) : texto}
       </Markdown>
     </div>
@@ -176,8 +211,11 @@ function Opcoes({ opcoes }: { opcoes: readonly OpcaoDaMensagem[] }) {
 export function MensagemFormatada({
   texto,
   linksInternos = false,
+  anexos = SEM_ANEXOS,
 }: {
   texto: string
+  /** As imagens guardadas com a mensagem; a que o texto cita aparece no lugar da citação. */
+  anexos?: readonly AnexoDaMensagem[]
   /** Só a mensagem do Flow liga para dentro do Flow (`/demandas/<id>`). */
   linksInternos?: boolean
 }) {
@@ -192,12 +230,12 @@ export function MensagemFormatada({
                 {b.resumo}
               </summary>
               <div className="border-t border-border px-3 py-2.5">
-                <MensagemFormatada texto={b.texto} linksInternos={linksInternos} />
+                <MensagemFormatada texto={b.texto} linksInternos={linksInternos} anexos={anexos} />
               </div>
             </details>
           )
         }
-        return <Texto key={i} texto={b.texto} internos={linksInternos} />
+        return <Texto key={i} texto={b.texto} internos={linksInternos} anexos={anexos} />
       })}
     </div>
   )

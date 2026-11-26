@@ -395,6 +395,49 @@ describe('decidir / service (integração)', () => {
     expect((await mensagens(conversaId))[0]!.texto).toBe(corpo.slice(0, 600))
   })
 
+  test('abrirItem da decisão da Fábrica: as imagens da pasta anexos do PR da pergunta viram anexos da abertura; abrir de novo não duplica; falha ao ler o arquivo deixa a pergunta sem imagem', async () => {
+    const ISSUE_43 = `https://github.com/${REPO}/issues/43`
+    const comA43 = async () => {
+      const retrato = await db.retratoDaFabrica.findFirstOrThrow()
+      const conteudo = retrato.conteudo as { planos: { decisoes: object[] }[] }
+      conteudo.planos[0]!.decisoes.push({
+        titulo: '[fábrica] pergunta: Em que ordem?',
+        url: ISSUE_43,
+      })
+      await db.retratoDaFabrica.update({
+        where: { fonteId: retrato.fonteId },
+        data: { conteudo },
+      })
+    }
+    await comA43()
+    const chave = chaveDaIssue(ISSUE_43)
+    const { conversaId } = await abrirItem(admin, chave, AGORA, comFixtures)
+    const [abertura] = await mensagens(conversaId)
+    expect(abertura!.texto).toContain('![O caminho completo dos campos')
+    const anexos = await db.anexoDaMensagem.findMany({ where: { conversaId } })
+    expect(anexos).toMatchObject([
+      { mensagemId: abertura!.id, nome: 'fluxo.svg', conteudo: 'image/svg+xml' },
+    ])
+    expect(anexos[0]!.tamanho).toBeGreaterThan(100)
+    expect(await readdir(join(dir, 'conversas', conversaId))).toEqual([anexos[0]!.id])
+
+    await abrirItem(admin, chave, AGORA, comFixtures)
+    expect(await db.anexoDaMensagem.count({ where: { conversaId } })).toBe(1)
+
+    await db.conversa.deleteMany({ where: { id: conversaId } })
+    const f = criarFonteFixtures()
+    const semArquivo = await abrirItem(admin, chave, AGORA, {
+      fonte: () => ({
+        ...f,
+        lerArquivoBinario: async () => {
+          throw new ErroDeIntegracao('rede')
+        },
+      }),
+    })
+    expect((await mensagens(semArquivo.conversaId))[0]!.texto).toContain('Em que ordem')
+    expect(await db.anexoDaMensagem.count({ where: { conversaId: semArquivo.conversaId } })).toBe(0)
+  })
+
   test('abrirItem com o GitHub fora: conversa aberta, contexto.pr null, mensagem "Não consegui ler o PR no GitHub…" e nenhum cartão', async () => {
     const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, {
       fonte: fonteFora,

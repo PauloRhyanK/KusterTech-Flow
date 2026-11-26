@@ -503,6 +503,52 @@ describe('lerArquivo', () => {
     expect(chamada.cabecalhos['X-GitHub-Api-Version']).toBe('2022-11-28')
   })
 
+  test('lerArquivoBinario: GET contents com ?ref=<sha> e Accept raw → bytes; 404 → null; acima de 2 MB, caminho com ".." ou ref que não é sha → resposta-invalida', async () => {
+    const SHA = 'a'.repeat(40)
+    const { fonte, chamadas } = criarComTexto(200, '<svg/>')
+    const bytes = await fonte.lerArquivoBinario(automacao, 'docs/anexos/fluxo.svg', SHA)
+    expect(new TextDecoder().decode(bytes!)).toBe('<svg/>')
+    const chamada = chamadas.at(-1)!
+    expect(chamada.url.pathname).toBe(
+      '/repos/kustertech-exemplo/automacao/contents/docs/anexos/fluxo.svg',
+    )
+    expect(chamada.url.searchParams.get('ref')).toBe(SHA)
+    expect(chamada.cabecalhos.Accept).toBe('application/vnd.github.raw+json')
+    expect(chamada.cabecalhos.Authorization).toBe(`Bearer ${TOKEN}`)
+
+    expect(
+      await criarComTexto(404, '{}').fonte.lerArquivoBinario(automacao, 'a.png', SHA),
+    ).toBeNull()
+
+    const invalida = async (f: Promise<unknown>) =>
+      ((await f.catch((e: unknown) => e)) as ErroDeIntegracao).categoria
+    expect(
+      await invalida(
+        criarComTexto(200, 'x', { 'content-length': '2000001' }).fonte.lerArquivoBinario(
+          automacao,
+          'a.png',
+          SHA,
+        ),
+      ),
+    ).toBe('resposta-invalida')
+    expect(
+      await invalida(
+        criarComTexto(200, 'x'.repeat(2_000_001)).fonte.lerArquivoBinario(automacao, 'a.png', SHA),
+      ),
+    ).toBe('resposta-invalida')
+    for (const [caminho, ref] of [
+      ['../a.png', SHA],
+      ['a.png', 'main'],
+      ['a.png', SHA + '&x=1'],
+    ] as const) {
+      const c = criarComTexto(200, 'ok')
+      expect(await invalida(c.fonte.lerArquivoBinario(automacao, caminho, ref))).toBe(
+        'resposta-invalida',
+      )
+      expect(c.chamadas).toHaveLength(0)
+    }
+  })
+
   test('lerArquivo: 404 → null; content-length 2_000_001 → resposta-invalida; caminho com ".." lança sem chamar fetch; mensagem sem o conteúdo', async () => {
     expect(
       await criarComTexto(404, '{"message":"Not Found"}').fonte.lerArquivo(

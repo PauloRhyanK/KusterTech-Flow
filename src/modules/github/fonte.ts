@@ -109,6 +109,11 @@ export interface FonteGitHub {
   compararCommits(repo: RefRepositorio, base: string, cabeca: string): Promise<ComparacaoDaFonte>
   /** Texto do arquivo no branch padrão; `null` quando o arquivo não existe. */
   lerArquivo(repo: RefRepositorio, caminho: string): Promise<string | null>
+  /**
+   * Os bytes do arquivo num commit (`ref` é o sha completo); `null` quando não existe. Acima de
+   * `TAMANHO_MAXIMO_ARQUIVO` lança `resposta-invalida`.
+   */
+  lerArquivoBinario(repo: RefRepositorio, caminho: string, ref: string): Promise<Uint8Array | null>
   lerCabecaDoBranchPadrao(repo: RefRepositorio): Promise<{ branch: string; sha: string }>
   /** Não idempotente: quem chama marca a tentativa antes e procura a execução antes de repetir. */
   dispararWorkflow(

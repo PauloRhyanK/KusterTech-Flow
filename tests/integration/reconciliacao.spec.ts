@@ -39,6 +39,7 @@ function fonteComFalha(falha: () => Error | null): FonteGitHub {
     listarDeployments: guardar(base.listarDeployments),
     compararCommits: guardar(base.compararCommits),
     lerArquivo: guardar(base.lerArquivo),
+    lerArquivoBinario: guardar(base.lerArquivoBinario),
     lerCabecaDoBranchPadrao: guardar(base.lerCabecaDoBranchPadrao),
     dispararWorkflow: guardar(base.dispararWorkflow),
     listarExecucoesDoWorkflow: guardar(base.listarExecucoesDoWorkflow),

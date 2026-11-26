@@ -1,11 +1,16 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
-import { corpoParaLeitura, opcoesDaMensagem, rotulosDasOpcoes } from '@/modules/decidir/leitura'
+import {
+  corpoParaLeitura,
+  imagensCitadas,
+  opcoesDaMensagem,
+  rotulosDasOpcoes,
+} from '@/modules/decidir/leitura'
 import { formatarIdade } from '@/modules/inicio/model'
 import { MensagemFormatada } from './mensagem-formatada'
-import { Figura, VisorAmpliado } from './visor-ampliado'
+import { MiniaturaDoAnexo } from './visor-ampliado'
 
 export interface MensagemNaTela {
   seq: string
@@ -50,24 +55,6 @@ function avisoDeEspera(atendenteBuscouEm: Date | null, agora: Date): string {
     return `O atendente da Fábrica não busca conversas ${formatarIdade(atendenteBuscouEm, agora)}. Você pode decidir sem ele:`
   }
   return 'O agente está demorando. Você pode decidir sem ele:'
-}
-
-/** A imagem anexada, em miniatura na mensagem; "Ampliar" abre em tela cheia. */
-function MiniaturaDoAnexo({ id, nome }: { id: string; nome: string }) {
-  const [ampliada, setAmpliada] = useState(false)
-  const src = `/decidir/anexos/${id}`
-  return (
-    <>
-      <Figura legenda={nome} onAmpliar={() => setAmpliada(true)}>
-        {/* eslint-disable-next-line @next/next/no-img-element -- arquivo privado servido pela rota com sessão */}
-        <img src={src} alt={nome} loading="lazy" className="max-h-56 max-w-full rounded-[4px]" />
-      </Figura>
-      <VisorAmpliado titulo={nome} aberto={ampliada} onFechar={() => setAmpliada(false)}>
-        {/* eslint-disable-next-line @next/next/no-img-element -- arquivo privado servido pela rota com sessão */}
-        <img src={src} alt={nome} className="mx-auto max-w-full" />
-      </VisorAmpliado>
-    </>
-  )
 }
 
 /**
@@ -121,6 +108,9 @@ export function Conversa({
           const avatar = AVATAR[m.autor]
           const texto =
             decisaoDaFabrica && !doPaulo ? corpoParaLeitura(m.texto) || m.texto : m.texto
+          // A imagem que o texto cita aparece no lugar da citação; as outras, depois do texto.
+          const citadas = doPaulo ? [] : imagensCitadas(texto)
+          const soltos = m.anexos.filter((a) => !citadas.includes(a.nome))
           // As opções só viram botão na última mensagem, e quando o agente não mandou as dele.
           const opcoes =
             decisaoDaFabrica &&
@@ -158,11 +148,15 @@ export function Conversa({
                 {doPaulo ? (
                   <p className="whitespace-pre-wrap break-words">{m.texto}</p>
                 ) : (
-                  <MensagemFormatada texto={texto} linksInternos={m.autor === 'flow'} />
+                  <MensagemFormatada
+                    texto={texto}
+                    linksInternos={m.autor === 'flow'}
+                    anexos={m.anexos}
+                  />
                 )}
-                {m.anexos.length > 0 && (
+                {soltos.length > 0 && (
                   <ul className="mt-2 space-y-1">
-                    {m.anexos.map((a) => (
+                    {soltos.map((a) => (
                       <li key={a.id}>
                         <MiniaturaDoAnexo id={a.id} nome={a.nome} />
                       </li>

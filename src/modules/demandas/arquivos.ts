@@ -210,6 +210,21 @@ function nomeCodificado(nome: string): string {
   )
 }
 
+/**
+ * O SVG que o agente manda junto de uma pergunta (diagrama). É a única exceção ao "svg só como
+ * download": vai como imagem, para o `<img>` da conversa (que nunca executa script), e sob o
+ * mesmo `sandbox` do desenho em HTML, para que abrir o endereço direto também não execute nada.
+ */
+export function cabecalhosDoSvg(nome: string): Record<string, string> {
+  return {
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'private, no-store',
+    'Content-Disposition': `inline; filename*=UTF-8''${nomeCodificado(nome)}`,
+    'Content-Type': 'image/svg+xml',
+    'Content-Security-Policy': CSP_DO_DESENHO,
+  }
+}
+
 export function cabecalhosDoArquivo(conteudo: string, nome: string): Record<string, string> {
   const tipo = (conteudo.split(';')[0] ?? '').trim().toLowerCase()
   const base = {

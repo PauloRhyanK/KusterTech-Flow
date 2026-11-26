@@ -72,6 +72,22 @@ describe('MensagemFormatada', () => {
     )
   })
 
+  test('a imagem que cita um anexo da mensagem aparece como figura no lugar da citação; a que não cita nada não vira imagem nem link', () => {
+    const { container } = render(
+      <MensagemFormatada
+        texto={'Antes.\n\n![O caminho dos campos](anexos/fluxo.svg)\n\n![sumiu](anexos/outro.png)'}
+        anexos={[{ id: 'a1', nome: 'fluxo.svg' }]}
+      />,
+    )
+    const img = screen.getByRole('img', { name: 'O caminho dos campos' })
+    expect(img).toHaveAttribute('src', '/decidir/anexos/a1')
+    expect(img.closest('p')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Ampliar' })).toBeInTheDocument()
+    expect(container.querySelectorAll('img')).toHaveLength(1)
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText('sumiu')).toBeInTheDocument()
+  })
+
   test('link externo abre em outra aba sem referência; link javascript fica inerte', () => {
     const { container } = render(
       <MensagemFormatada texto={'[fora](https://fora.example) e [mau](javascript:alert(1))'} />,
