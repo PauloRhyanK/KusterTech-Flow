@@ -39,7 +39,8 @@ export type ResumoDoBeszel = {
 
 interface Lido {
   em: number
-  maquinas: ResumoDoBeszel['maquinas']
+  // Sem a ligação ao cadastro: ela é feita a cada leitura, para uma edição aparecer na hora.
+  maquinas: MaquinaNoBeszel[]
   // null quando a leitura dos contêineres falhou.
   containers: ContainerBruto[] | null
 }
@@ -95,23 +96,14 @@ async function buscarResumo(config: ConfiguracaoDoBeszel, agora: Date): Promise<
   const porSistema = new Map<string, number>()
   for (const ct of lista ?? []) porSistema.set(ct.system, (porSistema.get(ct.system) ?? 0) + 1)
 
-  const recursos = await db.recurso.findMany({
-    where: { arquivadoEm: null, identificadorExterno: { not: null } },
-    select: { id: true, identificadorExterno: true },
-  })
-  const maquinas = ordenarMaquinas(
-    ligarAoCadastro(
-      sistemas.valor.map((s) =>
-        paraMaquina(s, lista === null ? null : (porSistema.get(s.id) ?? 0), agora),
-      ),
-      recursos.flatMap((r) =>
-        r.identificadorExterno ? [{ id: r.id, identificadorExterno: r.identificadorExterno }] : [],
-      ),
-    ),
-    process.env.FLOW_MAQUINA_LOCAL || null,
-    agora,
-    'cadastro',
+  const maquinas = sistemas.valor.map((s) =>
+    paraMaquina(s, lista === null ? null : (porSistema.get(s.id) ?? 0), agora),
   )
+  // Sistemas que saíram do Beszel não ficam com amostra nem histórico guardados.
+  const ids = new Set(maquinas.map((m) => m.sistemaId))
+  for (const mapa of [amostras, historicos]) {
+    for (const id of mapa.keys()) if (!ids.has(id)) mapa.delete(id)
+  }
   const lido: Lido = { em: agora.getTime(), maquinas, containers: lista }
   falha = null
   // Leitura parcial (sem contêineres) não fica guardada: a próxima página tenta de novo.
@@ -128,7 +120,22 @@ export async function obterMaquinasNoBeszel(
   if (!config) return { situacao: 'nao_configurado', lidaEm: null, maquinas: [] }
   const { situacao, lido } = await lerResumo(config, agora)
   if (!lido) return { situacao, lidaEm: null, maquinas: [] }
-  return { situacao, lidaEm: new Date(lido.em), maquinas: lido.maquinas }
+  const recursos = await db.recurso.findMany({
+    where: { arquivadoEm: null, identificadorExterno: { not: null } },
+    select: { id: true, identificadorExterno: true },
+  })
+  const maquinas = ordenarMaquinas(
+    ligarAoCadastro(
+      lido.maquinas,
+      recursos.flatMap((r) =>
+        r.identificadorExterno ? [{ id: r.id, identificadorExterno: r.identificadorExterno }] : [],
+      ),
+    ),
+    process.env.FLOW_MAQUINA_LOCAL || null,
+    agora,
+    'cadastro',
+  )
+  return { situacao, lidaEm: new Date(lido.em), maquinas }
 }
 
 export async function obterDetalheNoBeszel(
@@ -141,7 +148,10 @@ export async function obterDetalheNoBeszel(
   if (!config) return { situacao: 'nao_configurado', detalhe: null }
   const { situacao, lido } = await lerResumo(config, agora)
   if (!lido) return { situacao, detalhe: null }
-  const maquina = lido.maquinas.find((m) => m.nome === nome)
+  // Dois sistemas com o mesmo nome: vale o que responde e, entre eles, a leitura mais nova.
+  const maquina = lido.maquinas
+    .filter((m) => m.nome === nome)
+    .sort((a, b) => Number(b.noAr) - Number(a.noAr) || b.lidaEm.getTime() - a.lidaEm.getTime())[0]
   if (!maquina) return { situacao, detalhe: null }
 
   const c = clienteDe(config)

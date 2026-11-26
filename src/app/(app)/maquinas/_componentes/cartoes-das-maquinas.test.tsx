@@ -63,6 +63,18 @@ describe('CartoesDasMaquinas', () => {
     ).toBeInTheDocument()
   })
 
+  it('a ordem de atenção vale só no celular e o limite é dito em texto', () => {
+    render(
+      <CartoesDasMaquinas
+        resumo={resumo([maquina({ nome: 'vps-alfa', discoPct: 86.2, recursoId: 'r1' })])}
+        agora={AGORA}
+      />,
+    )
+    const cartao = screen.getByRole('link', { name: /vps-alfa/ })
+    expect(cartao).toHaveClass('sm:order-none')
+    expect(within(cartao).getByText('acima do limite')).toHaveClass('sr-only')
+  })
+
   it('máquina sem resposta mostra a última leitura em texto', () => {
     render(
       <CartoesDasMaquinas
