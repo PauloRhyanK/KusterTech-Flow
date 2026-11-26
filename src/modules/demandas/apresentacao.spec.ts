@@ -449,6 +449,15 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
     expect(textoDoEvento('encerrada_pelo_paulo', {})).toBe('Demanda encerrada')
   })
 
+  test('histórico: erros do GlitchTip ligados e que voltaram', () => {
+    expect(textoDoEvento('erro-ligado', { titulo: 'PostgresError: x', link: 'https://e/1' })).toBe(
+      'Erro parecido ligado: PostgresError: x',
+    )
+    expect(textoDoEvento('erro-voltou', { demandaNova: 'd2' })).toBe(
+      'O erro voltou depois de ir ao ar; abriu uma demanda nova',
+    )
+  })
+
   test('histórico: retomada com resposta mostra o texto, truncado em 120', () => {
     expect(textoDoEvento('retomada', {})).toBe('Retomada')
     expect(textoDoEvento('retomada', { resposta: 'use o token novo' })).toBe(

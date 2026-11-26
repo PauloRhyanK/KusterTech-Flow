@@ -16,6 +16,11 @@ const ESTADO: Record<EstadoNoQuadro, { rotulo: string; cor: string; chip: string
     chip: 'bg-tonal-execucao text-execucao',
   },
   na_espera: { rotulo: 'Na espera', cor: 'text-neutro', chip: 'bg-surface-subtle text-neutro' },
+  observando: {
+    rotulo: 'Em observação',
+    cor: 'text-text-secondary',
+    chip: 'bg-surface-subtle text-text-secondary',
+  },
   corrigido: { rotulo: 'Corrigido', cor: 'text-sucesso', chip: 'bg-tonal-sucesso text-sucesso' },
 }
 
@@ -24,6 +29,7 @@ const CHIPS: { estado: Exclude<EstadoNoQuadro, 'corrigido'>; texto: string }[] =
   { estado: 'em_correcao', texto: 'em correção' },
   { estado: 'voltou', texto: 'voltou' },
   { estado: 'na_espera', texto: 'na espera' },
+  { estado: 'observando', texto: 'em observação' },
 ]
 
 function textoDaLeitura(q: QuadroDeErros, agora: Date): string {
@@ -51,7 +57,19 @@ function Barrinhas({ valores, subindo }: LinhaDoQuadro['barrinhas']) {
   )
 }
 
-function Linha({ l, agora, velha }: { l: LinhaDoQuadro; agora: Date; velha: boolean }) {
+type VirarDemanda = (form: FormData) => Promise<void>
+
+function Linha({
+  l,
+  agora,
+  velha,
+  virarDemanda,
+}: {
+  l: LinhaDoQuadro
+  agora: Date
+  velha: boolean
+  virarDemanda?: VirarDemanda
+}) {
   const estado = ESTADO[l.estado]
   const usuarios = l.usuarios === 1 ? '1 usuário' : `${l.usuarios} usuários`
   return (
@@ -88,6 +106,14 @@ function Linha({ l, agora, velha }: { l: LinhaDoQuadro; agora: Date; velha: bool
             Demanda
           </Link>
         ) : null}
+        {l.estado === 'observando' && virarDemanda ? (
+          <form action={virarDemanda}>
+            <input type="hidden" name="issueId" value={l.issueId} />
+            <button type="submit" className="cursor-pointer text-text-link hover:underline">
+              Virar demanda
+            </button>
+          </form>
+        ) : null}
         <a
           href={l.link}
           target="_blank"
@@ -101,7 +127,16 @@ function Linha({ l, agora, velha }: { l: LinhaDoQuadro; agora: Date; velha: bool
   )
 }
 
-export function ErrosNoAr({ quadro: q, agora }: { quadro: QuadroDeErros; agora: Date }) {
+export function ErrosNoAr({
+  quadro: q,
+  agora,
+  virarDemanda,
+}: {
+  quadro: QuadroDeErros
+  agora: Date
+  /** Ação do botão "Virar demanda"; sem ela (quem não pode abrir demanda) o botão não aparece. */
+  virarDemanda?: VirarDemanda
+}) {
   const velha = q.leitura.velha
   const visiveis = q.linhas.slice(0, VISIVEIS)
   const resto = q.linhas.slice(VISIVEIS)
@@ -153,7 +188,13 @@ export function ErrosNoAr({ quadro: q, agora }: { quadro: QuadroDeErros; agora: 
           <>
             <ul>
               {visiveis.map((l) => (
-                <Linha key={l.issueId} l={l} agora={agora} velha={velha} />
+                <Linha
+                  key={l.issueId}
+                  l={l}
+                  agora={agora}
+                  velha={velha}
+                  virarDemanda={virarDemanda}
+                />
               ))}
             </ul>
             {resto.length > 0 ? (
@@ -163,7 +204,13 @@ export function ErrosNoAr({ quadro: q, agora }: { quadro: QuadroDeErros; agora: 
                 </summary>
                 <ul>
                   {resto.map((l) => (
-                    <Linha key={l.issueId} l={l} agora={agora} velha={velha} />
+                    <Linha
+                      key={l.issueId}
+                      l={l}
+                      agora={agora}
+                      velha={velha}
+                      virarDemanda={virarDemanda}
+                    />
                   ))}
                 </ul>
               </details>

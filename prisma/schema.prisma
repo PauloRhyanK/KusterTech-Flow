@@ -1328,6 +1328,7 @@ model ErroDoGlitchTip {
   demandaId         String?
   demandaAnteriorId String?
   esperaDesde       DateTime?
+  grupo             String            @default("")
   serie             Json              @default("[]")
   criadoEm          DateTime          @default(now())
   atualizadoEm      DateTime          @updatedAt
@@ -1335,11 +1336,13 @@ model ErroDoGlitchTip {
   demanda           Demanda?          @relation("ErroDaDemanda", fields: [demandaId], references: [id], onDelete: SetNull)
 
   @@index([projetoGlitchTip, resolvidoEm])
+  @@index([projetoGlitchTip, grupo])
   @@index([demandaId])
 }
 
 model LeituraDoGlitchTip {
   projetoGlitchTip String    @id
+  ligadaEm         DateTime  @default(now())
   ultimoSucessoEm  DateTime?
   ultimaFalhaEm    DateTime?
   motivo           String?
