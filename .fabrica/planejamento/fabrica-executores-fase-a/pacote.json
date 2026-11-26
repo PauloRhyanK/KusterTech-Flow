@@ -5,7 +5,12 @@
   "objetivo": "Um limite de uso deixa de pausar a Fábrica: a raia segue com o próximo executor da lista do papel, incluindo uma conta Claude reserva. A toolstack entra por papel e o painel mostra executor, conta e trocas.",
   "planejamento": {
     "revisao": 2,
-    "base": "02757e09da18ee719093947233cfd1a2337ee39a"
+    "base": "02757e09da18ee719093947233cfd1a2337ee39a",
+    "aprovacao": {
+      "por": "Paulo Rhyan Kuster",
+      "em": "2026-11-26",
+      "hash": "a614a10f6fc66bf4cba09369c999b5f892006206555ca3fedeacca7ba16e6ada"
+    }
   },
   "fases": [
     {
