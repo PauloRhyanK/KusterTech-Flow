@@ -210,6 +210,65 @@ describe('buscarErrosDoGlitchTip', () => {
     expect(erros.map((e) => e.demandaId)).toEqual([demanda.id, demanda.id])
   })
 
+  test('erros do grupo que voltam depois de ir ao ar abrem uma demanda só', async () => {
+    const titulo = (t: string) => `PostgresError: permission denied for table ${t}`
+    let ultimo = new Date(agora.getTime() - MIN).toISOString()
+    const { buscar } = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([
+          issue('5', { title: titulo('recebido'), culprit: '', lastSeen: ultimo }),
+          issue('6', { title: titulo('aviso'), culprit: '', lastSeen: ultimo }),
+        ]),
+    })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const d1 = await db.demanda.findFirstOrThrow()
+    const noArEm = new Date(agora.getTime() + HORA)
+    await db.demanda.update({ where: { id: d1.id }, data: { encerrada: 'no_ar', noArEm } })
+    ultimo = new Date(noArEm.getTime() + HORA).toISOString()
+    const resumo = await buscarErrosDoGlitchTip(new Date(noArEm.getTime() + 2 * HORA), {
+      env: env(),
+      buscar,
+    })
+    expect(resumo).toMatchObject({ voltaram: 1, ligadas: 1 })
+    expect(await db.demanda.count()).toBe(2)
+    const erros = await db.erroDoGlitchTip.findMany()
+    expect(new Set(erros.map((e) => e.demandaId)).size).toBe(1)
+    expect(erros.map((e) => e.demandaAnteriorId)).toEqual([d1.id, d1.id])
+  })
+
+  test('linha antiga sem grupo não se liga a outras', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    await db.erroDoGlitchTip.updateMany({ data: { grupo: '' } })
+    const repo = await db.erroDoGlitchTip.findFirstOrThrow()
+    await db.erroDoGlitchTip.create({
+      data: {
+        issueId: '99',
+        projetoGlitchTip: 'app-vendas',
+        repositorioId: repo.repositorioId,
+        titulo: 'antigo',
+        nivel: 'error',
+        link: `${BASE}/minha-org/issues/99`,
+        eventos: 1,
+        usuarios: 1,
+        primeiroEm: agora,
+        ultimoEm: agora,
+      },
+    })
+    const admin = await criarUsuario({
+      email: 'admin-grupo@local.test',
+      nome: 'Admin',
+      senha: 'senha-super-segura-123',
+      papeis: [{ papel: 'ADMIN', clienteId: null }],
+    })
+    const { id } = await virarDemanda(
+      { usuarioId: admin.id, papeis: [{ papel: 'ADMIN', clienteId: null }] },
+      '99',
+      agora,
+    )
+    expect(id).not.toBe(repo.demandaId)
+  })
+
   test('teste e backlog ficam de fora', async () => {
     await db.leituraDoGlitchTip.update({
       where: { projetoGlitchTip: 'app-vendas' },

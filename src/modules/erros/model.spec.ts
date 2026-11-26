@@ -155,6 +155,13 @@ describe('decidir', () => {
       demandaId: 'd9',
     })
   })
+  test('voltou com um parecido já aberto liga a ele', () => {
+    const demanda = { encerrada: 'no_ar', noArEm: noAr }
+    expect(decidir({ ...base, issue: recente, demanda, demandaDoGrupo: 'd2' })).toEqual({
+      tipo: 'ligar',
+      demandaId: 'd2',
+    })
+  })
   test('com demanda aberta só atualiza', () => {
     expect(
       decidir({ ...base, issue: issue(), demanda: { encerrada: null, noArEm: null } }),
@@ -194,9 +201,12 @@ describe('ignorada', () => {
   ])('título de teste fica de fora: %s', (titulo) => {
     expect(ignorada(issue({ titulo }), ligadaEm)).toBe(true)
   })
-  test.each(['TypeError: testemunha is undefined', 'Error: falha no contest'])(
-    'palavra que só contém teste entra: %s',
-    (titulo) => expect(ignorada(issue({ titulo }), ligadaEm)).toBe(false),
+  test.each([
+    'TypeError: testemunha is undefined',
+    'Error: falha no contest',
+    'TypeError: re.test is not a function',
+  ])('palavra que só contém teste entra: %s', (titulo) =>
+    expect(ignorada(issue({ titulo }), ligadaEm)).toBe(false),
   )
   test('primeiro evento antes de ligar a fonte fica de fora', () => {
     expect(ignorada(issue({ primeiroEm: antes(4 * DIA) }), ligadaEm)).toBe(true)
@@ -213,6 +223,12 @@ describe('grupoDoErro', () => {
     const a = issue({ titulo: "Error: pedido 123 'abc' a1b2c3d4e5f6 não achado" })
     const b = issue({ titulo: 'Error: pedido 98 "xyz" 0f9e8d7c6b5a não achado' })
     expect(grupoDoErro(a)).toBe(grupoDoErro(b))
+  })
+  test('e-mail não fica no grupo nem separa o mesmo erro', () => {
+    const a = issue({ titulo: 'Usuário joao@x.com não encontrado', onde: null })
+    const b = issue({ titulo: 'Usuário maria@y.com não encontrado', onde: null })
+    expect(grupoDoErro(a)).toBe(grupoDoErro(b))
+    expect(grupoDoErro(a)).not.toContain('@')
   })
   test('byte nulo sai do grupo', () => {
     expect(grupoDoErro(issue({ titulo: 'falhou\u0000aqui', onde: null }))).toBe('falhouaqui|')
@@ -245,6 +261,11 @@ describe('estadoNoQuadro', () => {
   })
   test('sem demanda e sem espera fica em observação', () => {
     expect(estadoNoQuadro({ ...base, demanda: null }, agora)).toBe('observando')
+  })
+  test('em observação ou na espera sem evento há mais de 7 dias sai', () => {
+    const velho = { ...base, ultimoEm: antes(8 * DIA), demanda: null }
+    expect(estadoNoQuadro(velho, agora)).toBe(null)
+    expect(estadoNoQuadro({ ...velho, esperaDesde: antes(8 * DIA) }, agora)).toBe(null)
   })
   test('sem demanda e com espera', () => {
     expect(estadoNoQuadro({ ...base, esperaDesde: antes(HORA), demanda: null }, agora)).toBe(

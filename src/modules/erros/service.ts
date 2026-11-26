@@ -229,7 +229,11 @@ function processarIssue(
 
     const grupo = grupoDoErro(issue)
     const demanda = atual?.demanda ?? null
-    const doGrupo = demanda === null ? await demandaAbertaDoGrupo(tx, slug, grupo, issue.id) : null
+    // Sem demanda, ou com a demanda já no ar (pode ter voltado): um parecido aberto recebe o erro.
+    const doGrupo =
+      demanda === null || demanda.noArEm !== null
+        ? await demandaAbertaDoGrupo(tx, slug, grupo, issue.id)
+        : null
     const acao = decidir({
       issue,
       demanda,
@@ -275,7 +279,11 @@ function processarIssue(
         await gravar({ esperaDesde: atual?.esperaDesde ?? agora })
         return 'espera'
       case 'ligar':
-        await gravar({ demandaId: acao.demandaId, esperaDesde: null })
+        await gravar({
+          demandaId: acao.demandaId,
+          esperaDesde: null,
+          ...(demanda ? { demandaAnteriorId: demanda.id } : {}),
+        })
         await registrarLigacao(tx, acao.demandaId, issue, agora)
         return 'ligada'
       case 'abrir': {
@@ -304,6 +312,8 @@ async function demandaAbertaDoGrupo(
   grupo: string,
   issueId: string,
 ): Promise<string | null> {
+  // Linhas de antes da triagem têm grupo vazio: não são parecidas com nada.
+  if (grupo === '') return null
   const outro = await tx.erroDoGlitchTip.findFirst({
     where: {
       projetoGlitchTip: slug,
@@ -345,19 +355,20 @@ async function abrirParaOErro(
     usuarioId?: string
   },
 ): Promise<string> {
-  const parecidos = e.anterior
-    ? []
-    : await tx.erroDoGlitchTip.findMany({
-        where: {
-          projetoGlitchTip: e.slug,
-          grupo: e.grupo,
-          issueId: { not: e.issue.id },
-          demandaId: null,
-          resolvidoEm: null,
-        },
-        select: { issueId: true, titulo: true, link: true },
-        orderBy: { ultimoEm: 'desc' },
-      })
+  const parecidos =
+    e.anterior || e.grupo === ''
+      ? []
+      : await tx.erroDoGlitchTip.findMany({
+          where: {
+            projetoGlitchTip: e.slug,
+            grupo: e.grupo,
+            issueId: { not: e.issue.id },
+            demandaId: null,
+            resolvidoEm: null,
+          },
+          select: { issueId: true, titulo: true, link: true },
+          orderBy: { ultimoEm: 'desc' },
+        })
   const aberta = await abrirDemanda(
     tx,
     {

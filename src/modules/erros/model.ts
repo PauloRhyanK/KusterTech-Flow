@@ -131,7 +131,7 @@ export function ambientesParaLer(
   return filtro.length > 0 ? { ler: true, filtro } : { ler: false }
 }
 
-const TESTE = /(?:^|[^\p{L}])testes?(?:$|[^\p{L}])|(?:^|[^\p{L}])test(?:$|[^\p{L}])|smoke\s*test/iu
+const TESTE = /(?:^|[^\p{L}])testes?(?:$|[^\p{L}])|(?:^|[^\p{L}.])test(?:$|[^\p{L}])|smoke\s*test/iu
 
 /** Issue de teste ou de antes de a fonte ser ligada não é acompanhada. */
 export function ignorada(issue: IssueLida, ligadaEm: Date): boolean {
@@ -153,7 +153,7 @@ function normalizar(texto: string): string {
 
 /** Chave dos erros parecidos de um projeto: título e lugar sem nomes, ids e números. */
 export function grupoDoErro(issue: IssueLida): string {
-  return `${normalizar(issue.titulo)}|${normalizar(issue.onde ?? '')}`
+  return `${normalizar(mascarar(issue.titulo))}|${normalizar(mascarar(issue.onde ?? ''))}`
 }
 
 /** O erro persiste: chegou ao limiar de eventos ou seguiu ativo por `horas` desde o primeiro. */
@@ -200,8 +200,8 @@ export function decidir(e: {
     e.issue.ultimoEm.getTime() > e.demanda.noArEm.getTime()
   if (e.demanda !== null && !voltou) return { tipo: 'atualizar' }
   const cheio = e.abertasNoDia >= e.limiares.porDia
-  if (voltou) return cheio ? { tipo: 'esperar' } : { tipo: 'abrir', voltou: true }
   if (e.demandaDoGrupo !== null) return { tipo: 'ligar', demandaId: e.demandaDoGrupo }
+  if (voltou) return cheio ? { tipo: 'esperar' } : { tipo: 'abrir', voltou: true }
   if (!persiste(e.issue, e.limiares)) return { tipo: 'observar' }
   return cheio ? { tipo: 'esperar' } : { tipo: 'abrir', voltou: false }
 }
@@ -222,7 +222,11 @@ export function estadoNoQuadro(
 ): EstadoNoQuadro | null {
   if (e.resolvidoEm !== null) return null
   const d = e.demanda
-  if (d === null) return e.esperaDesde !== null ? 'na_espera' : 'observando'
+  if (d === null) {
+    // Sem evento na janela de entrada o worker não mexe mais nela: sai do quadro.
+    if (agora.getTime() - e.ultimoEm.getTime() > JANELA_DE_ENTRADA_MS) return null
+    return e.esperaDesde !== null ? 'na_espera' : 'observando'
+  }
   if (d.noArEm !== null) {
     if (e.esperaDesde !== null) return 'na_espera'
     if (e.ultimoEm.getTime() > d.noArEm.getTime()) return null
