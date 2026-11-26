@@ -111,16 +111,35 @@ O retrato ganha, por execução, `agente`, `conta` e `substituiu` (o par anterio
 | Lista com executor desconhecido | Configuração recusada na validação, antes de despachar |
 | Substituto produz trabalho reprovado pelo revisor | Fluxo normal de fixer; o revisor não muda de critério por executor |
 
-## 5. Spike 0 (antes do plano)
+## 5. Spike 0: resultado (26/11/2026, somente leitura na oficina)
 
-Somente leitura na oficina, para fechar o que o código não responde:
+| Pergunta | Achado |
+|---|---|
+| Adaptadores do Warren 0.19.3 | Só dois: `claude-code` e `pi` (`src/runtime/adapters/index.ts`). Não há adaptador de Codex nem de Antigravity. |
+| O que o `pi` cobre | Agente multi-fornecedor por **chave de API** (`OPENAI_API_KEY`, `GEMINI_API_KEY`, OpenRouter e outros, em `src/core/providers.ts`). Paga por token; não usa assinatura. |
+| Conta por execução | Não existe. A credencial Claude é uma só, global, em `~agentops/.warren/env` (`CLAUDE_CODE_OAUTH_TOKEN`). |
+| CLIs na oficina | `agentops` tem `claude`, `warren`, `sd`. Não tem `codex`, `agy` nem `rtk`. O Playwright MCP está em `/opt/agent-tools`. |
+| Texto de limite de uso por fornecedor | Não verificado: só aparece com execução real. |
 
-1. O Warren 0.19.3 tem adaptadores para Codex e Gemini? Se não, o motor desses executores roda o CLI direto no ambiente da raia, como `.agents/executar-seed.py` faz hoje.
-2. Como selecionar a **conta** por execução no Warren (a conta Claude é a do usuário `agentops`).
-3. Qual o texto de limite de uso de cada fornecedor, para estender `eh_falha_de_cota` e extrair o horário de retorno.
-4. RTK e as skills funcionam dentro do ambiente da raia?
+### Consequências para o desenho
 
-O resultado do spike pode mudar a seção 3.4, não o resto.
+**Conta reserva = segunda instância do Warren.** Como a credencial é global, `conta` passa a significar "qual instância do Warren atende". A reserva é um segundo serviço na oficina, com a outra credencial e outra porta. O roteador de motores (3.4) escolhe a instância pela conta. Nada muda no Warren.
+
+**Codex e Antigravity pedem um motor novo.** Duas formas, a decidir pelo Paulo:
+
+| | CLI direto, com assinatura | Via `pi`, com chave de API |
+|---|---|---|
+| Como | Instalar `codex` e `agy` na oficina e escrever um motor que roda o CLI em sandbox e abre o PR, como `.agents/executar-seed.py` faz no Mac | Configurar as chaves no Warren e usar o adaptador que já existe |
+| Custo de construir | Grande: sandbox, política, auditoria e abertura de PR próprios | Pequeno |
+| Custo de uso | Assinaturas que o Paulo já tem | Por token |
+| É "Codex" e "Antigravity" de fato | Sim | Não: são os modelos da OpenAI e do Google dentro de outro agente |
+
+### Fases propostas
+
+- **Fase A (pequena, acaba com a parada):** lista de executores, substituição automática, conta Claude reserva como segunda instância, toolstack por papel, registro e painel. Entrega o objetivo principal usando só Claude.
+- **Fase B:** executores Codex e Antigravity, pela forma escolhida acima. O mapa padrão da seção 3.2 só vale inteiro depois dela; até lá, os papéis de Codex e Antigravity rodam no Claude.
+
+Instalar `rtk` para o `agentops` entra na Fase A.
 
 ## 6. Testes
 
