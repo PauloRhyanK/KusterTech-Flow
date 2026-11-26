@@ -985,6 +985,20 @@ class TriagemTest(unittest.TestCase):
         self.assertIn("(sem descrição)", texto)
         self.assertIn("(nenhum)", texto)
 
+    def test_prompt_triagem_acha_o_caso_antes_do_destino_e_nao_pergunta_fato_ao_paulo(self):
+        texto = prompts.prompt_triagem(demanda=DEMANDA)
+        for frase in (
+            "Num defeito, ache o caso concreto antes de escolher o destino",
+            "a hora, a tela e a versão do relato estão na descrição",
+            "comportamento esperado ou uso errado",
+            "responda em `resposta` o que dizer a quem relatou e use `orientada`",
+            "`decisao_do_paulo` é para escolha de produto, não para fato que falta",
+            "comece `motivo` com \"Falta investigar:\"",
+            "a consulta exata que responde",
+        ):
+            with self.subTest(frase=frase):
+                self.assertIn(frase, texto)
+
     def test_extrair_triagem_le_o_ultimo_bloco_valido(self):
         primeiro = triagem_valida(destino="urgente")
         ultimo = triagem_valida(destino="orientada", resposta="Configure em Ajustes.", tipo="ajuste")
