@@ -25,12 +25,14 @@ export interface EscritorioProps {
   /** ISO do instante da leitura no servidor */
   agora: string
   tecnico: ReactNode
+  /** Quadro "Erros no ar", quando o módulo erros está ativo. */
+  erros?: ReactNode
 }
 
 /** Guarda só as chaves: o conteúdo é lido do retrato atual a cada render, para a ficha não envelhecer. */
 type Escolha = { tipo: 'agente'; id: string } | { tipo: 'parte'; raia: string; fase: string } | null
 
-export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioProps) {
+export function Escritorio({ escritorio, gestao, agora, tecnico, erros }: EscritorioProps) {
   const { andares, recepcao, esperas, formatoAntigo } = escritorio
   // abre no andar que espera o Paulo há mais tempo
   const primeiro =
@@ -89,6 +91,8 @@ export function Escritorio({ escritorio, gestao, agora, tecnico }: EscritorioPro
       )}
 
       <EsperasDoPaulo esperas={esperas} />
+
+      {erros}
 
       {/* celular: lista simples, quem espera o Paulo há mais tempo primeiro */}
       <ul className="space-y-2 md:hidden">

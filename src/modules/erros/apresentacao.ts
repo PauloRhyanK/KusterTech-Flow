@@ -1,0 +1,191 @@
+// O quadro "Erros no ar" da página Fábrica (spec 2026-11-26-erros-do-glitchtip, seções 6.3 e 8).
+import { chipDoPr } from '@/modules/demandas/apresentacao'
+import type { EtapaDefinida } from '@/modules/demandas/model'
+import { barrinhas, type EstadoNoQuadro, estadoNoQuadro, type Ponto, TETO_POR_HORA } from './model'
+
+const MIN_MS = 60_000
+const LEITURA_VELHA_MS = 30 * MIN_MS
+const CORRIGIDOS_DESDE_MS = 7 * 24 * 60 * MIN_MS
+const SEM_REPOSITORIO = 'projeto sem repositório'
+
+const ORDEM: Record<EstadoNoQuadro, number> = {
+  voltou: 0,
+  novo: 1,
+  em_correcao: 2,
+  na_espera: 3,
+  corrigido: 4,
+}
+
+export interface ErroComDemanda {
+  issueId: string
+  projetoGlitchTip: string
+  titulo: string
+  onde: string | null
+  nivel: string
+  link: string
+  eventos: number
+  usuarios: number
+  primeiroEm: Date
+  ultimoEm: Date
+  resolvidoEm: Date | null
+  esperaDesde: Date | null
+  demandaId: string | null
+  demandaAnteriorId: string | null
+  serie: Ponto[]
+  demanda: {
+    encerrada: string | null
+    noArEm: Date | null
+    etapaAtual: string
+    etapas: EtapaDefinida[]
+    prs: string[]
+  } | null
+}
+
+export interface LeituraDoProjeto {
+  projetoGlitchTip: string
+  ultimoSucessoEm: Date | null
+  ultimaFalhaEm: Date | null
+  motivo: string | null
+}
+
+export interface LinhaDoQuadro {
+  issueId: string
+  titulo: string
+  projeto: string
+  onde: string | null
+  nivel: string
+  eventos: number
+  usuarios: number
+  ultimoEm: Date
+  primeiroEm: Date
+  estado: EstadoNoQuadro
+  detalhe: string
+  demandaId: string | null
+  link: string
+  barrinhas: { valores: number[]; subindo: boolean }
+}
+
+export interface QuadroDeErros {
+  configurado: boolean
+  /** Todas as linhas do quadro, já na ordem; a tela mostra as 8 primeiras e o resto em "Ver todos". */
+  linhas: LinhaDoQuadro[]
+  contagem: Record<Exclude<EstadoNoQuadro, 'corrigido'>, number>
+  corrigidosEm7Dias: number
+  projetosLidos: number
+  leitura: { ultimoSucessoEm: Date | null; velha: boolean; motivo: string | null }
+  avisos: string[]
+}
+
+const HORA_DE_SAO_PAULO = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+function detalheDoEstado(estado: EstadoNoQuadro, e: ErroComDemanda): string {
+  const d = e.demanda
+  switch (estado) {
+    case 'voltou':
+      return 'voltou depois da correção · nova demanda'
+    case 'novo':
+      return 'demanda aberta, triagem'
+    case 'em_correcao': {
+      const etapa = d?.etapas.find((x) => x.chave === d.etapaAtual)?.rotulo ?? d?.etapaAtual ?? ''
+      const pr = d ? chipDoPr(d.prs) : null
+      return [etapa.toLowerCase(), pr].filter(Boolean).join(' · ')
+    }
+    case 'na_espera': {
+      const vaga = new Date((e.esperaDesde ?? e.ultimoEm).getTime() + 60 * MIN_MS)
+      return `teto de ${TETO_POR_HORA} por hora · entra até ${HORA_DE_SAO_PAULO.format(vaga)}`
+    }
+    case 'corrigido':
+      return 'no ar, sem evento desde a correção'
+  }
+}
+
+export function montarQuadro(
+  e: {
+    configurado: boolean
+    erros: ErroComDemanda[]
+    leituras: LeituraDoProjeto[]
+    slugs: string[]
+  },
+  agora: Date,
+): QuadroDeErros {
+  const linhas: LinhaDoQuadro[] = []
+  let corrigidosEm7Dias = 0
+  for (const erro of e.erros) {
+    const noArEm = erro.demanda?.noArEm
+    if (noArEm && agora.getTime() - noArEm.getTime() <= CORRIGIDOS_DESDE_MS) corrigidosEm7Dias += 1
+    const estado = estadoNoQuadro(
+      {
+        resolvidoEm: erro.resolvidoEm,
+        esperaDesde: erro.esperaDesde,
+        ultimoEm: erro.ultimoEm,
+        voltou: erro.demandaAnteriorId !== null,
+        demanda: erro.demanda && {
+          encerrada: erro.demanda.encerrada,
+          noArEm: erro.demanda.noArEm,
+          naPrimeiraEtapa: erro.demanda.etapaAtual === erro.demanda.etapas[0]?.chave,
+        },
+      },
+      agora,
+    )
+    if (estado === null) continue
+    linhas.push({
+      issueId: erro.issueId,
+      titulo: erro.titulo,
+      projeto: erro.projetoGlitchTip,
+      onde: erro.onde,
+      nivel: erro.nivel,
+      eventos: erro.eventos,
+      usuarios: erro.usuarios,
+      ultimoEm: erro.ultimoEm,
+      primeiroEm: erro.primeiroEm,
+      estado,
+      detalhe: detalheDoEstado(estado, erro),
+      demandaId: erro.demandaId,
+      link: erro.link,
+      barrinhas: barrinhas(erro.serie, agora),
+    })
+  }
+  linhas.sort(
+    (a, b) => ORDEM[a.estado] - ORDEM[b.estado] || b.ultimoEm.getTime() - a.ultimoEm.getTime(),
+  )
+
+  const contagem = { voltou: 0, novo: 0, em_correcao: 0, na_espera: 0 }
+  for (const l of linhas) if (l.estado !== 'corrigido') contagem[l.estado] += 1
+
+  const porSlug = new Map(e.leituras.map((l) => [l.projetoGlitchTip, l]))
+  const avisos: string[] = []
+  const lidos: (LeituraDoProjeto | undefined)[] = []
+  for (const slug of e.slugs) {
+    const l = porSlug.get(slug)
+    if (l?.motivo === SEM_REPOSITORIO) avisos.push(`${SEM_REPOSITORIO}: ${slug}`)
+    else lidos.push(l)
+  }
+  const sucessos = lidos.map((l) => l?.ultimoSucessoEm ?? null)
+  const ultimoSucessoEm = sucessos.some((s) => s === null)
+    ? null
+    : (sucessos as Date[]).reduce<Date | null>(
+        (min, s) => (min === null || s.getTime() < min.getTime() ? s : min),
+        null,
+      )
+  const velha =
+    e.configurado &&
+    lidos.length > 0 &&
+    (ultimoSucessoEm === null || agora.getTime() - ultimoSucessoEm.getTime() > LEITURA_VELHA_MS)
+  const comFalha = lidos
+    .filter((l): l is LeituraDoProjeto => !!l?.motivo && l.ultimaFalhaEm !== null)
+    .sort((a, b) => b.ultimaFalhaEm!.getTime() - a.ultimaFalhaEm!.getTime())
+
+  return {
+    configurado: e.configurado,
+    linhas,
+    contagem,
+    corrigidosEm7Dias,
+    projetosLidos: e.leituras.filter((l) => l.ultimoSucessoEm !== null).length,
+    leitura: { ultimoSucessoEm, velha, motivo: comFalha[0]?.motivo ?? null },
+    avisos,
+  }
+}
