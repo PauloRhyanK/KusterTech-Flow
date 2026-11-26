@@ -196,5 +196,6 @@ Este documento prevalece sobre os demais, então a mudança fica registrada aqui
 - **D78 — Nada fica "para depois".** Aprovada pelo Paulo em 25/11/2026. Quando falta uma parte, a demanda continua aberta e a Fábrica planeja tudo, até a entrega total, dentro da mesma demanda.
 - **D79 — Uma demanda pode ter partes em vários repositórios.** Aprovada pelo Paulo em 25/11/2026. Cada parte tem estado e ordem de publicação próprios; o pedido a outro repositório é uma parte, nunca um texto.
 - **D80 — Núcleo do Flow.ia primeiro, como versão.** Aprovada pelo Paulo em 25/11/2026. Uma mudança no núcleo entra primeiro no `flowia` de origem, como versão, e depois nos forks. O núcleo serve vários clientes e áreas, e todos os agentes da Fábrica seguem essa regra.
+- **D81 — O Flow lê os erros do GlitchTip (exceção à D70).** Aprovada pelo Paulo em 26/11/2026. O Flow lê a API do GlitchTip da organização configurada no `.env` (só GET, só https, token só no `.env`) para acompanhar os erros dos sistemas em produção e abrir demandas; nunca escreve no GlitchTip. Spec: [`2026-11-26-erros-do-glitchtip-design.md`](superpowers/specs/2026-11-26-erros-do-glitchtip-design.md).
 
 **Invariantes:** 1, 4, 8, 9 e 10 seguem valendo para tudo. 2, 3, 5, 6 e 7 seguem valendo para os módulos congelados e voltam a ser exercitados quando eles forem religados.
