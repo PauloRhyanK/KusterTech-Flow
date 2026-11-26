@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
-import { buscarPagina, enviarAndamento } from './cliente'
+import { baixarAnexo, buscarPagina, enviarAndamento } from './cliente'
 import { ID_A, relatoDeExemplo } from './exemplos'
 
 type Tratador = (req: IncomingMessage, corpo: string, res: ServerResponse) => void
@@ -138,5 +138,42 @@ describe('enviarAndamento', () => {
     })
     tratar = json(403, {})
     expect(await enviarAndamento(alvo(), ID_A, a)).toEqual({ resultado: 'token_recusado' })
+  })
+})
+
+describe('baixarAnexo', () => {
+  test('GET no caminho do anexo com Bearer; 200 → bytes e o tipo do conteúdo sem parâmetros', async () => {
+    tratar = (_q, _c, res) => {
+      res.writeHead(200, { 'Content-Type': 'image/png; charset=binary' })
+      res.end(Buffer.from([1, 2, 3]))
+    }
+    const r = await baixarAnexo(alvo(), `${base}/relatos/anexos/a`, 10)
+    expect(r).toEqual({ ok: true, conteudo: 'image/png', bytes: Buffer.from([1, 2, 3]) })
+    expect(pedidos[0]).toMatchObject({
+      metodo: 'GET',
+      url: '/v1/relatos/anexos/a',
+      auth: 'Bearer token-de-teste-1234567890',
+    })
+  })
+
+  test('outra origem não recebe o token; acima do limite, 404 e redirecionamento falham', async () => {
+    expect(await baixarAnexo(alvo(), 'https://outro.exemplo.com/v1/relatos/anexos/a', 10)).toEqual({
+      ok: false,
+      motivo: 'O anexo não é do endereço do sistema.',
+    })
+    expect(pedidos).toHaveLength(0)
+    tratar = (_q, _c, res) => {
+      res.writeHead(200, { 'Content-Type': 'image/png' })
+      res.end(Buffer.alloc(20))
+    }
+    expect(await baixarAnexo(alvo(), `${base}/relatos/anexos/a`, 10)).toEqual({
+      ok: false,
+      motivo: 'O anexo passou do limite.',
+    })
+    tratar = json(404, {})
+    expect(await baixarAnexo(alvo(), `${base}/relatos/anexos/a`, 10)).toEqual({
+      ok: false,
+      motivo: 'O sistema respondeu 404.',
+    })
   })
 })

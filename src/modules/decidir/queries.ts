@@ -10,7 +10,14 @@ import { resumirErroParaLog } from '@/modules/github/model'
 import { PLANO_EM_CURSO } from '@/modules/inicio/model'
 import { triagemSchema } from '@/modules/demandas/contrato'
 import { pessoasQueRelataram } from '@/modules/demandas/cruzada'
-import type { EtapaDefinida, Espera, Origem, Nivel, TipoDeDemanda } from '@/modules/demandas/model'
+import {
+  desfechoDaTrava,
+  type EtapaDefinida,
+  type Espera,
+  type Origem,
+  type Nivel,
+  type TipoDeDemanda,
+} from '@/modules/demandas/model'
 import type { Cartao } from './cartao'
 import {
   chaveValida,
@@ -70,6 +77,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
       return [e.demandaId, typeof url === 'string' ? url : null] as const
     }),
   )
+  const desfecho = new Map(eventos.map((e) => [e.demandaId, desfechoDaTrava(e.dados)] as const))
   return linhas.map((d) => {
     const triagem = triagemSchema.safeParse(d.triagem)
     return {
@@ -83,6 +91,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
       espera: d.espera as Espera,
       esperaMotivo: d.esperaMotivo,
       urlDaTrava: urlDaTrava.get(d.id) ?? null,
+      desfecho: desfecho.get(d.id) ?? null,
       esperaDesde: d.esperaDesde ?? d.atualizadaEm,
       versaoDoDesenho: d.versaoDoDesenho,
       etapaAtual: d.etapaAtual,

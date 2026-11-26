@@ -1047,6 +1047,75 @@ class TestesPlano(BasePasso):
         self.passo(ClienteDeBusca(pagina(retrato("planejada", eventos=retomada), cursor="3")))
         self.assertEqual(self.item()["conversa"], [{"pergunta": self.PERGUNTA, "resposta": ""}])
 
+    COBERTURA = ".fabrica/planejamento/demanda-11111111/cobertura.md"
+
+    def concluir_sem_plano(self, cabecalho):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(self.COBERTURA, ".fabrica/planejamento/demanda-11111111/acordadas.md"))
+        self.forja.definir_arquivo(REPO, HEAD, self.COBERTURA, "---\nfeature: demanda-11111111\n%s---\n\n# Cobertura\n\nTexto.\n" % cabecalho)
+        self.passo(ClienteDeBusca())
+
+    def test_duplicada_na_cobertura_vira_travada_com_o_desfecho_e_nao_mergeia(self):
+        self.concluir_sem_plano("resultado: duplicada\nde: %s\n" % OUTRO)
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual(
+            (evento["tipo"], evento["dados"]),
+            (
+                "travada",
+                {
+                    "motivo": "o orquestrador concluiu que a demanda é duplicada da 22222222: não há plano a fazer",
+                    "url": PR,
+                    "desfecho": {"resultado": "duplicada", "de": OUTRO},
+                },
+            ),
+        )
+        self.assertEqual(self.item()["fase"], "esperando_paulo")
+        self.assertIsNone(self.trava())
+
+    def test_ja_resolvida_na_cobertura_vira_travada_sem_de(self):
+        self.concluir_sem_plano("resultado: ja_resolvida  # o exemplo do roteiro tem comentário\n")
+        (evento,) = self.saida()
+        self.assertEqual(
+            evento["dados"],
+            {
+                "motivo": "o orquestrador concluiu que o que a demanda pede já está resolvido: não há plano a fazer",
+                "url": PR,
+                "desfecho": {"resultado": "ja_resolvida", "de": None},
+            },
+        )
+
+    def test_duplicada_sem_id_valido_da_outra_vai_sem_de(self):
+        for de in ("de: 7b7ba4b8\n", "", "de: %s\n" % ID):
+            with self.subTest(de=de):
+                self.setUp()
+                self.concluir_sem_plano("resultado: duplicada\n" + de)
+                (evento,) = self.saida()
+                self.assertEqual(evento["dados"]["desfecho"], {"resultado": "duplicada", "de": None})
+                self.assertEqual(evento["dados"]["motivo"], "o orquestrador concluiu que a demanda é duplicada de outra: não há plano a fazer")
+
+    def test_cobertura_sem_desfecho_ou_com_desfecho_desconhecido_segue_sem_plano(self):
+        for cabecalho in ("", "resultado: outro\n", "resultado: duplicadas\n"):
+            with self.subTest(cabecalho=cabecalho):
+                self.setUp()
+                self.concluir_sem_plano(cabecalho)
+                (evento,) = self.saida()
+                self.assertEqual(evento["dados"], {"motivo": "o PR não traz o plano %s" % CAMINHO, "url": PR})
+
+    def test_desfecho_entre_aspas_com_maiuscula_ou_bom_vale(self):
+        self.assertEqual(
+            demandas.desfecho_da_cobertura('\ufeff---\nresultado: "Duplicada"\nde: \'%s\'\n---\n' % OUTRO.upper(), ID),
+            {"resultado": "duplicada", "de": OUTRO},
+        )
+
+    def test_desfecho_fora_do_cabecalho_nao_vale(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(self.COBERTURA,))
+        self.forja.definir_arquivo(REPO, HEAD, self.COBERTURA, "# Cobertura\n\nresultado: duplicada\n")
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["dados"], {"motivo": "o PR não traz o plano %s" % CAMINHO, "url": PR})
+
     def test_config_do_head_do_plano_nao_vale(self):
         run_id = self.planejar()
         self.com_pr(run_id, arquivos=(CAMINHO, ".fabrica/planejamento/auth/notas.md"), config={"protegidos": ["**/auth/**"]})

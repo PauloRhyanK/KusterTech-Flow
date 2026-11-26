@@ -1,4 +1,5 @@
 // Regras puras dos relatos de usuários (spec 2026-11-19-relatos-de-usuarios-design, D83).
+import { createHash } from 'node:crypto'
 import type { Destino, Encerramento, EtapaDefinida } from '@/modules/demandas/model'
 import { formatarIdade } from '@/modules/inicio/model'
 import type { EstadoDoAndamento, RelatoDoFio, SinalDoFio } from './contrato'
@@ -114,7 +115,10 @@ export function demandaDoRelato(r: RelatoDoFio, nomeDoSistema: string): DemandaD
   if (r.ticket) origem.push(`ticket ${r.ticket}`)
   if (r.contexto.tela) origem.push(`tela ${r.contexto.tela}`)
   if (r.contexto.versao) origem.push(`versão ${r.contexto.versao}`)
-  const rodape = [origem.join(' · ')]
+  const rodape = [
+    origem.join(' · '),
+    `Relatado em ${quandoEmBrasilia(r.em)} (horário de Brasília).`,
+  ]
   if (r.tipo) rodape.push(`Tipo sugerido pelo sistema: ${r.tipo}.`)
   if (r.anexos.length > 0) {
     rodape.push(
@@ -128,6 +132,73 @@ export function demandaDoRelato(r: RelatoDoFio, nomeDoSistema: string): DemandaD
   const espaco = LIMITE_DA_DESCRICAO - rodapeTexto.length - 2
   const descricao = corpo ? `${cortar(corpo, espaco)}\n\n${rodapeTexto}` : rodapeTexto
   return { titulo, descricao }
+}
+
+const DATA_DE_BRASILIA = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/** `26/11/2026 às 16:38`: a hora do relato, para a triagem achar o caso nos dados do sistema. */
+function quandoEmBrasilia(em: string): string {
+  const p = Object.fromEntries(
+    DATA_DE_BRASILIA.formatToParts(new Date(em)).map((x) => [x.type, x.value]),
+  )
+  return `${p.day}/${p.month}/${p.year} às ${p.hour}:${p.minute}`
+}
+
+const NOME_DO_ANEXO = {
+  imagem: 'print',
+  audio: 'audio',
+  video: 'video',
+  arquivo: 'arquivo',
+} as const
+
+export interface AnexoGravado {
+  tipo: keyof typeof NOME_DO_ANEXO
+  bytes: number
+  caminho: string | null
+}
+
+export interface AnexoParaCopiar {
+  arquivoId: string
+  url: string
+  nome: string
+}
+
+/** UUID v5 (sha1) de `relato:posição`: baixar de novo o mesmo anexo cai no mesmo arquivo da demanda. */
+function idDoAnexo(relatoId: string, posicao: number): string {
+  const h = createHash('sha1').update(`relato-anexo:${relatoId}:${posicao}`).digest()
+  h[6] = (h[6]! & 0x0f) | 0x50
+  h[8] = (h[8]! & 0x3f) | 0x80
+  const x = h.subarray(0, 16).toString('hex')
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`
+}
+
+/**
+ * Os anexos do relato que o Flow copia para a demanda (spec dos relatos §4: "com o relato original
+ * anexado"). Só os que têm caminho conferido; o nome diz o tipo e a posição, nunca quem enviou.
+ */
+export function anexosParaCopiar(
+  relatoId: string,
+  anexos: readonly AnexoGravado[],
+): AnexoParaCopiar[] {
+  return anexos.flatMap((a, i) =>
+    a.caminho
+      ? [
+          {
+            arquivoId: idDoAnexo(relatoId, i),
+            url: a.caminho,
+            nome: `${NOME_DO_ANEXO[a.tipo]}-${i + 1}-do-relato`,
+          },
+        ]
+      : [],
+  )
 }
 
 /** Tira os repetidos dentro da própria página (o primeiro vale). */

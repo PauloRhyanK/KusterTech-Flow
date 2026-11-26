@@ -43,6 +43,7 @@ function itemDeDemanda(tipo: TipoDeItem, o: Partial<ItemDaPilha['ref']> = {}): I
       etapaAtual: 'homologacao',
       rotuloDaEtapa: 'Homologação',
       prDaTrava: null,
+      desfecho: null,
       ...o,
     } as ItemDaPilha['ref'],
   }
@@ -111,6 +112,29 @@ describe('acoesDoItem', () => {
       'encerrar',
     ])
     expect(acoesDoItem('trava', SEM_PR, 'travada')).toEqual(['retomar', 'encerrar'])
+  })
+})
+
+describe('trava com desfecho (duplicada ou já resolvida)', () => {
+  const OUTRA = '7b7ba4b8-1111-4222-8333-444444444444'
+  const desfecho = { resultado: 'duplicada', de: OUTRA } as const
+  const item = () => itemDeDemanda('trava', { espera: 'travada', desfecho })
+
+  it('só encerrar vale, mesmo com o PR lido', () => {
+    expect(acoesDoItem('trava', COM_PR, 'travada', desfecho)).toEqual(['encerrar'])
+    expect(acoesDoItem('trava', SEM_PR, 'travada', null)).toEqual(['retomar', 'encerrar'])
+    for (const acao of ['retomar', 'aprovar_e_mergear', 'entregar_parcial']) {
+      expect(validarCartao(item(), COM_PR, { acao })).toEqual({ ok: false, motivo: NAO_VALE })
+    }
+    expect(() => efeitoDoCartao(item(), { acao: 'retomar', resposta: null })).toThrow(NAO_VALE)
+  })
+
+  it('o cartão de encerrar leva o desfecho; o efeito é o encerramento de sempre', () => {
+    const cartao: Cartao = { acao: 'encerrar', desfecho }
+    expect(validarCartao(item(), SEM_PR, { acao: 'encerrar' })).toEqual({ ok: true, cartao })
+    expect(cartaoDaRespostaRapida(item(), SEM_PR, 'encerrar')).toEqual({ cartao })
+    expect(efeitoDoCartao(item(), cartao)).toEqual({ tipo: 'encerrar_demanda', demandaId: 'd1' })
+    expect(() => cartaoDaRespostaRapida(item(), SEM_PR, 'retomar')).toThrow(ErroDeDominio)
   })
 })
 

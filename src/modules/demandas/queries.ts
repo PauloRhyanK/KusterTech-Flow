@@ -54,6 +54,7 @@ import { paraOFio } from './service'
 import { comoParte } from './partes-service'
 import { cabecalhosDoArquivo, lerArquivo } from './arquivos'
 import {
+  desfechoDaTrava,
   type Destino,
   type EstadoDaTabela,
   type EtapaDefinida,
@@ -316,7 +317,7 @@ const ONDE_DO_ESTADO: Record<EstadoDaTabela, object> = {
 }
 
 /** O `where` da tabela: cada filtro escolhido vira uma condição; o período corta as encerradas pela última atualização. */
-function ondeDaTabela(f: FiltrosDaTabela, agora: Date) {
+export function ondeDaTabela(f: FiltrosDaTabela, agora: Date) {
   const dias = DIAS_DO_PERIODO[f.periodo]
   return {
     AND: [
@@ -356,7 +357,7 @@ function ordemDaTabela(f: FiltrosDaTabela) {
 }
 
 /** As opções dos seletores: clientes, projetos e repositórios ativos, por nome. */
-async function opcoesDosFiltros(): Promise<TelaDeDemandas['opcoes']> {
+export async function opcoesDosFiltros(): Promise<TelaDeDemandas['opcoes']> {
   const [clientes, projetos, repositorios] = await Promise.all([
     db.cliente.findMany({
       where: { arquivadoEm: null },
@@ -581,6 +582,7 @@ export async function obterPaginaDaDemanda(
               ? { texto: textoDoAjuste, em: ajuste.em }
               : null,
           urlDaTrava: typeof urlDaTrava === 'string' ? urlDaTrava : null,
+          desfecho: desfechoDaTrava(trava?.dados),
           etapaAtual: d.etapaAtual,
           etapas,
         },

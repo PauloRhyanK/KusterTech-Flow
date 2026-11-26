@@ -129,6 +129,19 @@ export function classificarChegada(e: {
   return { resultado: 'aceito' }
 }
 
+/**
+ * O commit que o pedido passa a ter com a cabeça de main deste ciclo, ou `null` se não muda.
+ * Sem commit, ou pedido que segue main (chegou sem commit), vale a cabeça; commit escolhido por
+ * quem pediu nunca muda.
+ */
+export function commitQueSegueMain(
+  p: { commit: string | null; segueMain: boolean },
+  cabeca: string,
+): string | null {
+  if (p.commit !== null && !p.segueMain) return null
+  return p.commit === cabeca ? null : cabeca
+}
+
 const TRANSICOES: Record<EstadoDoPedido, readonly EstadoDoPedido[]> = {
   na_fila: ['verificando', 'recusado', 'dispensado', 'cancelado'],
   verificando: ['publicando', 'na_fila', 'recusado', 'dispensado'],

@@ -8,7 +8,7 @@ const config: Configuracao = {
   token: 'tok',
   projetos: [{ slug: 'app-vendas', repositorio: 'dono/app-vendas' }],
   ambientes: ['production'],
-  limiares: { eventos: 10, horas: 2, porDia: 3 },
+  limiares: { eventos: 10, horas: 2, porDia: 3, horasSemErro: 24 },
 }
 
 const PRIMEIRA =

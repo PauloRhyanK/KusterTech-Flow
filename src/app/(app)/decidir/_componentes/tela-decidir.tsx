@@ -490,6 +490,7 @@ function ItemAberto({
             key={JSON.stringify(ajuste.inicial)}
             tipoDoItem={item.tipo}
             espera={item.ref.tipo === 'demanda' ? item.ref.espera : null}
+            desfecho={item.ref.tipo === 'demanda' ? item.ref.desfecho : null}
             inicial={ajuste.inicial}
             foco={ajuste.foco}
             erro={erroDoAjuste}

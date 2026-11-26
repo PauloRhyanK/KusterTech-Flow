@@ -110,6 +110,7 @@ export async function buscarConversasParaOAtendente(
             l.item.tipo,
             { pr },
             l.item.ref.tipo === 'demanda' ? l.item.ref.espera : null,
+            l.item.ref.tipo === 'demanda' ? l.item.ref.desfecho : null,
           ),
         },
         mensagens: recentes.reverse().map((m) => ({

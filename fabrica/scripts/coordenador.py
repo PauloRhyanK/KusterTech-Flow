@@ -58,6 +58,8 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import atendente  # noqa: E402
+import buscador  # noqa: E402
+import buscas_flow  # noqa: E402
 import capacidade  # noqa: E402
 import consertos  # noqa: E402
 import contratos_externos  # noqa: E402
@@ -353,6 +355,7 @@ class Coordenador:
         pedir_publicacao=None,
         cliente_do_flow=None,
         cliente_das_conversas=None,
+        cliente_das_buscas=None,
     ):
         self.raiz = pathlib.Path(raiz)
         self.forja = forja
@@ -379,6 +382,7 @@ class Coordenador:
         self._pedir_publicacao = pedir_publicacao or publicar.pedir
         self._cliente_do_flow = cliente_do_flow or demandas_flow.ClienteDoFlow  # (url da Central, token_file) → cliente
         self._cliente_das_conversas = cliente_das_conversas or conversas_flow.ClienteDasConversas  # idem, rotas do Decidir
+        self._cliente_das_buscas = cliente_das_buscas or buscas_flow.ClienteDasBuscas  # idem, buscas com IA
         self._ciclos = 0
         self._ultimo_preparo = None
         self._sha_revertido = None
@@ -800,14 +804,27 @@ class Coordenador:
         passado = 0
         while passado < intervalo:
             restante = intervalo - passado
-            if not self._atendente_ativo():
+            conversa, buscas = self._atendente_ativo(), self._buscador_ligado()
+            if not conversa and not buscas:
                 dormir(restante)
                 return
-            pausa = min(atendente.INTERVALO_DO_ATENDENTE_S, restante)
+            pausa = min(atendente.INTERVALO_DO_ATENDENTE_S if conversa else buscador.INTERVALO_DO_BUSCADOR_S, restante)
             dormir(pausa)
             antes = relogio()
-            self._passo_atendente()
+            if conversa:
+                self._passo_atendente()
+            if buscas:
+                self._passo_buscador()
             passado += pausa + int(max(0, relogio() - antes))
+
+    def _buscador_ligado(self) -> bool:
+        """O buscador roda entre ciclos? Só depois de um ciclo, com a Central, o modelo e o Flow com a rota."""
+        try:
+            if self._config is None or not (self.central or {}).get("url"):
+                return False
+            return buscador.ligado(self.dados, self._modelos_do_kit(), self._agora())
+        except Exception:  # noqa: BLE001
+            return False
 
     def _atendente_ativo(self) -> bool:
         """Conversa ativa com o atendente ligado? Nunca levanta (um estado torto vale "não")."""
@@ -841,6 +858,7 @@ class Coordenador:
             rodando, confiavel = self._passo_observar(eventos)
             self._passo_demandas()
             self._passo_atendente()
+            self._passo_buscador()
             self._passo_publicar()
             self._passo_orfaos(rodando, confiavel, eventos)
         finally:
@@ -1165,6 +1183,39 @@ class Coordenador:
                 else:
                     self._log(evento)
             self._esquecer_avisos_do_atendente({e.get("chave") for e in eventos if e.get("evento") == "aviso"}, modelos, mem, falhou)
+            self._salvar()
+
+    def _passo_buscador(self) -> None:
+        """O buscador de demandas com IA (`buscador.passo`), no ciclo e entre os ciclos. Nunca levanta.
+
+        Só com `FABRICA_CENTRAL_URL` e um `fila.json` já lido. O aviso de modelo ausente some quando o modelo volta;
+        os erros vão ao log pelo `_log_repetivel`.
+        """
+        central = self.central or {}
+        if self._config is None or not central.get("url"):
+            return
+        with contextlib.suppress(Exception):
+            try:
+                cliente = self._cliente_das_buscas(central["url"], central.get("token_file"))
+                eventos = buscador.passo(
+                    self.dados,
+                    cliente=cliente,
+                    modelos=self._modelos_do_kit(),
+                    agora=self._agora(),
+                    salvar=self._salvar,
+                )
+            except Exception as exc:  # noqa: BLE001 - só a classe e o texto seguro vão ao log
+                self._erro_de_etapa("buscador", "passo", exc)
+                eventos = []
+            for evento in eventos:
+                if evento.get("evento") == "aviso":
+                    self._aviso(evento["chave"], evento["mensagem"])
+                elif evento.get("evento") == "erro":
+                    self._log_repetivel("buscador:erro", evento)
+                else:
+                    self._log(evento)
+            if "buscador:modelo" not in {e.get("chave") for e in eventos}:
+                self._esquecer("buscador:modelo")
             self._salvar()
 
     def _esquecer_avisos_do_atendente(self, emitidos: set, modelos: dict, mem, falhou: bool = False) -> None:

@@ -47,6 +47,7 @@ model Usuario {
   mensagensEscritas         Mensagem[]
   cartoesConfirmados        CartaoDeFecho[]
   fontesDeDemandasCriadas   FonteDeDemandas[]
+  buscasDeDemandas          BuscaDeDemandas[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -922,6 +923,8 @@ model PedidoDePublicacao {
   id               String                     @id @default(uuid())
   repositorioId    String
   commit           String?
+  // Pedido sem commit ("a ponta de main"): o worker troca o commit pela cabeça de main até o disparo.
+  segueMain        Boolean                    @default(false)
   modo             ModoDePublicacao
   descricao        String?
   fonteId          String?
@@ -1357,6 +1360,43 @@ model LeituraDoGlitchTip {
   ultimoSucessoEm  DateTime?
   ultimaFalhaEm    DateTime?
   motivo           String?
+}
+
+// ——— Busca de demandas com IA (spec 2026-11-26-demandas-busca-com-ia-design.md) ———
+
+enum EstadoDaBusca {
+  PENDENTE
+  EM_CURSO
+  CONCLUIDA
+  FALHOU
+}
+
+model BuscaDeDemandas {
+  id                  String        @id @default(uuid())
+  pergunta            String
+  perguntaNormalizada String
+  pedidaPorId         String?
+  loteIds             String[]
+  /// sha256 dos ids do lote, ordenados: a mesma pergunta no mesmo lote reaproveita a resposta.
+  chaveDoLote         String
+  tokensDoLote        Int
+  estado              EstadoDaBusca @default(PENDENTE)
+  buscadaEm           DateTime?
+  respostaId          String?       @unique
+  impressao           String?
+  resumo              String?
+  itens               Json          @default("[]")
+  falha               String?
+  modelo              String?
+  tokensEntrada       Int?
+  tokensSaida         Int?
+  custoUsd            Float?
+  criadaEm            DateTime      @default(now())
+  concluidaEm         DateTime?
+  pedidaPor           Usuario?      @relation(fields: [pedidaPorId], references: [id], onDelete: SetNull)
+
+  @@index([estado, criadaEm])
+  @@index([perguntaNormalizada, chaveDoLote, criadaEm])
 }
 
 // Relatos de usuários (D83): sistemas conectados, relatos buscados e a caixa de saída do andamento.

@@ -3,6 +3,7 @@ import { formatarIdade } from '@/modules/inicio/model'
 import { textoSemNomes } from '@/modules/relatos/model'
 import {
   FABRICA_SEM_BUSCAR_MS,
+  type Desfecho,
   type Destino,
   type EtapaDefinida,
   type EstadoDaTabela,
@@ -761,6 +762,10 @@ export interface FaixaDaEspera {
   prUrl?: string
   /** Só na trava por pergunta do orquestrador: a retomada leva a resposta do Paulo ao plano. */
   responder?: true
+  /** Só na trava com desfecho duplicada: o link para a outra demanda. */
+  outraDemanda?: { href: string; rotulo: string }
+  /** Só na trava com desfecho: o rótulo do Encerrar, que entra no lugar do Retomar. */
+  encerrar?: string
 }
 
 /** O começo do motivo da trava quando o orquestrador fez uma pergunta (`MOTIVO_PERGUNTA` do kit). */
@@ -774,6 +779,8 @@ export interface DemandaEmEspera {
   ultimoAjuste: { texto: string; em: Date } | null
   /** O `dados.url` do último evento `travada`, como veio. */
   urlDaTrava: string | null
+  /** O `dados.desfecho` do último evento `travada` (duplicada, já resolvida). */
+  desfecho?: Desfecho | null
   etapaAtual: string
   etapas: readonly EtapaDefinida[]
 }
@@ -794,6 +801,32 @@ export function quandoFoi(data: Date, agora: Date): string {
   if (ehDeHoje(data, agora)) return formatarIdade(data, agora)
   if (ehDeHoje(data, new Date(agora.getTime() - 24 * 60 * 60_000))) return 'ontem'
   return `em ${diaEMes(data)}`
+}
+
+/** A trava em que o orquestrador concluiu que não há plano: encerrar no lugar de retomar. */
+function faixaDoDesfecho(d: Desfecho, prUrl: string | null): FaixaDaEspera {
+  const fim = 'Não há plano a fazer.'
+  const comPr = prUrl ? { prUrl } : {}
+  if (d.resultado === 'ja_resolvida') {
+    return {
+      titulo: 'Já está resolvida no repositório',
+      contexto: `O orquestrador conferiu: o que ela pede já está resolvido no repositório. ${fim}`,
+      acoes: [],
+      ...comPr,
+      encerrar: 'Encerrar como já resolvida',
+    }
+  }
+  const curto = d.de?.slice(0, 8)
+  return {
+    titulo: curto ? `Duplicada da demanda ${curto}` : 'Duplicada de outra demanda',
+    contexto: curto
+      ? `O orquestrador conferiu: o que ela pede já está feito lá. ${fim}`
+      : `O orquestrador conferiu: o que ela pede já está feito em outra demanda. ${fim}`,
+    acoes: [],
+    ...comPr,
+    ...(d.de ? { outraDemanda: { href: `/demandas/${d.de}`, rotulo: `Abrir a ${curto}` } } : {}),
+    encerrar: 'Encerrar como duplicada',
+  }
 }
 
 export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | null {
@@ -831,6 +864,7 @@ export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | 
       }
     case 'travada': {
       const prUrl = linkDoGithub(d.urlDaTrava)
+      if (d.desfecho) return faixaDoDesfecho(d.desfecho, prUrl)
       const pergunta = d.esperaMotivo?.startsWith(PREFIXO_DA_PERGUNTA) === true
       return {
         titulo: d.esperaMotivo ?? 'A demanda travou',
@@ -1041,6 +1075,15 @@ export function textoDoEvento(
     return `Retomada com resposta: ${curta}`
   }
   if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
+  if (tipo === 'erro-voltou' && typeof d.horas === 'number') {
+    const como = d.antesDeCorrigir
+      ? 'antes de contar como corrigido: a correção não resolveu'
+      : 'depois de corrigido: regressão'
+    return `O erro voltou ${d.horas} h depois de ir ao ar, ${como}; abriu uma demanda nova`
+  }
+  if (tipo === 'erro-corrigido' && typeof d.horas === 'number') {
+    return `O erro não voltou em ${d.horas} h no ar; corrigido`
+  }
   if (tipo === 'erro-ligado' && typeof d.titulo === 'string') {
     return `Erro parecido ligado: ${d.titulo}`
   }

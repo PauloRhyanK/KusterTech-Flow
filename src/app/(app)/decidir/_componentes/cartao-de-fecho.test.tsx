@@ -90,6 +90,38 @@ describe('CartaoDeFecho', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Falhou da última vez.')
   })
 
+  test('cartão de encerrar com desfecho: a ação diz o porquê e a outra demanda vira link', () => {
+    const outra = '7b7ba4b8-1111-4222-8333-444444444444'
+    const props = {
+      erro: null,
+      pendente: false,
+      podeAgir: true,
+      onConfirmar: vi.fn(),
+      onAjustar: vi.fn(),
+    }
+    const { rerender } = render(
+      <CartaoDeFecho
+        {...props}
+        cartao={cartao({ acao: 'encerrar', desfecho: { resultado: 'duplicada', de: outra } })}
+      />,
+    )
+    expect(screen.getByText(linha('Ação: encerrar como duplicada da 7b7ba4b8'))).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: `/demandas/${outra}` })).toHaveAttribute(
+      'href',
+      `/demandas/${outra}`,
+    )
+    rerender(
+      <CartaoDeFecho
+        {...props}
+        cartao={cartao({ acao: 'encerrar', desfecho: { resultado: 'ja_resolvida', de: null } })}
+      />,
+    )
+    expect(screen.getByText(linha('Ação: encerrar como já resolvida'))).toBeInTheDocument()
+    expect(screen.queryByRole('link')).toBeNull()
+    rerender(<CartaoDeFecho {...props} cartao={cartao({ acao: 'encerrar' })} />)
+    expect(screen.getByText(linha('Ação: encerrar a demanda'))).toBeInTheDocument()
+  })
+
   test('cartão de entregar o que funciona diz o que acontece com a demanda e com o que faltou', () => {
     render(
       <CartaoDeFecho
@@ -133,6 +165,22 @@ describe('CartaoDeFecho', () => {
       />,
     )
     expect(opcoes()).not.toContain('Entregar o que funciona')
+  })
+
+  test('FormularioDoCartao da trava com desfecho: só encerrar', () => {
+    render(
+      <FormularioDoCartao
+        tipoDoItem="trava"
+        espera="travada"
+        desfecho={{ resultado: 'ja_resolvida', de: null }}
+        inicial={{ acao: 'encerrar' }}
+        onSalvar={vi.fn()}
+        onCancelar={vi.fn()}
+      />,
+    )
+    // Uma ação só: o formulário não oferece a troca (nem Retomar).
+    expect(screen.queryAllByRole('option')).toEqual([])
+    expect(screen.queryByText(/Retomar/)).toBeNull()
   })
 
   test('FormularioDoCartao de destino envia os campos do cartão; o campo que falta vem em foco', () => {

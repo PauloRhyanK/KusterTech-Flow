@@ -44,10 +44,20 @@ const quadro = (erros: ErroComDemanda[], extra = {}) =>
   )
 
 describe('montarQuadro', () => {
-  test('ordem: voltou, novo, em correção, na espera, corrigido; recentes primeiro', () => {
+  test('ordem: voltou, novo, em correção, na espera, no ar, corrigido; recentes primeiro', () => {
     const q = quadro([
       erro('esp', { demanda: null, demandaId: null, esperaDesde: antes(MIN) }),
       erro('cor', {
+        ultimoEm: antes(40 * HORA),
+        demanda: {
+          encerrada: 'no_ar',
+          noArEm: antes(30 * HORA),
+          etapaAtual: 'no_ar',
+          etapas,
+          prs: [],
+        },
+      }),
+      erro('ar', {
         ultimoEm: antes(30 * HORA),
         demanda: {
           encerrada: 'no_ar',
@@ -79,6 +89,7 @@ describe('montarQuadro', () => {
       ['em', 'em_correcao'],
       ['esp', 'na_espera'],
       ['obs', 'observando'],
+      ['ar', 'no_ar'],
       ['cor', 'corrigido'],
     ])
     expect(q.contagem).toEqual({
@@ -87,7 +98,12 @@ describe('montarQuadro', () => {
       em_correcao: 1,
       na_espera: 1,
       observando: 1,
+      no_ar: 1,
     })
+    expect(q.linhas.find((l) => l.issueId === 'ar')?.detalhe).toBe('no ar · faltam 22 h sem o erro')
+    expect(q.linhas.find((l) => l.issueId === 'cor')?.detalhe).toBe(
+      'no ar há 30 h sem o erro voltar',
+    )
     expect(q.linhas.find((l) => l.issueId === 'em')?.detalhe).toBe('desenvolvida · PR #88')
     expect(q.linhas.find((l) => l.issueId === 'novo-recente')?.detalhe).toBe(
       'demanda aberta, triagem',
@@ -98,6 +114,24 @@ describe('montarQuadro', () => {
     expect(q.linhas.find((l) => l.issueId === 'obs')?.detalhe).toBe(
       'vira demanda com 10 eventos ou ativo por 2 h',
     )
+    expect(q.corrigidosEm7Dias).toBe(1)
+  })
+
+  test('a espera sem o erro vem dos limiares', () => {
+    const noAr = erro('ar', {
+      ultimoEm: antes(30 * HORA),
+      demanda: {
+        encerrada: 'no_ar',
+        noArEm: antes(2 * HORA),
+        etapaAtual: 'no_ar',
+        etapas,
+        prs: [],
+      },
+    })
+    const limiares = { eventos: 10, horas: 2, porDia: 3, horasSemErro: 1 }
+    const q = quadro([noAr], { limiares })
+    expect(q.linhas.map((l) => l.estado)).toEqual(['corrigido'])
+    expect(q.linhas[0]?.detalhe).toBe('no ar há 2 h sem o erro voltar')
     expect(q.corrigidosEm7Dias).toBe(1)
   })
 

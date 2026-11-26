@@ -352,6 +352,32 @@ O estado fica em `~/fabrica/fila-estado.json`, na chave `atendente`. O `coordena
 - `atendente: Flow sem o Decidir (tenta de novo 1 h depois de <instante>)`;
 - `atendente: desligado`, sem a URL.
 
+### Buscas com IA (buscador)
+
+Na tela **Demandas → Buscar com IA**, o Paulo descreve o que procura e o Flow guarda a busca com o lote de
+demandas do recorte. O coordenador (`scripts/buscador.py`) pega a busca pendente por `GET /api/fabrica/buscas`
+(o mesmo token da Fábrica), roda duas chamadas ao CLI `claude -p` e responde por
+`POST /api/fabrica/buscas/<id>/respostas`:
+
+1. a etapa 1 lê uma ficha curta de cada demanda e escolhe até 10 candidatas;
+2. a etapa 2 lê o texto completo só delas (`GET /api/fabrica/buscas/<id>/demandas?ids=…`) e diz quais tratam do
+   pedido, com relevância e motivo.
+
+O CLI roda sem ferramentas, sem sessão gravada e sem MCP, com `--max-budget-usd` = `modelos.buscador.maxCustoUsd`
+e teto de 60 s por chamada. O modelo vem de `modelos.buscador` (`claude-haiku-5-5` no kit). Sem esse papel, o
+coordenador avisa `Buscador: configure modelos.buscador …` e as buscas esperam. Com o Flow sem a rota (404), o
+buscador desliga por 1 h. Ligado, ele consulta o Flow a cada 10 s entre os ciclos.
+
+**O CLI precisa existir e estar logado para o usuário que roda o coordenador** (na oficina, `devops`):
+
+```sh
+curl -fsSL https://claude.ai/install.sh | bash   # instala em ~/.local/bin/claude, sem sudo
+claude                                            # uma vez: /login com a conta da Fábrica
+```
+
+O teto de buscas por dia e o tamanho do lote ficam no Flow: `FLOW_BUSCAS_IA_POR_DIA` (30) e
+`FLOW_BUSCAS_IA_TOKENS_DO_LOTE` (150000).
+
 ### Riscos conhecidos
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
@@ -383,6 +409,7 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 | `seguranca`    | `claude-sonnet-5-5` | medium  | 10          |
 | `fixer`        | `claude-haiku-5-5`  | medium  | 5           |
 | `atendente`    | `claude-sonnet-5-5` | medium  | 2           |
+| `buscador`     | `claude-haiku-5-5`  | medium  | 0.5         |
 
 Limitações:
 

@@ -39,7 +39,7 @@ export interface OpcoesDoCliente {
 const TEMPO_PADRAO_MS = 10_000
 const USER_AGENT = 'KusterTech-Flow/relatos'
 
-type Resposta = { status: number; corpo: Buffer; excedeu: boolean }
+type Resposta = { status: number; corpo: Buffer; excedeu: boolean; tipo?: string }
 
 class TempoEsgotado extends Error {}
 
@@ -47,7 +47,7 @@ async function requisitar(
   alvo: AlvoDoSistema,
   metodo: 'GET' | 'POST',
   url: string,
-  o: OpcoesDoCliente & { corpo?: string; limite: number },
+  o: OpcoesDoCliente & { corpo?: string; limite: number; aceita?: string },
 ): Promise<Resposta> {
   const u = new URL(url)
   const ip = await resolverComSeguranca(u.hostname, { permitirLocal: alvo.permitirLocal }, o.dns)
@@ -55,7 +55,7 @@ async function requisitar(
   const modulo = u.protocol === 'https:' ? https : http
   const host = u.hostname.replace(/^\[|\]$/g, '')
   const cabecalhos: Record<string, string> = {
-    Accept: 'application/json',
+    Accept: o.aceita ?? 'application/json',
     'User-Agent': USER_AGENT,
     Authorization: `Bearer ${alvo.token}`,
   }
@@ -105,7 +105,12 @@ async function requisitar(
         })
         res.on('end', () =>
           fim(() =>
-            resolve({ status: res.statusCode ?? 0, corpo: Buffer.concat(pedacos), excedeu: false }),
+            resolve({
+              status: res.statusCode ?? 0,
+              corpo: Buffer.concat(pedacos),
+              excedeu: false,
+              tipo: res.headers['content-type'],
+            }),
           ),
         )
         res.on('error', (e) => fim(() => reject(e)))
@@ -238,4 +243,43 @@ export async function enviarAndamento(
   if (r.status === 400 || r.status === 422)
     return { resultado: 'descartar', motivo: motivoDoErro(r.corpo) }
   return { resultado: 'tentar_de_novo', motivo: `O sistema respondeu ${r.status}.` }
+}
+
+export type AnexoBaixado =
+  { ok: true; conteudo: string; bytes: Buffer } | { ok: false; motivo: string }
+
+/**
+ * `GET` no caminho do anexo (já conferido por `caminhoDoAnexo`). O token só vai se o caminho for da
+ * origem cadastrada; o corpo para no limite.
+ */
+export async function baixarAnexo(
+  alvo: AlvoDoSistema,
+  url: string,
+  limite: number,
+  o: OpcoesDoCliente = {},
+): Promise<AnexoBaixado> {
+  const tempoMs = o.tempoMs ?? TEMPO_PADRAO_MS
+  let r: Resposta
+  try {
+    const origem = new URL(urlDoSistema(alvo, '/')).origin
+    let destino: URL
+    try {
+      destino = new URL(url)
+    } catch {
+      return { ok: false, motivo: 'O anexo não é do endereço do sistema.' }
+    }
+    if (destino.origin !== origem || destino.username || destino.password) {
+      return { ok: false, motivo: 'O anexo não é do endereço do sistema.' }
+    }
+    r = await requisitar(alvo, 'GET', destino.href, { ...o, limite, aceita: '*/*' })
+  } catch (err) {
+    const f = falhaDeRede(err, tempoMs)
+    return { ok: false, motivo: 'motivo' in f ? f.motivo : 'Falha de rede.' }
+  }
+  if (r.excedeu) return { ok: false, motivo: 'O anexo passou do limite.' }
+  if (r.status < 200 || r.status >= 300) {
+    return { ok: false, motivo: `O sistema respondeu ${r.status}.` }
+  }
+  const conteudo = (r.tipo ?? '').split(';')[0]!.trim().toLowerCase()
+  return { ok: true, conteudo, bytes: r.corpo }
 }

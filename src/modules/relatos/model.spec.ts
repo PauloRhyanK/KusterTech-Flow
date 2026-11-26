@@ -3,6 +3,7 @@ import type { EtapaDefinida } from '@/modules/demandas/model'
 import { relatoDoFioSchema, type RelatoDoFio } from './contrato'
 import { relatoDeExemplo } from './exemplos'
 import {
+  anexosParaCopiar,
   andamentoDaDemanda,
   caminhoDoAnexo,
   demandaDoRelato,
@@ -272,5 +273,39 @@ describe('proximaTentativa', () => {
     expect(proximaTentativa(9, agora, agora)).toEqual(new Date(agora.getTime() + 60 * MIN))
     const criado = new Date(agora.getTime() - 7 * 24 * 60 * MIN - MIN)
     expect(proximaTentativa(1, criado, agora)).toBeNull()
+  })
+})
+
+describe('quando o relato aconteceu e os anexos que vêm junto', () => {
+  test('a descrição diz o dia e a hora do relato no horário de Brasília', () => {
+    const d = demandaDoRelato(relato({ em: '2026-11-26T19:38:34.504Z' }), 'Sistema Alfa')
+    expect(d.descricao).toContain('Relatado em 26/11/2026 às 16:38 (horário de Brasília).')
+  })
+
+  test('anexosParaCopiar: um por anexo com caminho, id estável por relato e posição, nome pelo tipo', () => {
+    const anexos = [
+      {
+        tipo: 'imagem' as const,
+        bytes: 10,
+        caminho: 'https://alfa.exemplo.com/v1/relatos/anexos/a',
+      },
+      { tipo: 'audio' as const, bytes: 10, caminho: null },
+      {
+        tipo: 'audio' as const,
+        bytes: 10,
+        caminho: 'https://alfa.exemplo.com/v1/relatos/anexos/c',
+      },
+    ]
+    const a = anexosParaCopiar('rel-1', anexos)
+    expect(a.map((x) => [x.url, x.nome])).toEqual([
+      ['https://alfa.exemplo.com/v1/relatos/anexos/a', 'print-1-do-relato'],
+      ['https://alfa.exemplo.com/v1/relatos/anexos/c', 'audio-3-do-relato'],
+    ])
+    expect(a[0]!.arquivoId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
+    expect(anexosParaCopiar('rel-1', anexos)[0]!.arquivoId).toBe(a[0]!.arquivoId)
+    expect(anexosParaCopiar('rel-2', anexos)[0]!.arquivoId).not.toBe(a[0]!.arquivoId)
+    expect(a[1]!.arquivoId).not.toBe(a[0]!.arquivoId)
   })
 })

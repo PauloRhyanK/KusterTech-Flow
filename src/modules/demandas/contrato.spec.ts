@@ -48,6 +48,22 @@ describe('eventoDaFabricaSchema', () => {
     expect(eventoDaFabricaSchema.safeParse({ id: ID, em: EM, tipo, dados }).success).toBe(true)
   })
 
+  test('travada aceita o desfecho do orquestrador sem plano; recusa desfecho torto', () => {
+    const travada = (desfecho: unknown) =>
+      eventoDaFabricaSchema.safeParse({
+        id: ID,
+        em: EM,
+        tipo: 'travada',
+        dados: { motivo: 'x', url: PR, desfecho },
+      }).success
+    expect(travada({ resultado: 'duplicada', de: ID })).toBe(true)
+    expect(travada({ resultado: 'ja_resolvida', de: null })).toBe(true)
+    expect(travada({ resultado: 'outro', de: null })).toBe(false)
+    expect(travada({ resultado: 'duplicada', de: '7b7ba4b8' })).toBe(false)
+    expect(travada({ resultado: 'duplicada', de: null, extra: 1 })).toBe(false)
+    expect(travada({ resultado: 'duplicada' })).toBe(false)
+  })
+
   test('recusa campo extra, id que não é uuid e instante fora do formato', () => {
     const ok = { id: ID, em: EM, tipo: 'destravada', dados: {} }
     expect(eventoDaFabricaSchema.safeParse({ ...ok, extra: 1 }).success).toBe(false)
