@@ -4,6 +4,7 @@ import {
   FABRICA_SEM_BUSCAR_MS,
   type Destino,
   type EtapaDefinida,
+  type EstadoDaTabela,
   type Encerramento,
   type Espera,
   type Marco,
@@ -363,6 +364,73 @@ export function montarGrupos(
       linhas: orientadas.map((d) => linhaDe(d, 'orientadas_hoje', agora)),
     },
   ]
+}
+
+// ——— Tabela de demandas (filtros e ordem) ———
+
+/** A demanda na tabela: a da lista mais os clientes do projeto e os repositórios das partes. */
+export interface DemandaNaTabela extends DemandaNaLista {
+  /** Nomes, em ordem alfabética. */
+  clientes: readonly string[]
+  /** `nomeCompleto`, o principal primeiro, sem repetir. */
+  repositorios: readonly string[]
+}
+
+export interface LinhaDaTabela extends LinhaDeDemanda {
+  cliente: string
+  repositorio: string
+  estadoDaTabela: EstadoDaTabela
+}
+
+export interface TabelaDeDemandas {
+  linhas: LinhaDaTabela[]
+  /** Passou do teto: a tabela mostra só as mais recentes. */
+  truncada: boolean
+}
+
+export interface OpcaoDeFiltro {
+  valor: string
+  rotulo: string
+}
+
+/** O estado na tabela: o grupo até o ar, mas a no ar antiga continua no ar e o resto é encerrada. */
+export function estadoNaTabela(d: DemandaNaLista, agora: Date): EstadoDaTabela {
+  return grupoAteOAr(d, agora) ?? (d.encerrada === 'no_ar' ? 'no_ar' : 'encerrada')
+}
+
+const primeiroEMais = (nomes: readonly string[]): string =>
+  nomes.length === 0 ? '—' : nomes.length === 1 ? nomes[0] : `${nomes[0]} +${nomes.length - 1}`
+
+export function linhaDaTabela(d: DemandaNaTabela, agora: Date): LinhaDaTabela {
+  const estado = estadoNaTabela(d, agora)
+  // "Orientadas hoje" é o grupo que cai no rótulo do estado — o certo para as encerradas.
+  const linha = linhaDe(d, estado === 'encerrada' ? 'orientadas_hoje' : estado, agora)
+  return {
+    ...linha,
+    idade: semHa(formatarIdade(d.atualizadaEm, agora)),
+    cliente: primeiroEMais(d.clientes),
+    repositorio: primeiroEMais(d.repositorios.map((r) => r.slice(r.lastIndexOf('/') + 1))),
+    estadoDaTabela: estado,
+  }
+}
+
+const ORDEM_NA_TABELA: Record<EstadoDaTabela, number> = {
+  espera_voce: 0,
+  nao_chegou: 1,
+  a_caminho: 2,
+  no_ar: 3,
+  encerrada: 4,
+}
+
+/** Ordena pelo estado (o que pede o Paulo primeiro no `asc`), mantendo a ordem dentro de cada um. */
+export function ordenarPorEstado(
+  linhas: readonly LinhaDaTabela[],
+  sentido: 'asc' | 'desc',
+): LinhaDaTabela[] {
+  const sinal = sentido === 'asc' ? 1 : -1
+  return [...linhas].sort(
+    (a, b) => sinal * (ORDEM_NA_TABELA[a.estadoDaTabela] - ORDEM_NA_TABELA[b.estadoDaTabela]),
+  )
 }
 
 const QUADROS: readonly { chave: GrupoAteOAr; rotulo: string; meta: string }[] = [
