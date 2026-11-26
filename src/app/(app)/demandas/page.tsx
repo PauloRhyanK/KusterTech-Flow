@@ -65,11 +65,16 @@ export default async function PaginaDasDemandas({
           )
         }
         acoes={
-          tela.podeCriar && (
-            <Link href="/demandas/nova" className={buttonVariants()}>
-              Nova demanda
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/demandas/busca" className={buttonVariants({ variant: 'secondary' })}>
+              Buscar com IA
             </Link>
-          )
+            {tela.podeCriar && (
+              <Link href="/demandas/nova" className={buttonVariants()}>
+                Nova demanda
+              </Link>
+            )}
+          </div>
         }
       />
       <QuadrosAteOAr quadros={tela.quadros} />
