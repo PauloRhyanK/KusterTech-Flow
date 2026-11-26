@@ -12,6 +12,8 @@ import { type Buscar, lerIssue, listarAmbientes, listarIssues } from './cliente'
 import {
   acrescentarPonto,
   ambientesParaLer,
+  comoVoltou,
+  corrigidoEm,
   type Configuracao,
   decidir,
   descricaoDaDemanda,
@@ -20,15 +22,18 @@ import {
   ignorada,
   type IssueLida,
   lerConfiguracao,
+  LIMIARES_PADRAO,
   type Limiares,
   mascarar,
   NAO_CONFIGURADO,
   type Ponto,
   type ProjetoConfigurado,
+  reativada,
   tituloDaDemanda,
 } from './model'
 
-const DIA_MS = 24 * 60 * 60_000
+const HORA_MS = 60 * 60_000
+const DIA_MS = 24 * HORA_MS
 const CONFERIDOS_POR_CICLO = 50
 // A espera pela trava do projeto conta no tempo da transação (padrão do Prisma: 5 s).
 const TRANSACAO = { maxWait: 15_000, timeout: 15_000 }
@@ -42,6 +47,7 @@ export interface ResumoDaBusca {
   naEspera: number
   atualizados: number
   resolvidos: number
+  corrigidos: number
   falhas: number
 }
 
@@ -63,6 +69,7 @@ export async function buscarErrosDoGlitchTip(
     naEspera: 0,
     atualizados: 0,
     resolvidos: 0,
+    corrigidos: 0,
     falhas: 0,
   }
   const lida = lerConfiguracao(d.env ?? process.env)
@@ -93,7 +100,62 @@ export async function buscarErrosDoGlitchTip(
       await registrarLeitura(projeto.slug, { ultimaFalhaEm: agora, motivo: 'falha interna' })
     }
   }
+  try {
+    resumo.corrigidos = await registrarCorrigidos(agora, lida.config.limiares.horasSemErro)
+  } catch (err) {
+    log.error(
+      { tarefa: 'buscar-erros-do-glitchtip', erro: resumirErroParaLog(err) },
+      'registro dos erros corrigidos falhou',
+    )
+  }
   return resumo
+}
+
+/**
+ * Spec 2026-11-26-erros-ate-corrigido, 2: a demanda do GlitchTip no ar há `horasSemErro` sem
+ * nenhum dos seus erros voltar ganha uma vez o evento `erro-corrigido`. Um erro que voltou e
+ * foi para outra demanda continua contando (pela `demandaAnteriorId`).
+ */
+async function registrarCorrigidos(agora: Date, horasSemErro: number): Promise<number> {
+  const limite = new Date(agora.getTime() - horasSemErro * HORA_MS)
+  const candidatas = await db.demanda.findMany({
+    where: {
+      origem: 'GLITCHTIP',
+      encerrada: 'no_ar',
+      noArEm: { lte: limite, gte: new Date(limite.getTime() - 7 * DIA_MS) },
+      eventos: { none: { tipo: 'erro-corrigido' } },
+    },
+    select: { id: true, noArEm: true },
+  })
+  let registrados = 0
+  for (const d of candidatas) {
+    const erros = await db.erroDoGlitchTip.findMany({
+      where: { OR: [{ demandaId: d.id }, { demandaAnteriorId: d.id }] },
+      select: { ultimoEm: true },
+    })
+    const corrigida =
+      erros.length > 0 &&
+      erros.every((e) => corrigidoEm({ noArEm: d.noArEm, ultimoEm: e.ultimoEm }, horasSemErro))
+    if (!corrigida) continue
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+      await tx.eventoDaDemanda.createMany({
+        data: [
+          {
+            idExterno: `glitchtip:erro-corrigido:${d.id}`,
+            demandaId: d.id,
+            tipo: 'erro-corrigido',
+            origem: 'glitchtip',
+            dados: { horas: horasSemErro },
+            em: agora,
+          },
+        ],
+        skipDuplicates: true,
+      })
+    })
+    registrados += 1
+  }
+  return registrados
 }
 
 async function lerProjeto(
@@ -228,10 +290,14 @@ function processarIssue(
     if (atual === null && ignorada(issue, regras.ligadaEm)) return 'ignorada'
 
     const grupo = grupoDoErro(issue)
-    const demanda = atual?.demanda ?? null
-    // Sem demanda, ou com a demanda já no ar (pode ter voltado): um parecido aberto recebe o erro.
+    const demanda = atual?.demanda
+      ? { ...atual.demanda, descartadaEm: await descartadaEm(tx, atual.demanda) }
+      : null
+    // Descartada e o erro voltou a ter evento: a issue se solta dela e volta à triagem.
+    const solta = reativada(demanda, issue)
+    // Sem demanda, com a demanda já no ar (pode ter voltado) ou solta: um parecido aberto recebe o erro.
     const doGrupo =
-      demanda === null || demanda.noArEm !== null
+      demanda === null || demanda.noArEm !== null || solta
         ? await demandaAbertaDoGrupo(tx, slug, grupo, issue.id)
         : null
     const acao = decidir({
@@ -265,7 +331,7 @@ function processarIssue(
       tx.erroDoGlitchTip.upsert({
         where: { issueId: issue.id },
         create: { issueId: issue.id, ...comum, ...extra },
-        update: { ...comum, ...extra },
+        update: { ...comum, ...(solta ? { demandaId: null } : {}), ...extra },
       })
 
     switch (acao.tipo) {
@@ -298,11 +364,26 @@ function processarIssue(
           anterior,
           demandaAnteriorId: atual?.demandaAnteriorId ?? null,
           agora,
+          horasSemErro: regras.limiares.horasSemErro,
         })
         return anterior ? 'voltou' : 'aberta'
       }
     }
   }, TRANSACAO)
+}
+
+/** Quando o Paulo descartou a demanda; `null` se ela não foi descartada. */
+async function descartadaEm(
+  tx: Prisma.TransactionClient,
+  demanda: { id: string; encerrada: string | null },
+): Promise<Date | null> {
+  if (demanda.encerrada !== 'descartada') return null
+  const evento = await tx.eventoDaDemanda.findFirst({
+    where: { demandaId: demanda.id, tipo: 'encerrada_pelo_paulo' },
+    orderBy: { em: 'desc' },
+    select: { em: true },
+  })
+  return evento?.em ?? null
 }
 
 /** Demanda aberta (não encerrada) de outro erro do mesmo grupo e projeto. */
@@ -352,6 +433,7 @@ async function abrirParaOErro(
     anterior: { id: string; noArEm: Date } | null
     demandaAnteriorId: string | null
     agora: Date
+    horasSemErro?: number
     usuarioId?: string
   },
 ): Promise<string> {
@@ -375,7 +457,7 @@ async function abrirParaOErro(
       projetoId: e.repositorio.projetoId,
       repositorioId: e.repositorio.id,
       titulo: tituloDaDemanda(e.issue),
-      descricao: descricaoDaDemanda(e.issue, e.anterior, parecidos),
+      descricao: descricaoDaDemanda(e.issue, e.anterior, parecidos, e.horasSemErro),
       tipo: 'defeito',
       nivel: null,
       temTela: false,
@@ -407,7 +489,14 @@ async function abrirParaOErro(
         demandaId: e.anterior.id,
         tipo: 'erro-voltou',
         origem: 'glitchtip',
-        dados: { demandaNova: aberta.id },
+        dados: {
+          demandaNova: aberta.id,
+          ...comoVoltou(
+            e.anterior.noArEm,
+            e.issue.ultimoEm,
+            e.horasSemErro ?? LIMIARES_PADRAO.horasSemErro,
+          ),
+        },
         em: e.agora,
       },
     })

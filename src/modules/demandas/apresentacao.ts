@@ -1027,6 +1027,15 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
     return `Retomada com resposta: ${curta}`
   }
   if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
+  if (tipo === 'erro-voltou' && typeof d.horas === 'number') {
+    const como = d.antesDeCorrigir
+      ? 'antes de contar como corrigido: a correção não resolveu'
+      : 'depois de corrigido: regressão'
+    return `O erro voltou ${d.horas} h depois de ir ao ar, ${como}; abriu uma demanda nova`
+  }
+  if (tipo === 'erro-corrigido' && typeof d.horas === 'number') {
+    return `O erro não voltou em ${d.horas} h no ar; corrigido`
+  }
   if (tipo === 'erro-ligado' && typeof d.titulo === 'string') {
     return `Erro parecido ligado: ${d.titulo}`
   }

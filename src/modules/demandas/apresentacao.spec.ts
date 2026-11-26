@@ -505,6 +505,19 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
     expect(textoDoEvento('erro-voltou', { demandaNova: 'd2' })).toBe(
       'O erro voltou depois de ir ao ar; abriu uma demanda nova',
     )
+    expect(
+      textoDoEvento('erro-voltou', { demandaNova: 'd2', horas: 3, antesDeCorrigir: true }),
+    ).toBe(
+      'O erro voltou 3 h depois de ir ao ar, antes de contar como corrigido: a correção não resolveu; abriu uma demanda nova',
+    )
+    expect(
+      textoDoEvento('erro-voltou', { demandaNova: 'd2', horas: 72, antesDeCorrigir: false }),
+    ).toBe(
+      'O erro voltou 72 h depois de ir ao ar, depois de corrigido: regressão; abriu uma demanda nova',
+    )
+    expect(textoDoEvento('erro-corrigido', { horas: 24 })).toBe(
+      'O erro não voltou em 24 h no ar; corrigido',
+    )
   })
 
   test('histórico: retomada com resposta mostra o texto, truncado em 120', () => {

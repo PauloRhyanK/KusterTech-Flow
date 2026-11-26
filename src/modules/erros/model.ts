@@ -17,9 +17,11 @@ export interface Limiares {
   horas: number
   /** Demandas automáticas nas últimas 24 h, somando os projetos. */
   porDia: number
+  /** Horas no ar sem o erro voltar até a demanda contar como corrigida. */
+  horasSemErro: number
 }
 
-export const LIMIARES_PADRAO: Limiares = { eventos: 10, horas: 2, porDia: 3 }
+export const LIMIARES_PADRAO: Limiares = { eventos: 10, horas: 2, porDia: 3, horasSemErro: 24 }
 export const AMBIENTES_PADRAO = ['production', 'producao', 'produção', 'prod', 'live']
 
 export interface IssueLida {
@@ -95,6 +97,7 @@ export function lerConfiguracao(
     ['eventos', 'GLITCHTIP_LIMIAR_EVENTOS'],
     ['horas', 'GLITCHTIP_LIMIAR_HORAS'],
     ['porDia', 'GLITCHTIP_DEMANDAS_POR_DIA'],
+    ['horasSemErro', 'GLITCHTIP_HORAS_SEM_ERRO'],
   ]
   for (const [campo, chave] of chaves) {
     if (vazio(env[chave])) continue
@@ -176,6 +179,44 @@ export function entra(issue: IssueLida, agora: Date): boolean {
 export interface SituacaoDaDemanda {
   encerrada: string | null
   noArEm: Date | null
+  /** Quando o Paulo descartou a demanda (evento `encerrada_pelo_paulo`). */
+  descartadaEm?: Date | null
+}
+
+/** Demanda descartada e o erro teve evento depois do descarte: volta à triagem (spec 2026-11-26-erros-ate-corrigido, 4). */
+export function reativada(demanda: SituacaoDaDemanda | null, issue: IssueLida): boolean {
+  return (
+    demanda !== null &&
+    demanda.encerrada === 'descartada' &&
+    demanda.descartadaEm != null &&
+    issue.ultimoEm.getTime() > demanda.descartadaEm.getTime()
+  )
+}
+
+/** O momento em que o erro conta como corrigido: `horasSemErro` depois do ar, se não voltou. */
+export function corrigidoEm(
+  e: { noArEm: Date | null; ultimoEm: Date },
+  horasSemErro: number,
+): Date | null {
+  if (e.noArEm === null || e.ultimoEm.getTime() > e.noArEm.getTime()) return null
+  return new Date(e.noArEm.getTime() + horasSemErro * HORA_MS)
+}
+
+/** Voltou na espera (a correção não resolveu) ou depois de corrigido (regressão). */
+export function comoVoltou(
+  noArEm: Date,
+  ultimoEm: Date,
+  horasSemErro: number,
+): { horas: number; antesDeCorrigir: boolean } {
+  const ms = ultimoEm.getTime() - noArEm.getTime()
+  return { horas: Math.floor(ms / HORA_MS), antesDeCorrigir: ms < horasSemErro * HORA_MS }
+}
+
+/** Frase do aviso `erro-voltou` e da descrição da demanda nova. */
+export function fraseDoVoltou(v: { horas: number; antesDeCorrigir: boolean }): string {
+  return v.antesDeCorrigir
+    ? `voltou ${v.horas} h depois de ir ao ar, antes de contar como corrigido: a correção não resolveu`
+    : `voltou ${v.horas} h depois de ir ao ar, depois de corrigido: regressão`
 }
 
 export type Acao =
@@ -194,11 +235,12 @@ export function decidir(e: {
   abertasNoDia: number
   limiares: Limiares
 }): Acao {
+  const demanda = reativada(e.demanda, e.issue) ? null : e.demanda
   const voltou =
-    e.demanda !== null &&
-    e.demanda.noArEm !== null &&
-    e.issue.ultimoEm.getTime() > e.demanda.noArEm.getTime()
-  if (e.demanda !== null && !voltou) return { tipo: 'atualizar' }
+    demanda !== null &&
+    demanda.noArEm !== null &&
+    e.issue.ultimoEm.getTime() > demanda.noArEm.getTime()
+  if (demanda !== null && !voltou) return { tipo: 'atualizar' }
   const cheio = e.abertasNoDia >= e.limiares.porDia
   if (e.demandaDoGrupo !== null) return { tipo: 'ligar', demandaId: e.demandaDoGrupo }
   if (voltou) return cheio ? { tipo: 'esperar' } : { tipo: 'abrir', voltou: true }
@@ -207,7 +249,7 @@ export function decidir(e: {
 }
 
 export type EstadoNoQuadro =
-  'voltou' | 'novo' | 'em_correcao' | 'na_espera' | 'observando' | 'corrigido'
+  'voltou' | 'novo' | 'em_correcao' | 'na_espera' | 'observando' | 'no_ar' | 'corrigido'
 
 /** Tabela 6.3; `null` é fora do quadro. */
 export function estadoNoQuadro(
@@ -219,6 +261,7 @@ export function estadoNoQuadro(
     demanda: (SituacaoDaDemanda & { naPrimeiraEtapa: boolean }) | null
   },
   agora: Date,
+  horasSemErro: number = LIMIARES_PADRAO.horasSemErro,
 ): EstadoNoQuadro | null {
   if (e.resolvidoEm !== null) return null
   const d = e.demanda
@@ -229,8 +272,11 @@ export function estadoNoQuadro(
   }
   if (d.noArEm !== null) {
     if (e.esperaDesde !== null) return 'na_espera'
-    if (e.ultimoEm.getTime() > d.noArEm.getTime()) return null
-    return agora.getTime() - d.noArEm.getTime() <= CORRIGIDO_NO_QUADRO_MS ? 'corrigido' : null
+    const corrigido = corrigidoEm({ noArEm: d.noArEm, ultimoEm: e.ultimoEm }, horasSemErro)
+    if (corrigido === null) return null
+    const desde = agora.getTime() - corrigido.getTime()
+    if (desde < 0) return 'no_ar'
+    return desde <= CORRIGIDO_NO_QUADRO_MS ? 'corrigido' : null
   }
   if (d.encerrada !== null) return null
   if (e.voltou) return 'voltou'
@@ -294,9 +340,10 @@ export function descricaoDaDemanda(
   issue: IssueLida,
   anterior: { id: string; noArEm: Date } | null,
   ligadas: { titulo: string; link: string }[] = [],
+  horasSemErro: number = LIMIARES_PADRAO.horasSemErro,
 ): string {
   const abertura = anterior
-    ? `Este erro voltou depois da correção da demanda /demandas/${anterior.id}, no ar desde ${formatarDataHora(anterior.noArEm)}.`
+    ? `Este erro voltou depois da correção da demanda /demandas/${anterior.id}, no ar desde ${formatarDataHora(anterior.noArEm)}; ${fraseDoVoltou(comoVoltou(anterior.noArEm, issue.ultimoEm, horasSemErro))}.`
     : 'Erro novo no GlitchTip.'
   return [
     abertura,
