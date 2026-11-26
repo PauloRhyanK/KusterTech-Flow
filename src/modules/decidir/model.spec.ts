@@ -380,6 +380,19 @@ describe('avisos da publicação na pilha', () => {
   })
 })
 
+describe('decisão da Fábrica no cabeçalho', () => {
+  it('título e pergunta dizem o assunto, sem os prefixos', () => {
+    const { itens } = pilha({
+      decisoes: [decisao({ titulo: '[fábrica] pergunta: Cobrar à vista?' })],
+    })
+    expect(itens[0]).toMatchObject({
+      tipo: 'decisao_da_fabrica',
+      titulo: 'Cobrar à vista?',
+      pergunta: 'Cobrar à vista?',
+    })
+  })
+})
+
 describe('amanhaAsSeis', () => {
   it('06:00 do dia seguinte em São Paulo', () => {
     expect(amanhaAsSeis(new Date('2026-11-21T23:30:00-03:00')).toISOString()).toBe(

@@ -8,6 +8,7 @@ import {
   type TipoDeDemanda,
 } from '@/modules/demandas/model'
 import { formatarIdade } from '@/modules/inicio/model'
+import { tituloDaDecisao } from './leitura'
 
 export type TipoDeItem =
   | 'trava'
@@ -456,8 +457,8 @@ function itemDaDecisao(
       ? d.faseAtual
         ? `Fase ${d.faseAtual} concluída: ${d.feature}`
         : `Fim de fase: ${d.feature}`
-      : d.titulo,
-    pergunta: fimDeFase ? PERGUNTAS.fim_de_fase : d.titulo.replace(/^\[fábrica\] /, ''),
+      : tituloDaDecisao(d.titulo),
+    pergunta: fimDeFase ? PERGUNTAS.fim_de_fase : tituloDaDecisao(d.titulo),
     projeto: nomeDoProjeto(d.repo),
     repositorio: d.repo,
     linha: `Fábrica · ${d.feature}`,

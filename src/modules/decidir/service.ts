@@ -60,7 +60,15 @@ const CONVERSA_NAO_ENCONTRADA = 'Conversa não encontrada.'
 const REPETIDA = 'Mensagem repetida com outro conteúdo.'
 const CARTAO_EM_CONFIRMACAO = 'O cartão está sendo confirmado. Espere um instante.'
 const LIMITE_DO_RELATO = 4000
-const LIMITE_DA_DECISAO = 600
+const LIMITE_DA_DECISAO = LIMITE_DO_RELATO
+/** O corte antigo da abertura da decisão da Fábrica: a mensagem com esse tamanho é regravada inteira. */
+const CORTE_ANTIGO_DA_DECISAO = 600
+const CONTINUA_NA_ISSUE = '\n\n_Continua na issue._'
+
+function corpoDaDecisao(corpo: string): string {
+  if (corpo.length <= LIMITE_DA_DECISAO) return corpo
+  return corpo.slice(0, LIMITE_DA_DECISAO - CONTINUA_NA_ISSUE.length).trimEnd() + CONTINUA_NA_ISSUE
+}
 const MAXIMO_DE_IMAGENS = 3
 const TIPOS_DE_IMAGEM = CONTEUDOS_ACEITOS.anexo.filter((t) => t.startsWith('image/'))
 const DESTINOS_DO_CARTAO: readonly string[] = ['urgente', 'lote_da_noite', 'fila_de_agentes']
@@ -412,7 +420,7 @@ ${leitura.prDaTrava}`
     case 'decisao_da_fabrica': {
       if (leitura.aviso !== null) return flow(leitura.aviso)
       const corpo = leitura.corpo?.trim()
-      return flow(corpo ? corpo.slice(0, LIMITE_DA_DECISAO) : item.pergunta || item.titulo)
+      return flow(corpo ? corpoDaDecisao(corpo) : item.pergunta || item.titulo)
     }
   }
 }
@@ -471,7 +479,28 @@ async function criarOuCompletar(
     if (existente) {
       const c = await conversaAberta(tx, existente.id)
       conversaId = c.id
-      if (abertura === null || (await tx.mensagem.count({ where: { conversaId } })) > 0) {
+      if (abertura === null) return conversaId
+      const gravadas = await tx.mensagem.findMany({
+        where: { conversaId },
+        orderBy: { seq: 'asc' },
+        take: 2,
+        select: { id: true, autor: true, texto: true },
+      })
+      if (gravadas.length > 0) {
+        // A abertura antiga da decisão da Fábrica era cortada: sozinha na conversa, é regravada inteira.
+        const [unica] = gravadas
+        if (
+          item.tipo === 'decisao_da_fabrica' &&
+          gravadas.length === 1 &&
+          unica!.autor === 'FLOW' &&
+          unica!.texto.length === CORTE_ANTIGO_DA_DECISAO &&
+          unica!.texto !== abertura.texto
+        ) {
+          await tx.mensagem.update({
+            where: { id: unica!.id },
+            data: { texto: abertura.texto, impressao: jsonCanonico(abertura) },
+          })
+        }
         return conversaId
       }
       await tx.conversa.update({ where: { id: conversaId }, data: { contexto: json(contexto) } })
@@ -524,9 +553,21 @@ export async function abrirItem(
   const l = await localizarOuResolvido(chave, agora)
   const existente = await db.conversa.findUnique({
     where: { chave },
-    select: { id: true, _count: { select: { mensagens: true } } },
+    select: {
+      id: true,
+      _count: { select: { mensagens: true } },
+      mensagens: { orderBy: { seq: 'asc' }, take: 1, select: { autor: true, texto: true } },
+    },
   })
-  if (existente && existente._count.mensagens > 0) return { conversaId: existente.id }
+  if (existente && existente._count.mensagens > 0) {
+    const [primeira] = existente.mensagens
+    const cortada =
+      l.item.tipo === 'decisao_da_fabrica' &&
+      existente._count.mensagens === 1 &&
+      primeira?.autor === 'FLOW' &&
+      primeira.texto.length === CORTE_ANTIGO_DA_DECISAO
+    if (!cortada) return { conversaId: existente.id }
+  }
 
   // O GitHub é lido fora da transação: uma resposta lenta não segura conexão nem trava.
   const leitura = await lerContexto(l, deps.fonte())
