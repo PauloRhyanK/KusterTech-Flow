@@ -1388,6 +1388,38 @@ class AtendenteTest(unittest.TestCase):
             with self.subTest(caso=nome):
                 self.assertIsNone(prompts.extrair_resposta_do_atendente(texto, ACOES_DE_PEDIDO))
 
+    def test_extrair_resposta_aceita_cartao_com_os_campos_dentro_de_acao(self):
+        """Caso real de 26/11 (R-0001): o agente pôs os campos dentro de `acao`; a ação é inequívoca."""
+        campos = {"destino": "lote_da_noite", "nivel": "aprovar_desenho", "tipoDeDemanda": "ajuste", "escopo": "Minha leitura", "resposta": "Anotado."}
+        for cartao in ({"acao": campos}, {"acao": {"destino": campos}}):
+            with self.subTest(cartao=cartao):
+                lido = prompts.extrair_resposta_do_atendente(bloco_atendente(resposta_valida(cartao=cartao)), ACOES_DE_PEDIDO)
+                self.assertEqual(lido["cartao"], {"acao": "destino", **campos})
+        # objeto que não aponta uma ação só continua recusado
+        ambiguo = {"acao": {"resposta": "x"}}
+        self.assertIsNone(prompts.extrair_resposta_do_atendente(bloco_atendente(resposta_valida(cartao=ambiguo)), ACOES_DE_PEDIDO))
+
+    def test_diagnostico_diz_qual_campo_falhou(self):
+        casos = {
+            "sem bloco": ("Entendi.", "falta o bloco"),
+            "json torto": (bloco_atendente("{ nada"), "JSON"),
+            "campos": (bloco_atendente({"mensagem": "oi", "respostasRapidas": []}), "cartao"),
+            "mensagem longa": (bloco_atendente(resposta_valida(mensagem="m" * 4001)), "mensagem"),
+            "rápida longa": (bloco_atendente(resposta_valida(respostasRapidas=["r" * 61])), "respostasRapidas"),
+            "acao objeto": (bloco_atendente(resposta_valida(cartao={"acao": {"resposta": "x"}})), "cartao.acao"),
+            "escopo longo": (bloco_atendente(resposta_valida(cartao={"acao": "destino", "destino": "urgente", "nivel": "vai_sozinho", "escopo": "e" * 501})), "cartao.escopo"),
+            "nivel fora": (bloco_atendente(resposta_valida(cartao={"acao": "destino", "destino": "urgente", "nivel": "talvez"})), "cartao.nivel"),
+        }
+        for nome, (texto, campo) in casos.items():
+            with self.subTest(caso=nome):
+                self.assertIn(campo, prompts.diagnosticar_resposta_do_atendente(texto, ACOES_DE_PEDIDO))
+        self.assertIsNone(prompts.diagnosticar_resposta_do_atendente(bloco_atendente(resposta_valida()), ACOES_DE_PEDIDO))
+
+    def test_prompt_atendente_mostra_o_cartao_plano_com_exemplo(self):
+        texto = prompts.prompt_atendente(conversa={"item": {"tipo": "pedido", "acoes": ACOES_DE_PEDIDO}, "mensagens": []})
+        self.assertIn('"acao" é o nome da ação, em texto', texto)
+        self.assertIn('{"acao": "destino", "destino": "lote_da_noite"', texto)
+
     def test_extrair_resposta_aceita_quebra_de_linha_e_tab_na_mensagem(self):
         lido = prompts.extrair_resposta_do_atendente(bloco_atendente(resposta_valida(mensagem="a\n\tb")), ACOES_DE_PEDIDO)
         self.assertEqual(lido["mensagem"], "a\n\tb")

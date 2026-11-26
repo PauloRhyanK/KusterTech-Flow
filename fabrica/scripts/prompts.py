@@ -931,6 +931,12 @@ def prompt_atendente(*, conversa: dict, motivo: str | None = None) -> str:
         partes += [f"- `{a}`: {CAMPOS_DO_CARTAO[a]}" for a in acoes]
     else:
         partes.append('5. Este item não aceita cartão: use `"cartao": null`.')
+    if "destino" in acoes:
+        partes += [
+            "Exemplo de cartão (os valores dependem da conversa): "
+            '{"acao": "destino", "destino": "lote_da_noite", "nivel": "aprovar_desenho", "tipoDeDemanda": null, '
+            '"escopo": "o que entra", "resposta": null}',
+        ]
     partes += [
         "",
         "Termine a sua mensagem final com o bloco abaixo, como a última coisa escrita.",
@@ -941,7 +947,8 @@ def prompt_atendente(*, conversa: dict, motivo: str | None = None) -> str:
         f'  "mensagem": a sua mensagem ao Paulo, em até {LIMITE_MENSAGEM_DO_ATENDENTE} caracteres,',
         f'  "respostasRapidas": lista de até {MAXIMO_RESPOSTAS_RAPIDAS} respostas curtas que o Paulo pode tocar '
         f"(cada uma até {LIMITE_RESPOSTA_RAPIDA} caracteres), ou [],",
-        '  "cartao": null, ou um objeto com "acao" (uma das ações acima) e só os campos dela',
+        '  "cartao": null, ou um objeto plano: "acao" é o nome da ação, em texto, e os campos dela ficam ao lado de '
+        '"acao", no mesmo nível (nunca dentro dele)',
         "}",
         FIM_ATENDENTE,
     ]
@@ -962,16 +969,41 @@ def _texto_do_atendente(valor, limite: int, obrigatorio: bool):
     return aparado if _cortar_utf16(aparado, limite) == aparado else False
 
 
-def _cartao_do_atendente(cartao, acoes: list[str]):
-    """O cartão nos campos que o agente pode escrever, já aparado; `False` se não vale."""
+def _desaninhar_cartao(cartao: dict, acoes: list[str]) -> dict:
+    """`{"acao": {...campos}}` ou `{"acao": {"<ação>": {...}}}` (caso real de 26/11) vira o cartão plano.
+
+    Só quando a ação é inequívoca: um objeto com uma chave que é ação permitida, ou campos que cabem numa ação só
+    cujo nome também é um dos campos (como `destino`). Senão o cartão segue como veio e a leitura o recusa.
+    """
+    aninhado = cartao.get("acao")
+    if not isinstance(aninhado, dict) or set(cartao) != {"acao"}:
+        return cartao
+    if len(aninhado) == 1:
+        (nome, campos), = aninhado.items()
+        if nome in acoes and isinstance(campos, dict):
+            return {"acao": nome, **campos}
+    candidatas = [a for a in acoes if a in _REGRAS_DO_CARTAO and a in aninhado and set(aninhado) <= set(_REGRAS_DO_CARTAO[a])]
+    if len(candidatas) == 1:
+        return {"acao": candidatas[0], **aninhado}
+    return cartao
+
+
+def _ler_cartao(cartao, acoes: list[str]):
+    """`(cartão aparado ou None, None)` ou `(False, campo que falhou)`."""
     if cartao is None:
-        return None
-    if not isinstance(cartao, dict) or not isinstance(cartao.get("acao"), str):
-        return False
+        return None, None
+    if not isinstance(cartao, dict):
+        return False, "cartao precisa ser null ou um objeto"
+    cartao = _desaninhar_cartao(cartao, acoes)
+    if not isinstance(cartao.get("acao"), str):
+        return False, 'cartao.acao precisa ser o nome da ação, em texto, com os campos ao lado (não dentro) dele'
     acao = cartao["acao"]
     regras = _REGRAS_DO_CARTAO.get(acao)
-    if regras is None or acao not in acoes or not set(cartao) - {"acao"} <= set(regras):
-        return False
+    if regras is None or acao not in acoes:
+        return False, "cartao.acao \"%s\" não é uma das ações deste item (%s)" % (acao[:40], ", ".join(acoes))
+    extras = set(cartao) - {"acao"} - set(regras)
+    if extras:
+        return False, "cartao tem campos que a ação %s não aceita: %s" % (acao, ", ".join(sorted(map(str, extras)))[:80])
     lido = {"acao": acao}
     for campo, (regra, obrigatorio) in regras.items():
         valor = cartao.get(campo)
@@ -980,45 +1012,65 @@ def _cartao_do_atendente(cartao, acoes: list[str]):
                 lido[campo] = None
                 continue
             if not isinstance(valor, str) or valor not in regra:
-                return False
+                return False, "cartao.%s precisa ser um de: %s" % (campo, ", ".join(regra))
             lido[campo] = valor
         else:
             lido[campo] = _texto_do_atendente(valor, regra, obrigatorio)
             if lido[campo] is False:
-                return False
-    return lido
+                return False, "cartao.%s precisa ser texto de 1 a %d caracteres" % (campo, regra)
+    return lido, None
+
+
+def _cartao_do_atendente(cartao, acoes: list[str]):
+    """O cartão nos campos que o agente pode escrever, já aparado; `False` se não vale."""
+    return _ler_cartao(cartao, acoes)[0]
+
+
+def _ler_resposta_do_atendente(texto, acoes) -> tuple[dict | None, str | None]:
+    """`(resposta, None)` ou `(None, o campo que falhou, em palavras que o agente entende)`."""
+    if not isinstance(texto, str):
+        return None, "a resposta não tem texto"
+    inicio = texto.rfind(INICIO_ATENDENTE)
+    if inicio < 0:
+        return None, "falta o bloco %s … %s no fim da mensagem" % (INICIO_ATENDENTE, FIM_ATENDENTE)
+    corpo_ini = inicio + len(INICIO_ATENDENTE)
+    fim = texto.find(FIM_ATENDENTE, corpo_ini)
+    if fim < 0:
+        return None, "falta o marcador %s depois do JSON" % FIM_ATENDENTE
+    try:
+        dados = json.loads(_limpar_corpo(texto[corpo_ini:fim]))
+    except (ValueError, RecursionError):
+        return None, "o JSON do bloco não é válido"
+    if not isinstance(dados, dict) or set(dados) != {"mensagem", "respostasRapidas", "cartao"}:
+        return None, "o JSON precisa ter exatamente mensagem, respostasRapidas e cartao"
+    mensagem = _texto_do_atendente(dados["mensagem"], LIMITE_MENSAGEM_DO_ATENDENTE, True)
+    if mensagem is False:
+        return None, "mensagem precisa ser texto de 1 a %d caracteres, sem caractere de controle" % LIMITE_MENSAGEM_DO_ATENDENTE
+    rapidas = dados["respostasRapidas"]
+    if not isinstance(rapidas, list) or len(rapidas) > MAXIMO_RESPOSTAS_RAPIDAS:
+        return None, "respostasRapidas precisa ser uma lista de até %d textos" % MAXIMO_RESPOSTAS_RAPIDAS
+    rapidas = [_texto_do_atendente(r, LIMITE_RESPOSTA_RAPIDA, True) for r in rapidas]
+    if any(r is False for r in rapidas):
+        return None, "respostasRapidas: cada uma de 1 a %d caracteres" % LIMITE_RESPOSTA_RAPIDA
+    cartao, motivo = _ler_cartao(dados["cartao"], acoes if isinstance(acoes, list) else [])
+    if cartao is False:
+        return None, motivo
+    return {"mensagem": mensagem, "respostasRapidas": rapidas, "cartao": cartao}, None
 
 
 def extrair_resposta_do_atendente(texto: str, acoes: list[str]) -> dict | None:
     """A resposta do último bloco entre os marcadores, nos limites do Flow; `None` se faltar ou for inválida.
 
     O JSON traz exatamente `mensagem`, `respostasRapidas` e `cartao`. Nada é cortado: texto fora do limite, controle,
-    rápida a mais, ação fora de `acoes` ou campo que o agente não escreve devolvem `None`.
+    rápida a mais, ação fora de `acoes` ou campo que o agente não escreve devolvem `None`. O cartão com os campos
+    dentro de `acao` é aceito quando a ação é inequívoca.
     """
-    if not isinstance(texto, str):
-        return None
-    inicio = texto.rfind(INICIO_ATENDENTE)
-    if inicio < 0:
-        return None
-    corpo_ini = inicio + len(INICIO_ATENDENTE)
-    fim = texto.find(FIM_ATENDENTE, corpo_ini)
-    if fim < 0:
-        return None
-    try:
-        dados = json.loads(_limpar_corpo(texto[corpo_ini:fim]))
-    except (ValueError, RecursionError):
-        return None
-    if not isinstance(dados, dict) or set(dados) != {"mensagem", "respostasRapidas", "cartao"}:
-        return None
-    mensagem = _texto_do_atendente(dados["mensagem"], LIMITE_MENSAGEM_DO_ATENDENTE, True)
-    rapidas = dados["respostasRapidas"]
-    if mensagem is False or not isinstance(rapidas, list) or len(rapidas) > MAXIMO_RESPOSTAS_RAPIDAS:
-        return None
-    rapidas = [_texto_do_atendente(r, LIMITE_RESPOSTA_RAPIDA, True) for r in rapidas]
-    cartao = _cartao_do_atendente(dados["cartao"], acoes if isinstance(acoes, list) else [])
-    if any(r is False for r in rapidas) or cartao is False:
-        return None
-    return {"mensagem": mensagem, "respostasRapidas": rapidas, "cartao": cartao}
+    return _ler_resposta_do_atendente(texto, acoes)[0]
+
+
+def diagnosticar_resposta_do_atendente(texto: str, acoes: list[str]) -> str | None:
+    """O campo que fez a resposta ser recusada (para o log e para a nova tentativa); `None` se ela vale."""
+    return _ler_resposta_do_atendente(texto, acoes)[1]
 
 
 def _achados_validos(achados) -> bool:
