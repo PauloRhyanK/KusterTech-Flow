@@ -72,7 +72,7 @@ const recepcao = [
     demandaId: 'd2',
     titulo: 'Nova tela de relatórios',
     projeto: 'Beta',
-    tipo: 'funcionalidade',
+    tipo: 'funcao_nova',
     esperaPaulo: true,
     podeAlternarUrgencia: false,
   }),
@@ -128,6 +128,7 @@ describe('gaveta da fila', () => {
       '/demandas/d1',
     )
     const relatorios = screen.getByRole('listitem', { name: /Nova tela de relatórios/ })
+    expect(within(relatorios).getByText(/Função nova/)).toBeInTheDocument()
     expect(within(relatorios).getByText(/espera você/)).toBeInTheDocument()
   })
 
@@ -168,7 +169,8 @@ describe('gaveta da fila', () => {
   test('"sem tipo" não vira opção do filtro de tipo', () => {
     montar()
     const opcoes = within(screen.getByLabelText('Tipo')).getAllByRole('option')
-    expect(opcoes.map((o) => o.textContent)).toEqual(['Todos', 'ajuste', 'funcionalidade'])
+    expect(opcoes.map((o) => o.textContent)).toEqual(['Todos', 'Ajuste', 'Função nova'])
+    expect(opcoes.map((o) => o.getAttribute('value'))).toEqual(['', 'ajuste', 'funcao_nova'])
   })
 
   test('sem demandas mostra o estado vazio', () => {
@@ -194,5 +196,20 @@ describe('gaveta da fila', () => {
       'href',
       '/publicacao',
     )
+  })
+
+  test('Tab no último controle volta ao primeiro e Shift+Tab no primeiro vai ao último', async () => {
+    montar()
+    const dialogo = screen.getByRole('dialog', { name: 'Fila' })
+    const focaveis = [
+      ...dialogo.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input, select'),
+    ]
+    const primeiro = focaveis[0]!
+    const ultimo = focaveis[focaveis.length - 1]!
+    ultimo.focus()
+    await userEvent.tab()
+    expect(document.activeElement).toBe(primeiro)
+    await userEvent.tab({ shift: true })
+    expect(document.activeElement).toBe(ultimo)
   })
 })

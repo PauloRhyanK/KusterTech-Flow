@@ -8,6 +8,7 @@ import { PedidoExpansivel } from '@/app/(app)/publicacao/_componentes/pedido-exp
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
 import { CLASSE_DO_LINK } from '@/lib/ui/titulo-de-secao'
+import { ROTULO_DO_TIPO } from '@/modules/decidir/model'
 import { duracaoDaEspera } from '@/modules/demandas/model'
 import { filtrarLinhas, type LinhaDaFila } from '@/modules/fila-de-publicacao/apresentacao'
 import type { ItemDaRecepcao } from '@/modules/fabrica/escritorio/model'
@@ -22,6 +23,10 @@ export interface GavetaDaFilaProps {
 }
 
 const SEM_TIPO = 'sem tipo'
+
+function rotuloDoTipo(tipo: string): string {
+  return (ROTULO_DO_TIPO as Record<string, string>)[tipo] ?? tipo
+}
 const CLASSE_DO_CAMPO =
   'h-8 rounded-padrao border border-border bg-surface px-2 text-sm text-text-primary'
 
@@ -63,7 +68,7 @@ function ItemDeDemanda({ item }: { item: ItemDaRecepcao }) {
       </div>
       <b className="block text-sm text-text-primary">{item.titulo}</b>
       <span className="block text-xs text-text-secondary">
-        {[item.projeto, item.repositorio, item.tipo === SEM_TIPO ? null : item.tipo]
+        {[item.projeto, item.repositorio, item.tipo === SEM_TIPO ? null : rotuloDoTipo(item.tipo)]
           .filter(Boolean)
           .join(' · ')}
       </span>
@@ -124,7 +129,7 @@ function AbaDemandas({ recepcao }: { recepcao: ItemDaRecepcao[] }) {
             <option value="">Todos</option>
             {tipos.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {rotuloDoTipo(t)}
               </option>
             ))}
           </select>
@@ -275,6 +280,25 @@ export function GavetaDaFila({ recepcao, publicacao, agora, onFechar }: GavetaDa
           if (e.key === 'Escape') {
             e.stopPropagation()
             onFechar()
+          }
+          if (e.key === 'Tab') {
+            // o diálogo é modal: o foco dá a volta dentro dele
+            const focaveis = [
+              ...e.currentTarget.querySelectorAll<HTMLElement>(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled])',
+              ),
+            ]
+            const primeiro = focaveis[0]
+            const ultimo = focaveis[focaveis.length - 1]
+            if (!primeiro || !ultimo) return
+            const atual = document.activeElement
+            if (e.shiftKey && (atual === primeiro || atual === e.currentTarget)) {
+              e.preventDefault()
+              ultimo.focus()
+            } else if (!e.shiftKey && atual === ultimo) {
+              e.preventDefault()
+              primeiro.focus()
+            }
           }
         }}
         className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background shadow-xl outline-none md:inset-y-0 md:right-0 md:left-auto md:w-[460px] md:border-l md:border-border"
