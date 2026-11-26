@@ -14,6 +14,7 @@ export type ModuloId =
   | 'atividade'
   | 'decidir'
   | 'erros'
+  | 'relatos'
 
 export const CATALOGO_DE_MODULOS: Record<
   ModuloId,
@@ -34,6 +35,7 @@ export const CATALOGO_DE_MODULOS: Record<
   atividade: { ativo: true, dependeDe: ['github'] },
   decidir: { ativo: true, dependeDe: ['demandas', 'fabrica', 'github'] },
   erros: { ativo: true, dependeDe: ['demandas'] },
+  relatos: { ativo: true, dependeDe: ['demandas', 'decidir'] },
 }
 
 export class ErroDeConfiguracaoDeModulos extends Error {}
