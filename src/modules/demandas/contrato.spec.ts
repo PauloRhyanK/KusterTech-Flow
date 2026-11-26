@@ -23,6 +23,12 @@ const triagem = {
   motivo: 'ajuste simples',
 }
 
+const parte = { titulo: 'Parte', descricao: 'Descrição', tipo: 'ajuste' }
+const OUTRO = '22222222-2222-4222-8222-222222222222'
+const fio = (tipo: string, dados: unknown) => ({ id: ID, em: EM, tipo, dados })
+const valido = (tipo: string, dados: unknown) =>
+  eventoDaFabricaSchema.safeParse(fio(tipo, dados)).success
+
 describe('eventoDaFabricaSchema', () => {
   const casos: [string, unknown][] = [
     ['triagem', triagem],
@@ -34,6 +40,9 @@ describe('eventoDaFabricaSchema', () => {
     ['destravada', {}],
     ['teste', { resultado: 'passou', resumo: 'ok', capturas: [ID] }],
     ['entregue', { prs: [PR] }],
+    ['juntar', { em: ID, motivo: 'mesmo defeito' }],
+    ['ligar_erros', { erros: [ID], motivo: 'mesmo erro' }],
+    ['dividir', { partes: [parte, parte], motivo: 'dois pedidos' }],
   ]
   test.each(casos)('aceita %s com dados mínimos', (tipo, dados) => {
     expect(eventoDaFabricaSchema.safeParse({ id: ID, em: EM, tipo, dados }).success).toBe(true)
@@ -64,6 +73,38 @@ describe('eventoDaFabricaSchema', () => {
       false,
     )
     expect(eventoDaFabricaSchema.safeParse({ ...ok, tipo: 'outro' }).success).toBe(false)
+  })
+})
+
+describe('eventos da triagem cruzada', () => {
+  test('dividir exige de 2 a 4 partes', () => {
+    expect(valido('dividir', { partes: [parte], motivo: 'x' })).toBe(false)
+    expect(valido('dividir', { partes: [parte, parte, parte, parte], motivo: 'x' })).toBe(true)
+    expect(valido('dividir', { partes: Array(5).fill(parte), motivo: 'x' })).toBe(false)
+  })
+  test('dividir recusa título de 121 caracteres e tipo fora de TIPOS', () => {
+    const longa = { ...parte, titulo: 'a'.repeat(121) }
+    expect(valido('dividir', { partes: [parte, longa], motivo: 'x' })).toBe(false)
+    expect(valido('dividir', { partes: [parte, { ...parte, tipo: 'outro' }], motivo: 'x' })).toBe(
+      false,
+    )
+  })
+  test('ligar_erros exige de 1 a 10 ids, sem repetição', () => {
+    expect(valido('ligar_erros', { erros: [], motivo: 'x' })).toBe(false)
+    const ids = Array.from(
+      { length: 11 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+    )
+    expect(valido('ligar_erros', { erros: ids.slice(0, 10), motivo: 'x' })).toBe(true)
+    expect(valido('ligar_erros', { erros: ids, motivo: 'x' })).toBe(false)
+    expect(valido('ligar_erros', { erros: [ID, ID], motivo: 'x' })).toBe(false)
+    expect(valido('ligar_erros', { erros: [ID, OUTRO], motivo: 'x' })).toBe(true)
+  })
+  test('motivo vazio ou com mais de 300 caracteres é recusado', () => {
+    expect(valido('juntar', { em: ID, motivo: '' })).toBe(false)
+    expect(valido('juntar', { em: ID, motivo: 'a'.repeat(301) })).toBe(false)
+    expect(valido('ligar_erros', { erros: [ID], motivo: '' })).toBe(false)
+    expect(valido('dividir', { partes: [parte, parte], motivo: '' })).toBe(false)
   })
 })
 

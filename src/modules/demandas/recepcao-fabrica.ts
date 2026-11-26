@@ -18,6 +18,8 @@ import {
   type Destino,
   type EtapaDefinida,
 } from './model'
+import { candidatasDaDemanda } from './queries'
+import { esperaTriagem } from './cruzada'
 import { guardarArquivo, paraOFio, registrarEvento } from './service'
 import { demandaParaAFabrica, type ParteParaAFabrica } from './visao-da-fabrica'
 
@@ -161,6 +163,20 @@ export async function buscarDemandasParaAFabrica(
         ),
       )
 
+    // Candidatas só para as demandas que ainda esperam a triagem (uma consulta por projeto).
+    const esperando = ordenadas
+      .filter(({ d }) => {
+        const etapas = etapasAplicaveis(d.etapas as unknown as EtapaDefinida[], d.temTela)
+        return esperaTriagem({
+          etapaAtualMarco: etapas.find((e) => e.chave === d.etapaAtual)?.marco ?? null,
+          espera: d.espera,
+          triagem: d.triagem,
+          encerrada: d.encerrada,
+        })
+      })
+      .map(({ d }) => d.id)
+    const candidatas = await candidatasDaDemanda(esperando, agora)
+
     return {
       status: 200,
       corpo: {
@@ -223,6 +239,7 @@ export async function buscarDemandasParaAFabrica(
                   }
                 : null,
               encerrada: d.encerrada,
+              candidatas: candidatas.get(d.id) ?? null,
               naoChegouDesde: d.naoChegouDesde ? instanteNoFio(d.naoChegouDesde) : null,
               desenho: { versao: d.versaoDoDesenho, aprovada: d.desenhoAprovado },
               ajustes: d.eventos

@@ -121,6 +121,14 @@ export const parteDeclaradaSchema = z.strictObject({
   chegaAoAr: z.enum(['publicacao', 'versao']),
 })
 
+const motivoDaTriagem = texto300
+
+export const parteDaDivisaoSchema = z.strictObject({
+  titulo: z.string().min(1).max(120),
+  descricao: texto4000,
+  tipo: z.enum(TIPOS),
+})
+
 const eventosComuns = [
   evento('triagem', triagemSchema),
   evento('triagem_falhou', z.strictObject({ motivo: texto300 })),
@@ -148,6 +156,25 @@ const eventosComuns = [
       resultado: z.enum(['passou', 'falhou']),
       resumo: texto2000,
       capturas: z.array(uuid).max(20),
+    }),
+  ),
+  evento('juntar', z.strictObject({ em: uuid, motivo: motivoDaTriagem })),
+  evento(
+    'ligar_erros',
+    z.strictObject({
+      erros: z
+        .array(uuid)
+        .min(1)
+        .max(10)
+        .refine((ids) => new Set(ids).size === ids.length, 'erros não pode repetir ids'),
+      motivo: motivoDaTriagem,
+    }),
+  ),
+  evento(
+    'dividir',
+    z.strictObject({
+      partes: z.array(parteDaDivisaoSchema).min(2).max(4),
+      motivo: motivoDaTriagem,
     }),
   ),
 ] as const

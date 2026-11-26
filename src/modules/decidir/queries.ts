@@ -9,6 +9,7 @@ import { avisosParaODecidir } from '@/modules/fila-de-publicacao/queries'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { PLANO_EM_CURSO } from '@/modules/inicio/model'
 import { triagemSchema } from '@/modules/demandas/contrato'
+import { pessoasQueRelataram } from '@/modules/demandas/cruzada'
 import {
   desfechoDaTrava,
   type EtapaDefinida,
@@ -56,6 +57,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
       projeto: { select: { nome: true } },
       repositorio: { select: { nomeCompleto: true } },
       _count: { select: { arquivos: { where: { tipo: 'ANEXO', apagadoEm: null } } } },
+      relatos: { select: { autorIdExterno: true, sistemaId: true } },
     },
   })
   // O link de cada trava vem do último `travada` da demanda (o PR da correção, quando há).
@@ -98,6 +100,7 @@ export async function demandasEsperando(ids?: readonly string[]): Promise<Demand
         d.etapaAtual,
       descricao: d.descricao,
       anexos: d._count.arquivos,
+      pessoas: pessoasQueRelataram(d.relatos),
       triagem: triagem.success
         ? {
             tamanho: triagem.data.tamanho,

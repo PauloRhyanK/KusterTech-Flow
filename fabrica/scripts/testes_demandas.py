@@ -739,6 +739,152 @@ class TestesTriagem(BasePasso):
         self.assertEqual(self.saida(), [])
         self.assertEqual(len(self.despachos()), 1)
 
+
+DEMANDA_A = "aaaaaaaa-1111-4111-8111-111111111111"
+ERRO_1 = "eeeeeeee-1111-4111-8111-111111111111"
+CANDIDATAS = {
+    "demandas": [{"id": DEMANDA_A, "titulo": "Salvar cliente não funciona", "resumo": "O botão salvar fica parado.", "origem": "relato",
+                  "tipo": "defeito", "etapa": "Recebida", "relatos": 2, "erros": 0, "criadaEm": "2026-11-20T09:00:00Z"}],
+    "erros": [{"id": ERRO_1, "titulo": "TypeError: salvar is undefined", "onde": "/clientes", "eventos": 12, "usuarios": 3,
+               "ultimoEm": "2026-11-20T08:00:00Z", "estado": "na_espera"}],
+}
+JUNTAR = {"em": DEMANDA_A, "motivo": "mesmo defeito do salvar"}
+LIGAR = {"erros": [ERRO_1], "motivo": "o erro do salvar"}
+DIVIDIR = {"partes": [{"titulo": "Salvar", "descricao": "não salva", "tipo": "defeito"}, {"titulo": "Lento", "descricao": "demora", "tipo": "ajuste"}], "motivo": "dois problemas"}
+
+
+def resposta_cruzada(cruzamento, triagem=None):
+    bloco = "%s\n%s\n%s\n" % (prompts.INICIO_CRUZAMENTO, json.dumps(cruzamento, ensure_ascii=False), prompts.FIM_CRUZAMENTO)
+    return bloco + resposta_triagem(triagem or triagem_ok())
+
+
+class TestesTriagemCruzada(BasePasso):
+    def triar_com_resposta(self, texto):
+        self.passo(ClienteDeBusca(pagina(retrato(candidatas=CANDIDATAS))))
+        run_id = self.item()["runId"]
+        self.assertIn("Salvar cliente não funciona", self.despachos()[0]["prompt"])
+        self.motor.definir_run(run_id, estado="succeeded")
+        self.motor.definir_texto(run_id, texto)
+        self.passo(ClienteDeBusca())
+
+    def tipos(self):
+        return [e["tipo"] for e in self.saida()]
+
+    def test_ligar_erros_e_juntar_saem_nessa_ordem_sem_a_triagem_guardada(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR, "ligarErros": LIGAR, "dividir": None}))
+        self.assertEqual(self.tipos(), ["ligar_erros", "juntar"])
+        self.assertEqual([e["dados"] for e in self.saida()], [LIGAR, JUNTAR])
+        self.assertEqual(self.item()["triagem"], triagem_ok())
+        self.assertTrue(self.item()["juntando"])
+        self.assertEqual((self.item()["fase"], self.item()["runId"]), ("triando", None))
+        # tudo no mesmo `salvar`
+        self.assertEqual([s["evento"]["tipo"] for s in self.salvos[-1]["demandas"]["saida"]], ["ligar_erros", "juntar"])
+
+    def test_dividir_sai_antes_da_triagem(self):
+        self.triar_com_resposta(resposta_cruzada({"dividir": DIVIDIR}))
+        self.assertEqual(self.tipos(), ["dividir", "triagem"])
+        self.assertEqual(self.saida()[0]["dados"], DIVIDIR)
+        self.assertNotIn("juntando", self.item())
+
+    def test_ligar_erros_dividir_e_triagem(self):
+        self.triar_com_resposta(resposta_cruzada({"ligarErros": LIGAR, "dividir": DIVIDIR}))
+        self.assertEqual(self.tipos(), ["ligar_erros", "dividir", "triagem"])
+
+    def test_sem_cruzamento_so_a_triagem(self):
+        for texto in (resposta_triagem(triagem_ok()), resposta_cruzada({"juntar": None, "ligarErros": None, "dividir": None})):
+            with self.subTest(texto=texto[:40]):
+                self.estado = {"fila": [], "avisos": [], "chaves": {}}
+                self.motor = motor.MotorFalso()
+                self.motor.agora = lambda: self.agora
+                self.triar_com_resposta(texto)
+                self.assertEqual(self.tipos(), ["triagem"])
+                self.assertEqual(self.saida()[0]["dados"], triagem_ok())
+
+    def test_juntar_fora_das_candidatas_vira_triagem(self):
+        fora = {"em": "99999999-9999-4999-8999-999999999999", "motivo": "m"}
+        self.triar_com_resposta(resposta_cruzada({"juntar": fora}))
+        self.assertEqual(self.tipos(), ["triagem"])
+        self.assertNotIn("juntando", self.item())
+
+    def test_cruzamento_sem_triagem_vira_triagem_falhou(self):
+        bloco = "%s\n%s\n%s" % (prompts.INICIO_CRUZAMENTO, json.dumps({"juntar": JUNTAR}), prompts.FIM_CRUZAMENTO)
+        self.triar_com_resposta(bloco)
+        self.assertEqual(self.tipos(), ["triagem_falhou"])
+
+    def test_juntar_recusado_manda_a_triagem_guardada_uma_vez(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR, "ligarErros": LIGAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", "recusado"), self.raiz, salvar=lambda: None)
+        self.assertTrue(self.item()["precisa_ressincronizar"])
+        self.passo(ClienteDeBusca(pagina(retrato(candidatas=CANDIDATAS), cursor="2")))
+        (evento,) = self.saida()
+        self.assertEqual((evento["tipo"], evento["dados"]), ("triagem", triagem_ok()))
+        self.assertTrue(self.item()["juntarRecusado"])
+        self.assertFalse(self.item()["precisa_ressincronizar"])
+        # a triagem guardada recusada também: a decisão do Paulo, como hoje (uma vez)
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "triagem_falhou")
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertEqual(len(self.despachos()), 1)
+
+    def test_ligar_erros_recusado_com_juntar_aplicado_encerra_sem_mandar_nada(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR, "ligarErros": LIGAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado", "aplicado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca(pagina(retrato(encerrada="juntada"), cursor="2")))
+        self.assertEqual(self.saida(), [])
+        self.passo(ClienteDeBusca())
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+
+    def test_dividir_recusado_nao_manda_nada_a_mais(self):
+        self.triar_com_resposta(resposta_cruzada({"dividir": DIVIDIR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("recusado", "aplicado"), self.raiz, salvar=lambda: None)
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", destino="fila_de_agentes"), cursor="2")))
+        self.assertNotIn("triagem_falhou", self.tipos())
+        self.assertNotIn("triagem", self.tipos())
+
+    def test_separada_antes_de_o_kit_ver_a_juntada_e_triada_de_novo(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR, "ligarErros": LIGAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado", "aplicado"), self.raiz, salvar=lambda: None)
+        # o Paulo separou antes da busca: o retrato volta `recebida`, sem triagem, com o `separada`
+        separada = {"id": "s1", "tipo": "separada", "origem": "paulo", "em": AGORA, "dados": {"de": DEMANDA_A}}
+        self.passo(ClienteDeBusca(pagina(retrato(candidatas=CANDIDATAS, eventos=[separada]), cursor="2")))
+        self.assertEqual(len(self.despachos()), 2)  # uma triagem nova
+        it = self.item()
+        self.assertEqual(it.get("alvo"), "triando")
+        self.assertEqual(it["nonce"], demandas.nonce_do_motor(ID, "triagem", 1))
+        self.assertNotEqual(self.despachos()[1]["chave_idempotencia"], self.despachos()[0]["chave_idempotencia"])
+        for campo in ("juntando", "juntarRecusado", "triagem"):
+            self.assertNotIn(campo, it)
+        self.assertEqual(self.saida(), [])
+
+    def test_juntando_com_o_retrato_antigo_nao_tria_de_novo(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado"), self.raiz, salvar=lambda: None)
+        # nenhuma mudança nova no Flow: o retrato guardado é o de antes da junção
+        self.passo(ClienteDeBusca())
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertTrue(self.item()["juntando"])
+
+    def test_juntando_com_o_juntar_na_saida_espera_o_envio(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR}))
+        separada = {"id": "s1", "tipo": "separada", "origem": "paulo", "em": AGORA, "dados": {"de": DEMANDA_A}}
+        self.passo(ClienteDeBusca(pagina(retrato(candidatas=CANDIDATAS, eventos=[separada]), cursor="2")))
+        self.assertEqual(len(self.despachos()), 1)
+        self.assertEqual(self.tipos(), ["juntar"])
+
+    def test_juntar_aplicado_encerra_o_item_como_juntada(self):
+        self.triar_com_resposta(resposta_cruzada({"juntar": JUNTAR}))
+        demandas.esvaziar_saida(self.estado, ClienteFalso("aplicado"), self.raiz, salvar=lambda: None)
+        self.assertEqual(demandas.proxima_acao(self.item(), retrato(encerrada="juntada")), "encerrar")
+        eventos = self.passo(ClienteDeBusca(pagina(retrato(encerrada="juntada"), cursor="2")))
+        self.assertNotIn(ID, self.estado["demandas"]["itens"])
+        self.assertIn({"evento": "demanda_encerrada", "id": ID}, eventos)
+        self.assertEqual(self.saida(), [])
+
+
 PR = "https://github.com/kustertech-exemplo/app/pull/7"
 HEAD = "a" * 40
 CAMINHO = ".fabrica/planos/demanda-11111111.json"

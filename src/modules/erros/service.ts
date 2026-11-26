@@ -127,7 +127,8 @@ async function registrarCorrigidos(agora: Date, horasSemErro: number): Promise<n
   if (lidosAgora.size === 0) return 0
   const candidatas = await db.demanda.findMany({
     where: {
-      origem: 'GLITCHTIP',
+      // Também a demanda de outra origem que recebeu erro pela triagem cruzada (ligar/juntar).
+      OR: [{ origem: 'GLITCHTIP' }, { erros: { some: {} } }],
       encerrada: 'no_ar',
       noArEm: { lte: limite, gte: new Date(limite.getTime() - 7 * DIA_MS) },
       eventos: { none: { tipo: { in: ['erro-corrigido', 'erro-voltou'] } } },
@@ -288,6 +289,7 @@ function processarIssue(
 ): Promise<Resultado> {
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
     await travarErros(tx)
+    await travarLinhaDoErro(tx, issue.id)
     const atual = await tx.erroDoGlitchTip.findUnique({
       where: { issueId: issue.id },
       select: {
@@ -437,7 +439,13 @@ function abertasNoDia(tx: Prisma.TransactionClient, agora: Date): Promise<number
     where: {
       tipo: 'criada',
       em: { gt: new Date(agora.getTime() - DIA_MS) },
-      demanda: { origem: 'GLITCHTIP' },
+      // `NOT` sozinho descartaria as demandas sem encerramento (NULL), por isso o `OR`.
+      demanda: {
+        origem: 'GLITCHTIP',
+        OR: [{ encerrada: null }, { encerrada: { not: 'juntada' } }],
+        // As partes de uma divisão vêm da triagem, não do GlitchTip: não ocupam a vaga do dia.
+        divididaDeId: null,
+      },
     },
   })
 }
@@ -460,20 +468,17 @@ async function abrirParaOErro(
     usuarioId?: string
   },
 ): Promise<string> {
+  // Os parecidos ficam travados até o commit; os que um `ligar_erros` da triagem está ligando
+  // (linha já travada por ele) ficam de fora, sem espera: a descrição lista só os que vêm junto.
   const parecidos =
     e.anterior || e.grupo === ''
       ? []
-      : await tx.erroDoGlitchTip.findMany({
-          where: {
-            projetoGlitchTip: e.slug,
-            grupo: e.grupo,
-            issueId: { not: e.issue.id },
-            demandaId: null,
-            resolvidoEm: null,
-          },
-          select: { issueId: true, titulo: true, link: true },
-          orderBy: { ultimoEm: 'desc' },
-        })
+      : await tx.$queryRaw<{ issueId: string; titulo: string; link: string }[]>`
+          SELECT "issueId", "titulo", "link" FROM "ErroDoGlitchTip"
+          WHERE "projetoGlitchTip" = ${e.slug} AND "grupo" = ${e.grupo}
+            AND "issueId" <> ${e.issue.id} AND "demandaId" IS NULL AND "resolvidoEm" IS NULL
+          ORDER BY "ultimoEm" DESC
+          FOR UPDATE SKIP LOCKED`
   const aberta = await abrirDemanda(
     tx,
     {
@@ -499,7 +504,11 @@ async function abrirParaOErro(
   })
   if (parecidos.length > 0) {
     await tx.erroDoGlitchTip.updateMany({
-      where: { issueId: { in: parecidos.map((p) => p.issueId) } },
+      where: {
+        issueId: { in: parecidos.map((p) => p.issueId) },
+        demandaId: null,
+        resolvidoEm: null,
+      },
       data: { demandaId: aberta.id, esperaDesde: null },
     })
   }
@@ -558,6 +567,7 @@ export async function virarDemanda(
   exigirPermissao(sujeito, 'projetos.gerenciar')
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
     await travarErros(tx)
+    await travarLinhaDoErro(tx, issueId)
     const erro = await tx.erroDoGlitchTip.findUnique({
       where: { issueId },
       include: {
@@ -617,6 +627,14 @@ async function ligarFonte(slug: string, agora: Date): Promise<Date> {
 
 async function travarErros(tx: Prisma.TransactionClient): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('erros-glitchtip'))`
+}
+
+/**
+ * A linha do erro, travada depois da trava dos erros: o `ligar_erros` da triagem só trava a linha,
+ * então a decisão espera o commit dele e lê o `demandaId` já gravado.
+ */
+async function travarLinhaDoErro(tx: Prisma.TransactionClient, issueId: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "ErroDoGlitchTip" WHERE "issueId" = ${issueId} FOR UPDATE`
 }
 
 async function travarProjeto(tx: Prisma.TransactionClient, slug: string): Promise<void> {

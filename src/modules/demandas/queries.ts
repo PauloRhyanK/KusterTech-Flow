@@ -1,6 +1,7 @@
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { formatarDataHora } from '@/lib/data'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { moduloAtivo } from '@/lib/modulos'
@@ -19,6 +20,8 @@ import {
   quemFez,
   textoDaOrdem,
   textoDoEvento,
+  EVENTOS_FORA_DO_HISTORICO,
+  montarEvidencias,
   trilhoDaDemanda,
   avisoDeFabricaSemBuscar,
   demandasQueVemAi,
@@ -33,8 +36,21 @@ import {
   type TelaDeDemandas,
   type ExtrasDasPartes,
   type TriagemDaDemanda,
+  type Evidencias,
+  type JuntadaEm,
+  type JuntadaNaEvidencia,
 } from './apresentacao'
 import { fraseDaDemanda, grupoAteOAr } from './partes'
+import {
+  JANELA_DAS_CANDIDATAS_DIAS,
+  candidatasDe,
+  podeSeparar,
+  separadasDe,
+  type Candidatas,
+  type DemandaCandidataLinha,
+  type ErroCandidatoLinha,
+} from './cruzada'
+import { paraOFio } from './service'
 import { comoParte } from './partes-service'
 import { cabecalhosDoArquivo, lerArquivo } from './arquivos'
 import {
@@ -47,6 +63,9 @@ import {
   type Nivel,
   type TipoDeDemanda,
 } from './model'
+
+// Folga para as demandas separadas e a própria demanda saírem do corte de 15.
+const CANDIDATAS_COM_FOLGA = 15 + 1 + 20
 
 export type PublicacaoDaDemanda = {
   estado: EstadoDoPedido
@@ -294,7 +313,7 @@ const ONDE_DO_ESTADO: Record<EstadoDaTabela, object> = {
   nao_chegou: { encerrada: null, espera: null, naoChegouDesde: { not: null } },
   a_caminho: { encerrada: null, espera: null, naoChegouDesde: null },
   no_ar: { encerrada: 'no_ar' },
-  encerrada: { encerrada: { in: ['orientada', 'descartada', 'entregue'] } },
+  encerrada: { encerrada: { in: ['orientada', 'descartada', 'entregue', 'juntada'] } },
 }
 
 /** O `where` da tabela: cada filtro escolhido vira uma condição; o período corta as encerradas pela última atualização. */
@@ -459,6 +478,7 @@ export async function obterPaginaDaDemanda(
         },
       },
       eventos: {
+        where: { tipo: { notIn: [...EVENTOS_FORA_DO_HISTORICO] } },
         orderBy: { seq: 'desc' },
         take: LIMITE_DO_HISTORICO,
         select: { seq: true, tipo: true, origem: true, dados: true, em: true },
@@ -546,6 +566,9 @@ export async function obterPaginaDaDemanda(
 
   const triagem = d.triagem as unknown as TriagemDaDemanda | null
   const podeAgir = autorizar(sujeito, 'projetos.gerenciar')
+  const evidencias = await evidenciasDaDemanda(d.id, d.noArEm, podeAgir)
+  const juntadaEm = await juntadaEmDaDemanda(d, podeAgir)
+  const titulos = await titulosCitados(d.eventos)
   const faixa = d.encerrada
     ? null
     : faixaDaEspera(
@@ -578,7 +601,9 @@ export async function obterPaginaDaDemanda(
     titulo: d.titulo,
     subtitulo: fechada
       ? d.projeto.nome
-      : `${d.projeto.nome} · aberta ${formatarIdade(d.criadaEm, agora)}`,
+      : d.encerrada === 'juntada'
+        ? `${d.projeto.nome} · aberta em ${formatarDataHora(d.criadaEm).slice(0, 5)} · encerrada: juntada`
+        : `${d.projeto.nome} · aberta ${formatarIdade(d.criadaEm, agora)}`,
     entrega: entregue
       ? cabecalhoDaEntrega(publicacao, agora)
       : d.encerrada === 'no_ar'
@@ -609,14 +634,171 @@ export async function obterPaginaDaDemanda(
     temTela: d.temTela,
     historico: d.eventos.map((e) => ({
       id: String(e.seq),
-      evento: textoDoEvento(e.tipo, e.dados),
+      evento: textoDoEvento(e.tipo, e.dados, titulos, e.origem),
       quem: quemFez(e.origem),
       quando: e.em,
     })),
     podeAgir,
     descartada: d.encerrada === 'descartada',
     podeEncerrar: podeAgir && d.encerrada === null,
+    evidencias,
+    juntadaEm,
   }
+}
+
+const idsDaLista = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+const campo = (dados: unknown, nome: string): unknown =>
+  typeof dados === 'object' && dados !== null ? (dados as Record<string, unknown>)[nome] : undefined
+
+/** Relatos e erros ligados à demanda, agrupados pela origem (desta, juntada de B, ligado). */
+async function evidenciasDaDemanda(
+  demandaId: string,
+  noArEm: Date | null,
+  podeAgir: boolean,
+): Promise<Evidencias | null> {
+  const [relatos, erros] = await Promise.all([
+    // O nome do autor (e os dos sinais) só serve para tirá-lo do texto; a tela mostra o papel.
+    db.relato.findMany({
+      where: { demandaId },
+      select: {
+        id: true,
+        texto: true,
+        transcricao: true,
+        autorNome: true,
+        autorPapel: true,
+        anexos: true,
+        canal: true,
+        assunto: true,
+        em: true,
+        sinais: true,
+      },
+    }),
+    db.erroDoGlitchTip.findMany({
+      where: { demandaId },
+      select: {
+        id: true,
+        issueId: true,
+        titulo: true,
+        onde: true,
+        eventos: true,
+        usuarios: true,
+        ultimoEm: true,
+        link: true,
+      },
+    }),
+  ])
+  if (relatos.length === 0 && erros.length === 0) return null
+
+  const [juntadas, ligados] = await Promise.all([
+    db.demanda.findMany({
+      where: { juntadaEmId: demandaId },
+      select: { id: true, titulo: true, encerrada: true, juntadaEmId: true },
+    }),
+    db.eventoDaDemanda.findMany({
+      where: { demandaId, tipo: 'erro-ligado', origem: 'fabrica' },
+      select: { dados: true },
+    }),
+  ])
+  const eventosDasJuntadas =
+    juntadas.length > 0
+      ? await db.eventoDaDemanda.findMany({
+          where: { demandaId: { in: juntadas.map((b) => b.id) }, tipo: 'juntada' },
+          orderBy: { seq: 'desc' },
+          select: { demandaId: true, dados: true, em: true },
+        })
+      : []
+  const porJuntada = juntadas.flatMap((b): JuntadaNaEvidencia[] => {
+    // O `juntada` mais recente de B com destino nesta demanda.
+    const ev = eventosDasJuntadas.find(
+      (e) => e.demandaId === b.id && campo(e.dados, 'em') === demandaId,
+    )
+    if (!ev) return []
+    const motivo = campo(ev.dados, 'motivo')
+    return [
+      {
+        de: { id: b.id, titulo: b.titulo },
+        em: ev.em,
+        motivo: typeof motivo === 'string' ? motivo : '',
+        relatos: idsDaLista(campo(ev.dados, 'relatos')),
+        erros: idsDaLista(campo(ev.dados, 'erros')),
+        podeSeparar: podeAgir && podeSeparar(b, { noArEm }),
+      },
+    ]
+  })
+
+  return montarEvidencias({
+    relatos: relatos.map((r) => ({
+      id: r.id,
+      texto: r.texto,
+      transcricao: r.transcricao,
+      papel: r.autorPapel,
+      canal: r.canal,
+      tela: r.assunto,
+      em: r.em,
+      sinais: r.sinais,
+      anexos: r.anexos,
+      autorNome: r.autorNome,
+    })),
+    erros,
+    juntadas: porJuntada,
+    ligadosPelaTriagem: ligados
+      .map((e) => campo(e.dados, 'issueId'))
+      .filter((x): x is string => typeof x === 'string'),
+  })
+}
+
+/** A demanda juntada: destino, motivo e quantos relatos foram junto (do último `juntada`). */
+async function juntadaEmDaDemanda(
+  b: { id: string; encerrada: string | null; juntadaEmId: string | null },
+  podeAgir: boolean,
+): Promise<JuntadaEm | null> {
+  if (b.encerrada !== 'juntada' || b.juntadaEmId === null) return null
+  const [a, eventos] = await Promise.all([
+    db.demanda.findUnique({
+      where: { id: b.juntadaEmId },
+      select: { id: true, titulo: true, noArEm: true },
+    }),
+    db.eventoDaDemanda.findMany({
+      where: { demandaId: b.id, tipo: 'juntada' },
+      orderBy: { seq: 'desc' },
+      select: { dados: true },
+    }),
+  ])
+  if (!a) return null
+  const ev = eventos.find((e) => campo(e.dados, 'em') === a.id)
+  const motivo = campo(ev?.dados, 'motivo')
+  return {
+    id: a.id,
+    titulo: a.titulo,
+    motivo: typeof motivo === 'string' ? motivo : '',
+    relatos: idsDaLista(campo(ev?.dados, 'relatos')).length,
+    podeSeparar: podeAgir && podeSeparar(b, a),
+  }
+}
+
+/** Os títulos das demandas citadas pela história (`juntada.em`, `evidencia_ligada.de`, `separada`). */
+async function titulosCitados(
+  eventos: readonly { tipo: string; dados: unknown }[],
+): Promise<Record<string, string>> {
+  const ids = new Set<string>()
+  for (const e of eventos) {
+    const id =
+      e.tipo === 'juntada'
+        ? campo(e.dados, 'em')
+        : e.tipo === 'evidencia_ligada'
+          ? campo(e.dados, 'de')
+          : e.tipo === 'separada'
+            ? (campo(e.dados, 'de') ?? campo(e.dados, 'separou'))
+            : undefined
+    if (typeof id === 'string' && UUID.test(id)) ids.add(id)
+  }
+  if (ids.size === 0) return {}
+  const linhas = await db.demanda.findMany({
+    where: { id: { in: [...ids] } },
+    select: { id: true, titulo: true },
+  })
+  return Object.fromEntries(linhas.map((l) => [l.id, l.titulo]))
 }
 
 /**
@@ -755,4 +937,104 @@ export async function obterDemandasQueVemAi(sujeito: Sujeito): Promise<DemandaQu
       desenhoAprovado: null,
     })),
   )
+}
+
+/**
+ * Candidatas à triagem cruzada das demandas dadas (que já esperam a triagem): uma consulta de
+ * demandas e uma de erros por projeto envolvido, mais as contagens agrupadas.
+ */
+export async function candidatasDaDemanda(
+  demandaIds: string[],
+  agora: Date,
+): Promise<Map<string, Candidatas>> {
+  const resultado = new Map<string, Candidatas>()
+  if (demandaIds.length === 0) return resultado
+
+  const alvos = await db.demanda.findMany({
+    where: { id: { in: demandaIds } },
+    select: { id: true, projetoId: true },
+  })
+  const separadas = await db.eventoDaDemanda.findMany({
+    where: { demandaId: { in: demandaIds }, tipo: 'separada' },
+    select: { demandaId: true, tipo: true, dados: true },
+  })
+  const corte = new Date(agora.getTime() - JANELA_DAS_CANDIDATAS_DIAS * 86_400_000)
+
+  const projetos = [...new Set(alvos.map((a) => a.projetoId))]
+  const porProjeto = new Map<
+    string,
+    { demandas: DemandaCandidataLinha[]; erros: ErroCandidatoLinha[] }
+  >()
+  for (const projetoId of projetos) {
+    const demandas = await db.demanda.findMany({
+      where: { projetoId, encerrada: null, noArEm: null, criadaEm: { gte: corte } },
+      orderBy: { criadaEm: 'desc' },
+      take: CANDIDATAS_COM_FOLGA,
+    })
+    const erros = await db.erroDoGlitchTip.findMany({
+      where: { repositorio: { projetoId }, demandaId: null, resolvidoEm: null },
+      orderBy: { ultimoEm: 'desc' },
+      take: CANDIDATAS_COM_FOLGA,
+    })
+    const ids = demandas.map((d) => d.id)
+    const relatos = await db.relato.groupBy({
+      by: ['demandaId'],
+      where: { demandaId: { in: ids } },
+      _count: { _all: true },
+    })
+    const ligados = await db.erroDoGlitchTip.groupBy({
+      by: ['demandaId'],
+      where: { demandaId: { in: ids } },
+      _count: { _all: true },
+    })
+    const nRelatos = new Map(relatos.map((r) => [r.demandaId, r._count._all]))
+    const nErros = new Map(ligados.map((r) => [r.demandaId, r._count._all]))
+    porProjeto.set(projetoId, {
+      demandas: demandas.map((d) => ({
+        id: d.id,
+        projetoId: d.projetoId,
+        titulo: d.titulo,
+        descricao: d.descricao,
+        origem: paraOFio.origem(d.origem),
+        tipo: d.tipo ? paraOFio.tipo(d.tipo) : null,
+        etapa: d.etapaAtual,
+        relatos: nRelatos.get(d.id) ?? 0,
+        erros: nErros.get(d.id) ?? 0,
+        criadaEm: d.criadaEm,
+        encerrada: d.encerrada,
+        noArEm: d.noArEm,
+        juntadaEmId: d.juntadaEmId,
+      })),
+      erros: erros.map((e) => ({
+        id: e.id,
+        projetoId,
+        titulo: e.titulo,
+        onde: e.onde,
+        eventos: e.eventos,
+        usuarios: e.usuarios,
+        ultimoEm: e.ultimoEm,
+        demandaId: e.demandaId,
+        resolvidoEm: e.resolvidoEm,
+        esperaDesde: e.esperaDesde,
+      })),
+    })
+  }
+
+  for (const alvo of alvos) {
+    const linhas = porProjeto.get(alvo.projetoId)!
+    resultado.set(
+      alvo.id,
+      candidatasDe(
+        {
+          id: alvo.id,
+          projetoId: alvo.projetoId,
+          separadasDe: separadasDe(separadas.filter((e) => e.demandaId === alvo.id)),
+        },
+        linhas.demandas,
+        linhas.erros,
+        agora,
+      ),
+    )
+  }
+  return resultado
 }

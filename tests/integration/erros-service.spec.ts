@@ -153,6 +153,48 @@ describe('buscarErrosDoGlitchTip', () => {
     expect(await db.demanda.count()).toBe(5)
   })
 
+  test('demanda juntada devolve a vaga do dia', async () => {
+    const lista = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        issue(String(i + 1), {
+          lastSeen: new Date(agora.getTime() - (i + 1) * MIN).toISOString(),
+        }),
+      )
+    let issues = lista(3)
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json(issues) })
+    const primeiro = await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    expect(primeiro).toMatchObject({ abertas: 3, naEspera: 0 })
+    const uma = await db.demanda.findFirstOrThrow({ orderBy: { criadaEm: 'asc' } })
+    await db.demanda.update({ where: { id: uma.id }, data: { encerrada: 'juntada' } })
+    issues = lista(4)
+    const depois = await buscarErrosDoGlitchTip(new Date(agora.getTime() + MIN), {
+      env: env(),
+      buscar,
+    })
+    expect(depois).toMatchObject({ abertas: 1, naEspera: 0 })
+  })
+
+  test('as partes de uma divisão não ocupam a vaga do dia', async () => {
+    const lista = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        issue(String(i + 1), {
+          lastSeen: new Date(agora.getTime() - (i + 1) * MIN).toISOString(),
+        }),
+      )
+    let issues = lista(3)
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json(issues) })
+    const primeiro = await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    expect(primeiro).toMatchObject({ abertas: 3, naEspera: 0 })
+    const [original, parte] = await db.demanda.findMany({ orderBy: { criadaEm: 'asc' }, take: 2 })
+    await db.demanda.update({ where: { id: parte!.id }, data: { divididaDeId: original!.id } })
+    issues = lista(4)
+    const depois = await buscarErrosDoGlitchTip(new Date(agora.getTime() + MIN), {
+      env: env(),
+      buscar,
+    })
+    expect(depois).toMatchObject({ abertas: 1, naEspera: 0 })
+  })
+
   test('erro passageiro fica em observação, sem demanda', async () => {
     const { buscar } = glitchtip({
       [LISTA('app-vendas')]: () => json([issue('17', { count: '3' })]),
@@ -208,6 +250,65 @@ describe('buscarErrosDoGlitchTip', () => {
     expect(demanda.descricao).toContain(titulo('aviso'))
     const erros = await db.erroDoGlitchTip.findMany()
     expect(erros.map((e) => e.demandaId)).toEqual([demanda.id, demanda.id])
+  })
+
+  test('o parecido que a triagem ligou no meio da abertura fica na demanda dela', async () => {
+    const titulo = (t: string) => `PostgresError: permission denied for table ${t}`
+    let count = '2'
+    const { buscar } = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([
+          issue('5', { title: titulo('recebido'), culprit: '', count }),
+          issue('6', {
+            title: titulo('aviso'),
+            culprit: '',
+            count: '1',
+            lastSeen: new Date(agora.getTime() - 5 * MIN).toISOString(),
+          }),
+          issue('17', { lastSeen: new Date(agora.getTime() - 9 * MIN).toISOString() }),
+        ]),
+    })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const daTriagem = await db.demanda.findFirstOrThrow()
+    const seis = await db.erroDoGlitchTip.findUniqueOrThrow({ where: { issueId: '6' } })
+    expect(seis.demandaId).toBeNull()
+
+    // O `ligar_erros` em curso: a linha do 6 travada e já ligada, ainda sem commit.
+    let soltar!: () => void
+    const portao = new Promise<void>((r) => (soltar = r))
+    let travou!: () => void
+    const travada = new Promise<void>((r) => (travou = r))
+    const ligacao = db.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "ErroDoGlitchTip" WHERE "id" = ${seis.id} FOR UPDATE`
+        await tx.erroDoGlitchTip.update({
+          where: { id: seis.id },
+          data: { demandaId: daTriagem.id },
+        })
+        travou()
+        await portao
+      },
+      { timeout: 20_000 },
+    )
+    await travada
+    count = '15'
+    const busca = buscarErrosDoGlitchTip(new Date(agora.getTime() + 2 * MIN), {
+      env: env(),
+      buscar,
+    })
+    await new Promise((r) => setTimeout(r, 500))
+    soltar()
+    await ligacao
+    await busca
+
+    const nova = await db.demanda.findFirstOrThrow({ where: { id: { not: daTriagem.id } } })
+    expect(nova.descricao).not.toContain(titulo('aviso'))
+    const depois = await db.erroDoGlitchTip.findMany({ orderBy: { issueId: 'asc' } })
+    expect(depois.map((e) => [e.issueId, e.demandaId])).toEqual([
+      ['17', daTriagem.id],
+      ['5', nova.id],
+      ['6', daTriagem.id],
+    ])
   })
 
   test('erros do grupo que voltam depois de ir ao ar abrem uma demanda só', async () => {
@@ -428,6 +529,39 @@ describe('buscarErrosDoGlitchTip', () => {
     const eventos = await corrigidos()
     expect(eventos).toHaveLength(1)
     expect(eventos[0]).toMatchObject({ origem: 'glitchtip', dados: { horas: 24 }, em: depois(25) })
+  })
+
+  test('demanda de outra origem que recebeu o erro pela triagem também vira corrigida', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const demanda = await db.demanda.findFirstOrThrow()
+    await db.demanda.update({
+      where: { id: demanda.id },
+      data: { origem: 'USUARIO', encerrada: 'no_ar', noArEm: agora },
+    })
+    const sem = await db.demanda.create({
+      data: {
+        projetoId: demanda.projetoId,
+        repositorioId: demanda.repositorioId,
+        titulo: 'Relato sem erro',
+        nivel: 'VAI_SOZINHO',
+        temTela: false,
+        origem: 'USUARIO',
+        etapas: [],
+        etapaAtual: 'triagem',
+        encerrada: 'no_ar',
+        noArEm: agora,
+      },
+    })
+    const contar = (id: string) =>
+      db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'erro-corrigido' } })
+    const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 25 * HORA), {
+      env: env(),
+      buscar,
+    })
+    expect(resumo.corrigidos).toBe(1)
+    expect(await contar(demanda.id)).toBe(1)
+    expect(await contar(sem.id)).toBe(0)
   })
 
   test('erro que voltou não deixa a demanda anterior contar como corrigida', async () => {

@@ -123,10 +123,11 @@ ACOES = (
     "aguardar_envio",
     "ressincronizar",
 )
-# como uma demanda termina no Flow: entregue, orientada na triagem ou descartada pelo Paulo ("Encerrar demanda").
+# como uma demanda termina no Flow: entregue, orientada na triagem, descartada pelo Paulo ("Encerrar demanda") ou
+# juntada a outra pela triagem (`juntar`).
 # Qualquer `encerrada` não nula (estes ou um valor que o kit não conhece) para a demanda: `proxima_acao` dá
 # `encerrar`, os runs em curso viram superados e seguram a vaga até terminar, e o item sai do estado.
-ENCERRAMENTOS = ("entregue", "orientada", "descartada")
+ENCERRAMENTOS = ("entregue", "orientada", "descartada", "juntada")
 # esperas em que só o Paulo mexe: a Fábrica não faz nada até a espera sair
 ESPERAS_DO_PAULO = ("decidir_destino", "aprovar_desenho", "concluir_etapa", "travada", "teste_falhou")
 FASES_COM_VAGA = ("desenhando", "testando", "corrigindo")
@@ -1228,6 +1229,7 @@ class _Passo:
                 self.seguir_correcao_sem_ci(id_, it, demanda)
                 self.adotar_plano_da_sessao(id_, it, demanda)
                 self.seguir_desenvolvimento(id_, it, demanda)
+                self.reabrir_separada(id_, it)
                 acao = proxima_acao(it, demanda, pendente=tem_pendente(self.estado, id_))
                 if acao == "aguardar_envio":
                     continue  # o retrato está atrasado: decide de novo quando a saída esvaziar
@@ -1287,16 +1289,47 @@ class _Passo:
             self.salvar()
             self.eventos.append({"evento": "demanda_triagem_superada", "id": id_})
 
+    def reabrir_separada(self, id_: str, it: dict) -> None:
+        """O Paulo separou a demanda antes de o kit ver a junção: ela volta `recebida`, sem triagem, e é triada de novo.
+
+        Só com retrato novo (`recebida`: o guardado é o de antes da junção), nada da demanda na caixa de saída, sem
+        ressincronização pendente (a recusa do `juntar` segue por `ressincronizar`) e com a triagem local terminada.
+        O sinal é o `juntando` (ainda sem recusa) ou o evento `separada` no retrato.
+        """
+        novo = it.get("recebida")
+        if not isinstance(novo, dict) or not _ainda_na_triagem(novo):
+            return
+        if it.get("precisa_ressincronizar") or tem_pendente(self.estado, id_):
+            return
+        if it.get("fase") != "triando" or it.get("runId"):
+            return
+        separada = any(isinstance(e, dict) and e.get("tipo") == "separada" for e in novo.get("eventos") or [])
+        if not separada and not (it.get("juntando") and not it.get("juntarRecusado")):
+            return
+        for campo in ("juntando", "juntarRecusado", "triagem", "triagemRecusada"):
+            it.pop(campo, None)
+        # tentativa nova: a chave de idempotência da triagem anterior devolveria o run antigo
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it.update(fase="nova", alvo=None, tentativa=tentativa + 1)
+        self.salvar()
+        self.eventos.append({"evento": "demanda_separada", "id": id_})
+
     def ressincronizar(self, id_: str, it: dict, demanda: dict) -> None:
         """Um evento da demanda saiu da caixa sem o Flow aplicar: refaz a fase local pelo retrato.
 
-        Na triagem: a demanda ainda `recebida` com a triagem já decidida vai para a decisão do Paulo com um
-        `triagem_falhou` (uma vez só; recusado de novo, fica onde está, com o aviso da recusa). Nas outras etapas,
+        Na triagem: depois de um `juntar` (`juntando`), a demanda ainda `recebida` recebe a triagem guardada (uma vez
+        só, `juntarRecusado`). Fora disso, a demanda ainda `recebida` com a triagem já decidida vai para a decisão do
+        Paulo com um `triagem_falhou` (uma vez só; recusado de novo, fica onde está, com o aviso da recusa). Nas outras etapas,
         só limpa a marca (as Tasks 4 a 8 refazem as suas fases).
         """
         it["precisa_ressincronizar"] = False
         terminada = it.get("fase") == "triando" and not it.get("runId")
-        if _ainda_na_triagem(demanda) and terminada and not it.get("triagemRecusada"):
+        if _ainda_na_triagem(demanda) and terminada and it.get("juntando") and not it.get("juntarRecusado") and isinstance(it.get("triagem"), dict):
+            # o Flow recusou o `juntar` (ou o `ligar_erros` antes dele, com a junção ainda por vir no retrato):
+            # a demanda recebe a triagem guardada, uma vez só; recusada também, cai no ramo de baixo
+            it["juntarRecusado"] = True
+            enfileirar_evento(self.estado, id_, "triagem", it["triagem"], agora=self.agora_texto)
+        elif _ainda_na_triagem(demanda) and terminada and not it.get("triagemRecusada"):
             it["triagemRecusada"] = True
             enfileirar_evento(self.estado, id_, "triagem_falhou", {"motivo": MOTIVO_TRIAGEM_RECUSADA}, agora=self.agora_texto)
         elif _ainda_no_planejamento(demanda) and it.get("fase") == "plano_no_repo" and not it.get("planoRecusado"):
@@ -1642,11 +1675,12 @@ class _Passo:
             if self.esperar_retry(id_, it, run):
                 return
         if situacao == "succeeded":
-            triagem = prompts.extrair_triagem(self.motor.ultimo_texto(it["runId"]))
+            texto = self.motor.ultimo_texto(it["runId"])
+            triagem = prompts.extrair_triagem(texto)
             if triagem is None:
                 self.falhou(id_, it, MOTIVO_SEM_FORMATO)
             else:
-                self.concluir(id_, it, "triagem", triagem)
+                self.concluir(id_, it, "triagem", triagem, cruzamento=prompts.extrair_cruzamento(texto, demanda.get("candidatas")))
         elif situacao in despachante.TERMINAIS_DE_RUN:
             self.falhou(id_, it, MOTIVO_AGENTE % despachante.motivo_do_run_falho(run)[:LIMITE_MOTIVO_DO_AGENTE])
         elif self.estourou(it):
@@ -1668,15 +1702,36 @@ class _Passo:
             self.erro(id_, valor)
         return True
 
-    def concluir(self, id_: str, it: dict, tipo: str, dados: dict) -> None:
-        """O evento vai para a caixa de saída e a triagem fecha no mesmo `salvar` (`triando` sem `runId`)."""
-        enfileirar_evento(self.estado, id_, tipo, dados, agora=self.agora_texto)
+    def concluir(self, id_: str, it: dict, tipo: str, dados: dict, *, cruzamento: dict | None = None) -> None:
+        """Os eventos vão para a caixa de saída e a triagem fecha no mesmo `salvar` (`triando` sem `runId`).
+
+        Com o `cruzamento` da triagem (`prompts.extrair_cruzamento`), a ordem é: `ligar_erros`, se houver; depois
+        `juntar`, que vem no lugar da triagem (guardada em `it["triagem"]` com `juntando`, para a ressincronização
+        mandá-la se o Flow recusar a junção), ou `dividir` seguido da `triagem`, ou só a `triagem`.
+        """
+        c = cruzamento or {}
+        enviados = []
+        if tipo == "triagem" and c.get("ligarErros"):
+            enviados.append(("ligar_erros", c["ligarErros"]))
+        if tipo == "triagem" and c.get("juntar"):
+            enviados.append(("juntar", c["juntar"]))
+            it["juntando"] = True
+        else:
+            if tipo == "triagem" and c.get("dividir"):
+                enviados.append(("dividir", c["dividir"]))
+            enviados.append((tipo, dados))
+        for tipo_, dados_ in enviados:
+            enfileirar_evento(self.estado, id_, tipo_, dados_, agora=self.agora_texto)
         if tipo == "triagem":
             it["triagem"] = dados  # o retrato do Flow não traz a triagem; o plano a leva no contexto
         it.update(fase="triando", runId=None)
         it.pop("retryEsperado", None)
         self.salvar()
-        self.eventos.append({"evento": "demanda_%s" % tipo, "id": id_, "destino": dados.get("destino"), "motivo": dados.get("motivo")})
+        evento = {"evento": "demanda_%s" % tipo, "id": id_, "destino": dados.get("destino"), "motivo": dados.get("motivo")}
+        cruzados = [t for t, _ in enviados if t != tipo]
+        if cruzados:
+            evento["cruzamento"] = cruzados
+        self.eventos.append(evento)
 
     def falhou(self, id_: str, it: dict, motivo: str) -> None:
         self.concluir(id_, it, "triagem_falhou", {"motivo": motivo[:300]})

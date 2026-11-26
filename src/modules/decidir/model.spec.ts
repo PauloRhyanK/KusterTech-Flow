@@ -42,6 +42,7 @@ function demanda(o: Partial<DemandaEsperando> = {}): DemandaEsperando {
     rotuloDaEtapa: 'Triagem',
     descricao: null,
     anexos: 0,
+    pessoas: 0,
     triagem: { tamanho: 'Pequeno', mexeEm: 'Cadastro', motivo: 'm', destino: 'fila' },
     ...o,
   }
@@ -252,6 +253,17 @@ describe('montarPilha', () => {
       externo: false,
     })
     expect(pilha({ demandas: [demanda()] }).itens[0]!.relato).toBeNull()
+  })
+
+  it('demanda: "Relataram" aparece quando mais de uma pessoa relatou', () => {
+    const fatos = (pessoas: number) => pilha({ demandas: [demanda({ pessoas })] }).itens[0]!.fatos
+    expect(fatos(4)).toContainEqual({ rotulo: 'Relataram', valor: '4 pessoas' })
+    expect(fatos(1).some((f) => f.rotulo === 'Relataram')).toBe(false)
+    expect(fatos(0).some((f) => f.rotulo === 'Relataram')).toBe(false)
+    // Sem triagem, o fato aparece sozinho.
+    expect(pilha({ demandas: [demanda({ pessoas: 2, triagem: null })] }).itens[0]!.fatos).toEqual([
+      { rotulo: 'Relataram', valor: '2 pessoas' },
+    ])
   })
 
   it('demanda: o resumo do relato diz só o que existe', () => {

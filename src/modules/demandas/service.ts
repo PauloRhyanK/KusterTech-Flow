@@ -20,6 +20,7 @@ import {
 } from './arquivos'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { aplicarEventoDeParte, conferirPartesDaEtapa, criarParteDeEntrada } from './partes-service'
+import { RecusaDoEfeito, aplicarEfeitoCruzado, demandasATravar } from './cruzada-service'
 import { fecharDemandaSeNoAr } from './partes-no-ar'
 import { DESTINOS, NIVEIS, TIPOS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
@@ -559,6 +560,7 @@ export async function registrarEvento(e: RegistroDeEvento): Promise<ResultadoDoR
   } catch (erro) {
     // O mesmo idExterno gravado ao mesmo tempo em outra demanda: o índice único decide.
     if (ehUnicoRepetido(erro)) return { resultado: 'conflito' }
+    if (erro instanceof RecusaDoEfeito) return { resultado: 'recusado', motivo: erro.message }
     throw erro
   }
 }
@@ -568,9 +570,11 @@ export async function registrarEventoNa(
   tx: Prisma.TransactionClient,
   e: RegistroDeEvento,
 ): Promise<ResultadoDoRegistro> {
-  const travada = await tx.$queryRaw<{ id: string }[]>`
-    SELECT "id" FROM "Demanda" WHERE "id" = ${e.demandaId} FOR UPDATE`
-  if (travada.length === 0) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
+  // O `juntar` trava também a demanda de destino, em ordem de id (sem travar em cruz).
+  const travadas = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Demanda" WHERE "id" IN (${Prisma.join(demandasATravar(e.demandaId, e.evento))})
+    ORDER BY "id" FOR UPDATE`
+  if (!travadas.some((t) => t.id === e.demandaId)) throw new ErroDeDominio(DEMANDA_NAO_ENCONTRADA)
   const demanda = await tx.demanda.findUniqueOrThrow({ where: { id: e.demandaId } })
   const estado = estadoDaLinha(demanda)
 
@@ -635,11 +639,14 @@ export async function registrarEventoNa(
   }
   const nasPartes = await aplicarEventoDeParte(tx, demanda, e.evento, agora)
   if (!nasPartes.ok) return { resultado: 'recusado', motivo: nasPartes.motivo }
+  const cruzado = await aplicarEfeitoCruzado(tx, demanda, e.evento, agora)
+  if (!cruzado.ok) return { resultado: 'recusado', motivo: cruzado.motivo }
   await tx.demanda.update({
     where: { id: e.demandaId },
     data: {
       ...colunasDoEstado(r.estado, estado, demanda.esperaDesde, agora),
       ...colunasDoEvento(e.evento, demanda, agora),
+      ...cruzado.colunas,
       ...(e.tipo ? { tipo: doFio.tipo(e.tipo) } : {}),
       ...(etapas.length !== salvas.length
         ? { etapas: etapas as unknown as Prisma.InputJsonValue }

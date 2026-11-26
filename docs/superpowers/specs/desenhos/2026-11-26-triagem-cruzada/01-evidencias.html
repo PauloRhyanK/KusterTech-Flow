@@ -1,0 +1,253 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>KusterTech Flow — Evidências da demanda (desenho 26/11)</title><style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11.5px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:680px}
+  .tela.cel.on{display:block;max-width:390px;min-height:0}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}.logo span{color:#72d9c3}
+  aside small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}aside a.on i{background:#72d9c3}
+  main{padding:26px 32px 36px;min-width:0}
+  .cel main{padding:16px}
+  .voltar{color:var(--text-link);font-size:13px;text-decoration:none}
+  .titulo{display:flex;align-items:baseline;gap:12px;margin:8px 0 18px;flex-wrap:wrap}
+  h1{font-size:24px;margin:0;letter-spacing:-.02em;font-weight:650}
+  .titulo span{color:var(--text-tertiary);font-size:13px}
+  .trilho{display:flex;gap:0;margin-bottom:20px;max-width:440px}
+  .trilho div{flex:1;font-size:10.5px;letter-spacing:.08em;color:var(--text-tertiary);border-top:2px solid var(--border-strong);padding-top:8px}
+  .trilho div.f{border-color:var(--flow)}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:16px}
+  .cab{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .cab b{font-size:15px}
+  .chip{font-size:12px;border-radius:999px;padding:2px 10px;background:var(--surface-subtle);color:var(--text-secondary)}
+  .chip.e{background:#fbf0f0;color:var(--erro)} .chip.r{background:#eef4fd;color:var(--action)}
+  .cab .dir{margin-left:auto;font-size:12px;color:var(--text-tertiary)}
+  .grupo{padding:6px 16px 4px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-tertiary);background:#fafbfc}
+  .grupo:first-of-type{border-top:0}
+  .grupo a{color:var(--text-link);text-decoration:none}
+  .grupo .sep{margin-left:auto}
+  .linha{display:flex;align-items:center;gap:14px;padding:10px 16px;border-top:1px solid var(--border)}
+  .ic{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:700;flex:none}
+  .ic.e{background:#fbf0f0;color:var(--erro)} .ic.r{background:#eef4fd;color:var(--action)}
+  .cresce{flex:1;min-width:0}
+  .tit{font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sub{font-size:12px;color:var(--text-tertiary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vol{width:190px;flex:none;font-size:12px;color:var(--text-secondary);text-align:right}
+  .vol b{color:var(--text-primary)}
+  .acoes{width:90px;flex:none;text-align:right;font-size:12.5px}
+  .acoes a{color:var(--text-link);text-decoration:none}
+  .faixa{border-radius:var(--r);padding:14px 16px;margin-bottom:16px;display:flex;gap:14px;align-items:flex-start}
+  .faixa.j{background:#f4f1fa;border:1px solid #e0d8ef}
+  .faixa .bola{width:26px;height:26px;border-radius:50%;background:var(--execucao);color:#fff;display:grid;place-items:center;font-weight:700;flex:none}
+  .faixa b{display:block;margin-bottom:3px}
+  .faixa p{margin:0;font-size:13px;color:var(--text-secondary)}
+  .faixa a{color:var(--text-link);text-decoration:none}
+  .botao{margin-left:auto;font:inherit;font-size:13px;border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:6px 12px;cursor:pointer;white-space:nowrap}
+  .hist{font-size:13px;color:var(--text-secondary)}
+  .hist b{color:var(--text-primary);font-size:15px;margin-right:8px}
+  .hist li{margin:4px 0}
+  .legenda{max-width:1280px;margin:0 auto 30px;font-size:12.5px;color:var(--text-secondary);padding:0 8px}
+  .legenda li{margin:3px 0}
+  .cel .linha{flex-wrap:wrap;gap:4px 10px;align-items:flex-start}
+  .cel .cresce{flex:1 1 calc(100% - 36px)}
+  .cel .tit{white-space:normal}
+  .cel .vol{width:auto;text-align:left;margin-left:32px}
+  .cel .acoes{width:auto;margin-left:auto}
+  .cel .faixa{flex-wrap:wrap}
+  .cel .botao{margin-left:40px}
+</style></head><body>
+<div class="barra">
+  <b>Evidências da demanda · desenho</b>
+  <button class="on" data-t="t1">1 · Demanda com evidências</button>
+  <button data-t="t2">2 · Demanda juntada</button>
+  <button data-t="t3">3 · Celular</button>
+  <span class="nota">Nomes fictícios; relato mostra papel, nunca o nome (repositório público)</span>
+</div>
+
+<!-- 1. demanda que recebeu evidências -->
+<section class="tela on" id="t1">
+  <aside>
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <a class="voltar" href="#">← Demandas</a>
+    <div class="titulo"><h1>Fechar pedido falha com carrinho vazio</h1><span>Projeto Alfa · aberta há 2 d · defeito</span></div>
+    <div class="trilho"><div class="f">PEDIDA</div><div class="f">PLANO</div><div>FEITA</div><div>NO AR</div></div>
+
+    <div class="cartao">
+      <div class="cab">
+        <b>Evidências</b>
+        <span class="chip e">2 erros</span>
+        <span class="chip r">4 relatos</span>
+        <span class="chip">+2 reforços</span>
+        <span class="dir">juntadas pela triagem</span>
+      </div>
+
+      <div class="grupo">Desta demanda</div>
+      <div class="linha">
+        <span class="ic r">R</span>
+        <div class="cresce">
+          <div class="tit">"Cliquei em fechar pedido e a tela ficou branca"</div>
+          <div class="sub">Vendedora · pelo sistema · tela Pedidos · 24/11 15:02</div>
+        </div>
+        <div class="vol"><b>2</b> reforços</div>
+        <div class="acoes"><a href="#">Ver relato</a></div>
+      </div>
+
+      <div class="grupo">Juntada de <a href="#">"Pedido não fecha"</a> · 25/11 · mesma falha ao fechar pedido sem itens <button class="botao sep">Separar</button></div>
+      <div class="linha">
+        <span class="ic r">R</span>
+        <div class="cresce">
+          <div class="tit">"Pedido não fecha, aparece erro e volta pro carrinho"</div>
+          <div class="sub">Gerente · WhatsApp · 25/11 09:40</div>
+        </div>
+        <div class="vol">—</div>
+        <div class="acoes"><a href="#">Ver relato</a></div>
+      </div>
+      <div class="linha">
+        <span class="ic r">R</span>
+        <div class="cresce">
+          <div class="tit">"Não consigo finalizar venda quando apago os itens"</div>
+          <div class="sub">Vendedor · pelo sistema · tela Pedidos · 25/11 10:15</div>
+        </div>
+        <div class="vol">—</div>
+        <div class="acoes"><a href="#">Ver relato</a></div>
+      </div>
+
+      <div class="grupo">Juntada de <a href="#">"Carrinho some ao fechar"</a> · 26/11 · mesma falha, relatada por outra pessoa <button class="botao sep">Separar</button></div>
+      <div class="linha">
+        <span class="ic r">R</span>
+        <div class="cresce">
+          <div class="tit">"Carrinho some quando tento fechar"</div>
+          <div class="sub">Caixa · pelo sistema · 26/11 08:12</div>
+        </div>
+        <div class="vol">—</div>
+        <div class="acoes"><a href="#">Ver relato</a></div>
+      </div>
+
+      <div class="grupo">Ligado pela triagem (estava sem demanda no GlitchTip)</div>
+      <div class="linha">
+        <span class="ic e">E</span>
+        <div class="cresce">
+          <div class="tit">TypeError: Cannot read properties of undefined (reading 'itens')</div>
+          <div class="sub mono">pedidos/fechar.ts in calcularTotal</div>
+        </div>
+        <div class="vol"><b>48</b> eventos · <b>9</b> usuários<br>último há 1 h</div>
+        <div class="acoes"><a href="#">GlitchTip ↗</a></div>
+      </div>
+      <div class="linha">
+        <span class="ic e">E</span>
+        <div class="cresce">
+          <div class="tit">TypeError: Cannot read properties of undefined (reading 'total')</div>
+          <div class="sub mono">pedidos/fechar.ts in calcularTotal</div>
+        </div>
+        <div class="vol"><b>12</b> eventos · <b>4</b> usuários<br>último há 3 h</div>
+        <div class="acoes"><a href="#">GlitchTip ↗</a></div>
+      </div>
+    </div>
+
+    <div class="hist"><b>Histórico</b> recolhido · 11 eventos
+      <ul>
+        <li>26/11 08:14 · A triagem ligou o erro "TypeError … reading 'itens'": a tela branca ao fechar pedido</li>
+        <li>26/11 08:14 · A triagem juntou "Carrinho some ao fechar": mesma falha, relatada por outra pessoa</li>
+        <li>25/11 10:20 · A triagem ligou o erro "TypeError … reading 'total'": mesmo ponto em calcularTotal</li>
+        <li>25/11 10:16 · A triagem juntou "Pedido não fecha": mesma falha ao fechar pedido sem itens</li>
+      </ul>
+    </div>
+  </main>
+</section>
+
+<!-- 2. demanda juntada -->
+<section class="tela" id="t2">
+  <aside>
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <a class="voltar" href="#">← Demandas</a>
+    <div class="titulo"><h1>Pedido não fecha</h1><span>Projeto Alfa · aberta em 25/11 · encerrada: juntada</span></div>
+
+    <div class="faixa j">
+      <span class="bola">↗</span>
+      <div>
+        <b>Juntada a <a href="#">"Fechar pedido falha com carrinho vazio"</a></b>
+        <p>A triagem viu o mesmo problema: mesma falha ao fechar pedido sem itens. Os 2 relatos desta demanda estão lá, e quem relatou recebe o andamento de lá.</p>
+      </div>
+      <button class="botao">Separar</button>
+    </div>
+
+    <div class="hist"><b>Histórico</b>
+      <ul>
+        <li>25/11 10:16 · Juntada pela triagem a "Fechar pedido falha com carrinho vazio" (2 relatos foram junto)</li>
+        <li>25/11 10:15 · Aberta pelo relato de um usuário (Gerente · WhatsApp)</li>
+      </ul>
+    </div>
+  </main>
+</section>
+
+<!-- 3. celular -->
+<section class="tela cel" id="t3">
+  <main>
+    <a class="voltar" href="#">← Demandas</a>
+    <div class="titulo"><h1 style="font-size:20px">Fechar pedido falha com carrinho vazio</h1><span>Projeto Alfa · defeito</span></div>
+    <div class="cartao">
+      <div class="cab"><b>Evidências</b><span class="chip e">2 erros</span><span class="chip r">4 relatos</span></div>
+      <div class="grupo">Desta demanda</div>
+      <div class="linha">
+        <span class="ic r">R</span>
+        <div class="cresce"><div class="tit">"Cliquei em fechar pedido e a tela ficou branca"</div><div class="sub">Vendedora · sistema · 24/11</div></div>
+        <div class="vol"><b>2</b> reforços</div><div class="acoes"><a href="#">Ver</a></div>
+      </div>
+      <div class="grupo">Ligado pela triagem</div>
+      <div class="linha">
+        <span class="ic e">E</span>
+        <div class="cresce"><div class="tit">TypeError … reading 'itens'</div><div class="sub mono">calcularTotal</div></div>
+        <div class="vol"><b>48</b> eventos · <b>9</b> usuários</div><div class="acoes"><a href="#">↗</a></div>
+      </div>
+      <div class="grupo">Juntada de <a href="#">"Pedido não fecha"</a> <button class="botao sep">Separar</button></div>
+      <div class="linha">
+        <span class="ic r">R</span>
+        <div class="cresce"><div class="tit">"Pedido não fecha, aparece erro…"</div><div class="sub">Gerente · WhatsApp · 25/11</div></div>
+        <div class="acoes"><a href="#">Ver</a></div>
+      </div>
+      <div class="grupo" style="justify-content:center"><a href="#">Ver as 3 outras</a></div>
+    </div>
+  </main>
+</section>
+
+<ol class="legenda">
+  <li><b>Evidências:</b> chips com a contagem (erros, relatos, reforços dos relatos). As linhas ficam agrupadas pela origem: desta demanda, juntada de outra demanda (com o motivo da triagem e o botão Separar) ou ligada pela triagem (um erro do GlitchTip que estava em observação, sem demanda).</li>
+  <li><b>Relato:</b> trecho entre aspas, papel, canal, tela e data. Nunca o nome. "Ver relato" abre o relato com anexos, como hoje. <b>Erro:</b> título, onde, eventos, usuários, último evento e o link do GlitchTip.</li>
+  <li><b>Demanda juntada:</b> faixa roxa com o destino, o motivo e Separar. Quem relatou passa a receber o andamento da demanda de destino.</li>
+  <li><b>Separar:</b> reabre a demanda juntada, devolve a ela as evidências que eram dela e a manda de novo para a triagem, que não pode juntá-la outra vez ao mesmo destino.</li>
+  <li><b>Celular:</b> mostra até 3 linhas e "Ver as N outras". Sem bloco quando a demanda não tem relato nem erro (demanda do Paulo ou de sessão).</li>
+</ol>
+
+<script>
+  document.querySelectorAll('.barra button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.barra button').forEach(x=>x.classList.toggle('on',x===b));
+    document.querySelectorAll('.tela').forEach(t=>t.classList.toggle('on',t.id===b.dataset.t));
+  });
+</script>
+</body></html>

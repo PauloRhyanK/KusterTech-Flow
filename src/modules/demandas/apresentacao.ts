@@ -1,5 +1,6 @@
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { formatarIdade } from '@/modules/inicio/model'
+import { textoSemNomes } from '@/modules/relatos/model'
 import {
   FABRICA_SEM_BUSCAR_MS,
   type Desfecho,
@@ -162,6 +163,7 @@ export function rotuloDoEstado(d: DemandaNaLista): { texto: string; tom: TomDaDe
   }
   if (d.encerrada === 'orientada') return { texto: 'Orientada', tom: 'neutro' }
   if (d.encerrada === 'descartada') return { texto: 'Encerrada', tom: 'neutro' }
+  if (d.encerrada === 'juntada') return { texto: 'Juntada', tom: 'neutro' }
   const marco = etapa?.marco ?? null
   if (marco === 'recebida') return { texto: TEXTO_DO_MARCO.recebida, tom: 'neutro' }
   if (marco === null) return { texto: `Em ${rotulo}`, tom: 'execucao' }
@@ -995,6 +997,8 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   migrada: 'Demanda migrada',
   partes_planejadas: 'Partes planejadas',
   'erro-voltou': 'O erro voltou depois de ir ao ar; abriu uma demanda nova',
+  veio_de: 'Veio da divisão de outra demanda',
+  separada: 'Separada pelo Paulo',
 }
 
 const TEXTO_DO_EVENTO_DA_PARTE: Record<string, (chave: string) => string> = {
@@ -1014,8 +1018,52 @@ const QUEM_FEZ: Record<string, string> = {
 
 const LIMITE_DA_RESPOSTA_NO_HISTORICO = 120
 
-export function textoDoEvento(tipo: string, dados: unknown): string {
+/** Eventos crus da Fábrica na triagem cruzada: o texto da história vem dos eventos do Flow. */
+export const EVENTOS_FORA_DO_HISTORICO: readonly string[] = ['juntar', 'dividir', 'ligar_erros']
+
+const qtd = (v: unknown) => (Array.isArray(v) ? v.length : 0)
+
+/** " (2 relatos e 1 erro foram junto)"; sem parênteses quando nada foi junto. */
+function oQueFoiJunto(relatos: number, erros: number): string {
+  const partes = [
+    relatos > 0 && `${relatos} ${relatos === 1 ? 'relato' : 'relatos'}`,
+    erros > 0 && `${erros} ${erros === 1 ? 'erro' : 'erros'}`,
+  ].filter((x): x is string => typeof x === 'string')
+  if (partes.length === 0) return ''
+  const verbo = relatos + erros === 1 ? 'foi junto' : 'foram junto'
+  return ` (${partes.join(' e ')} ${verbo})`
+}
+
+/**
+ * O texto de um evento na história. `titulos` traz os títulos das demandas citadas pelo id
+ * (`juntada.em`, `evidencia_ligada.de`, `separada.de`/`separou`); sem o título, o texto diz "outra demanda".
+ */
+export function textoDoEvento(
+  tipo: string,
+  dados: unknown,
+  titulos: Readonly<Record<string, string>> = {},
+  origem?: string,
+): string {
   const d = (dados ?? {}) as Record<string, unknown>
+  const outra = (id: unknown) => {
+    const t = typeof id === 'string' ? titulos[id] : undefined
+    return t ? `"${t}"` : 'outra demanda'
+  }
+  if (tipo === 'juntada') {
+    return `Juntada pela triagem a ${outra(d.em)}${oQueFoiJunto(qtd(d.relatos), qtd(d.erros))}`
+  }
+  if (tipo === 'evidencia_ligada')
+    return `A triagem juntou ${outra(d.de)}: ${String(d.motivo ?? '')}`
+  if (tipo === 'separada' && d.separou !== undefined) {
+    return `O Paulo separou ${outra(d.separou)} desta demanda`
+  }
+  if (tipo === 'separada' && d.de !== undefined) return `Separada de ${outra(d.de)}`
+  if (tipo === 'dividida') {
+    return `A triagem dividiu em ${qtd(d.novas) + 1} demandas: ${String(d.motivo ?? '')}`
+  }
+  if (tipo === 'erro-ligado' && origem === 'fabrica' && typeof d.titulo === 'string') {
+    return `A triagem ligou o erro "${d.titulo}": ${String(d.motivo ?? '')}`
+  }
   const daParte = TEXTO_DO_EVENTO_DA_PARTE[tipo]
   if (daParte && typeof d.chave === 'string') return daParte(d.chave)
   if (tipo === 'retomada' && typeof d.resposta === 'string' && d.resposta.trim()) {
@@ -1073,6 +1121,193 @@ export interface EventoNoHistorico {
   quando: Date
 }
 
+export type ItemDeEvidencia =
+  | {
+      tipo: 'relato'
+      id: string
+      /** Começo do texto (ou da transcrição); a tela põe entre aspas. */
+      trecho: string
+      /** O texto inteiro, com os nomes trocados por `[pessoa]` (aberto em "Ver relato"). */
+      texto: string
+      anexos: number
+      papel: string
+      canal: string
+      tela: string | null
+      em: Date
+      reforcos: number
+    }
+  | {
+      tipo: 'erro'
+      id: string
+      titulo: string
+      onde: string | null
+      eventos: number
+      usuarios: number
+      ultimoEm: Date
+      link: string
+    }
+
+export interface GrupoDeEvidencia {
+  tipo: 'desta' | 'juntada' | 'ligado'
+  de?: { id: string; titulo: string; em: Date; motivo: string }
+  podeSeparar: boolean
+  itens: ItemDeEvidencia[]
+}
+
+export interface Evidencias {
+  erros: number
+  relatos: number
+  reforcos: number
+  grupos: GrupoDeEvidencia[]
+}
+
+export interface RelatoNaEvidencia {
+  id: string
+  texto: string | null
+  transcricao: string | null
+  papel: string
+  canal: 'SISTEMA' | 'WHATSAPP'
+  tela: string | null
+  em: Date
+  sinais: unknown
+  anexos: unknown
+  /** Só para limpar o texto no servidor; nunca sai daqui. */
+  autorNome: string
+}
+
+export interface ErroNaEvidencia {
+  id: string
+  issueId: string
+  titulo: string
+  onde: string | null
+  eventos: number
+  usuarios: number
+  ultimoEm: Date
+  link: string
+}
+
+/** O evento `juntada` mais recente de cada B juntada nesta demanda. */
+export interface JuntadaNaEvidencia {
+  de: { id: string; titulo: string }
+  em: Date
+  motivo: string
+  relatos: string[]
+  erros: string[]
+  podeSeparar: boolean
+}
+
+const LIMITE_DO_TRECHO = 120
+const ROTULO_DO_CANAL_DO_RELATO = { SISTEMA: 'pelo sistema', WHATSAPP: 'WhatsApp' } as const
+
+function reforcosDe(sinais: unknown): number {
+  if (!Array.isArray(sinais)) return 0
+  return sinais.filter(
+    (s) => typeof s === 'object' && s !== null && (s as { tipo?: unknown }).tipo === 'reforco',
+  ).length
+}
+
+/** O autor e quem deu sinais: os nomes que não podem aparecer na tela. */
+function nomesDe(r: RelatoNaEvidencia): string[] {
+  const dosSinais = Array.isArray(r.sinais)
+    ? r.sinais.map((s) => (s as { autor?: { nome?: unknown } } | null)?.autor?.nome)
+    : []
+  return [r.autorNome, ...dosSinais.filter((n): n is string => typeof n === 'string')]
+}
+
+function textoLimpo(r: RelatoNaEvidencia): string {
+  return textoSemNomes(r.texto?.trim() || r.transcricao?.trim() || '', nomesDe(r))
+}
+
+function trechoDe(texto: string): string {
+  const t = texto.replace(/\s+/g, ' ')
+  return t.length > LIMITE_DO_TRECHO ? `${t.slice(0, LIMITE_DO_TRECHO)}…` : t
+}
+
+/**
+ * O bloco Evidências: um item vai para "Juntada de B" quando está no último `juntada` de B,
+ * para "Ligado pela triagem" quando o erro veio de um `erro-ligado` da Fábrica, e o resto fica em
+ * "Desta demanda". Sem relato nem erro, `null` (o bloco não aparece).
+ */
+export function montarEvidencias(e: {
+  relatos: readonly RelatoNaEvidencia[]
+  erros: readonly ErroNaEvidencia[]
+  juntadas: readonly JuntadaNaEvidencia[]
+  /** `issueId` dos erros ligados pela triagem (`erro-ligado` de origem `fabrica`). */
+  ligadosPelaTriagem: readonly string[]
+}): Evidencias | null {
+  if (e.relatos.length === 0 && e.erros.length === 0) return null
+  const juntadaDoRelato = (id: string) => e.juntadas.find((j) => j.relatos.includes(id))
+  const juntadaDoErro = (id: string) => e.juntadas.find((j) => j.erros.includes(id))
+
+  const comoRelato = (r: RelatoNaEvidencia): ItemDeEvidencia => {
+    const texto = textoLimpo(r)
+    return {
+      tipo: 'relato',
+      id: r.id,
+      trecho: trechoDe(texto),
+      texto,
+      anexos: Array.isArray(r.anexos) ? r.anexos.length : 0,
+      papel: r.papel,
+      canal: ROTULO_DO_CANAL_DO_RELATO[r.canal],
+      tela: r.tela,
+      em: r.em,
+      reforcos: reforcosDe(r.sinais),
+    }
+  }
+  const comoErro = (x: ErroNaEvidencia): ItemDeEvidencia => ({
+    tipo: 'erro',
+    id: x.id,
+    titulo: x.titulo,
+    onde: x.onde,
+    eventos: x.eventos,
+    usuarios: x.usuarios,
+    ultimoEm: x.ultimoEm,
+    link: x.link,
+  })
+  const relatos = [...e.relatos].sort((a, b) => a.em.getTime() - b.em.getTime())
+  const erros = [...e.erros].sort((a, b) => b.ultimoEm.getTime() - a.ultimoEm.getTime())
+  const ligado = (x: ErroNaEvidencia) =>
+    !juntadaDoErro(x.id) && e.ligadosPelaTriagem.includes(x.issueId)
+
+  const grupos: GrupoDeEvidencia[] = [
+    {
+      tipo: 'desta',
+      podeSeparar: false,
+      itens: [
+        ...relatos.filter((r) => !juntadaDoRelato(r.id)).map(comoRelato),
+        ...erros.filter((x) => !juntadaDoErro(x.id) && !ligado(x)).map(comoErro),
+      ],
+    },
+    ...[...e.juntadas]
+      .sort((a, b) => a.em.getTime() - b.em.getTime())
+      .map((j): GrupoDeEvidencia => ({
+        tipo: 'juntada',
+        de: { id: j.de.id, titulo: j.de.titulo, em: j.em, motivo: j.motivo },
+        podeSeparar: j.podeSeparar,
+        itens: [
+          ...relatos.filter((r) => juntadaDoRelato(r.id) === j).map(comoRelato),
+          ...erros.filter((x) => juntadaDoErro(x.id) === j).map(comoErro),
+        ],
+      })),
+    { tipo: 'ligado', podeSeparar: false, itens: erros.filter(ligado).map(comoErro) },
+  ]
+  return {
+    erros: e.erros.length,
+    relatos: e.relatos.length,
+    reforcos: e.relatos.reduce((n, r) => n + reforcosDe(r.sinais), 0),
+    grupos: grupos.filter((g) => g.itens.length > 0),
+  }
+}
+
+/** A demanda juntada: a faixa no lugar do conteúdo de trabalho. */
+export interface JuntadaEm {
+  id: string
+  titulo: string
+  motivo: string
+  relatos: number
+  podeSeparar: boolean
+}
+
 export interface PaginaDaDemanda {
   id: string
   titulo: string
@@ -1101,4 +1336,8 @@ export interface PaginaDaDemanda {
   descartada: boolean
   /** "Encerrar demanda": quem gerencia, com a demanda ainda aberta. */
   podeEncerrar: boolean
+  /** O bloco Evidências; `null` sem relato nem erro. */
+  evidencias: Evidencias | null
+  /** Só na demanda encerrada como `juntada`. */
+  juntadaEm: JuntadaEm | null
 }

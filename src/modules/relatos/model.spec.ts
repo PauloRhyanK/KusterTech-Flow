@@ -214,6 +214,7 @@ describe('andamentoDaDemanda', () => {
     expect(d({ encerrada: 'no_ar' })).toBe('entregue')
     expect(d({ encerrada: 'descartada' })).toBeNull()
     expect(d({ encerrada: 'orientada' })).toBeNull()
+    expect(d({ encerrada: 'juntada' })).toBeNull()
   })
 })
 
