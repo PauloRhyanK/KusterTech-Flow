@@ -777,9 +777,10 @@ export async function retomarDemanda(
 
 /**
  * O interruptor "Urgente / normal": `true` grava o destino `urgente`, `false` volta a demanda urgente à
- * `fila_de_agentes`. Já no valor pedido não grava nada (dois cliques não duplicam o evento).
+ * `fila_de_agentes`; só vale para esses dois destinos. Já no valor pedido não grava nada (dois cliques
+ * não duplicam o evento). Usa o evento próprio `urgencia_alterada`: `destino_decidido` só vale em
+ * `decidir_destino` e concluiria a etapa.
  */
-// Evento próprio `urgencia_alterada`: `destino_decidido` só vale em `decidir_destino` e concluiria a etapa.
 export async function alternarUrgencia(
   sujeito: Sujeito,
   demandaId: string,

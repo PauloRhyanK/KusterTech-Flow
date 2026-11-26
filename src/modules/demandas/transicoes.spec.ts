@@ -299,7 +299,7 @@ describe('urgencia_alterada', () => {
     for (const base of [
       est({ destino: 'fila_de_agentes', etapaAtual: 'planejada' }),
       est({
-        destino: 'lote_da_noite',
+        destino: 'fila_de_agentes',
         etapaAtual: 'desenho',
         espera: 'aprovar_desenho',
         versaoDoDesenho: 1,
@@ -323,10 +323,14 @@ describe('urgencia_alterada', () => {
     expect(recusa(ap(est({ destino: 'fila_de_agentes' }), urgencia(false), 'paulo'))).toBe(
       URGENCIA_SEM_MUDANCA,
     )
-    // lote da noite já não é urgente: "normal" não troca o modo de publicação
-    expect(recusa(ap(est({ destino: 'lote_da_noite' }), urgencia(false), 'paulo'))).toBe(
-      URGENCIA_SEM_MUDANCA,
-    )
+  })
+
+  test('lote da noite e orientada não alternam: o interruptor perderia o destino', () => {
+    const motivo = 'A urgência só se alterna na fila de agentes; esta demanda tem outro destino.'
+    for (const destino of ['lote_da_noite', 'orientada'] as const) {
+      expect(recusa(ap(est({ destino }), urgencia(true), 'paulo'))).toBe(motivo)
+      expect(recusa(ap(est({ destino }), urgencia(false), 'paulo'))).toBe(motivo)
+    }
   })
 
   test('sem destino decidido (antes da triagem ou esperando a decisão) recusa', () => {

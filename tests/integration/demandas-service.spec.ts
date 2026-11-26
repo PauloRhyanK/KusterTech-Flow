@@ -1383,6 +1383,28 @@ describe('alternarUrgencia (integração)', () => {
     expect(await eventosDeUrgencia(id)).toHaveLength(2)
   })
 
+  test('lote da noite recusa o interruptor e mantém o destino, sem evento', async () => {
+    const { projeto, repositorio } = await cenario()
+    const { id } = await criarDemanda(admin, {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Lote',
+      descricao: null,
+      nivel: 'vai_sozinho',
+      temTela: false,
+      anexos: [],
+    })
+    expect((await daFabrica(id, triagem('lote_da_noite'))).resultado).toBe('aplicado')
+    await expect(alternarUrgencia(admin, id, true)).rejects.toThrow(
+      new ErroDeDominio(
+        'A urgência só se alterna na fila de agentes; esta demanda tem outro destino.',
+      ),
+    )
+    await expect(alternarUrgencia(admin, id, false)).rejects.toBeInstanceOf(ErroDeDominio)
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).destino).toBe('LOTE_DA_NOITE')
+    expect(await eventosDeUrgencia(id)).toHaveLength(0)
+  })
+
   test('demanda encerrada lança ErroDeDominio', async () => {
     const id = await demandaNaFila()
     await encerrarDemanda(admin, id)

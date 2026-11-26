@@ -600,7 +600,7 @@ describe('recepção com tipo, projeto e urgência', () => {
     expect(r.map((i) => i.demandaId)).toEqual(['urg', 'velha', 'nova'])
   })
 
-  test('podeAlternarUrgencia só com destino de fila, urgente ou lote', () => {
+  test('podeAlternarUrgencia só com destino de fila ou urgente', () => {
     const r = recepcaoDe([
       demanda({ id: 'a', marco: 'recebida', destino: 'fila_de_agentes' }),
       demanda({ id: 'b', marco: 'recebida', destino: 'urgente' }),
@@ -611,7 +611,7 @@ describe('recepção com tipo, projeto e urgência', () => {
     expect(r.map((i) => [i.demandaId, i.podeAlternarUrgencia])).toEqual([
       ['b', true],
       ['a', true],
-      ['c', true],
+      ['c', false],
       ['d', false],
       ['e', false],
     ])
