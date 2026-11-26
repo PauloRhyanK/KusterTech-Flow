@@ -30,7 +30,7 @@ function quadro(p: Partial<QuadroDeErros> = {}): QuadroDeErros {
   return {
     configurado: true,
     linhas: [linha()],
-    contagem: { voltou: 1, novo: 0, em_correcao: 0, na_espera: 0 },
+    contagem: { voltou: 1, novo: 0, em_correcao: 0, na_espera: 0, observando: 0 },
     corrigidosEm7Dias: 0,
     projetosLidos: 4,
     leitura: { ultimoSucessoEm: new Date(agora.getTime() - 2 * MIN), velha: false, motivo: null },
@@ -67,6 +67,21 @@ describe('Erros no ar', () => {
     expect(screen.getByText('Na espera')).toBeInTheDocument()
   })
 
+  test('em observação mostra o botão Virar demanda para quem pode', () => {
+    const acao = async () => {}
+    const obs = quadro({
+      linhas: [linha({ estado: 'observando', demandaId: null, detalhe: 'vira demanda com 10' })],
+      contagem: { voltou: 0, novo: 0, em_correcao: 0, na_espera: 0, observando: 1 },
+    })
+    const { rerender } = render(<ErrosNoAr quadro={obs} agora={agora} virarDemanda={acao} />)
+    expect(screen.getByText('Em observação')).toBeInTheDocument()
+    expect(screen.getByText('em observação')).toBeInTheDocument()
+    const botao = screen.getByRole('button', { name: 'Virar demanda' })
+    expect(botao.closest('form')?.querySelector('input[name="issueId"]')).toHaveValue('17')
+    rerender(<ErrosNoAr quadro={obs} agora={agora} />)
+    expect(screen.queryByRole('button', { name: 'Virar demanda' })).not.toBeInTheDocument()
+  })
+
   test('mostra 8 e guarda o resto em Ver todos', () => {
     const linhas = Array.from({ length: 10 }, (_, i) =>
       linha({ issueId: String(i), titulo: `Erro ${i}`, estado: 'novo' }),
@@ -80,7 +95,7 @@ describe('Erros no ar', () => {
       <ErrosNoAr
         quadro={quadro({
           linhas: [],
-          contagem: { voltou: 0, novo: 0, em_correcao: 0, na_espera: 0 },
+          contagem: { voltou: 0, novo: 0, em_correcao: 0, na_espera: 0, observando: 0 },
           corrigidosEm7Dias: 3,
         })}
         agora={agora}

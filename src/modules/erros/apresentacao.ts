@@ -1,7 +1,14 @@
 // O quadro "Erros no ar" da página Fábrica (spec 2026-11-26-erros-do-glitchtip, seções 6.3 e 8).
 import { chipDoPr } from '@/modules/demandas/apresentacao'
 import type { EtapaDefinida } from '@/modules/demandas/model'
-import { barrinhas, type EstadoNoQuadro, estadoNoQuadro, type Ponto, TETO_POR_HORA } from './model'
+import {
+  barrinhas,
+  type EstadoNoQuadro,
+  estadoNoQuadro,
+  LIMIARES_PADRAO,
+  type Limiares,
+  type Ponto,
+} from './model'
 
 const MIN_MS = 60_000
 const LEITURA_VELHA_MS = 30 * MIN_MS
@@ -13,7 +20,8 @@ const ORDEM: Record<EstadoNoQuadro, number> = {
   novo: 1,
   em_correcao: 2,
   na_espera: 3,
-  corrigido: 4,
+  observando: 4,
+  corrigido: 5,
 }
 
 export interface ErroComDemanda {
@@ -76,13 +84,7 @@ export interface QuadroDeErros {
   avisos: string[]
 }
 
-const HORA_DE_SAO_PAULO = new Intl.DateTimeFormat('pt-BR', {
-  timeZone: 'America/Sao_Paulo',
-  hour: '2-digit',
-  minute: '2-digit',
-})
-
-function detalheDoEstado(estado: EstadoNoQuadro, e: ErroComDemanda): string {
+function detalheDoEstado(estado: EstadoNoQuadro, e: ErroComDemanda, l: Limiares): string {
   const d = e.demanda
   switch (estado) {
     case 'voltou':
@@ -94,10 +96,10 @@ function detalheDoEstado(estado: EstadoNoQuadro, e: ErroComDemanda): string {
       const pr = d ? chipDoPr(d.prs) : null
       return [etapa.toLowerCase(), pr].filter(Boolean).join(' · ')
     }
-    case 'na_espera': {
-      const vaga = new Date((e.esperaDesde ?? e.ultimoEm).getTime() + 60 * MIN_MS)
-      return `teto de ${TETO_POR_HORA} por hora · entra até ${HORA_DE_SAO_PAULO.format(vaga)}`
-    }
+    case 'na_espera':
+      return `limite de ${l.porDia} demandas por dia · entra quando abrir vaga`
+    case 'observando':
+      return `vira demanda com ${l.eventos} eventos ou ativo por ${l.horas} h`
     case 'corrigido':
       return 'no ar, sem evento desde a correção'
   }
@@ -109,9 +111,11 @@ export function montarQuadro(
     erros: ErroComDemanda[]
     leituras: LeituraDoProjeto[]
     slugs: string[]
+    limiares?: Limiares
   },
   agora: Date,
 ): QuadroDeErros {
+  const limiares = e.limiares ?? LIMIARES_PADRAO
   const linhas: LinhaDoQuadro[] = []
   let corrigidosEm7Dias = 0
   for (const erro of e.erros) {
@@ -143,7 +147,7 @@ export function montarQuadro(
       ultimoEm: erro.ultimoEm,
       primeiroEm: erro.primeiroEm,
       estado,
-      detalhe: detalheDoEstado(estado, erro),
+      detalhe: detalheDoEstado(estado, erro, limiares),
       demandaId: erro.demandaId,
       link: erro.link,
       barrinhas: barrinhas(erro.serie, agora),
@@ -153,7 +157,7 @@ export function montarQuadro(
     (a, b) => ORDEM[a.estado] - ORDEM[b.estado] || b.ultimoEm.getTime() - a.ultimoEm.getTime(),
   )
 
-  const contagem = { voltou: 0, novo: 0, em_correcao: 0, na_espera: 0 }
+  const contagem = { voltou: 0, novo: 0, em_correcao: 0, na_espera: 0, observando: 0 }
   for (const l of linhas) if (l.estado !== 'corrigido') contagem[l.estado] += 1
 
   const porSlug = new Map(e.leituras.map((l) => [l.projetoGlitchTip, l]))

@@ -104,14 +104,38 @@ async function pedir(config: Configuracao, url: string, buscar: Buscar): Promise
   }
 }
 
-/** Issues não resolvidas do projeto, até 3 páginas; itens tortos são pulados e contados. */
+const doProjeto = (config: Configuracao, slug: string) =>
+  `${config.url}/api/0/projects/${encodeURIComponent(config.org)}/${encodeURIComponent(slug)}`
+
+/** Nomes dos ambientes cadastrados no projeto. */
+export async function listarAmbientes(
+  config: Configuracao,
+  slug: string,
+  buscar: Buscar,
+): Promise<{ ok: true; nomes: string[] } | Falha> {
+  const r = await pedir(config, `${doProjeto(config, slug)}/environments/`, buscar)
+  if (!r.ok) return r
+  // Sem a rota de ambientes (ou o projeto sumiu): lê sem filtro; a lista de issues dirá o resto.
+  if (r.status === 404) return { ok: true, nomes: [] }
+  const lista = z.array(z.object({ name: z.string() })).safeParse(r.corpo)
+  return lista.success
+    ? { ok: true, nomes: lista.data.map((a) => a.name) }
+    : { ok: false, motivo: FORA_DO_FORMATO }
+}
+
+/**
+ * Issues não resolvidas do projeto, até 3 páginas, só dos ambientes pedidos (vazio: todos); itens
+ * tortos são pulados e contados.
+ */
 export async function listarIssues(
   config: Configuracao,
   slug: string,
   buscar: Buscar,
+  ambientes: string[] = [],
 ): Promise<{ ok: true; issues: IssueLida[]; tortas: number } | Falha> {
   let url: string | null =
-    `${config.url}/api/0/projects/${encodeURIComponent(config.org)}/${encodeURIComponent(slug)}/issues/?query=${encodeURIComponent('is:unresolved')}`
+    `${doProjeto(config, slug)}/issues/?query=${encodeURIComponent('is:unresolved')}` +
+    ambientes.map((a) => `&environment=${encodeURIComponent(a)}`).join('')
   const issues: IssueLida[] = []
   let tortas = 0
   for (let pagina = 0; pagina < PAGINAS && url !== null; pagina++) {

@@ -7,6 +7,9 @@ import {
   entra,
   estadoNoQuadro,
   type IssueLida,
+  ambientesParaLer,
+  grupoDoErro,
+  ignorada,
   lerConfiguracao,
   mascarar,
   type Ponto,
@@ -53,7 +56,28 @@ describe('lerConfiguracao', () => {
           { slug: 'app-vendas', repositorio: 'dono/app-vendas' },
           { slug: 'portal', repositorio: 'dono/portal' },
         ],
+        ambientes: ['production', 'producao', 'produção', 'prod', 'live'],
+        limiares: { eventos: 10, horas: 2, porDia: 3 },
       },
+    })
+  })
+
+  test('limiares e ambientes vêm do ambiente', () => {
+    const r = lerConfiguracao({
+      ...env,
+      GLITCHTIP_AMBIENTES: 'LIVE, producao',
+      GLITCHTIP_LIMIAR_EVENTOS: '20',
+      GLITCHTIP_LIMIAR_HORAS: '4',
+      GLITCHTIP_DEMANDAS_POR_DIA: '1',
+    })
+    expect(r.ok && r.config.ambientes).toEqual(['live', 'producao'])
+    expect(r.ok && r.config.limiares).toEqual({ eventos: 20, horas: 4, porDia: 1 })
+  })
+
+  test('limiar que não é número inteiro positivo é inválido', () => {
+    expect(lerConfiguracao({ ...env, GLITCHTIP_LIMIAR_EVENTOS: 'dez' })).toEqual({
+      ok: false,
+      motivo: 'GLITCHTIP_LIMIAR_EVENTOS inválido',
     })
   })
 
@@ -102,53 +126,130 @@ describe('entra', () => {
 
 describe('decidir', () => {
   const noAr = antes(DIA)
-  test('nova com vaga abre', () => {
-    expect(decidir({ issue: issue(), demanda: null, abertasNaUltimaHora: 4 })).toEqual({
+  const limiares = { eventos: 10, horas: 2, porDia: 3 }
+  const base = { demanda: null, demandaDoGrupo: null, abertasNoDia: 0, limiares }
+  const recente = issue({ eventos: 3, primeiroEm: antes(HORA), ultimoEm: antes(60_000) })
+  test('erro novo e passageiro fica em observação', () => {
+    expect(decidir({ ...base, issue: recente })).toEqual({ tipo: 'observar' })
+  })
+  test('10 eventos abrem', () => {
+    expect(decidir({ ...base, issue: { ...recente, eventos: 10 } })).toEqual({
       tipo: 'abrir',
       voltou: false,
     })
   })
-  test('nova com o teto cheio espera', () => {
-    expect(decidir({ issue: issue(), demanda: null, abertasNaUltimaHora: 5 })).toEqual({
-      tipo: 'esperar',
+  test('ativo 2 h depois do primeiro evento abre', () => {
+    const i = { ...recente, primeiroEm: antes(3 * HORA), ultimoEm: antes(HORA) }
+    expect(decidir({ ...base, issue: i })).toEqual({ tipo: 'abrir', voltou: false })
+  })
+  test('primeiro evento há 3 h, mas sem evento depois, continua em observação', () => {
+    const i = { ...recente, primeiroEm: antes(3 * HORA), ultimoEm: antes(3 * HORA - 60_000) }
+    expect(decidir({ ...base, issue: i })).toEqual({ tipo: 'observar' })
+  })
+  test('persistente com o limite do dia cheio espera', () => {
+    expect(decidir({ ...base, issue: issue(), abertasNoDia: 3 })).toEqual({ tipo: 'esperar' })
+  })
+  test('grupo com demanda aberta liga, mesmo passageiro e com o limite cheio', () => {
+    expect(decidir({ ...base, issue: recente, demandaDoGrupo: 'd9', abertasNoDia: 3 })).toEqual({
+      tipo: 'ligar',
+      demandaId: 'd9',
+    })
+  })
+  test('voltou com um parecido já aberto liga a ele', () => {
+    const demanda = { encerrada: 'no_ar', noArEm: noAr }
+    expect(decidir({ ...base, issue: recente, demanda, demandaDoGrupo: 'd2' })).toEqual({
+      tipo: 'ligar',
+      demandaId: 'd2',
     })
   })
   test('com demanda aberta só atualiza', () => {
     expect(
-      decidir({
-        issue: issue(),
-        demanda: { encerrada: null, noArEm: null },
-        abertasNaUltimaHora: 0,
-      }),
+      decidir({ ...base, issue: issue(), demanda: { encerrada: null, noArEm: null } }),
     ).toEqual({ tipo: 'atualizar' })
   })
-  test('evento depois de ir ao ar: voltou', () => {
+  test('evento depois de ir ao ar: voltou, dentro do limite do dia', () => {
     const demanda = { encerrada: 'no_ar', noArEm: noAr }
-    expect(decidir({ issue: issue(), demanda, abertasNaUltimaHora: 0 })).toEqual({
-      tipo: 'abrir',
-      voltou: true,
-    })
-    expect(decidir({ issue: issue(), demanda, abertasNaUltimaHora: 5 })).toEqual({
+    expect(decidir({ ...base, issue: recente, demanda })).toEqual({ tipo: 'abrir', voltou: true })
+    expect(decidir({ ...base, issue: recente, demanda, abertasNoDia: 3 })).toEqual({
       tipo: 'esperar',
     })
   })
   test('sem evento depois de ir ao ar só atualiza', () => {
     expect(
       decidir({
+        ...base,
         issue: issue({ ultimoEm: antes(2 * DIA) }),
         demanda: { encerrada: 'no_ar', noArEm: noAr },
-        abertasNaUltimaHora: 0,
       }),
     ).toEqual({ tipo: 'atualizar' })
   })
   test('descartada não reabre', () => {
     expect(
-      decidir({
-        issue: issue(),
-        demanda: { encerrada: 'descartada', noArEm: null },
-        abertasNaUltimaHora: 0,
-      }),
+      decidir({ ...base, issue: issue(), demanda: { encerrada: 'descartada', noArEm: null } }),
     ).toEqual({ tipo: 'atualizar' })
+  })
+})
+
+describe('ignorada', () => {
+  const ligadaEm = antes(3 * DIA)
+  test.each([
+    'Error: código ERELATO_TESTE',
+    'GlitchTipSmokeTest',
+    'Error: smoke test do deploy',
+    'Error: teste de instalação',
+    'Error: this is a test',
+  ])('título de teste fica de fora: %s', (titulo) => {
+    expect(ignorada(issue({ titulo }), ligadaEm)).toBe(true)
+  })
+  test.each([
+    'TypeError: testemunha is undefined',
+    'Error: falha no contest',
+    'TypeError: re.test is not a function',
+  ])('palavra que só contém teste entra: %s', (titulo) =>
+    expect(ignorada(issue({ titulo }), ligadaEm)).toBe(false),
+  )
+  test('primeiro evento antes de ligar a fonte fica de fora', () => {
+    expect(ignorada(issue({ primeiroEm: antes(4 * DIA) }), ligadaEm)).toBe(true)
+  })
+})
+
+describe('grupoDoErro', () => {
+  test('tabelas diferentes do mesmo erro ficam no mesmo grupo', () => {
+    const a = issue({ titulo: 'PostgresError: permission denied for table aviso', onde: null })
+    const b = issue({ titulo: 'PostgresError: permission denied for table recebido', onde: null })
+    expect(grupoDoErro(a)).toBe(grupoDoErro(b))
+  })
+  test('ids, números e aspas não separam', () => {
+    const a = issue({ titulo: "Error: pedido 123 'abc' a1b2c3d4e5f6 não achado" })
+    const b = issue({ titulo: 'Error: pedido 98 "xyz" 0f9e8d7c6b5a não achado' })
+    expect(grupoDoErro(a)).toBe(grupoDoErro(b))
+  })
+  test('e-mail não fica no grupo nem separa o mesmo erro', () => {
+    const a = issue({ titulo: 'Usuário joao@x.com não encontrado', onde: null })
+    const b = issue({ titulo: 'Usuário maria@y.com não encontrado', onde: null })
+    expect(grupoDoErro(a)).toBe(grupoDoErro(b))
+    expect(grupoDoErro(a)).not.toContain('@')
+  })
+  test('byte nulo sai do grupo', () => {
+    expect(grupoDoErro(issue({ titulo: 'falhou\u0000aqui', onde: null }))).toBe('falhouaqui|')
+  })
+  test('lugar diferente separa', () => {
+    expect(grupoDoErro(issue({ onde: 'a.ts in x' }))).not.toBe(
+      grupoDoErro(issue({ onde: 'b.ts in y' })),
+    )
+  })
+})
+
+describe('ambientesParaLer', () => {
+  const aceitos = ['production', 'producao', 'produção', 'prod', 'live']
+  test('pega os de produção, sem diferença de maiúsculas', () => {
+    expect(ambientesParaLer(['LIVE', 'TEST'], aceitos)).toEqual({ ler: true, filtro: ['LIVE'] })
+  })
+  test('sem ambiente cadastrado lê sem filtro', () => {
+    expect(ambientesParaLer([], aceitos)).toEqual({ ler: true, filtro: [] })
+  })
+  test('com ambientes e nenhum de produção não lê', () => {
+    expect(ambientesParaLer(['development'], aceitos)).toEqual({ ler: false })
   })
 })
 
@@ -157,6 +258,14 @@ describe('estadoNoQuadro', () => {
   const aberta = { encerrada: null, noArEm: null, naPrimeiraEtapa: true }
   test('resolvida no GlitchTip sai', () => {
     expect(estadoNoQuadro({ ...base, resolvidoEm: antes(HORA), demanda: aberta }, agora)).toBe(null)
+  })
+  test('sem demanda e sem espera fica em observação', () => {
+    expect(estadoNoQuadro({ ...base, demanda: null }, agora)).toBe('observando')
+  })
+  test('em observação ou na espera sem evento há mais de 7 dias sai', () => {
+    const velho = { ...base, ultimoEm: antes(8 * DIA), demanda: null }
+    expect(estadoNoQuadro(velho, agora)).toBe(null)
+    expect(estadoNoQuadro({ ...velho, esperaDesde: antes(8 * DIA) }, agora)).toBe(null)
   })
   test('sem demanda e com espera', () => {
     expect(estadoNoQuadro({ ...base, esperaDesde: antes(HORA), demanda: null }, agora)).toBe(
@@ -271,5 +380,12 @@ describe('texto da demanda', () => {
     expect(d).toContain('/demandas/abc')
     expect(d).toContain('20/11/2026')
     expect(d).toContain('[documento]')
+  })
+  test('descrição lista os erros parecidos ligados', () => {
+    const d = descricaoDaDemanda(issue(), null, [
+      { titulo: 'PostgresError: permission denied for table aviso', link: 'https://e/x/6' },
+    ])
+    expect(d).toContain('Erros parecidos nesta demanda')
+    expect(d).toContain('PostgresError: permission denied for table aviso — https://e/x/6')
   })
 })

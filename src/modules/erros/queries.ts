@@ -59,6 +59,7 @@ export async function obterQuadroDeErros(
     {
       configurado: true,
       slugs,
+      limiares: lida.ok ? lida.config.limiares : undefined,
       leituras,
       erros: erros.map((e) => ({
         ...e,
