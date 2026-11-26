@@ -8,6 +8,7 @@ import {
 } from '@/modules/demandas/recepcao-fabrica'
 import type { Buscar } from '@/modules/erros/cliente'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
+import { separarDemanda } from '@/modules/demandas/cruzada-service'
 import { abrirDemanda } from '@/modules/demandas/service'
 import { criarFonteDaFabrica } from '@/modules/fabrica/service'
 import { enfileirarAutomaticos } from '@/modules/relatos/andamento'
@@ -534,5 +535,144 @@ describe('candidatas no GET da Fábrica', () => {
     })
     const linha = (await buscar()).find((d) => d.id === b)!
     expect(linha.candidatas!.demandas.map((d) => d.id)).not.toContain(a)
+  })
+})
+
+describe('separar', () => {
+  const comoLeitor = (): Sujeito => ({
+    usuarioId: admin.usuarioId,
+    papeis: [{ papel: 'TESTADOR', clienteId: null }],
+  })
+
+  async function juntada() {
+    const a = await novaDemanda('Demanda A')
+    const b = await novaDemanda('Demanda B')
+    const relato = await novoRelato(b)
+    const erro = await novoErro(b)
+    expect((await pedirEvento(b, juntar(a))).status).toBe(201)
+    return { a, b, relato, erro }
+  }
+
+  test('sem projetos.gerenciar recebe o erro de permissão', async () => {
+    const { b } = await juntada()
+    await expect(separarDemanda(comoLeitor(), b, AGORA)).rejects.toThrow()
+    expect((await db.demanda.findUniqueOrThrow({ where: { id: b } })).encerrada).toBe('juntada')
+  })
+
+  test('recusa quando A já foi ao ar', async () => {
+    const { a, b } = await juntada()
+    await db.demanda.update({ where: { id: a }, data: { noArEm: AGORA } })
+    await expect(separarDemanda(admin, b, AGORA)).rejects.toThrow(
+      'A demanda de destino já foi ao ar.',
+    )
+  })
+
+  test('devolve a B o que segue em A, deixa o que foi para C e impede nova junção', async () => {
+    const { a, b, relato, erro } = await juntada()
+    const c = await novaDemanda('Demanda C')
+    // Um dos relatos/erros juntados segue para C depois da junção.
+    const relatoDeC = await novoRelato(null)
+    const erroDeC = await novoErro(null)
+    await db.eventoDaDemanda.updateMany({
+      where: { demandaId: b, tipo: 'juntada' },
+      data: {
+        dados: { em: a, motivo: 'x', relatos: [relato, relatoDeC], erros: [erro, erroDeC] },
+      },
+    })
+    await db.relato.update({ where: { id: relatoDeC }, data: { demandaId: c } })
+    await db.erroDoGlitchTip.update({ where: { id: erroDeC }, data: { demandaId: c } })
+
+    await separarDemanda(admin, b, AGORA)
+
+    const linhaB = await db.demanda.findUniqueOrThrow({ where: { id: b } })
+    expect(linhaB).toMatchObject({
+      encerrada: null,
+      juntadaEmId: null,
+      etapaAtual: 'recebida',
+      concluidas: [],
+      destino: null,
+      espera: null,
+      esperaMotivo: null,
+      esperaDesde: null,
+    })
+    expect(linhaB.triagem).toBeNull()
+    expect((await db.relato.findUniqueOrThrow({ where: { id: relato } })).demandaId).toBe(b)
+    expect((await db.erroDoGlitchTip.findUniqueOrThrow({ where: { id: erro } })).demandaId).toBe(b)
+    expect((await db.relato.findUniqueOrThrow({ where: { id: relatoDeC } })).demandaId).toBe(c)
+    expect((await db.erroDoGlitchTip.findUniqueOrThrow({ where: { id: erroDeC } })).demandaId).toBe(
+      c,
+    )
+    const [naB] = await eventosDe(b, 'separada')
+    const [naA] = await eventosDe(a, 'separada')
+    expect(naB).toMatchObject({ origem: 'paulo', usuarioId: admin.usuarioId, dados: { de: a } })
+    expect(naA).toMatchObject({
+      origem: 'paulo',
+      usuarioId: admin.usuarioId,
+      dados: { separou: b },
+    })
+
+    const r = await buscarDemandasParaAFabrica(`Bearer ${token}`, null, new Date(), 1)
+    const linha = (
+      r.corpo as { demandas: { id: string; candidatas: { demandas: { id: string }[] } | null }[] }
+    ).demandas.find((d) => d.id === b)!
+    expect(linha.candidatas!.demandas.map((d) => d.id)).not.toContain(a)
+
+    const nova = await pedirEvento(b, juntar(a))
+    expect(nova.status).toBe(422)
+  })
+
+  test('a conta diária do GlitchTip volta a contar B depois de separar', async () => {
+    const repo = await db.repositorioGitHub.update({
+      where: { id: repositorioId },
+      data: { vinculadoEm: AGORA },
+    })
+    await db.leituraDoGlitchTip.create({
+      data: { projetoGlitchTip: 'app', ligadaEm: new Date(AGORA.getTime() - 30 * 86_400_000) },
+    })
+    const a = await novaDemanda('Demanda A')
+    const b = await novaDemanda('Demanda B')
+    await db.demanda.update({ where: { id: b }, data: { origem: 'GLITCHTIP' } })
+    await db.eventoDaDemanda.updateMany({
+      where: { demandaId: b, tipo: 'criada' },
+      data: { em: new Date(AGORA.getTime() - 60_000) },
+    })
+    expect((await pedirEvento(b, juntar(a))).status).toBe(201)
+    await separarDemanda(admin, b, AGORA)
+
+    const base = 'https://glitchtip.exemplo.com'
+    const lista = `${base}/api/0/projects/minha-org/app/issues/?query=is%3Aunresolved`
+    const buscar: Buscar = async (url) =>
+      url === lista
+        ? new Response(
+            JSON.stringify([
+              {
+                id: '777001',
+                title: 'Erro novo',
+                culprit: 'pedidos/entrada.ts',
+                level: 'error',
+                status: 'unresolved',
+                count: '500',
+                userCount: 40,
+                firstSeen: new Date(AGORA.getTime() - 3_600_000).toISOString(),
+                lastSeen: new Date(AGORA.getTime() - 60_000).toISOString(),
+                permalink: `${base}/issues/777001`,
+              },
+            ]),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        : new Response('{"detail":"Not found"}', { status: 404 })
+    const resumo = await buscarErrosDoGlitchTip(AGORA, {
+      env: {
+        GLITCHTIP_URL: base,
+        GLITCHTIP_ORG: 'minha-org',
+        GLITCHTIP_TOKEN: 'tok',
+        GLITCHTIP_PROJETOS: `app:${repo.nomeCompleto}`,
+        GLITCHTIP_DEMANDAS_POR_DIA: '1',
+      },
+      buscar,
+    })
+    // B conta de novo: o teto de 1 por dia já foi usado, então o erro novo não abre demanda.
+    expect(resumo).toMatchObject({ abertas: 0 })
+    expect(await db.demanda.count({ where: { origem: 'GLITCHTIP', encerrada: null } })).toBe(1)
   })
 })

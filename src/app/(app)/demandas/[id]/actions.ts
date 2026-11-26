@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { exigirModulo } from '@/lib/modulos-rota'
@@ -16,6 +17,7 @@ import {
   pedirAjuste,
   retomarDemanda,
 } from '@/modules/demandas/service'
+import { separarDemanda } from '@/modules/demandas/cruzada-service'
 import { conferirNoArPeloPaulo } from '@/modules/demandas/partes-service'
 import { resumirErroParaLog } from '@/modules/github/model'
 
@@ -167,5 +169,24 @@ export async function conferirNoArAction(
     return { sucesso: 'Parte no ar.' }
   } catch (erro) {
     return traduzirErro(erro, 'conferir a parte no ar')
+  }
+}
+
+/** Desfaz a junção da triagem: B volta ao começo e relatos e erros que seguem em A voltam para B. */
+export async function separarAction(demandaIdBruto: string): Promise<EstadoDaDecisao> {
+  const sessao = await exigirSessao()
+  const parse = demandaId.safeParse(demandaIdBruto)
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  try {
+    const antes = await db.demanda.findUnique({
+      where: { id: parse.data },
+      select: { juntadaEmId: true },
+    })
+    await separarDemanda(sessao.sujeito, parse.data, new Date())
+    revalidar(parse.data)
+    if (antes?.juntadaEmId) revalidar(antes.juntadaEmId)
+    return { sucesso: 'Demanda separada.' }
+  } catch (erro) {
+    return traduzirErro(erro, 'separar a demanda')
   }
 }

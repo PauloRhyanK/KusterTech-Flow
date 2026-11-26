@@ -4,14 +4,19 @@
 import { randomUUID } from 'node:crypto'
 import { Prisma, type Demanda } from '@prisma/client'
 import {
+  devolverNaSeparacao,
   lerTetoDeDivisoes,
+  podeSeparar,
   separadasDe,
   validarDividir,
   validarJuntar,
   validarLigarErros,
   type DemandaDaValidacao,
 } from './cruzada'
-import type { EtapaDefinida, Origem, TipoDeDemanda } from './model'
+import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
+import { estadoInicial, type EtapaDefinida, type Origem, type TipoDeDemanda } from './model'
 import { TRAVA_DOS_EVENTOS_SQL, abrirDemanda, paraOFio } from './service'
 import type { EventoAplicavel } from './transicoes'
 
@@ -243,4 +248,122 @@ async function dividir(
   }
   await gravarEventoDoFlow(tx, d.id, 'dividida', { motivo: dados.motivo, novas }, agora)
   return { ok: true, colunas: { titulo: primeira!.titulo } }
+}
+
+const SEPARAR_NAO_ENCONTRADA = 'Demanda não encontrada.'
+const SEPARAR_RECUSADA = 'Esta demanda não pode ser separada.'
+const SEPARAR_DESTINO_NO_AR = 'A demanda de destino já foi ao ar.'
+
+function idsDoEvento(dados: unknown, campo: 'relatos' | 'erros'): string[] {
+  const v = (dados as Record<string, unknown> | null)?.[campo]
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
+/**
+ * Desfaz a junção: B volta à primeira etapa, e relatos e erros que ainda estão em A voltam para B
+ * (o que foi parar em outra demanda fica onde está). B nunca mais é juntada em A.
+ */
+export async function separarDemanda(
+  sujeito: Sujeito,
+  demandaJuntadaId: string,
+  agora: Date,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  await db.$transaction(async (tx) => {
+    const proprio = await tx.demanda.findUnique({
+      where: { id: demandaJuntadaId },
+      select: { juntadaEmId: true },
+    })
+    if (!proprio) throw new ErroDeDominio(SEPARAR_NAO_ENCONTRADA)
+    if (proprio.juntadaEmId === null) throw new ErroDeDominio(SEPARAR_RECUSADA)
+    // B e A juntas, em ordem de id (mesmo padrão do juntar); depois se relê tudo já travado.
+    await tx.$queryRaw`
+      SELECT "id" FROM "Demanda"
+      WHERE "id" IN (${Prisma.join([demandaJuntadaId, proprio.juntadaEmId])})
+      ORDER BY "id" FOR UPDATE`
+    const b = await tx.demanda.findUniqueOrThrow({ where: { id: demandaJuntadaId } })
+    const aId = b.juntadaEmId
+    const a = aId ? await tx.demanda.findUnique({ where: { id: aId } }) : null
+    if (a !== null && a.noArEm !== null && b.encerrada === 'juntada') {
+      throw new ErroDeDominio(SEPARAR_DESTINO_NO_AR)
+    }
+    if (!podeSeparar(b, a) || a === null) throw new ErroDeDominio(SEPARAR_RECUSADA)
+
+    const juntadas = await tx.eventoDaDemanda.findMany({
+      where: { demandaId: b.id, tipo: 'juntada' },
+      orderBy: { seq: 'desc' },
+      select: { dados: true },
+    })
+    const juntada = juntadas.find((e) => (e.dados as { em?: unknown } | null)?.em === a.id)
+    const noEvento = {
+      relatos: juntada ? idsDoEvento(juntada.dados, 'relatos') : [],
+      erros: juntada ? idsDoEvento(juntada.dados, 'erros') : [],
+    }
+    if (noEvento.erros.length > 0) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "ErroDoGlitchTip" WHERE "id" IN (${Prisma.join(noEvento.erros)})
+        ORDER BY "id" FOR UPDATE`
+    }
+    const aindaEmA = {
+      relatos: (
+        await tx.relato.findMany({
+          where: { id: { in: noEvento.relatos }, demandaId: a.id },
+          select: { id: true },
+        })
+      ).map((r) => r.id),
+      erros: (
+        await tx.erroDoGlitchTip.findMany({
+          where: { id: { in: noEvento.erros }, demandaId: a.id },
+          select: { id: true },
+        })
+      ).map((e) => e.id),
+    }
+    const devolver = devolverNaSeparacao(noEvento, aindaEmA)
+    if (devolver.relatos.length > 0) {
+      await tx.relato.updateMany({
+        where: { id: { in: devolver.relatos }, demandaId: a.id },
+        data: { demandaId: b.id },
+      })
+    }
+    if (devolver.erros.length > 0) {
+      await tx.erroDoGlitchTip.updateMany({
+        where: { id: { in: devolver.erros }, demandaId: a.id },
+        data: { demandaId: b.id },
+      })
+    }
+
+    const inicial = estadoInicial(
+      b.etapas as unknown as EtapaDefinida[],
+      b.temTela,
+      paraOFio.nivel(b.nivel),
+    )
+    await tx.demanda.update({
+      where: { id: b.id },
+      data: {
+        etapaAtual: inicial.etapaAtual,
+        concluidas: inicial.concluidas,
+        triagem: Prisma.DbNull,
+        destino: null,
+        espera: null,
+        esperaMotivo: null,
+        esperaDesde: null,
+        encerrada: null,
+        juntadaEmId: null,
+      },
+    })
+    await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+    await tx.eventoDaDemanda.createMany({
+      data: [
+        { demandaId: b.id, dados: { de: a.id } },
+        { demandaId: a.id, dados: { separou: b.id } },
+      ].map((e) => ({
+        ...e,
+        idExterno: randomUUID(),
+        tipo: 'separada',
+        origem: 'paulo',
+        usuarioId: sujeito.usuarioId,
+        em: agora,
+      })),
+    })
+  })
 }
