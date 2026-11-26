@@ -24,4 +24,9 @@ describe('EncerrarDemanda', () => {
     expect(screen.queryByRole('button', { name: 'Sim, encerrar' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Encerrar demanda' })).toBeInTheDocument()
   })
+
+  test('o rótulo do botão pode vir de fora (a trava com desfecho)', () => {
+    render(<EncerrarDemanda demandaId={ID} rotulo="Encerrar como já resolvida" />)
+    expect(screen.getByRole('button', { name: 'Encerrar como já resolvida' })).toBeInTheDocument()
+  })
 })

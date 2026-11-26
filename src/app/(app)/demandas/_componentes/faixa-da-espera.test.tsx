@@ -7,6 +7,7 @@ vi.mock('../[id]/actions', () => ({
   pedirAjusteAction: vi.fn(async () => ({})),
   decidirDestinoAction: vi.fn(async () => ({})),
   retomarDemandaAction: vi.fn(async () => ({})),
+  encerrarDemandaAction: vi.fn(async () => ({})),
   concluirEtapaAction: vi.fn(async () => ({})),
 }))
 
@@ -129,6 +130,31 @@ describe('FaixaDaEspera', () => {
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
     expect(container).toBeTruthy()
+  })
+
+  test('trava com desfecho: links da outra demanda e do PR, Encerrar com o rótulo e sem Retomar', () => {
+    const outra = '/demandas/7b7ba4b8-1111-4222-8333-444444444444'
+    const faixa = {
+      titulo: 'Duplicada da demanda 7b7ba4b8',
+      contexto: 'O orquestrador conferiu: o que ela pede já está feito lá. Não há plano a fazer.',
+      acoes: [],
+      prUrl: 'https://github.com/kustertech-exemplo/alfa/pull/325',
+      outraDemanda: { href: outra, rotulo: 'Abrir a 7b7ba4b8' },
+      encerrar: 'Encerrar como duplicada',
+    }
+    const { rerender } = render(
+      <FaixaDaEspera demandaId={ID} versao={0} etapaAtual="plano" podeAgir faixa={faixa} />,
+    )
+    expect(screen.getByRole('link', { name: 'Abrir a 7b7ba4b8' })).toHaveAttribute('href', outra)
+    expect(screen.getByRole('link', { name: 'Abrir PR' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Tentar de novo|Retomar/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar como duplicada' }))
+    expect(screen.getByRole('button', { name: 'Sim, encerrar' })).toHaveAttribute('type', 'submit')
+
+    rerender(
+      <FaixaDaEspera demandaId={ID} versao={0} etapaAtual="plano" podeAgir={false} faixa={faixa} />,
+    )
+    expect(screen.queryByRole('button', { name: /Encerrar|Sim, encerrar/ })).toBeNull()
   })
 
   test('sem prUrl não há link "Abrir PR"', () => {

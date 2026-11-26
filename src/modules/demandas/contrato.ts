@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { instante, urlGithub } from '../fabrica/contrato'
+import { RESULTADOS_SEM_PLANO, UUID_DA_DEMANDA } from './model'
 
 export const LIMITE_DO_CORPO_DO_EVENTO = 65_536
 export const LIMITE_DO_CORPO_DA_DEMANDA = 42 * 1024 * 1024
@@ -102,7 +103,20 @@ const eventosComuns = [
   evento('plano_criado', z.strictObject({ plano: caminhoDoPlano, prUrl: urlGithub.nullable() })),
   evento('desenho_pronto', z.strictObject({ arquivoId: uuid })),
   evento('etapa_concluida', z.strictObject({ marco: z.enum(['desenvolvida', 'entregue']) })),
-  evento('travada', z.strictObject({ motivo: texto300, url: urlGithub.nullable() })),
+  evento(
+    'travada',
+    z.strictObject({
+      motivo: texto300,
+      url: urlGithub.nullable(),
+      // O orquestrador concluiu que não há plano (duplicada, já resolvida): o Flow oferece encerrar.
+      desfecho: z
+        .strictObject({
+          resultado: z.enum(RESULTADOS_SEM_PLANO),
+          de: z.string().regex(UUID_DA_DEMANDA).nullable(),
+        })
+        .optional(),
+    }),
+  ),
   evento('destravada', z.strictObject({})),
   evento(
     'teste',

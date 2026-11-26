@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useActionState, useState } from 'react'
 import { MensagensDeEstado } from '@/app/(app)/projetos/_componentes/mensagens-de-estado'
 import { Button } from '@/components/ui/button'
@@ -13,6 +14,7 @@ import {
   retomarDemandaAction,
   type EstadoDaDecisao,
 } from '../[id]/actions'
+import { EncerrarDemanda } from './encerrar-demanda'
 
 const LIMITE_DO_AJUSTE = 500
 const LIMITE_DA_RESPOSTA = 2000
@@ -224,17 +226,39 @@ export function FaixaDaEspera({
           {faixa.contexto && (
             <p className="break-words text-[12.5px] text-text-secondary">{faixa.contexto}</p>
           )}
-          {faixa.prUrl && (
-            <a
-              href={faixa.prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[12.5px] font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
-            >
-              Abrir PR
-            </a>
+          {(faixa.outraDemanda || faixa.prUrl) && (
+            <p className="flex flex-wrap gap-x-2">
+              {faixa.outraDemanda && (
+                <Link
+                  href={faixa.outraDemanda.href}
+                  className="text-[12.5px] font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                >
+                  {faixa.outraDemanda.rotulo}
+                </Link>
+              )}
+              {faixa.outraDemanda && faixa.prUrl && (
+                <span aria-hidden="true" className="text-[12.5px] text-text-secondary">
+                  ·
+                </span>
+              )}
+              {faixa.prUrl && (
+                <a
+                  href={faixa.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[12.5px] font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                >
+                  Abrir PR
+                </a>
+              )}
+            </p>
           )}
         </div>
+        {podeAgir && faixa.encerrar && (
+          <div className="w-full sm:w-auto">
+            <EncerrarDemanda demandaId={demandaId} rotulo={faixa.encerrar} />
+          </div>
+        )}
         {podeAgir && faixa.acoes.length > 0 && (
           <BotoesDaDecisao
             ctx={{ demandaId, versao, etapaAtual }}

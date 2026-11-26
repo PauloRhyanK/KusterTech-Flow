@@ -434,3 +434,36 @@ export function lerFiltrosDaTabela(params: ParametrosDaUrl): FiltrosDaTabela {
 export function ehModoTabela(params: ParametrosDaUrl): boolean {
   return CHAVES_DA_TABELA.some((c) => unico(params[c]) !== null)
 }
+
+/**
+ * O orquestrador concluiu que não há plano a fazer: a demanda é duplicada de outra (`de`, o uuid
+ * dela, quando ele soube) ou o que ela pede já está resolvido. Vem no `travada` da Fábrica
+ * (`desfecho_da_cobertura` em fabrica/scripts/demandas.py); o Flow oferece encerrar, nunca retomar.
+ */
+export const RESULTADOS_SEM_PLANO = ['duplicada', 'ja_resolvida'] as const
+export interface Desfecho {
+  resultado: (typeof RESULTADOS_SEM_PLANO)[number]
+  de: string | null
+}
+
+export const UUID_DA_DEMANDA = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** O desfecho dos `dados` de um evento `travada`, como veio; sem ele (ou torto), `null`. */
+export function desfechoDaTrava(dados: unknown): Desfecho | null {
+  const d = (dados as { desfecho?: unknown } | null)?.desfecho as
+    { resultado?: unknown; de?: unknown } | null | undefined
+  if (typeof d !== 'object' || d === null) return null
+  const resultado = RESULTADOS_SEM_PLANO.find((r) => r === d.resultado)
+  if (!resultado) return null
+  const de =
+    resultado === 'duplicada' && typeof d.de === 'string' && UUID_DA_DEMANDA.test(d.de)
+      ? d.de
+      : null
+  return { resultado, de }
+}
+
+/** "duplicada da 7b7ba4b8", "duplicada de outra demanda" ou "já resolvida". */
+export function rotuloDoDesfecho(d: Desfecho): string {
+  if (d.resultado === 'ja_resolvida') return 'já resolvida'
+  return d.de ? `duplicada da ${d.de.slice(0, 8)}` : 'duplicada de outra demanda'
+}

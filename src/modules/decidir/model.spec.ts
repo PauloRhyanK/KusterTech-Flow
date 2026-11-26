@@ -34,6 +34,7 @@ function demanda(o: Partial<DemandaEsperando> = {}): DemandaEsperando {
     espera: 'decidir_destino',
     esperaMotivo: null,
     urlDaTrava: null,
+    desfecho: null,
     esperaDesde: new Date('2026-11-21T12:00:00Z'),
     versaoDoDesenho: 0,
     etapaAtual: 'triagem',
@@ -415,6 +416,20 @@ describe('textoDaTrava', () => {
     expect(textoDaTrava('travada', ' O PR não passou no CI. ')).toBe('O PR não passou no CI.')
   })
 
+  it('com desfecho, diz o que o orquestrador concluiu e leva à outra demanda', () => {
+    const outra = '7b7ba4b8-1111-4222-8333-444444444444'
+    expect(textoDaTrava('travada', 'm', { resultado: 'duplicada', de: outra })).toBe(
+      'O orquestrador concluiu que esta demanda é duplicada da 7b7ba4b8: o que ela pede já está feito lá. Não há plano a fazer.\n\n' +
+        `A outra demanda: /demandas/${outra}`,
+    )
+    expect(textoDaTrava('travada', 'm', { resultado: 'duplicada', de: null })).toBe(
+      'O orquestrador concluiu que esta demanda é duplicada de outra demanda. Não há plano a fazer.',
+    )
+    expect(textoDaTrava('travada', 'm', { resultado: 'ja_resolvida', de: null })).toBe(
+      'O orquestrador concluiu que o que esta demanda pede já está resolvido no repositório. Não há plano a fazer.',
+    )
+  })
+
   it('sem motivo usa o texto padrão', () => {
     expect(textoDaTrava('travada', null)).toBe('A demanda está travada e espera você.')
     expect(textoDaTrava('teste_falhou', '  ')).toMatch(/^O teste no navegador falhou\.\n\nRetomar:/)
@@ -501,6 +516,31 @@ describe('respostasDoItem', () => {
       'retomar',
       'encerrar',
     ])
+  })
+
+  it('trava com desfecho: só "Encerrar como …", nunca Retomar', () => {
+    const outra = '7b7ba4b8-1111-4222-8333-444444444444'
+    const duplicada = demanda({
+      espera: 'travada',
+      esperaMotivo: 'm',
+      desfecho: { resultado: 'duplicada', de: outra },
+    })
+    expect(respostasDoItem(pilha(duplicada))).toEqual([
+      { chave: 'encerrar', rotulo: 'Encerrar como duplicada da 7b7ba4b8' },
+    ])
+    const resolvida = demanda({
+      espera: 'travada',
+      desfecho: { resultado: 'ja_resolvida', de: null },
+    })
+    expect(respostasDoItem(pilha(resolvida))).toEqual([
+      { chave: 'encerrar', rotulo: 'Encerrar como já resolvida' },
+    ])
+    expect(pilha(duplicada).ref).toMatchObject({ desfecho: { resultado: 'duplicada', de: outra } })
+    // Só a espera travada leva o desfecho.
+    expect(
+      pilha(demanda({ espera: 'teste_falhou', desfecho: { resultado: 'ja_resolvida', de: null } }))
+        .ref,
+    ).toMatchObject({ desfecho: null })
   })
 
   it('os outros tipos seguem com as respostas de sempre', () => {
