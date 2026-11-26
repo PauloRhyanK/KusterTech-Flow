@@ -31,6 +31,7 @@ HAIKU = "claude-haiku-5-5"
 
 TABELA = {
     "orquestrador": (FABLE, "high", 20),
+    "arbitro": (FABLE, "high", 20),
     "arquiteto": (SONNET, "medium", 15),
     "produto": (HAIKU, "medium", 5),
     "ux-ui": (SONNET, "medium", 10),

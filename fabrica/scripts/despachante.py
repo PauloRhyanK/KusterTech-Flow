@@ -119,6 +119,11 @@ PROTEGIDOS_FIXOS = (".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
 ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
+# Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
+PAPEL_DO_ARBITRO = "arbitro"
+MOTIVO_DA_ARBITRAGEM = "arbitragem"
+TITULO_DA_PERGUNTA = "[fábrica] orquestrador: pergunta para o Paulo"
+LIMITE_TITULO_DA_PERGUNTA = 120
 # O Warren reapa como falha o run que não commitou num branch existente; o revisor não commita por desenho,
 # então nesses dois motivos vale o veredito dele. Sem veredito válido, continua sendo falha.
 MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
@@ -495,6 +500,27 @@ def _permitido_ao_orquestrador(caminho, caminho_plano=CAMINHO_PLANO) -> bool:
     return any(globs.casa_glob(caminho, g) for g in permitidos_ao_orquestrador(caminho_plano))
 
 
+def _titulo_da_pergunta(conteudo) -> str:
+    """O título da issue: a primeira linha com texto da pergunta, sem as marcas de markdown; sem ela, o genérico."""
+    for linha in conteudo.splitlines() if _texto(conteudo) else ():
+        assunto = linha.strip().lstrip("#").strip().strip("*").strip()
+        if assunto:
+            return "[fábrica] pergunta: " + _cortar(assunto, LIMITE_TITULO_DA_PERGUNTA)
+    return TITULO_DA_PERGUNTA
+
+
+def _acordada_do_arbitro(acordada) -> bool:
+    """A acordada é do árbitro: a arbitragem, ou o `plano_invalido` que conclui uma arbitragem sem PR válido."""
+    for _ in range(8):  # o `plano_invalido` guarda a acordada anterior dentro do contexto
+        acordada = _dict(acordada)
+        if acordada.get("motivo") == MOTIVO_DA_ARBITRAGEM:
+            return True
+        if acordada.get("motivo") != "plano_invalido":
+            return False
+        acordada = _dict(acordada.get("contexto")).get("acordadaAnterior")
+    return False
+
+
 def _plano_id_valido(plano_id) -> bool:
     return isinstance(plano_id, str) and PADRAO_PLANO_ID.fullmatch(plano_id) is not None
 
@@ -595,6 +621,8 @@ def _validar_config(config) -> dict:
         raise ConfigInvalida("modelos")
     for papel in PAPEIS_OBRIGATORIOS:
         _validar_modelo(modelos.get(papel), papel)
+    if PAPEL_DO_ARBITRO in modelos:
+        _validar_modelo(modelos[PAPEL_DO_ARBITRO], PAPEL_DO_ARBITRO)
     config.setdefault("branchPadrao", "main")
     if not _texto(config["branchPadrao"]):
         raise ConfigInvalida("branchPadrao")
@@ -2566,7 +2594,12 @@ class Despachante:
             motivos = ["PR do orquestrador ilegível"]
             return self._sem_resultado(self._decidir_humano_orquestrador(pr_url, motivo, motivos), motivos)
         if est.PERGUNTA_DO_ORQUESTRADOR in arquivos:
-            self._abrir_pergunta(pr_url, self.forja.arquivo(self.repo, head, est.PERGUNTA_DO_ORQUESTRADOR))
+            pergunta = self.forja.arquivo(self.repo, head, est.PERGUNTA_DO_ORQUESTRADOR)
+            do_arbitro = _acordada_do_arbitro(orquestrador.get("acordada")) or motivo == MOTIVO_DA_ARBITRAGEM
+            if not do_arbitro and PAPEL_DO_ARBITRO in self.config["modelos"] and _texto(pergunta):
+                self._arbitrar(pr_url, pergunta)
+            else:  # sem árbitro na config, pergunta ilegível ou pergunta do próprio árbitro: é do Paulo
+                self._abrir_pergunta(pr_url, pergunta)
             return {"r": "neutro"}
 
         motivos = []
@@ -2597,7 +2630,13 @@ class Despachante:
             {"evento": "pr_do_orquestrador", "pr": pr_url, "decisao": decisao, "motivos": motivos + fase},
         )
         if decisao == "mergear":
-            return self._mergear_pr_orquestrador(pr_url, head, motivo)
+            resultado = self._mergear_pr_orquestrador(pr_url, head, motivo)
+            if resultado["r"] == "merge" and (
+                motivo == MOTIVO_DA_ARBITRAGEM or _acordada_do_arbitro(orquestrador.get("acordada"))
+            ):
+                # o Paulo não foi chamado: fica o registro do que a Fábrica decidiu sozinha
+                self._aviso("o árbitro técnico resolveu uma pergunta do orquestrador sem chamar o Paulo: %s" % pr_url)
+            return resultado
         if decisao == "replanejar":
             self._fechar_depois(
                 pr_url,
@@ -2877,6 +2916,16 @@ class Despachante:
         self._acompanhar_pr(pr_url)
         return self._abrir_decisao_rastreada("; ".join(motivos), pr_url, titulo, corpo, tipo="orquestrador")
 
+    def _arbitrar(self, pr_url: str, pergunta: str) -> None:
+        """A pergunta do orquestrador vai primeiro ao árbitro técnico; o PR dela fica acompanhado até ser substituído."""
+        self._acompanhar_pr(pr_url)
+        contexto = {"pergunta": pergunta, "pr": pr_url}
+        anterior = _dict(self._orq().get("acordada"))
+        if _texto(anterior.get("motivo")):
+            contexto["acordadaAnterior"] = copy.deepcopy(anterior)
+        self._enfileirar_acordar("arbitragem", pr_url, contexto)
+        self._log_repetivel("arbitragem:%s" % pr_url, {"evento": "arbitragem", "pr": pr_url})
+
     def _abrir_pergunta(self, pr_url: str, conteudo) -> str:
         pergunta = conteudo if _texto(conteudo) else "(%s não foi encontrado no head do PR)" % est.PERGUNTA_DO_ORQUESTRADOR
         corpo = "%s\n\nPR: %s\n\nFeche esta issue com um comentário: ele volta para o orquestrador." % (
@@ -2885,7 +2934,7 @@ class Despachante:
         )
         self._acompanhar_pr(pr_url)
         return self._abrir_decisao_rastreada(
-            _cortar(pergunta, LIMITE_CONTEXTO), pr_url, "[fábrica] orquestrador: pergunta para o Paulo", corpo, tipo="pergunta"
+            _cortar(pergunta, LIMITE_CONTEXTO), pr_url, _titulo_da_pergunta(conteudo), corpo, tipo="pergunta"
         )
 
     # ------------------------------------------------------------ acordar
@@ -3957,8 +4006,9 @@ class Despachante:
             return {"url": url}
 
         if tipo == "acordar":
-            modelo = self._modelo("orquestrador")
-            prompt = prompts.prompt_orquestrador(
+            arbitragem = _acordada_do_arbitro(acao)
+            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else "orquestrador")
+            prompt = (prompts.prompt_arbitro if arbitragem else prompts.prompt_orquestrador)(
                 motivo=acao.get("motivo"),
                 estado_compacto=compactar(self.estado, self.plano),
                 contexto=_dict(acao.get("contexto")),
