@@ -46,6 +46,7 @@ function Medida({
         className={`text-right font-[600] tabular-nums ${acima ? 'text-atencao' : 'text-text-primary'}`}
       >
         {pct(valor)}
+        {acima && <span className="sr-only"> acima do limite</span>}
       </span>
     </div>
   )
@@ -96,9 +97,10 @@ function Cartao({ m, agora, ordem }: { m: Maquina; agora: Date; ordem: number })
       )}
     </>
   )
-  // No celular, as máquinas que pedem atenção vêm primeiro; no desktop, a ordem do cadastro.
+  // No celular (uma coluna), as máquinas que pedem atenção vêm primeiro; com mais colunas, a ordem
+  // do cadastro.
   const estilo = { '--ordem': ordem } as CSSProperties
-  const classe = `${CLASSE_DO_CARTAO} order-[var(--ordem)] block min-w-0 px-4 py-3.5 lg:order-none`
+  const classe = `${CLASSE_DO_CARTAO} order-[var(--ordem)] block min-w-0 px-4 py-3.5 sm:order-none`
   return m.recursoId ? (
     <Link
       href={`/maquinas/${m.recursoId}`}

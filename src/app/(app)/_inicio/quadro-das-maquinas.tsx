@@ -23,14 +23,31 @@ type Maquinas = NonNullable<Inicio['maquinas']>
 
 const GRADE = 'grid grid-cols-[14px_minmax(0,1fr)_46px_46px_46px] items-center gap-2'
 
-function Pct({ valor, limite }: { valor: number | null; limite: number | null }) {
-  if (valor === null) return <span className="text-right text-text-tertiary">—</span>
+// O cabeçalho da tabela é visual: o leitor de tela ouve o nome da medida e o limite passado.
+function Pct({
+  rotulo,
+  valor,
+  limite,
+}: {
+  rotulo: string
+  valor: number | null
+  limite: number | null
+}) {
+  if (valor === null) {
+    return (
+      <span className="text-right text-text-tertiary">
+        <span className="sr-only">{`${rotulo} `}</span>—
+      </span>
+    )
+  }
   const acima = limite !== null && valor > limite
   return (
-    <span
-      className={`text-right font-[550] tabular-nums ${acima ? 'text-atencao' : 'text-text-primary'}`}
-    >
-      {`${Math.round(valor)}%`}
+    <span className="text-right font-[550] tabular-nums">
+      <span className="sr-only">{`${rotulo} `}</span>
+      <span
+        className={acima ? 'text-atencao' : 'text-text-primary'}
+      >{`${Math.round(valor)}%`}</span>
+      {acima && <span className="sr-only"> acima do limite</span>}
     </span>
   )
 }
@@ -70,7 +87,15 @@ function DiscoDaOficina({ leitura, agora }: { leitura: LeituraDaMaquina; agora: 
 }
 
 function Linhas({ beszel, agora }: { beszel: Maquinas['beszel']; agora: Date }) {
-  if (beszel === 'falha' || beszel.situacao === 'sem_resposta') {
+  // 'falha' é erro inesperado (o banco, por exemplo): não é culpa do Beszel.
+  if (beszel === 'falha') {
+    return (
+      <p className="px-3.5 py-3">
+        <BadgeDeEstado tom="atencao">Leitura das máquinas falhou</BadgeDeEstado>
+      </p>
+    )
+  }
+  if (beszel.situacao === 'sem_resposta') {
     return (
       <p className="px-3.5 py-3">
         <BadgeDeEstado tom="atencao">Beszel sem resposta</BadgeDeEstado>
@@ -121,9 +146,13 @@ function Linhas({ beszel, agora }: { beszel: Maquinas['beszel']; agora: Date }) 
                 </span>
               ) : (
                 <>
-                  <Pct valor={m.cpuPct} limite={null} />
-                  <Pct valor={m.memPct} limite={LIMITES_DA_OFICINA.memoriaUsoPct} />
-                  <Pct valor={m.discoPct} limite={LIMITES_DA_OFICINA.discoUsoPct} />
+                  <Pct rotulo="CPU" valor={m.cpuPct} limite={null} />
+                  <Pct
+                    rotulo="Memória"
+                    valor={m.memPct}
+                    limite={LIMITES_DA_OFICINA.memoriaUsoPct}
+                  />
+                  <Pct rotulo="Disco" valor={m.discoPct} limite={LIMITES_DA_OFICINA.discoUsoPct} />
                 </>
               )}
             </li>

@@ -95,6 +95,22 @@ describe('QuadroDasMaquinas', () => {
     expect(screen.getByRole('link', { name: 'Ver máquinas' })).toHaveAttribute('href', '/maquinas')
   })
 
+  it('leitor de tela ouve o nome de cada medida e o limite passado', () => {
+    render(
+      <QuadroDasMaquinas
+        maquinas={{
+          beszel: ok([maquina({ nome: 'vps-alfa', cpuPct: 3, memPct: 62.5, discoPct: 86.2 })]),
+          oficina: null,
+        }}
+        agora={AGORA}
+      />,
+    )
+    // Entre células o textContent não tem espaço; o leitor de tela separa os elementos.
+    expect(screen.getByRole('listitem')).toHaveTextContent(
+      /vps-alfa\s*CPU 3%\s*Memória 63%\s*Disco 86% acima do limite/,
+    )
+  })
+
   it('máquina sem resposta mostra há quanto tempo no lugar dos números', () => {
     render(
       <QuadroDasMaquinas
@@ -128,6 +144,16 @@ describe('QuadroDasMaquinas', () => {
   it('Beszel fora do ar ou recusando vira um selo', () => {
     const { rerender } = render(
       <QuadroDasMaquinas maquinas={{ beszel: 'falha', oficina: null }} agora={AGORA} />,
+    )
+    expect(screen.getByText('Leitura das máquinas falhou')).toBeInTheDocument()
+    rerender(
+      <QuadroDasMaquinas
+        maquinas={{
+          beszel: { situacao: 'sem_resposta', lidaEm: null, maquinas: [] },
+          oficina: null,
+        }}
+        agora={AGORA}
+      />,
     )
     expect(screen.getByText('Beszel sem resposta')).toBeInTheDocument()
     rerender(
