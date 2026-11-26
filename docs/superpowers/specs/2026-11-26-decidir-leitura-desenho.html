@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Decidir — leitura da mensagem (desenho)</title>
+    <style>
+      /* Tokens do tema escuro, copiados de src/app/globals.css. Este arquivo é só o desenho. */
+      :root {
+        --background: #0b1120;
+        --surface: #121a2c;
+        --surface-subtle: #0f1728;
+        --surface-elevated: #1a2338;
+        --text-primary: #e8efff;
+        --text-secondary: #a7b4c9;
+        --text-tertiary: #7e8da6;
+        --text-link: #78a4ff;
+        --border: #26334a;
+        --border-strong: #34445f;
+        --action-primary: #2d6be4;
+        --marca-tech: #5b8ff9;
+        --marca-flow: #72d9c3;
+        --sucesso: #72d9a2;
+        --atencao: #f2b85b;
+        --execucao: #b49ae8;
+        --r: 12px;
+        --rc: 8px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--text-primary);
+        font: 14px/1.6 Inter, system-ui, sans-serif;
+        padding: 32px;
+      }
+      h1.pagina {
+        font-size: 20px;
+        margin: 0 0 4px;
+      }
+      p.legenda {
+        color: var(--text-secondary);
+        margin: 0 0 28px;
+        max-width: 900px;
+      }
+      .quadro {
+        margin-bottom: 48px;
+      }
+      .quadro > h2 {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin: 0 0 10px;
+      }
+      .nota {
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin: 10px 0 0;
+        max-width: 900px;
+      }
+      .tela {
+        display: grid;
+        grid-template-columns: 250px 1fr;
+        gap: 16px;
+        max-width: 1180px;
+      }
+      .pilha,
+      .item {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+      }
+      .pilha {
+        padding: 14px;
+        align-self: start;
+      }
+      .pilha h3 {
+        margin: 0 0 4px;
+        font-size: 13px;
+      }
+      .barra {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--surface-subtle);
+        margin: 8px 0 12px;
+      }
+      .barra i {
+        display: block;
+        width: 28%;
+        height: 100%;
+        border-radius: 2px;
+        background: var(--marca-flow);
+      }
+      .pilha li {
+        list-style: none;
+        padding: 8px 10px;
+        border-radius: var(--rc);
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+      .pilha ul {
+        margin: 0;
+        padding: 0;
+      }
+      .pilha li.ativo {
+        background: var(--surface-elevated);
+        color: var(--text-primary);
+        border: 1px solid var(--border-strong);
+      }
+      .pilha li small {
+        display: block;
+        color: var(--text-tertiary);
+        font-size: 11.5px;
+      }
+      .sem-voce {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+        font-size: 12.5px;
+        color: var(--text-secondary);
+      }
+      .sem-voce a {
+        color: var(--text-link);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .cab {
+        padding: 22px;
+        border-bottom: 1px solid var(--border);
+      }
+      .linha {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12.5px;
+        color: var(--text-secondary);
+      }
+      .chip {
+        border: 1px solid var(--border);
+        background: var(--surface-subtle);
+        border-radius: var(--rc);
+        padding: 1px 8px;
+        font-weight: 550;
+      }
+      .chip::before {
+        content: '';
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        background: var(--marca-tech);
+        margin-right: 6px;
+      }
+      .cab h2 {
+        font-size: 21px;
+        letter-spacing: -0.01em;
+        margin: 12px 0;
+        line-height: 1.3;
+      }
+      .preciso {
+        display: flex;
+        gap: 14px;
+        border: 1px solid color-mix(in srgb, var(--atencao) 30%, transparent);
+        background: color-mix(in srgb, var(--atencao) 14%, var(--surface));
+        border-radius: var(--r);
+        padding: 14px 16px;
+      }
+      .preciso .q {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--atencao);
+        color: #1a1305;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        flex: none;
+      }
+      .preciso small {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--atencao);
+      }
+      .preciso b {
+        font-size: 16px;
+        font-weight: 650;
+      }
+      .conversa {
+        padding: 22px;
+      }
+      .msg {
+        display: flex;
+        gap: 10px;
+        max-width: 86%;
+      }
+      .avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--marca-flow);
+        color: #06241e;
+        font-size: 9.5px;
+        font-weight: 700;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .balao {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: var(--r);
+        padding: 14px 16px;
+        min-width: 0;
+      }
+      .cru {
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--text-primary);
+      }
+
+      /* ---- a mensagem formatada: é isto que o desenho propõe ---- */
+      .md > :first-child {
+        margin-top: 0;
+      }
+      .md > :last-child {
+        margin-bottom: 0;
+      }
+      .md h4 {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin: 18px 0 4px;
+      }
+      .md p {
+        margin: 0 0 10px;
+      }
+      .md code {
+        font: 12.5px 'JetBrains Mono', ui-monospace, monospace;
+        background: var(--surface-subtle);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      .md pre {
+        background: var(--surface-subtle);
+        border: 1px solid var(--border);
+        border-radius: var(--rc);
+        padding: 10px 12px;
+        overflow-x: auto;
+        margin: 8px 0;
+      }
+      .md pre code {
+        border: 0;
+        padding: 0;
+        background: none;
+      }
+      .md table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+        margin: 8px 0;
+      }
+      .md th,
+      .md td {
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        padding: 6px 10px 6px 0;
+      }
+      .md th {
+        color: var(--text-secondary);
+        font-weight: 600;
+      }
+      .opcoes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin: 6px 0 12px;
+      }
+      .opcao {
+        border: 1px solid var(--border-strong);
+        border-radius: var(--rc);
+        padding: 10px 12px;
+        background: var(--surface-subtle);
+      }
+      .opcao.rec {
+        border-color: var(--execucao);
+      }
+      .opcao b {
+        display: block;
+      }
+      .opcao span {
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+      .selo {
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--execucao);
+        text-transform: uppercase;
+      }
+      .figura {
+        border: 1px solid var(--border);
+        border-radius: var(--rc);
+        background: var(--surface-subtle);
+        margin: 8px 0 12px;
+        overflow: hidden;
+      }
+      .figura .area {
+        padding: 14px;
+        display: grid;
+        place-items: center;
+      }
+      .figura figcaption,
+      .figura .pe {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border-top: 1px solid var(--border);
+        padding: 6px 12px;
+        font-size: 12.5px;
+        color: var(--text-secondary);
+      }
+      .figura .pe a {
+        color: var(--text-link);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .captura {
+        width: 100%;
+        max-width: 420px;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        background: #f5f7fa;
+        color: #172033;
+        font-size: 12px;
+        padding: 10px 12px;
+      }
+      .captura .campo {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid #dce4ea;
+        padding: 4px 0;
+      }
+      .captura .campo span:first-child {
+        color: #607083;
+      }
+      details.tecnico {
+        border: 1px solid var(--border);
+        border-radius: var(--rc);
+        margin-top: 12px;
+      }
+      details.tecnico summary {
+        cursor: pointer;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+      }
+      details.tecnico > div {
+        padding: 0 12px 12px;
+        border-top: 1px solid var(--border);
+      }
+      .rapidas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .rapida {
+        border: 1px solid var(--border-strong);
+        background: var(--surface);
+        color: var(--text-primary);
+        border-radius: 999px;
+        padding: 4px 12px;
+        font: 600 13px Inter, system-ui, sans-serif;
+      }
+      .rapida.rec {
+        border-color: var(--execucao);
+        color: var(--execucao);
+      }
+      .compositor {
+        margin: 0 22px 18px;
+        border: 1px solid var(--border-strong);
+        border-radius: var(--r);
+        padding: 12px 14px;
+        color: var(--text-tertiary);
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        min-height: 70px;
+      }
+      .botao {
+        background: var(--action-primary);
+        color: #fff;
+        border-radius: var(--rc);
+        padding: 6px 14px;
+        font-weight: 600;
+        opacity: 0.5;
+      }
+      .celular {
+        width: 390px;
+        border: 1px solid var(--border-strong);
+        border-radius: 22px;
+        padding: 14px;
+        background: var(--surface);
+      }
+      .celular .msg {
+        max-width: 100%;
+      }
+      .celular .opcoes {
+        grid-template-columns: 1fr;
+      }
+      .lado {
+        display: flex;
+        gap: 28px;
+        flex-wrap: wrap;
+        align-items: start;
+      }
+      .aviso {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        padding: 14px 16px;
+        max-width: 640px;
+        margin-bottom: 10px;
+      }
+      .aviso .topo {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12.5px;
+        color: var(--text-secondary);
+      }
+      .aviso .selo-ok {
+        color: var(--sucesso);
+        font-weight: 700;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .aviso h3 {
+        margin: 4px 0 8px;
+        font-size: 15px;
+      }
+      .aviso dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 4px 12px;
+        font-size: 13px;
+      }
+      .aviso dt {
+        color: var(--text-secondary);
+      }
+      .aviso dd {
+        margin: 0;
+      }
+      svg text {
+        font: 12px Inter, system-ui, sans-serif;
+        fill: var(--text-primary);
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="pagina">Decidir — leitura da mensagem</h1>
+    <p class="legenda">
+      Desenho para aprovação (D74). O exemplo é o caso real da ficha do lead, reescrito como a pergunta chegaria se a
+      decisão fosse sua. Os textos são ilustrativos; o que está em aprovação é a forma.
+    </p>
+
+    <section class="quadro">
+      <h2>1 · Hoje</h2>
+      <div class="item" style="max-width: 920px">
+        <div class="conversa">
+          <div class="msg">
+            <span class="avatar">Flow</span>
+            <div class="balao cru"># Pergunta ao Paulo — lead-de-formulario-na-ficha, raia `extras-do-formulario` (a ordem das chaves de `extras` é impossível de garantir)
+
+**Acordada:** `gate_falhou_apos_fixer`, 2026-11-26, seed `flowia-e5ad` (tentativa 1 da raia, PR #308, head `5a0326b`). **Plano:** `.fabrica/planos/lead-de-formulario-na-ficha.json` (não mudou nesta acordada).
+
+## O que foi conferido
+
+- **PR #308**, head `5a0326b`. **Revisor:** `aprovado`, sem achados. **CI:** ausente, como esperado. **Verificação da raia:** código 1, lint verde, **116 testes passam e 1 falha**: `recebimento.test.ts:717`, "campo desconhecido,</div>
+          </div>
+        </div>
+      </div>
+      <p class="nota">
+        Texto cru, com os sinais do markdown à mostra, título que não diz o assunto e a mensagem cortada no meio.
+      </p>
+    </section>
+
+    <section class="quadro">
+      <h2>2 · Proposta — computador</h2>
+      <div class="tela">
+        <aside class="pilha">
+          <h3>Decidir</h3>
+          <small style="color: var(--text-tertiary)">2 de 7</small>
+          <div class="barra"><i></i></div>
+          <ul>
+            <li>Publicar a v1.4 do portal<small>Publicação · CAISv2</small></li>
+            <li class="ativo">Em que ordem a ficha mostra os campos extras?<small>Fábrica · Flow.ia</small></li>
+            <li>Aprovar a fase 2 do painel<small>Fábrica · Flow</small></li>
+            <li>Relato: botão de exportar some<small>Relato · CAISv2</small></li>
+          </ul>
+          <div class="sem-voce">
+            A Fábrica resolveu <b style="color: var(--text-primary)">2</b> sem você esta semana.
+            <a href="#q4">Ver o que foi decidido →</a>
+          </div>
+        </aside>
+
+        <main class="item">
+          <header class="cab">
+            <div class="linha">
+              <span class="chip">Flow.ia</span>
+              <span>Fábrica · lead de formulário na ficha</span>
+            </div>
+            <h2>Em que ordem a ficha do lead mostra os campos extras do formulário?</h2>
+            <div class="preciso">
+              <span class="q">?</span>
+              <div>
+                <small>O QUE PRECISO DE VOCÊ</small>
+                <b>Escolher a ordem dos campos extras na ficha: a do formulário ou alfabética.</b>
+              </div>
+            </div>
+          </header>
+
+          <div class="conversa">
+            <div class="msg">
+              <span class="avatar">Flow</span>
+              <div class="balao">
+                <div class="md">
+                  <h4>O que aconteceu</h4>
+                  <p>
+                    A ficha do lead já recebe os campos extras do formulário. O plano pedia que eles aparecessem
+                    <strong>na ordem em que o cliente montou o formulário</strong>, mas hoje o sistema não guarda essa
+                    ordem: ela se perde no caminho.
+                  </p>
+
+                  <figure class="figura">
+                    <div class="area">
+                      <svg viewBox="0 0 560 96" width="100%" role="img" aria-label="Formulário, recebimento, ficha do lead">
+                        <defs>
+                          <marker id="s" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                            <path d="M0 0 L8 4 L0 8 z" fill="#7e8da6" />
+                          </marker>
+                        </defs>
+                        <rect x="4" y="26" width="140" height="44" rx="8" fill="#1a2338" stroke="#34445f" />
+                        <text x="74" y="52" text-anchor="middle">Formulário</text>
+                        <rect x="210" y="26" width="140" height="44" rx="8" fill="#1a2338" stroke="#f2b85b" />
+                        <text x="280" y="46" text-anchor="middle">Recebimento</text>
+                        <text x="280" y="62" text-anchor="middle" style="fill: #f2b85b; font-size: 10.5px">a ordem se perde aqui</text>
+                        <rect x="416" y="26" width="140" height="44" rx="8" fill="#1a2338" stroke="#34445f" />
+                        <text x="486" y="52" text-anchor="middle">Ficha do lead</text>
+                        <path d="M146 48 H206" stroke="#7e8da6" marker-end="url(#s)" />
+                        <path d="M352 48 H412" stroke="#7e8da6" marker-end="url(#s)" />
+                      </svg>
+                    </div>
+                    <div class="pe"><span>Diagrama enviado pelo agente</span><a href="#">Ampliar</a></div>
+                  </figure>
+
+                  <h4>Opções</h4>
+                  <div class="opcoes">
+                    <div class="opcao rec">
+                      <span class="selo">Recomendada</span>
+                      <b>1. Ordem alfabética</b>
+                      <span>Fica pronto hoje. O cliente vê os campos sempre na mesma ordem, mas não a que ele montou.</span>
+                    </div>
+                    <div class="opcao">
+                      <b>2. Ordem do formulário</b>
+                      <span>O cliente vê como montou. Custa mais uma etapa de trabalho, cerca de meio dia.</span>
+                    </div>
+                  </div>
+
+                  <h4>Como fica na opção 1</h4>
+                  <figure class="figura">
+                    <div class="area">
+                      <div class="captura">
+                        <b>Campos do formulário</b>
+                        <div class="campo"><span>Cargo</span><span>Diretora financeira</span></div>
+                        <div class="campo"><span>Faturamento</span><span>R$ 2 a 5 mi</span></div>
+                        <div class="campo"><span>Origem</span><span>Indicação</span></div>
+                      </div>
+                    </div>
+                    <div class="pe"><span>ficha-do-lead.png</span><a href="#">Ampliar</a></div>
+                  </figure>
+
+                  <details class="tecnico">
+                    <summary>Detalhes técnicos</summary>
+                    <div>
+                      <table>
+                        <tr><th>PR</th><td><a href="#" style="color: var(--text-link)">#308</a> · revisor aprovou</td></tr>
+                        <tr><th>Testes</th><td>116 passam, 1 falha</td></tr>
+                        <tr><th>Onde falha</th><td><code>recebimento.test.ts:717</code></td></tr>
+                      </table>
+                      <pre><code>esperado: ["origem", "cargo", "faturamento"]
+recebido: ["cargo", "faturamento", "origem"]</code></pre>
+                    </div>
+                  </details>
+                </div>
+
+                <div class="rapidas">
+                  <button class="rapida rec">1. Ordem alfabética</button>
+                  <button class="rapida">2. Ordem do formulário</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="compositor">
+            <span>Escreva ou cole uma imagem…</span>
+            <span class="botao">Enviar</span>
+          </div>
+        </main>
+      </div>
+      <p class="nota">
+        O título e o destaque dizem a decisão. A mensagem vem inteira e formatada. As opções viram respostas de um
+        toque, com a recomendada primeiro. O que é técnico fica recolhido em "Detalhes técnicos" (fechado ao abrir).
+        Diagrama e imagem aparecem na própria mensagem e abrem maiores em "Ampliar".
+      </p>
+    </section>
+
+    <section class="quadro">
+      <h2>3 · Proposta — celular (390 px) e detalhes abertos</h2>
+      <div class="lado">
+        <div class="celular">
+          <div class="msg">
+            <span class="avatar">Flow</span>
+            <div class="balao">
+              <div class="md">
+                <h4>O que aconteceu</h4>
+                <p>A ficha recebe os campos extras, mas o sistema não guarda a ordem em que o cliente montou o formulário.</p>
+                <h4>Opções</h4>
+                <div class="opcoes">
+                  <div class="opcao rec">
+                    <span class="selo">Recomendada</span><b>1. Ordem alfabética</b><span>Fica pronto hoje.</span>
+                  </div>
+                  <div class="opcao"><b>2. Ordem do formulário</b><span>Mais meio dia de trabalho.</span></div>
+                </div>
+                <details class="tecnico" open>
+                  <summary>Detalhes técnicos</summary>
+                  <div>
+                    <table>
+                      <tr><th>Testes</th><td>116 passam, 1 falha</td></tr>
+                      <tr><th>Onde</th><td><code>recebimento.test.ts:717</code></td></tr>
+                    </table>
+                    <pre><code>esperado: ["origem", "cargo", "faturamento"]
+recebido: ["cargo", "faturamento", "origem"]</code></pre>
+                  </div>
+                </details>
+              </div>
+              <div class="rapidas">
+                <button class="rapida rec">1. Ordem alfabética</button>
+                <button class="rapida">2. Ordem do formulário</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="nota" style="max-width: 360px">
+          No celular as opções empilham, tabela e código rolam de lado dentro do próprio bloco, e nada estoura a
+          largura da tela.
+        </p>
+      </div>
+    </section>
+
+    <section class="quadro" id="q4">
+      <h2>4 · Proposta — "Resolvido sem você" (em Fábrica › Avisos)</h2>
+      <div class="aviso">
+        <div class="topo"><span class="selo-ok">Resolvido sem você</span><span>Flow.ia · hoje, 14:20</span></div>
+        <h3>Teste cobrava a ordem das chaves de um objeto</h3>
+        <dl>
+          <dt>O que travou</dt>
+          <dd>Um teste exigia uma ordem que a linguagem não garante.</dd>
+          <dt>O que foi decidido</dt>
+          <dd>O teste passa a conferir o conteúdo dos campos, não a ordem.</dd>
+          <dt>Muda para o produto</dt>
+          <dd>Nada.</dd>
+        </dl>
+      </div>
+      <div class="aviso">
+        <div class="topo"><span class="selo-ok">Resolvido sem você</span><span>CAISv2 · ontem, 18:02</span></div>
+        <h3>Duas etapas editavam o mesmo arquivo</h3>
+        <dl>
+          <dt>O que travou</dt>
+          <dd>O plano dava o mesmo arquivo a duas etapas paralelas.</dd>
+          <dt>O que foi decidido</dt>
+          <dd>O arquivo ficou com uma etapa só; a outra espera ela terminar.</dd>
+          <dt>Muda para o produto</dt>
+          <dd>Nada.</dd>
+        </dl>
+      </div>
+      <p class="nota">
+        Só para olhar: não entra na pilha de Decidir nem no contador. Na pilha fica uma linha discreta com a contagem da
+        semana, que leva para cá.
+      </p>
+    </section>
+  </body>
+</html>
