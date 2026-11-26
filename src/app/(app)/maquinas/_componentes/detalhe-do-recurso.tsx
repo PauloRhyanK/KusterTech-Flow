@@ -6,12 +6,15 @@ import { rotuloDoTipo } from '@/modules/infra/model'
 import type { RecursoDetalhado } from '@/modules/infra/queries'
 import { ArquivamentoDoRecurso } from './arquivamento-do-recurso'
 import { PainelDaMaquinaLocal, type PainelDaMaquinaLocalProps } from './painel-da-maquina-local'
+import { PainelDoBeszel, type PainelDoBeszelProps } from './painel-do-beszel'
 import { ProjetosDoRecurso } from './projetos-do-recurso'
 
 export interface DetalheDoRecursoProps {
   recurso: RecursoDetalhado
   // Só na máquina em que o Flow roda: o painel vem antes e o cadastro vai para a lateral dele.
   painelLocal?: Omit<PainelDaMaquinaLocalProps, 'principal' | 'lateral'>
+  // Máquina ligada ao Beszel (D82): o mesmo arranjo, com as métricas do Beszel.
+  painelBeszel?: Omit<PainelDoBeszelProps, 'principal' | 'lateral'>
 }
 
 const SECAO = 'space-y-3 rounded-padrao border border-border bg-surface p-4'
@@ -43,11 +46,11 @@ function ParDoCadastro({
 
 // Máquina comum não tem quadro de métrica (spec §6.5): só a máquina local tem fonte, o painel.
 // Contêiner sem fonte de logs ou saúde (decisão 1) aparece como "Sem dados".
-export function DetalheDoRecurso({ recurso, painelLocal }: DetalheDoRecursoProps) {
+export function DetalheDoRecurso({ recurso, painelLocal, painelBeszel }: DetalheDoRecursoProps) {
   const urlDeEdicao = `/maquinas/${recurso.id}/editar`
   const arquivado = recurso.arquivadoEm !== null
   // Na máquina local o painel já diz o que roda nela: seções vazias ficam de fora.
-  const local = painelLocal !== undefined
+  const local = painelLocal !== undefined || painelBeszel !== undefined
   const mostrarHospedados = recurso.tipo === 'SERVIDOR' && (!local || recurso.hospedados.length > 0)
   const mostrarIdentificador = !local && recurso.identificadorExterno !== null
 
@@ -162,6 +165,10 @@ export function DetalheDoRecurso({ recurso, painelLocal }: DetalheDoRecursoProps
 
   if (painelLocal) {
     return <PainelDaMaquinaLocal {...painelLocal} principal={principal} lateral={lateral} />
+  }
+
+  if (painelBeszel) {
+    return <PainelDoBeszel {...painelBeszel} principal={principal} lateral={lateral} />
   }
 
   return (

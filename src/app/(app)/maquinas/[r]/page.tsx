@@ -2,12 +2,15 @@ import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { log } from '@/lib/log'
 import { ErroDeDominio } from '@/lib/erros'
 import { moduloAtivo } from '@/lib/modulos'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { obterDetalheNoBeszel, linkDoBeszel } from '@/modules/beszel/queries'
 import { planosEmCurso } from '@/modules/fabrica/model'
+import { resumirErroParaLog } from '@/modules/github/model'
 import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
 import { rotuloDoTipo } from '@/modules/infra/model'
 import { obterRecursoDaPagina } from '@/modules/infra/queries'
@@ -59,6 +62,23 @@ async function painelDaMaquinaLocal(
   }
 }
 
+// Painel de uma máquina ligada ao Beszel pelo identificador externo. Beszel fora ou sem esse
+// sistema: a página segue como antes, só com o cadastro.
+async function painelDoBeszel(
+  sujeito: Sujeito,
+  identificador: string | null,
+): Promise<NonNullable<DetalheDoRecursoProps['painelBeszel']> | null> {
+  if (identificador === null) return null
+  const agora = new Date()
+  const { detalhe } = await obterDetalheNoBeszel(sujeito, identificador, agora).catch(
+    (erro: unknown) => {
+      log.error({ erro: resumirErroParaLog(erro), fonte: 'beszel' }, 'leitura do Beszel falhou')
+      return { detalhe: null }
+    },
+  )
+  return detalhe ? { detalhe, agora, link: linkDoBeszel() } : null
+}
+
 export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
   const sessao = await obterSessao()
   if (!sessao) {
@@ -89,10 +109,12 @@ export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
   }
 
   const local = maquinaLocalConfigurada()
-  const painelLocal =
-    local !== null && recurso.identificadorExterno === local
-      ? await painelDaMaquinaLocal(sessao.sujeito)
-      : null
+  const ehLocal = local !== null && recurso.identificadorExterno === local
+  const painelLocal = ehLocal ? await painelDaMaquinaLocal(sessao.sujeito) : null
+  const painelBeszel =
+    ehLocal || recurso.arquivadoEm !== null
+      ? null
+      : await painelDoBeszel(sessao.sujeito, recurso.identificadorExterno)
 
   return (
     <div className="space-y-6">
@@ -108,7 +130,11 @@ export default async function PaginaRecurso({ params }: PaginaRecursoProps) {
           </div>
         }
       />
-      <DetalheDoRecurso recurso={recurso} painelLocal={painelLocal ?? undefined} />
+      <DetalheDoRecurso
+        recurso={recurso}
+        painelLocal={painelLocal ?? undefined}
+        painelBeszel={painelBeszel ?? undefined}
+      />
     </div>
   )
 }

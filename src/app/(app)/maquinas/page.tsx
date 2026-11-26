@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { buttonVariants } from '@/components/ui/button'
 import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
+import { log } from '@/lib/log'
 import { BadgeDeEstado } from '@/lib/ui/badge-de-estado'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
@@ -11,6 +12,7 @@ import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { seloDeMetricas } from '@/modules/beszel/model'
 import { obterMaquinasNoBeszel, type ResumoDoBeszel } from '@/modules/beszel/queries'
+import { resumirErroParaLog } from '@/modules/github/model'
 import { rotuloDoTipo } from '@/modules/infra/model'
 import { idadeCurta } from '@/modules/oficina/model'
 import { lerFiltrosDoInventario, listarRecursos } from '@/modules/infra/queries'
@@ -41,7 +43,8 @@ async function lerBeszel(
 ): Promise<ResumoDoBeszel> {
   try {
     return await obterMaquinasNoBeszel(sujeito, agora)
-  } catch {
+  } catch (erro) {
+    log.error({ erro: resumirErroParaLog(erro), fonte: 'beszel' }, 'leitura do Beszel falhou')
     return { situacao: 'sem_resposta', lidaEm: null, maquinas: [] }
   }
 }
