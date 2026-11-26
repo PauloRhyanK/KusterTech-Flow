@@ -99,6 +99,35 @@ describe('demandaDoRelato', () => {
   })
 })
 
+describe('título e resumo do relato', () => {
+  test('sem título no fio, pula saudação e frase de abertura', () => {
+    const d = demandaDoRelato(
+      relato({
+        texto:
+          'Oi\n\nQuero acrescentar uma ideia\n\nVi que quando eu abro essa aba, ele me dá sugestões',
+      }),
+      'Sistema Alfa',
+    )
+    expect(d.titulo).toBe('Vi que quando eu abro essa aba, ele me dá sugestões')
+  })
+
+  test('com título e resumo no fio: título do relato; descrição começa pelo resumo e traz as palavras de quem pediu', () => {
+    const d = demandaDoRelato(
+      relato({
+        titulo: 'Sugestão de texto para conversa com o lead',
+        resumo: 'Ana Lima sugere que a aba ensine o que escrever ao lead.',
+        texto: 'Oi\n\nVi que a aba sugere ações.',
+      }),
+      'Sistema Alfa',
+    )
+    expect(d.titulo).toBe('Sugestão de texto para conversa com o lead')
+    expect(
+      d.descricao!.startsWith('Resumo: [pessoa] sugere que a aba ensine o que escrever ao lead.'),
+    ).toBe(true)
+    expect(d.descricao).toContain('Nas palavras de quem pediu:\nOi\n\nVi que a aba sugere ações.')
+  })
+})
+
 describe('relatosNovos e sinaisNovos', () => {
   test('tira o repetido na mesma página (o primeiro vale)', () => {
     expect(
