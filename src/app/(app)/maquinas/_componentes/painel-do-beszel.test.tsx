@@ -147,6 +147,17 @@ describe('PainelDoBeszel', () => {
     erro.mockRestore()
   })
 
+  it('no celular a tabela de contêineres mostra só nome, memória e estado', () => {
+    render(<PainelDoBeszel detalhe={detalhe()} agora={AGORA} link={null} />)
+    for (const coluna of ['CPU', 'Desde']) {
+      expect(screen.getByRole('columnheader', { name: coluna })).toHaveClass(
+        'hidden',
+        'sm:table-cell',
+      )
+    }
+    expect(screen.getByText('2,3%').closest('td')).toHaveClass('hidden', 'sm:table-cell')
+  })
+
   it('sem histórico ainda', () => {
     render(<PainelDoBeszel detalhe={detalhe({ historico: [] })} agora={AGORA} link={null} />)
     expect(screen.getByText('Sem histórico ainda.')).toBeInTheDocument()
