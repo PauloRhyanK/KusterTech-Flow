@@ -321,6 +321,7 @@ const ROTULO_DA_ORIGEM: Record<Origem, string> = {
   sessao: 'Sessão',
   fabrica: 'Fábrica',
   usuario: 'Usuário',
+  glitchtip: 'GlitchTip',
 }
 
 /** O resumo diz só o que existe: "texto", "2 anexos", "texto e 1 anexo". */

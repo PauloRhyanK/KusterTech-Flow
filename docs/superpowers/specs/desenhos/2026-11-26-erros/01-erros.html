@@ -1,0 +1,275 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>KusterTech Flow — Erros no ar (desenho 26/11)</title><style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11.5px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:720px}
+  .tela.cel.on{display:block;max-width:390px;min-height:0}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}.logo span{color:#72d9c3}
+  aside small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}aside a.on i{background:#72d9c3}
+  main{padding:26px 32px 36px;min-width:0}
+  .cel main{padding:16px}
+  h1{font-size:24px;margin:0 0 18px;letter-spacing:-.02em;font-weight:650}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .espera{background:#fbf3e8;border:1px solid #efdcc0;border-radius:var(--r);padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--text-secondary)}
+  .espera b{color:var(--atencao)}
+  /* quadro de erros */
+  .erros{margin-bottom:16px}
+  .cab{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .cab b{font-size:15px}
+  .cab .busca{margin-left:auto;font-size:12px;color:var(--text-tertiary)}
+  .cab .busca.x{color:var(--erro);font-weight:600}
+  .nums{display:flex;gap:6px}
+  .n{font-size:12px;border-radius:999px;padding:2px 10px;background:var(--surface-subtle);color:var(--text-secondary);border:1px solid transparent;cursor:pointer}
+  .n strong{font-weight:650}
+  .n.novo{background:#fbf0f0;color:var(--erro)} .n.cor{background:#f4f1fa;color:var(--execucao)} .n.volt{background:#fbf3e8;color:var(--atencao)}
+  .linha{display:flex;align-items:center;gap:14px;padding:11px 16px;border-top:1px solid var(--border)}
+  .linha:first-of-type{border-top:0}
+  .sev{width:10px;height:10px;border-radius:50%;flex:none}
+  .sev.fatal{background:var(--erro);box-shadow:0 0 0 3px #f4d6d6} .sev.error{background:var(--erro)}
+  .cresce{flex:1;min-width:0}
+  .tit{font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sub{font-size:12px;color:var(--text-tertiary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vol{width:150px;flex:none;font-size:12px;color:var(--text-secondary);text-align:right}
+  .vol b{color:var(--text-primary)}
+  .spark{display:flex;align-items:flex-end;gap:2px;height:20px;width:64px;flex:none}
+  .spark i{flex:1;background:var(--border-strong);border-radius:1px}
+  .spark.q i{background:#e6b0b0}
+  .est{width:170px;flex:none;font-size:12.5px;font-weight:600}
+  .est small{display:block;font-weight:400;color:var(--text-tertiary);font-size:11.5px}
+  .est.novo{color:var(--erro)} .est.cor{color:var(--execucao)} .est.vol2{color:var(--atencao)} .est.ok{color:var(--sucesso)} .est.esp{color:var(--neutro)}
+  .acoes{width:150px;white-space:nowrap;flex:none;display:flex;gap:10px;justify-content:flex-end;font-size:12.5px}
+  .acoes a{color:var(--text-link);text-decoration:none}
+  .rodape{padding:10px 16px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-link)}
+  .vazio{padding:18px 16px;color:var(--text-secondary);font-size:13px}
+  .escritorio{height:300px;border:2px dashed var(--border-strong);border-radius:var(--r);display:grid;place-items:center;color:var(--text-tertiary)}
+  .legenda{max-width:1280px;margin:0 auto 30px;font-size:12.5px;color:var(--text-secondary);padding:0 8px}
+  .legenda li{margin:3px 0}
+  /* celular */
+  .cel .cab{flex-wrap:wrap;gap:8px}
+  .cel .cab .busca{margin-left:0;width:100%}
+  .cel .linha{flex-wrap:wrap;gap:6px 10px;align-items:flex-start}
+  .cel .sev{margin-top:5px}
+  .cel .cresce{flex:1 1 calc(100% - 24px)}
+  .cel .tit{white-space:normal}
+  .cel .est,.cel .vol,.cel .acoes{width:auto;text-align:left;margin-left:20px}
+  .cel .acoes{margin-left:auto}
+  .cel .spark{display:none}
+</style></head><body>
+<div class="barra">
+  <b>Erros no ar · desenho</b>
+  <button class="on" data-t="t1">Com erros</button>
+  <button data-t="t2">Tudo em ordem</button>
+  <button data-t="t3">GlitchTip sem resposta</button>
+  <button data-t="t4">Celular</button>
+  <span class="nota">Nomes de projetos fictícios (o repositório é público)</span>
+</div>
+
+<!-- 1. com erros -->
+<section class="tela on" id="t1">
+  <aside>
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a><i></i>Demandas</a><a class="on"><i></i>Fábrica</a><a><i></i>Decidir</a>
+    <small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a>
+  </aside>
+  <main>
+    <h1>Fábrica</h1>
+    <div class="espera"><b>Espera você:</b> 1 desenho para aprovar · portal-pedidos</div>
+
+    <div class="cartao erros">
+      <div class="cab">
+        <b>Erros no ar</b>
+        <div class="nums">
+          <span class="n novo"><strong>1</strong> novo</span>
+          <span class="n cor"><strong>2</strong> em correção</span>
+          <span class="n volt"><strong>1</strong> voltou</span>
+          <span class="n"><strong>1</strong> na espera</span>
+        </div>
+        <span class="busca">GlitchTip lido há 2 min</span>
+      </div>
+
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce">
+          <div class="tit">TypeError: Cannot read properties of undefined (reading 'itens')</div>
+          <div class="sub">app-vendas · <span class="mono">pedidos/fechar.ts in calcularTotal</span></div>
+        </div>
+        <div class="spark q"><i style="height:20%"></i><i style="height:35%"></i><i style="height:30%"></i><i style="height:60%"></i><i style="height:100%"></i></div>
+        <div class="vol"><b>48</b> eventos · <b>9</b> usuários<br>último há 1 min</div>
+        <div class="est vol2">Voltou<small>corrigido em 20/11 · nova demanda</small></div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">Detalhes ↗</a></div>
+      </div>
+
+      <div class="linha">
+        <i class="sev fatal"></i>
+        <div class="cresce">
+          <div class="tit">PrismaClientKnownRequestError: Unique constraint failed on (email)</div>
+          <div class="sub">portal-pedidos · <span class="mono">api/cadastro POST</span></div>
+        </div>
+        <div class="spark q"><i style="height:0"></i><i style="height:0"></i><i style="height:0"></i><i style="height:0"></i><i style="height:40%"></i></div>
+        <div class="vol"><b>3</b> eventos · <b>2</b> usuários<br>primeiro há 6 min</div>
+        <div class="est novo">Novo<small>demanda aberta, triagem</small></div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">Detalhes ↗</a></div>
+      </div>
+
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce">
+          <div class="tit">Timeout ao chamar o conector de mensagens</div>
+          <div class="sub">conector-msg · <span class="mono">filas/enviar in tentarDeNovo</span></div>
+        </div>
+        <div class="spark"><i style="height:70%"></i><i style="height:50%"></i><i style="height:40%"></i><i style="height:20%"></i><i style="height:10%"></i></div>
+        <div class="vol"><b>212</b> eventos · <b>31</b> usuários<br>último há 40 min</div>
+        <div class="est cor">Em correção<small>desenvolvida · PR #88</small></div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">Detalhes ↗</a></div>
+      </div>
+
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce">
+          <div class="tit">ValueError: data de vencimento inválida</div>
+          <div class="sub">app-vendas · <span class="mono">boletos/gerar.py in montar</span></div>
+        </div>
+        <div class="spark"><i style="height:30%"></i><i style="height:30%"></i><i style="height:20%"></i><i style="height:20%"></i><i style="height:10%"></i></div>
+        <div class="vol"><b>14</b> eventos · <b>4</b> usuários<br>último há 3 h</div>
+        <div class="est cor">Em correção<small>planejada</small></div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">Detalhes ↗</a></div>
+      </div>
+
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce">
+          <div class="tit">KeyError: 'telefone'</div>
+          <div class="sub">conector-msg · <span class="mono">contatos/importar.py</span></div>
+        </div>
+        <div class="spark q"><i style="height:0"></i><i style="height:0"></i><i style="height:10%"></i><i style="height:30%"></i><i style="height:30%"></i></div>
+        <div class="vol"><b>6</b> eventos · <b>1</b> usuário<br>último há 12 min</div>
+        <div class="est esp">Na espera<small>teto de 5 por hora · entra 15h</small></div>
+        <div class="acoes"><a href="#">Detalhes ↗</a></div>
+      </div>
+
+      <div class="rodape">Ver os 7 corrigidos nos últimos 7 dias</div>
+    </div>
+
+    <div class="escritorio">o escritório da Fábrica continua aqui, sem mudança</div>
+  </main>
+</section>
+
+<!-- 2. tudo em ordem -->
+<section class="tela" id="t2">
+  <aside>
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a><i></i>Demandas</a><a class="on"><i></i>Fábrica</a><a><i></i>Decidir</a>
+  </aside>
+  <main>
+    <h1>Fábrica</h1>
+    <div class="cartao erros">
+      <div class="cab"><b>Erros no ar</b><span class="busca">GlitchTip lido há 2 min</span></div>
+      <div class="vazio">Nenhum erro aberto nos 4 projetos lidos. <a href="#" style="color:var(--text-link)">3 corrigidos nos últimos 7 dias</a></div>
+    </div>
+    <div class="escritorio">o escritório da Fábrica</div>
+  </main>
+</section>
+
+<!-- 3. sem resposta -->
+<section class="tela" id="t3">
+  <aside>
+    <div class="logo">Kuster<span>Tech</span> Flow</div>
+    <small>Trabalho</small>
+    <a><i></i>Início</a><a><i></i>Demandas</a><a class="on"><i></i>Fábrica</a><a><i></i>Decidir</a>
+  </aside>
+  <main>
+    <h1>Fábrica</h1>
+    <div class="espera"><b>Espera você:</b> o GlitchTip não responde há 45 min (token recusado)</div>
+    <div class="cartao erros">
+      <div class="cab">
+        <b>Erros no ar</b>
+        <div class="nums"><span class="n cor"><strong>2</strong> em correção</span></div>
+        <span class="busca x">sem leitura há 45 min · token recusado</span>
+      </div>
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce"><div class="tit">Timeout ao chamar o conector de mensagens</div><div class="sub">conector-msg</div></div>
+        <div class="vol"><b>212</b> eventos<br>até a última leitura</div>
+        <div class="est cor">Em correção<small>desenvolvida · PR #88</small></div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">Detalhes ↗</a></div>
+      </div>
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce"><div class="tit">ValueError: data de vencimento inválida</div><div class="sub">app-vendas</div></div>
+        <div class="vol"><b>14</b> eventos<br>até a última leitura</div>
+        <div class="est cor">Em correção<small>planejada</small></div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">Detalhes ↗</a></div>
+      </div>
+    </div>
+    <div class="escritorio">o escritório da Fábrica</div>
+  </main>
+</section>
+
+<!-- 4. celular -->
+<section class="tela cel" id="t4">
+  <main>
+    <h1>Fábrica</h1>
+    <div class="cartao erros">
+      <div class="cab">
+        <b>Erros no ar</b>
+        <div class="nums"><span class="n novo"><strong>1</strong> novo</span><span class="n cor"><strong>2</strong></span><span class="n volt"><strong>1</strong></span></div>
+        <span class="busca">GlitchTip lido há 2 min</span>
+      </div>
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce"><div class="tit">TypeError: Cannot read properties of undefined (reading 'itens')</div><div class="sub">app-vendas</div></div>
+        <div class="est vol2">Voltou</div>
+        <div class="vol"><b>48</b> ev · há 1 min</div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">↗</a></div>
+      </div>
+      <div class="linha">
+        <i class="sev fatal"></i>
+        <div class="cresce"><div class="tit">PrismaClientKnownRequestError: Unique constraint failed</div><div class="sub">portal-pedidos</div></div>
+        <div class="est novo">Novo</div>
+        <div class="vol"><b>3</b> ev · há 6 min</div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">↗</a></div>
+      </div>
+      <div class="linha">
+        <i class="sev error"></i>
+        <div class="cresce"><div class="tit">Timeout ao chamar o conector de mensagens</div><div class="sub">conector-msg</div></div>
+        <div class="est cor">Em correção</div>
+        <div class="vol"><b>212</b> ev · há 40 min</div>
+        <div class="acoes"><a href="#">Demanda</a><a href="#">↗</a></div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<ul class="legenda">
+  <li><b>Ordem:</b> voltou, novo, em correção, na espera; dentro de cada um, o mais recente primeiro. Mostra até 8; o resto fica em "Ver todos".</li>
+  <li><b>Sumiço:</b> o erro sai do quadro quando a demanda dele chega ao ar e fica 24 h sem evento novo, ou quando alguém o resolve no GlitchTip. Ele vai para "corrigidos nos últimos 7 dias".</li>
+  <li><b>Barrinhas:</b> eventos nas últimas 5 horas (vermelhas quando estão subindo). "Detalhes ↗" abre a issue no GlitchTip.</li>
+  <li><b>Sem verde falso:</b> sem leitura há mais de 30 min, o quadro diz isso em vermelho e vira item em "Espera você".</li>
+</ul>
+
+<script>
+  document.querySelectorAll('.barra button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.barra button').forEach(x=>x.classList.toggle('on',x===b));
+    document.querySelectorAll('.tela').forEach(t=>t.classList.toggle('on',t.id===b.dataset.t));
+  });
+</script>
+</body></html>

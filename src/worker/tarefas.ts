@@ -10,6 +10,7 @@ import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
 import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/modules/decidir/worker'
 import { limparArquivosDeDemandas, marcarPartesSemPublicacao } from '@/modules/demandas/worker'
+import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
@@ -19,6 +20,7 @@ import { detectarDivergencias } from '@/modules/publicacao/divergencias'
 const INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS = 60 * 60_000
 const INTERVALO_DA_MARCACAO_DE_PARTES_MS = 10 * 60_000
 const INTERVALO_DO_ARQUIVAMENTO_MS = 5 * 60_000
+const INTERVALO_DA_LEITURA_DO_GLITCHTIP_MS = 2 * 60_000
 
 export interface TarefaDoWorker {
   nome: string
@@ -37,6 +39,7 @@ export function criarTarefasDoCiclo(d: {
   let ultimaMarcacaoDePartes: number | null = null
   let ultimoArquivamento: number | null = null
   let ultimaLimpezaDeConversas: number | null = null
+  let ultimaLeituraDoGlitchTip: number | null = null
   const tarefas: readonly TarefaDoWorker[] = [
     {
       nome: 'processar-eventos-de-webhook',
@@ -211,6 +214,27 @@ export function criarTarefasDoCiclo(d: {
           log.info(
             { tarefa: 'decidir:arquivar', encerradas, parciais },
             'conversas do Decidir arquivadas',
+          )
+        }
+      },
+    },
+    {
+      nome: 'buscar-erros-do-glitchtip',
+      modulo: 'erros',
+      async executar(agora) {
+        if (
+          ultimaLeituraDoGlitchTip !== null &&
+          agora.getTime() - ultimaLeituraDoGlitchTip < INTERVALO_DA_LEITURA_DO_GLITCHTIP_MS
+        ) {
+          return
+        }
+        ultimaLeituraDoGlitchTip = agora.getTime()
+        const resumo = await buscarErrosDoGlitchTip(agora)
+        const { projetos, ...contagens } = resumo
+        if (Object.values(contagens).some((n) => n > 0)) {
+          log.info(
+            { tarefa: 'buscar-erros-do-glitchtip', projetos, ...contagens },
+            'erros do GlitchTip lidos',
           )
         }
       },

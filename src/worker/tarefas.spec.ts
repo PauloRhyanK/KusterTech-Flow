@@ -7,6 +7,18 @@ vi.mock('@/modules/demandas/worker', () => ({
   marcarPartesSemPublicacao: vi.fn(async () => 0),
 }))
 
+vi.mock('@/modules/erros/service', () => ({
+  buscarErrosDoGlitchTip: vi.fn(async () => ({
+    projetos: 0,
+    abertas: 0,
+    voltaram: 0,
+    naEspera: 0,
+    atualizados: 0,
+    resolvidos: 0,
+    falhas: 0,
+  })),
+}))
+
 vi.mock('@/modules/decidir/worker', () => ({
   arquivarConversasResolvidas: vi.fn(async () => 0),
   limparParciaisDeConversas: vi.fn(async () => 0),
@@ -15,12 +27,13 @@ vi.mock('@/modules/decidir/worker', () => ({
 import { log } from '@/lib/log'
 import { resolverModulosAtivos } from '@/lib/modulos'
 import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
+import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
 import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem sete tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem oito tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -32,6 +45,7 @@ describe('tarefas do worker', () => {
       'limpar-arquivos-de-demandas',
       'marcar-partes-sem-publicacao',
       'decidir:arquivar',
+      'buscar-erros-do-glitchtip',
     ])
   })
 
@@ -79,6 +93,28 @@ describe('tarefas do worker', () => {
     ])
   })
 
+  test('buscar-erros-do-glitchtip é do módulo erros e roda no máximo a cada 2 minutos', async () => {
+    const buscar = vi.mocked(buscarErrosDoGlitchTip)
+    buscar.mockClear()
+    const semErros = new Set(resolverModulosAtivos(undefined))
+    semErros.delete('erros')
+    expect(criarTarefasDoCiclo({ ...fonte, ativos: semErros }).map((t) => t.nome)).not.toContain(
+      'buscar-erros-do-glitchtip',
+    )
+    const tarefa = criarTarefasDoCiclo({
+      ...fonte,
+      ativos: resolverModulosAtivos(undefined),
+    }).find((t) => t.nome === 'buscar-erros-do-glitchtip')!
+    expect(tarefa.modulo).toBe('erros')
+    const t0 = new Date('2026-11-26T12:00:00.000Z')
+    const em = (ms: number) => new Date(t0.getTime() + ms)
+    await tarefa.executar(t0)
+    await tarefa.executar(em(60_000))
+    await tarefa.executar(em(119_000))
+    await tarefa.executar(em(120_000))
+    expect(buscar.mock.calls.map(([agora]) => agora)).toEqual([t0, em(120_000)])
+  })
+
   test('a tarefa processar-fila-de-publicacao some quando fila-de-publicacao não está ativo', () => {
     const semFila = new Set(resolverModulosAtivos(undefined))
     semFila.delete('fila-de-publicacao')
@@ -90,7 +126,7 @@ describe('tarefas do worker', () => {
     )
   })
 
-  test('com todos os módulos ligados o ciclo tem as catorze tarefas na ordem original', () => {
+  test('com todos os módulos ligados o ciclo tem as quinze tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
@@ -107,6 +143,7 @@ describe('tarefas do worker', () => {
       'limpar-arquivos-de-demandas',
       'marcar-partes-sem-publicacao',
       'decidir:arquivar',
+      'buscar-erros-do-glitchtip',
     ])
   })
 

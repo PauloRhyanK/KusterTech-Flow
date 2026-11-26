@@ -5,6 +5,9 @@ import { autorizar } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { Abas } from '@/lib/ui/abas'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
+import { moduloAtivo } from '@/lib/modulos'
+import { rotuloDaAba } from '@/modules/erros/apresentacao'
+import { obterQuadroDeErros } from '@/modules/erros/queries'
 import { obterRetratoMaisRecente } from '@/modules/fabrica/queries'
 
 export const metadata: Metadata = {
@@ -18,7 +21,13 @@ export default async function LayoutDaFabrica({ children }: { children: ReactNod
   }
 
   const permitido = autorizar(sessao.sujeito, 'desenvolvimento.ler')
-  const retrato = permitido ? await obterRetratoMaisRecente(sessao.sujeito) : null
+  const comErros = moduloAtivo('erros')
+  const [retrato, erros] = permitido
+    ? await Promise.all([
+        obterRetratoMaisRecente(sessao.sujeito),
+        comErros ? obterQuadroDeErros(sessao.sujeito, new Date()) : null,
+      ])
+    : [null, null]
 
   return (
     <div className="space-y-6">
@@ -37,6 +46,15 @@ export default async function LayoutDaFabrica({ children }: { children: ReactNod
             disponivel: true,
             contador: retrato?.retrato.avisos.length,
           },
+          ...(comErros
+            ? [
+                {
+                  ...(erros ? rotuloDaAba(erros) : { rotulo: 'Erros' }),
+                  href: '/fabrica/erros',
+                  disponivel: true,
+                },
+              ]
+            : []),
         ]}
       />
       {children}

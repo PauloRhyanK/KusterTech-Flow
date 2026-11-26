@@ -850,6 +850,7 @@ const QUEM_ABRIU: Record<Origem, string> = {
   sessao: 'uma sessão',
   fabrica: 'a Fábrica',
   usuario: 'um usuário',
+  glitchtip: 'o GlitchTip',
 }
 
 export function chipDeAbertura(origem: Origem, criadaEm: Date, agora: Date): string {
@@ -899,6 +900,7 @@ const QUEM_FEZ: Record<string, string> = {
   sessao: 'uma sessão',
   flow: 'você',
   usuario: 'um usuário',
+  glitchtip: 'o GlitchTip',
 }
 
 const LIMITE_DA_RESPOSTA_NO_HISTORICO = 120
