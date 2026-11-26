@@ -250,7 +250,7 @@ Fora do PR. Só depois do merge e com o Paulo presente, porque exige o login da 
 - [ ] **Step 2:** Criar o usuário `agentops2`, instalar o mesmo `@os-eco/warren-cli` 0.19.3 e o `claude`, e rodar `preparar_warren.py` nele. Conferir com `warren up --help` como fixar a porta e anotar em `docs/infra/oficina.md`.
 - [ ] **Step 3:** O Paulo faz o login da segunda conta no assistente do `warren up` desse usuário.
 - [ ] **Step 4:** Criar `warren-reserva.service` copiando `warren.service` com `User=agentops2`; `systemctl enable --now`.
-- [ ] **Step 5:** Registrar nessa instância os projetos da fila (`POST /projects {gitUrl}`) e gravar `~/fabrica/contas.json` com `claude-principal` e `claude-reserva`; apontar `FABRICA_CONTAS_FILE` em `~/fabrica/despachante.env`.
+- [ ] **Step 5:** Registrar nessa instância os projetos da fila (`POST /projects {gitUrl}`) e gravar `~/fabrica/contas.json` com `claude-principal` e `claude-reserva` (o coordenador repassa o caminho aos despachantes pelo `plano.env`).
 - [ ] **Step 6:** Instalar o kit (`instalar_maquina.py --branch main`) e `systemctl --user restart fabrica-fila`.
 - [ ] **Step 7:** Prova: marcar `claude-code|claude-principal` como esgotado por 10 minutos no arquivo de esgotados, despachar uma raia de teste e conferir no painel que ela rodou em "Claude · reserva" com o selo de troca. Remover a marcação.
 
