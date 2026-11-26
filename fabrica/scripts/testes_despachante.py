@@ -7336,6 +7336,55 @@ class TestesDoArbitroTecnico(Base):
         self.assertTrue(any("árbitro" in a and PR_ARB in a for a in self.estado()["avisos"]), self.estado()["avisos"])
         self.assertEqual([u for u, _ in self.forja.fechados], [PR_ORQ])  # o PR da pergunta foi substituído
 
+    def test_arbitragem_mergeada_fica_registrada_no_estado_para_o_retrato(self):
+        d = self.perguntar()
+        d.ciclo()
+        rid = self.orquestrador()["runId"]
+        nota = ".fabrica/planejamento/lead/arbitragens.md"
+        self.pr_do_orquestrador(
+            rid, [".fabrica/plano.json", nota], plano(raia("a", plano_seeds="pl-00aa")), head=H2, url=PR_ARB
+        )
+        self.forja.definir_arquivo(
+            REPO,
+            H2,
+            nota,
+            "## 2026-11-20 — Antiga\n\n**O que travou:** x\n\n"
+            "## 2026-11-26 — Teste cobrava a ordem das chaves\n\n"
+            "**O que travou:** um teste exigia uma ordem que a linguagem não garante.\n"
+            "**O que decidi:** o teste confere o conteúdo, não a ordem.\n"
+            "**Por quê:** o contrato não fala de ordem.\n"
+            "**O que muda para o produto:** nada. Token %s.\n" % TOKEN,
+        )
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ARB, H2)])
+        (registro,) = self.estado()["arbitragens"]
+        self.assertRegex(registro.pop("em"), r"^2026-11-0[34]T\d{2}:00:00Z$")  # UTC, qualquer que seja o fuso da máquina
+        self.assertEqual(
+            registro,
+            {
+                "pr": PR_ARB,
+                "assunto": "Teste cobrava a ordem das chaves",
+                "travou": "um teste exigia uma ordem que a linguagem não garante.",
+                "decidido": "o teste confere o conteúdo, não a ordem.",
+                "muda": "nada. Token ***.",
+            },
+        )
+        d.ciclo()
+        self.assertEqual(len(self.estado()["arbitragens"]), 1)  # o mesmo PR não registra duas vezes
+
+    def test_arbitragem_sem_nota_legivel_mergeia_e_nao_registra(self):
+        d = self.perguntar()
+        d.ciclo()
+        rid = self.orquestrador()["runId"]
+        self.pr_do_orquestrador(
+            rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")), head=H2, url=PR_ARB
+        )
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ARB, H2)])
+        self.assertEqual(self.estado().get("arbitragens", []), [])
+
     def test_pergunta_do_arbitro_vai_ao_paulo_com_titulo_que_diz_o_assunto(self):
         d = self.perguntar()
         d.ciclo()

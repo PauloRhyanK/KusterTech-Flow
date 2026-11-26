@@ -246,6 +246,47 @@ class TestesMontar(unittest.TestCase):
                 )
                 self.assertEqual(gerado, hoje)
 
+    def test_arbitragens_dos_planos_vao_no_retrato_so_quando_existem(self):
+        self.assertNotIn("arbitragens", montar(fila=[entrada(ID_A)], planos={ID_A: {"estado": estado_json({}), "plano": plano_json()}}))
+        boa = {
+            "em": "2026-11-03T21:00:00Z",
+            "pr": "https://github.com/dono/cliente/pull/95",
+            "assunto": "Teste cobrava a ordem das chaves",
+            "travou": "um teste exigia uma ordem que a linguagem não garante.",
+            "decidido": "o teste confere o conteúdo.",
+            "muda": "nada.",
+        }
+        tortas = [None, {"em": "ontem", "assunto": "x"}, {"em": "2026-11-03T21:00:00Z"}, dict(boa, pr="http://fora/1", em="2026-11-03T20:00:00Z")]
+        estado = estado_json({}, arbitragens=[boa] + tortas)
+        gerado = montar(fila=[entrada(ID_A)], planos={ID_A: {"estado": estado, "plano": plano_json()}})
+        self.assertEqual(
+            gerado["arbitragens"],
+            [
+                {
+                    "em": "2026-11-03T21:00:00Z",
+                    "repo": "dono/cliente",
+                    "feature": "Login",
+                    "assunto": "Teste cobrava a ordem das chaves",
+                    "travou": "um teste exigia uma ordem que a linguagem não garante.",
+                    "decidido": "o teste confere o conteúdo.",
+                    "muda": "nada.",
+                    "prUrl": "https://github.com/dono/cliente/pull/95",
+                },
+                {
+                    "em": "2026-11-03T20:00:00Z",
+                    "repo": "dono/cliente",
+                    "feature": "Login",
+                    "assunto": "Teste cobrava a ordem das chaves",
+                    "travou": "um teste exigia uma ordem que a linguagem não garante.",
+                    "decidido": "o teste confere o conteúdo.",
+                    "muda": "nada.",
+                    "prUrl": None,
+                },
+            ],
+        )
+        muitas = estado_json({}, arbitragens=[dict(boa, assunto="a%d" % i) for i in range(30)])
+        self.assertEqual(len(montar(fila=[entrada(ID_A)], planos={ID_A: {"estado": muitas, "plano": plano_json()}})["arbitragens"]), 20)
+
     def test_montar_com_consertos_acrescenta_o_campo_limpo_e_no_maximo_20(self):
         id_ = "0b6f3c2e-6a1d-4c8e-9f00-1a2b3c4d5e6f"
         item = {"id": id_, "estado": "desistiu", "runId": "run-1", "prUrl": "https://exemplo.com/pr", "motivo": "falhou em /home/x/y " + "m" * 400, "em": "torto"}

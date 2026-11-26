@@ -283,6 +283,35 @@ def _plano(entrada: dict, lidos: dict, agora: str, versao: int = 1) -> dict:
     return resultado
 
 
+LIMITE_ARBITRAGENS = 20
+
+
+def _arbitragens(entradas: list, planos: dict) -> list:
+    """O que o árbitro técnico resolveu sem o Paulo, de todos os planos da fila, da mais nova para a mais antiga."""
+    achadas = []
+    for entrada in entradas:
+        estado = _dict(_dict(planos.get(entrada["id"])).get("estado"))
+        for item in _lista(estado.get("arbitragens")):
+            item = _dict(item)
+            em, assunto = _instante(item.get("em")), _texto(item.get("assunto"), LIMITES["textoLongo"])
+            if em is None or assunto is None:
+                continue
+            achadas.append(
+                {
+                    "em": em,
+                    "repo": _texto(entrada.get("repo"), LIMITES["texto"]) or "desconhecido",
+                    "feature": _texto(entrada.get("feature"), LIMITES["texto"]) or entrada["id"],
+                    "assunto": assunto,
+                    "travou": _texto(item.get("travou"), LIMITES["textoLongo"]),
+                    "decidido": _texto(item.get("decidido"), LIMITES["textoLongo"]),
+                    "muda": _texto(item.get("muda"), LIMITES["textoLongo"]),
+                    "prUrl": item["pr"] if url_do_github(item.get("pr")) else None,
+                }
+            )
+    achadas.sort(key=lambda a: a["em"], reverse=True)
+    return achadas[:LIMITE_ARBITRAGENS]
+
+
 def _conserto(item, agora: str):
     item = _dict(item)
     id_ = item.get("id")
@@ -368,6 +397,9 @@ def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem
         "planos": [_plano(e, _dict(_dict(planos).get(e["id"])), agora, versao) for e in entradas],
         "avisos": avisos[-LIMITES["avisos"] :],
     }
+    arbitragens = _arbitragens(entradas, _dict(planos))
+    if arbitragens:
+        resultado["arbitragens"] = arbitragens
     limpos = [c for c in (_conserto(item, agora) for item in _lista(consertos)) if c is not None]
     if limpos:
         resultado["consertos"] = limpos[:LIMITE_CONSERTOS]

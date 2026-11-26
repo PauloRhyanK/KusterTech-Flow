@@ -509,6 +509,29 @@ def _titulo_da_pergunta(conteudo) -> str:
     return TITULO_DA_PERGUNTA
 
 
+PADRAO_DA_NOTA_DE_ARBITRAGEM = ".fabrica/planejamento/*/arbitragens.md"
+LIMITE_ARBITRAGENS = 20
+_CAMPOS_DA_ARBITRAGEM = (("travou", "O que travou"), ("decidido", "O que decidi"), ("muda", "O que muda para o produto"))
+
+
+def ultima_arbitragem(texto):
+    """A última entrada de `arbitragens.md` (`## <data> — <assunto>` e os campos em negrito), ou `None`."""
+    if not _texto(texto):
+        return None
+    entradas = re.split(r"(?m)^##[ \t]+", texto)[1:]
+    if not entradas:
+        return None
+    titulo, _, corpo = entradas[-1].partition("\n")
+    assunto = re.sub(r"^\d{4}-\d{2}-\d{2}\s*[—–-]\s*", "", titulo.strip()).strip()
+    if not assunto:
+        return None
+    registro = {"assunto": _cortar(assunto, 300)}
+    for chave, rotulo in _CAMPOS_DA_ARBITRAGEM:
+        achado = re.search(r"(?m)^\*\*%s:\*\*[ \t]*(.+)$" % re.escape(rotulo), corpo)
+        registro[chave] = _cortar(achado.group(1).strip(), 300) if achado else None
+    return registro
+
+
 def _acordada_do_arbitro(acordada) -> bool:
     """A acordada é do árbitro: a arbitragem, ou o `plano_invalido` que conclui uma arbitragem sem PR válido."""
     for _ in range(8):  # o `plano_invalido` guarda a acordada anterior dentro do contexto
@@ -2636,6 +2659,7 @@ class Despachante:
             ):
                 # o Paulo não foi chamado: fica o registro do que a Fábrica decidiu sozinha
                 self._aviso("o árbitro técnico resolveu uma pergunta do orquestrador sem chamar o Paulo: %s" % pr_url)
+                self._registrar_arbitragem(pr_url, head, arquivos)
             return resultado
         if decisao == "replanejar":
             self._fechar_depois(
@@ -2915,6 +2939,26 @@ class Despachante:
         )
         self._acompanhar_pr(pr_url)
         return self._abrir_decisao_rastreada("; ".join(motivos), pr_url, titulo, corpo, tipo="orquestrador")
+
+    def _registrar_arbitragem(self, pr_url: str, head: str, arquivos: list) -> None:
+        """O que o árbitro decidiu sozinho, para o retrato levar ao Flow ("Resolvido sem você"). Nunca impede o merge."""
+        registros = self.estado.get("arbitragens")
+        if not isinstance(registros, list):
+            registros = self.estado["arbitragens"] = []
+        if any(_dict(r).get("pr") == pr_url for r in registros):
+            return
+        nota = next((a for a in arquivos if _texto(a) and globs.casa_glob(a, PADRAO_DA_NOTA_DE_ARBITRAGEM)), None)
+        try:
+            registro = ultima_arbitragem(self.forja.arquivo(self.repo, head, nota)) if nota else None
+        except Exception as exc:  # noqa: BLE001 - a nota é só para o aviso; o merge já aconteceu
+            self._erro_de_etapa("registrar_arbitragem", pr_url, exc)
+            return
+        if registro is None:
+            return
+        registro = {"em": self._agora_utc(), "pr": pr_url, **{k: self._limitar(v) for k, v in registro.items()}}
+        registros.append(registro)
+        del registros[:-LIMITE_ARBITRAGENS]
+        self._salvar()
 
     def _arbitrar(self, pr_url: str, pergunta: str) -> None:
         """A pergunta do orquestrador vai primeiro ao árbitro técnico; o PR dela fica acompanhado até ser substituído."""
