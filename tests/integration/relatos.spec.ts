@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
@@ -8,7 +11,12 @@ import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
 import { sincronizarCatalogo } from '@/modules/github/reconciliacao'
 import { enfileirarAutomaticos, enviarPendentes } from '@/modules/relatos/andamento'
 import { buscarSistema, buscarTodos } from '@/modules/relatos/busca'
-import type { buscarPagina, enviarAndamento, PaginaBuscada } from '@/modules/relatos/cliente'
+import type {
+  baixarAnexo,
+  buscarPagina,
+  enviarAndamento,
+  PaginaBuscada,
+} from '@/modules/relatos/cliente'
 import { lerPagina } from '@/modules/relatos/contrato'
 import { ID_A, ID_B, relatoDeExemplo } from '@/modules/relatos/exemplos'
 import {
@@ -437,5 +445,73 @@ describe('tela', () => {
     })
     expect(JSON.stringify(t)).not.toContain('tokenCifrado')
     await expect(obterSistemasConectados(testador(), agora)).rejects.toThrow(ErroDeAutorizacao)
+  })
+})
+
+describe('anexos do relato', () => {
+  let dir: string
+  let dirAntes: string | undefined
+  beforeAll(async () => {
+    dirAntes = process.env.FLOW_ARQUIVOS_DIR
+    dir = await mkdtemp(join(tmpdir(), 'flow-relatos-anexos-'))
+    process.env.FLOW_ARQUIVOS_DIR = dir
+  })
+  afterAll(async () => {
+    if (dirAntes === undefined) delete process.env.FLOW_ARQUIVOS_DIR
+    else process.env.FLOW_ARQUIVOS_DIR = dirAntes
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const comAnexos = () =>
+    relatoDeExemplo({
+      anexos: [
+        { tipo: 'imagem', url: 'https://alfa.exemplo.com/v1/relatos/anexos/p1', bytes: 3 },
+        { tipo: 'imagem', url: 'https://alfa.exemplo.com/v1/relatos/anexos/p2', bytes: 3 },
+      ],
+    })
+
+  test('o print do relato é copiado para a demanda; o que não baixa fica de fora sem travar a busca', async () => {
+    const { id } = await criarSistema(admin, dados())
+    const { buscar } = sistemaFalso([{ relatos: [comAnexos()], cursor: '1' }])
+    const pedidos: string[] = []
+    const baixar: typeof baixarAnexo = async (alvo, url) => {
+      expect(alvo.token).toBe(TOKEN)
+      pedidos.push(url)
+      return url.endsWith('/p1')
+        ? { ok: true, conteudo: 'image/png', bytes: Buffer.from([137, 80, 78]) }
+        : { ok: false, motivo: 'O sistema respondeu 404.' }
+    }
+    const r = await buscarSistema(id, agora, { buscar, chave, baixar })
+    expect(r).toMatchObject({ novos: 1, falha: null })
+    expect(pedidos).toEqual([
+      'https://alfa.exemplo.com/v1/relatos/anexos/p1',
+      'https://alfa.exemplo.com/v1/relatos/anexos/p2',
+    ])
+    const demanda = await db.demanda.findFirstOrThrow({ include: { arquivos: true } })
+    expect(demanda.arquivos).toHaveLength(1)
+    expect(demanda.arquivos[0]).toMatchObject({
+      tipo: 'ANEXO',
+      nome: 'print-1-do-relato',
+      conteudo: 'image/png',
+      tamanho: 3,
+      enviadoPor: 'flow',
+    })
+  })
+
+  test('relato repetido não baixa de novo', async () => {
+    const { id } = await criarSistema(admin, dados())
+    const { buscar } = sistemaFalso([
+      { relatos: [comAnexos()], cursor: '1' },
+      { relatos: [comAnexos()], cursor: '2' },
+    ])
+    let chamadas = 0
+    const baixar: typeof baixarAnexo = async () => {
+      chamadas++
+      return { ok: true, conteudo: 'image/png', bytes: Buffer.from([1]) }
+    }
+    await buscarSistema(id, agora, { buscar, chave, baixar })
+    await buscarSistema(id, new Date(agora.getTime() + MIN), { buscar, chave, baixar })
+    expect(chamadas).toBe(2)
+    expect(await db.arquivoDaDemanda.count()).toBe(2)
   })
 })
