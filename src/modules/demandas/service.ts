@@ -20,7 +20,7 @@ import {
 } from './arquivos'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
 import { aplicarEventoDeParte, conferirPartesDaEtapa, criarParteDeEntrada } from './partes-service'
-import { aplicarEfeitoCruzado, demandasATravar } from './cruzada-service'
+import { RecusaDoEfeito, aplicarEfeitoCruzado, demandasATravar } from './cruzada-service'
 import { fecharDemandaSeNoAr } from './partes-no-ar'
 import { DESTINOS, NIVEIS, TIPOS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
@@ -559,6 +559,7 @@ export async function registrarEvento(e: RegistroDeEvento): Promise<ResultadoDoR
   } catch (erro) {
     // O mesmo idExterno gravado ao mesmo tempo em outra demanda: o índice único decide.
     if (ehUnicoRepetido(erro)) return { resultado: 'conflito' }
+    if (erro instanceof RecusaDoEfeito) return { resultado: 'recusado', motivo: erro.message }
     throw erro
   }
 }

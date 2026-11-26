@@ -215,6 +215,7 @@ function processarIssue(
 ): Promise<Resultado> {
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
     await travarErros(tx)
+    await travarLinhaDoErro(tx, issue.id)
     const atual = await tx.erroDoGlitchTip.findUnique({
       where: { issueId: issue.id },
       select: {
@@ -446,6 +447,7 @@ export async function virarDemanda(
   exigirPermissao(sujeito, 'projetos.gerenciar')
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
     await travarErros(tx)
+    await travarLinhaDoErro(tx, issueId)
     const erro = await tx.erroDoGlitchTip.findUnique({
       where: { issueId },
       include: {
@@ -505,6 +507,14 @@ async function ligarFonte(slug: string, agora: Date): Promise<Date> {
 
 async function travarErros(tx: Prisma.TransactionClient): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('erros-glitchtip'))`
+}
+
+/**
+ * A linha do erro, travada depois da trava dos erros: o `ligar_erros` da triagem só trava a linha,
+ * então a decisão espera o commit dele e lê o `demandaId` já gravado.
+ */
+async function travarLinhaDoErro(tx: Prisma.TransactionClient, issueId: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "ErroDoGlitchTip" WHERE "issueId" = ${issueId} FOR UPDATE`
 }
 
 async function travarProjeto(tx: Prisma.TransactionClient, slug: string): Promise<void> {

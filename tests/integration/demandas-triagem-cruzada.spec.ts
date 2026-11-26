@@ -3,6 +3,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { receberEventoDaFabrica } from '@/modules/demandas/recepcao-fabrica'
+import type { Buscar } from '@/modules/erros/cliente'
+import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
 import { abrirDemanda } from '@/modules/demandas/service'
 import { criarFonteDaFabrica } from '@/modules/fabrica/service'
 import { enfileirarAutomaticos } from '@/modules/relatos/andamento'
@@ -321,6 +323,63 @@ describe('ligar_erros', () => {
   })
 })
 
+describe('ligar_erros e a leitura do GlitchTip', () => {
+  test('a leitura depois do ligar_erros mantém a ligação, não abre demanda nem põe na espera', async () => {
+    const repo = await db.repositorioGitHub.update({
+      where: { id: repositorioId },
+      data: { vinculadoEm: AGORA },
+    })
+    await db.leituraDoGlitchTip.create({
+      data: { projetoGlitchTip: 'app', ligadaEm: new Date(AGORA.getTime() - 30 * 86_400_000) },
+    })
+    const d = await novaDemanda('D')
+    const erroId = await novoErro(null)
+    const erro = await db.erroDoGlitchTip.findUniqueOrThrow({ where: { id: erroId } })
+    const ligar = evento('ligar_erros', { erros: [erroId], motivo: 'mesmo erro' })
+    expect((await pedirEvento(d, ligar)).status).toBe(201)
+    const demandasAntes = await db.demanda.count()
+
+    const base = 'https://glitchtip.exemplo.com'
+    const lista = `${base}/api/0/projects/minha-org/app/issues/?query=is%3Aunresolved`
+    const buscar: Buscar = async (url) =>
+      url === lista
+        ? new Response(
+            JSON.stringify([
+              {
+                id: erro.issueId,
+                title: erro.titulo,
+                culprit: 'pedidos/entrada.ts',
+                level: 'error',
+                status: 'unresolved',
+                count: '500',
+                userCount: 40,
+                firstSeen: new Date(AGORA.getTime() - 3_600_000).toISOString(),
+                lastSeen: new Date(AGORA.getTime() - 60_000).toISOString(),
+                permalink: erro.link,
+              },
+            ]),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        : new Response('{"detail":"Not found"}', { status: 404 })
+    const resumo = await buscarErrosDoGlitchTip(AGORA, {
+      env: {
+        GLITCHTIP_URL: base,
+        GLITCHTIP_ORG: 'minha-org',
+        GLITCHTIP_TOKEN: 'tok',
+        GLITCHTIP_PROJETOS: `app:${repo.nomeCompleto}`,
+      },
+      buscar,
+    })
+    expect(resumo).toMatchObject({ projetos: 1, falhas: 0, abertas: 0 })
+    expect(await db.erroDoGlitchTip.findUniqueOrThrow({ where: { id: erroId } })).toMatchObject({
+      demandaId: d,
+      esperaDesde: null,
+      eventos: 500,
+    })
+    expect(await db.demanda.count()).toBe(demandasAntes)
+  })
+})
+
 describe('dividir', () => {
   const dividir = (n: number) =>
     evento('dividir', {
@@ -374,5 +433,8 @@ describe('dividir', () => {
     expect(r.status).toBe(422)
     expect(await db.demanda.count()).toBe(antes)
     expect((await db.demanda.findUniqueOrThrow({ where: { id: z } })).titulo).toBe('Z')
+    expect(await eventosDe(z, 'dividir')).toHaveLength(0)
+    expect(await eventosDe(z, 'dividida')).toHaveLength(0)
+    expect(await db.eventoDaDemanda.count({ where: { tipo: 'veio_de' } })).toBe(4)
   })
 })

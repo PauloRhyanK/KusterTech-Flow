@@ -20,6 +20,10 @@ type Tx = Prisma.TransactionClient
 export type EfeitoCruzado =
   { ok: true; colunas?: Prisma.DemandaUncheckedUpdateInput } | { ok: false; motivo: string }
 
+/** Recusa depois de uma escrita: lançada para desfazer a transação; quem chama vira `recusado`. */
+export class RecusaDoEfeito extends Error {}
+
+const MOTIVO_DOS_ERROS = 'Algum erro não pode ser ligado a esta demanda.'
 const DIA_MS = 86_400_000
 /** Serializa a conta do teto de divisões entre demandas diferentes. */
 const TRAVA_DAS_DIVISOES_SQL = Prisma.sql`SELECT pg_advisory_xact_lock(hashtext('demandas-divisao'))`
@@ -175,10 +179,12 @@ async function ligarErros(
   )
   if (!v.ok) return v
 
-  await tx.erroDoGlitchTip.updateMany({
-    where: { id: { in: dados.erros } },
+  // Defesa: só liga o que segue livre; se algum mudou, desfaz a transação e recusa.
+  const { count } = await tx.erroDoGlitchTip.updateMany({
+    where: { id: { in: dados.erros }, demandaId: null, resolvidoEm: null },
     data: { demandaId: d.id, esperaDesde: null },
   })
+  if (count !== dados.erros.length) throw new RecusaDoEfeito(MOTIVO_DOS_ERROS)
   for (const id of dados.erros) {
     const e = linhas.find((x) => x.id === id)!
     await gravarEventoDoFlow(
