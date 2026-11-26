@@ -9,8 +9,12 @@ import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { ListaOperacional } from '@/lib/ui/lista-operacional'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
+import { seloDeMetricas } from '@/modules/beszel/model'
+import { obterMaquinasNoBeszel, type ResumoDoBeszel } from '@/modules/beszel/queries'
 import { rotuloDoTipo } from '@/modules/infra/model'
+import { idadeCurta } from '@/modules/oficina/model'
 import { lerFiltrosDoInventario, listarRecursos } from '@/modules/infra/queries'
+import { CartoesDasMaquinas } from './_componentes/cartoes-das-maquinas'
 import { FiltrosDoInventario } from './_componentes/filtros-do-inventario'
 
 export const metadata: Metadata = {
@@ -23,6 +27,24 @@ export interface PaginaMaquinasProps {
 
 const TRILHAS = [{ rotulo: 'Máquinas' }]
 const CONTEXTO = 'Inventário de servidores, containers, bancos e storage'
+
+const SELO_DA_SITUACAO: Record<Exclude<ResumoDoBeszel['situacao'], 'ok'>, string> = {
+  nao_configurado: 'Métricas não configuradas',
+  sem_resposta: 'Beszel sem resposta',
+  recusado: 'Beszel recusou o acesso',
+}
+
+// O Beszel fora não derruba o inventário: a página segue com o selo de sem resposta.
+async function lerBeszel(
+  sujeito: Parameters<typeof obterMaquinasNoBeszel>[0],
+  agora: Date,
+): Promise<ResumoDoBeszel> {
+  try {
+    return await obterMaquinasNoBeszel(sujeito, agora)
+  } catch {
+    return { situacao: 'sem_resposta', lidaEm: null, maquinas: [] }
+  }
+}
 
 export default async function PaginaMaquinas({ searchParams }: PaginaMaquinasProps) {
   const sessao = await obterSessao()
@@ -39,8 +61,14 @@ export default async function PaginaMaquinas({ searchParams }: PaginaMaquinasPro
     )
   }
 
+  const agora = new Date()
   const filtros = lerFiltrosDoInventario(await searchParams)
-  const { recursos, total, projetos } = await listarRecursos(sessao.sujeito, filtros)
+  const [{ recursos, total, projetos }, beszel] = await Promise.all([
+    listarRecursos(sessao.sujeito, filtros),
+    lerBeszel(sessao.sujeito, agora),
+  ])
+  const comBeszel = beszel.situacao === 'ok'
+  const nomesNoBeszel = new Set(beszel.maquinas.map((m) => m.nome))
   const comFiltros =
     filtros.tipo !== null || filtros.projetoId !== null || filtros.situacao !== 'todas'
 
@@ -59,8 +87,13 @@ export default async function PaginaMaquinas({ searchParams }: PaginaMaquinasPro
       nome: r.nome,
       href: `/maquinas/${r.id}`,
       contexto: partes.join(' · '),
+      // Selo de métricas só nos servidores e só com o Beszel respondendo.
       estado: r.situacao ? (
         <BadgeDeEstado tom={r.situacao.tom}>{r.situacao.texto}</BadgeDeEstado>
+      ) : comBeszel && r.tipo === 'SERVIDOR' ? (
+        <BadgeDeEstado tom="neutro">
+          {seloDeMetricas(r.identificadorExterno, nomesNoBeszel)}
+        </BadgeDeEstado>
       ) : undefined,
     }
   })
@@ -70,17 +103,32 @@ export default async function PaginaMaquinas({ searchParams }: PaginaMaquinasPro
       <CabecalhoDePagina
         trilhas={TRILHAS}
         titulo="Máquinas"
-        contexto={CONTEXTO}
+        contexto={
+          comBeszel
+            ? `${beszel.maquinas.length} acompanhadas pelo Beszel · leitura de há ${idadeCurta(beszel.lidaEm ?? agora, agora)}`
+            : CONTEXTO
+        }
         acoes={acaoCadastrar}
       />
 
-      <div className="flex flex-wrap items-center gap-3 rounded-padrao border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
-        <BadgeDeEstado tom="neutro">Inventário manual</BadgeDeEstado>
-        <p>
-          Descoberta automática e métricas não estão configuradas; indicadores sem fonte aparecem
-          como Sem dados.
-        </p>
-      </div>
+      {beszel.situacao === 'ok' ? (
+        <CartoesDasMaquinas resumo={beszel} agora={agora} />
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
+          <BadgeDeEstado tom={beszel.situacao === 'nao_configurado' ? 'neutro' : 'atencao'}>
+            {SELO_DA_SITUACAO[beszel.situacao]}
+          </BadgeDeEstado>
+          <p>
+            {beszel.situacao === 'nao_configurado'
+              ? 'O inventário abaixo é manual.'
+              : 'As métricas voltam quando ele responder; o inventário segue abaixo.'}
+          </p>
+        </div>
+      )}
+
+      <h2 className="text-[13px] font-[600] uppercase tracking-[0.06em] text-text-secondary">
+        Inventário
+      </h2>
 
       <ListaOperacional
         rotulo="Inventário de recursos"
