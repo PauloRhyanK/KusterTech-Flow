@@ -1,6 +1,6 @@
 # Demandas — busca avançada com IA (desenho)
 
-Status: **aguardando aprovação**. Depende da tarefa 1
+Status: **aprovado** (2026-11-26), com as decisões de execução da seção abaixo. Depende da tarefa 1
 ([tabela e filtros](2026-11-26-demandas-tabela-filtros-design.md)). Seed: FLOW-7fff.
 
 ## Intenção
@@ -16,6 +16,16 @@ perguntarem "alguma demanda já cobre parte disso?" ao desenhar algo novo.
 2. **A abordagem é escolha do Claude**, comparando com a ideia do Paulo: puxar do banco todo o texto
    relevante das demandas e dar a um modelo barato junto com a pergunta.
 3. **Controlar o gasto e guardar o histórico** de buscas.
+
+## Decisões de execução (Paulo, 2026-11-26, antes do plano)
+
+- O coordenador da Fábrica roda como `devops`, e o CLI `claude` só existia para o `agentops` (Warren).
+  Decisão: **instalar o `claude` para o `devops`**; o Paulo faz o login uma vez na oficina. A busca
+  chama o CLI direto (sem Warren, sem repositório, sem ferramentas), com `--max-budget-usd`.
+- Não há tela de limites da Fábrica; o único limite diário do Flow (GlitchTip) é variável de ambiente.
+  Decisão: **o teto diário é `FLOW_BUSCAS_IA_POR_DIA`** (padrão 30), e o teto do lote é
+  `FLOW_BUSCAS_IA_TOKENS_DO_LOTE` (padrão 150000). Substitui "configurável em Configurações".
+- A idempotência do `POST` segue o padrão do atendente: o `id` (uuid) no corpo, não um cabeçalho.
 
 ## Objetivos
 
