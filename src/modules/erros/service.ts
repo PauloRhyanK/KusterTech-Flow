@@ -113,17 +113,24 @@ export async function buscarErrosDoGlitchTip(
 
 /**
  * Spec 2026-11-26-erros-ate-corrigido, 2: a demanda do GlitchTip no ar há `horasSemErro` sem
- * nenhum dos seus erros voltar ganha uma vez o evento `erro-corrigido`. Um erro que voltou e
- * foi para outra demanda continua contando (pela `demandaAnteriorId`).
+ * nenhum dos seus erros voltar ganha uma vez o evento `erro-corrigido`. Só conta o que foi lido
+ * com sucesso neste ciclo (números velhos não provam que o erro sumiu); a demanda que já recebeu
+ * `erro-voltou` nunca conta.
  */
 async function registrarCorrigidos(agora: Date, horasSemErro: number): Promise<number> {
   const limite = new Date(agora.getTime() - horasSemErro * HORA_MS)
+  const lidos = await db.leituraDoGlitchTip.findMany({
+    where: { ultimoSucessoEm: { gte: agora } },
+    select: { projetoGlitchTip: true },
+  })
+  const lidosAgora = new Set(lidos.map((l) => l.projetoGlitchTip))
+  if (lidosAgora.size === 0) return 0
   const candidatas = await db.demanda.findMany({
     where: {
       origem: 'GLITCHTIP',
       encerrada: 'no_ar',
       noArEm: { lte: limite, gte: new Date(limite.getTime() - 7 * DIA_MS) },
-      eventos: { none: { tipo: 'erro-corrigido' } },
+      eventos: { none: { tipo: { in: ['erro-corrigido', 'erro-voltou'] } } },
     },
     select: { id: true, noArEm: true },
   })
@@ -131,11 +138,15 @@ async function registrarCorrigidos(agora: Date, horasSemErro: number): Promise<n
   for (const d of candidatas) {
     const erros = await db.erroDoGlitchTip.findMany({
       where: { OR: [{ demandaId: d.id }, { demandaAnteriorId: d.id }] },
-      select: { ultimoEm: true },
+      select: { ultimoEm: true, projetoGlitchTip: true },
     })
     const corrigida =
       erros.length > 0 &&
-      erros.every((e) => corrigidoEm({ noArEm: d.noArEm, ultimoEm: e.ultimoEm }, horasSemErro))
+      erros.every(
+        (e) =>
+          lidosAgora.has(e.projetoGlitchTip) &&
+          corrigidoEm({ noArEm: d.noArEm, ultimoEm: e.ultimoEm }, horasSemErro),
+      )
     if (!corrigida) continue
     await db.$transaction(async (tx) => {
       await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
@@ -331,7 +342,11 @@ function processarIssue(
       tx.erroDoGlitchTip.upsert({
         where: { issueId: issue.id },
         create: { issueId: issue.id, ...comum, ...extra },
-        update: { ...comum, ...(solta ? { demandaId: null } : {}), ...extra },
+        update: {
+          ...comum,
+          ...(solta ? { demandaId: null, demandaAnteriorId: null } : {}),
+          ...extra,
+        },
       })
 
     switch (acao.tipo) {
@@ -348,13 +363,21 @@ function processarIssue(
         await gravar({
           demandaId: acao.demandaId,
           esperaDesde: null,
-          ...(demanda ? { demandaAnteriorId: demanda.id } : {}),
+          // Só a demanda que foi ao ar vira "anterior"; a descartada não.
+          ...(demanda?.noArEm ? { demandaAnteriorId: demanda.id } : {}),
         })
         await registrarLigacao(tx, acao.demandaId, issue, agora)
         return 'ligada'
       case 'abrir': {
+        // A volta foi vista no primeiro ciclo que esperou vaga, ou agora pelo último evento.
+        const voltouEm =
+          atual?.esperaDesde && atual.esperaDesde < issue.ultimoEm
+            ? atual.esperaDesde
+            : issue.ultimoEm
         const anterior =
-          acao.voltou && demanda?.noArEm ? { id: demanda.id, noArEm: demanda.noArEm } : null
+          acao.voltou && demanda?.noArEm
+            ? { id: demanda.id, noArEm: demanda.noArEm, voltouEm }
+            : null
         await gravar({})
         await abrirParaOErro(tx, {
           issue,
@@ -362,7 +385,7 @@ function processarIssue(
           grupo,
           repositorio,
           anterior,
-          demandaAnteriorId: atual?.demandaAnteriorId ?? null,
+          demandaAnteriorId: solta ? null : (atual?.demandaAnteriorId ?? null),
           agora,
           horasSemErro: regras.limiares.horasSemErro,
         })
@@ -430,7 +453,7 @@ async function abrirParaOErro(
     slug: string
     grupo: string
     repositorio: { id: string; projetoId: string }
-    anterior: { id: string; noArEm: Date } | null
+    anterior: { id: string; noArEm: Date; voltouEm?: Date } | null
     demandaAnteriorId: string | null
     agora: Date
     horasSemErro?: number
@@ -493,7 +516,7 @@ async function abrirParaOErro(
           demandaNova: aberta.id,
           ...comoVoltou(
             e.anterior.noArEm,
-            e.issue.ultimoEm,
+            e.anterior.voltouEm ?? e.issue.ultimoEm,
             e.horasSemErro ?? LIMIARES_PADRAO.horasSemErro,
           ),
         },

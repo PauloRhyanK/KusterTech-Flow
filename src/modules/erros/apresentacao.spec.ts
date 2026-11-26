@@ -102,7 +102,7 @@ describe('montarQuadro', () => {
     })
     expect(q.linhas.find((l) => l.issueId === 'ar')?.detalhe).toBe('no ar · faltam 22 h sem o erro')
     expect(q.linhas.find((l) => l.issueId === 'cor')?.detalhe).toBe(
-      'no ar há 24 h sem o erro voltar',
+      'no ar há 30 h sem o erro voltar',
     )
     expect(q.linhas.find((l) => l.issueId === 'em')?.detalhe).toBe('desenvolvida · PR #88')
     expect(q.linhas.find((l) => l.issueId === 'novo-recente')?.detalhe).toBe(
@@ -131,7 +131,7 @@ describe('montarQuadro', () => {
     const limiares = { eventos: 10, horas: 2, porDia: 3, horasSemErro: 1 }
     const q = quadro([noAr], { limiares })
     expect(q.linhas.map((l) => l.estado)).toEqual(['corrigido'])
-    expect(q.linhas[0]?.detalhe).toBe('no ar há 1 h sem o erro voltar')
+    expect(q.linhas[0]?.detalhe).toBe('no ar há 2 h sem o erro voltar')
     expect(q.corrigidosEm7Dias).toBe(1)
   })
 

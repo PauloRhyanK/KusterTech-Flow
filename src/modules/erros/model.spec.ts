@@ -201,6 +201,19 @@ describe('decidir', () => {
   })
 })
 
+describe('descrição do erro que voltou', () => {
+  test('conta as horas a partir de quando a volta foi vista, não do último evento', () => {
+    const noArEm = new Date('2026-11-26T19:48:00.000Z')
+    const texto = descricaoDaDemanda(
+      issue({ ultimoEm: new Date('2026-11-29T19:48:00.000Z') }),
+      { id: 'd1', noArEm, voltouEm: new Date('2026-11-26T21:48:00.000Z') },
+      [],
+      24,
+    )
+    expect(texto).toContain('voltou 2 h depois de ir ao ar, antes de contar como corrigido')
+  })
+})
+
 describe('corrigido só depois do ar e da espera sem o erro', () => {
   // flowia#319: merge às 18h21, no ar (7619719) às 19h48; o último evento foi às 03h00.
   const ultimoEm = new Date('2026-11-26T03:00:04.887Z')

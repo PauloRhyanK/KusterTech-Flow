@@ -113,8 +113,11 @@ function detalheDoEstado(
       const faltam = fim ? Math.max(1, Math.ceil((fim.getTime() - agora.getTime()) / HORA_MS)) : 0
       return `no ar · faltam ${faltam} h sem o erro`
     }
-    case 'corrigido':
-      return `no ar há ${l.horasSemErro} h sem o erro voltar`
+    case 'corrigido': {
+      const noArEm = d?.noArEm ?? agora
+      const horas = Math.floor((agora.getTime() - noArEm.getTime()) / HORA_MS)
+      return `no ar há ${horas} h sem o erro voltar`
+    }
   }
 }
 

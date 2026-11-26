@@ -338,12 +338,13 @@ export function tituloDaDemanda(issue: IssueLida): string {
 
 export function descricaoDaDemanda(
   issue: IssueLida,
-  anterior: { id: string; noArEm: Date } | null,
+  /** `voltouEm`: quando a volta foi vista (o último evento pode ser bem depois, se esperou vaga). */
+  anterior: { id: string; noArEm: Date; voltouEm?: Date } | null,
   ligadas: { titulo: string; link: string }[] = [],
   horasSemErro: number = LIMIARES_PADRAO.horasSemErro,
 ): string {
   const abertura = anterior
-    ? `Este erro voltou depois da correção da demanda /demandas/${anterior.id}, no ar desde ${formatarDataHora(anterior.noArEm)}; ${fraseDoVoltou(comoVoltou(anterior.noArEm, issue.ultimoEm, horasSemErro))}.`
+    ? `Este erro voltou depois da correção da demanda /demandas/${anterior.id}, no ar desde ${formatarDataHora(anterior.noArEm)}; ${fraseDoVoltou(comoVoltou(anterior.noArEm, anterior.voltouEm ?? issue.ultimoEm, horasSemErro))}.`
     : 'Erro novo no GlitchTip.'
   return [
     abertura,
