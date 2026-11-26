@@ -61,75 +61,105 @@ function CabecalhoDoGrupo({ grupo }: { grupo: GrupoDeEvidencia }) {
 
 function LinhaDoItem({ item, agora }: { item: ItemDeEvidencia; agora: Date }) {
   const relato = item.tipo === 'relato'
+  const [aberto, setAberto] = useState(false)
+  const painel = useId()
   return (
     <>
-      <span
-        aria-hidden="true"
-        className={cn(
-          'grid size-[22px] shrink-0 place-items-center rounded-compacto text-[11px] font-[700]',
-          relato ? 'bg-tonal-informacao text-action-primary' : 'bg-tonal-erro text-erro',
-        )}
-      >
-        {relato ? 'R' : 'E'}
-      </span>
-      <div className="min-w-0 flex-1 basis-[calc(100%-36px)] md:basis-auto">
-        {relato ? (
-          <>
-            <p className="font-[550] text-text-primary md:truncate">
-              {item.trecho ? `"${item.trecho}"` : 'Relato sem texto'}
-            </p>
-            <p className="mt-0.5 truncate text-xs text-text-tertiary">
-              {[item.papel, item.canal, item.tela && `tela ${item.tela}`, formatarDataHora(item.em)]
-                .filter(Boolean)
-                .join(' · ')}
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="font-[550] text-text-primary md:truncate">{item.titulo}</p>
-            {item.onde && (
-              <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-tertiary">
-                {item.onde}
-              </p>
-            )}
-          </>
-        )}
-      </div>
-      <div className="ml-8 text-xs text-text-secondary md:ml-0 md:w-[190px] md:shrink-0 md:text-right">
-        {relato ? (
-          item.reforcos > 0 ? (
+      <div className="flex flex-wrap items-start gap-x-2.5 gap-y-1 md:flex-nowrap md:items-center md:gap-3.5">
+        <span
+          aria-hidden="true"
+          className={cn(
+            'grid size-[22px] shrink-0 place-items-center rounded-compacto text-[11px] font-[700]',
+            relato ? 'bg-tonal-informacao text-action-primary' : 'bg-tonal-erro text-erro',
+          )}
+        >
+          {relato ? 'R' : 'E'}
+        </span>
+        <div className="min-w-0 flex-1 basis-[calc(100%-36px)] md:basis-auto">
+          {relato ? (
             <>
-              <b className="text-text-primary">{item.reforcos}</b>{' '}
-              {item.reforcos === 1 ? 'reforço' : 'reforços'}
+              <p className="font-[550] text-text-primary md:truncate">
+                {item.trecho ? `"${item.trecho}"` : 'Relato sem texto'}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-text-tertiary">
+                {[
+                  item.papel,
+                  item.canal,
+                  item.tela && `tela ${item.tela}`,
+                  formatarDataHora(item.em),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
             </>
           ) : (
-            <span aria-hidden="true">—</span>
-          )
-        ) : (
-          <>
-            <b className="text-text-primary">{item.eventos}</b> eventos ·{' '}
-            <b className="text-text-primary">{item.usuarios}</b> usuários
-            <br />
-            último {formatarIdade(item.ultimoEm, agora)}
-          </>
-        )}
+            <>
+              <p className="font-[550] text-text-primary md:truncate">{item.titulo}</p>
+              {item.onde && (
+                <p className="mt-0.5 truncate font-mono text-[11.5px] text-text-tertiary">
+                  {item.onde}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <div className="ml-8 text-xs text-text-secondary md:ml-0 md:w-[190px] md:shrink-0 md:text-right">
+          {relato ? (
+            item.reforcos > 0 ? (
+              <>
+                <b className="text-text-primary">{item.reforcos}</b>{' '}
+                {item.reforcos === 1 ? 'reforço' : 'reforços'}
+              </>
+            ) : (
+              <span aria-hidden="true">—</span>
+            )
+          ) : (
+            <>
+              <b className="text-text-primary">{item.eventos}</b> eventos ·{' '}
+              <b className="text-text-primary">{item.usuarios}</b> usuários
+              <br />
+              último {formatarIdade(item.ultimoEm, agora)}
+            </>
+          )}
+        </div>
+        <div className="ml-auto text-[12.5px] md:w-[90px] md:shrink-0 md:text-right">
+          {relato ? (
+            <button
+              type="button"
+              aria-expanded={aberto}
+              aria-controls={painel}
+              onClick={() => setAberto((a) => !a)}
+              className="text-text-link hover:underline"
+            >
+              {aberto ? 'Fechar relato' : 'Ver relato'}
+            </button>
+          ) : (
+            <a
+              href={item.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-text-link hover:underline"
+            >
+              GlitchTip <span aria-hidden="true">↗</span>
+            </a>
+          )}
+        </div>
       </div>
-      <div className="ml-auto text-[12.5px] md:w-[90px] md:shrink-0 md:text-right">
-        {relato ? (
-          <Link href={item.href} className="text-text-link hover:underline">
-            Ver relato
-          </Link>
-        ) : (
-          <a
-            href={item.link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-text-link hover:underline"
-          >
-            GlitchTip <span aria-hidden="true">↗</span>
-          </a>
-        )}
-      </div>
+      {relato && aberto && (
+        <div
+          id={painel}
+          className="ml-8 mt-2 space-y-1 rounded-compacto bg-surface-subtle px-3 py-2 text-[13px] text-text-secondary"
+        >
+          <p className="whitespace-pre-line text-text-primary">
+            {item.texto || 'Relato sem texto.'}
+          </p>
+          {item.anexos > 0 && (
+            <p className="text-xs text-text-tertiary">
+              {item.anexos === 1 ? '1 anexo' : `${item.anexos} anexos`}
+            </p>
+          )}
+        </div>
+      )}
     </>
   )
 }
@@ -195,10 +225,9 @@ export function EvidenciasDaDemanda({
               {grupo.itens.map((item, i) => (
                 <li
                   key={item.id}
-                  id={item.tipo === 'relato' ? `relato-${item.id}` : undefined}
                   className={cn(
-                    'flex-wrap items-start gap-x-2.5 gap-y-1 border-t border-border px-4 py-2.5 text-sm md:flex-nowrap md:items-center md:gap-3.5',
-                    escondeNoCelular(inicio + i) ? 'hidden md:flex' : 'flex',
+                    'border-t border-border px-4 py-2.5 text-sm',
+                    escondeNoCelular(inicio + i) ? 'hidden md:block' : 'block',
                   )}
                 >
                   <LinhaDoItem item={item} agora={agora} />
@@ -214,7 +243,7 @@ export function EvidenciasDaDemanda({
           <button
             type="button"
             onClick={() => setTodas(true)}
-            className="text-xs text-text-link hover:underline md:hidden"
+            className="text-xs text-text-link hover:underline"
           >
             Ver as {outras} outras
           </button>

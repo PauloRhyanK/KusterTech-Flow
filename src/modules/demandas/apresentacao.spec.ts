@@ -880,7 +880,7 @@ describe('triagem cruzada: textos da história', () => {
         { em: 'a1', motivo: 'mesma falha', relatos: ['r1', 'r2'], erros: ['e1'] },
         titulos,
       ),
-    ).toBe('Juntada pela triagem a "Fechar pedido falha" (2 relatos e 1 erros foram junto)')
+    ).toBe('Juntada pela triagem a "Fechar pedido falha" (2 relatos e 1 erro foram junto)')
     expect(
       textoDoEvento(
         'evidencia_ligada',
@@ -896,19 +896,48 @@ describe('triagem cruzada: textos da história', () => {
     expect(textoDoEvento('separada', { separou: 'b1' })).toBe('Separada pelo Paulo')
   })
 
+  test('juntada: plural certo, sem as partes zeradas e sem parênteses quando nada foi', () => {
+    const junto = (relatos: number, erros: number) =>
+      textoDoEvento(
+        'juntada',
+        {
+          em: 'a1',
+          motivo: 'm',
+          relatos: Array.from({ length: relatos }, (_, i) => `r${i}`),
+          erros: Array.from({ length: erros }, (_, i) => `e${i}`),
+        },
+        titulos,
+      )
+    expect(junto(1, 0)).toBe('Juntada pela triagem a "Fechar pedido falha" (1 relato foi junto)')
+    expect(junto(2, 0)).toBe('Juntada pela triagem a "Fechar pedido falha" (2 relatos foram junto)')
+    expect(junto(0, 1)).toBe('Juntada pela triagem a "Fechar pedido falha" (1 erro foi junto)')
+    expect(junto(2, 1)).toBe(
+      'Juntada pela triagem a "Fechar pedido falha" (2 relatos e 1 erro foram junto)',
+    )
+    expect(junto(0, 0)).toBe('Juntada pela triagem a "Fechar pedido falha"')
+  })
+
   test('sem o título da outra demanda, o texto diz "outra demanda"', () => {
     expect(textoDoEvento('juntada', { em: 'x', motivo: 'm', relatos: [], erros: [] })).toBe(
-      'Juntada pela triagem a outra demanda (0 relatos e 0 erros foram junto)',
+      'Juntada pela triagem a outra demanda',
     )
     expect(textoDoEvento('evidencia_ligada', { de: 'x', motivo: 'm' })).toBe(
       'A triagem juntou outra demanda: m',
     )
   })
 
-  test('erro-ligado: da Fábrica (com motivo) diz "A triagem ligou"; do GlitchTip segue igual', () => {
+  test('erro-ligado: da Fábrica diz "A triagem ligou"; do GlitchTip segue igual', () => {
     expect(
-      textoDoEvento('erro-ligado', { titulo: 'TypeError: x', issueId: '9', motivo: 'tela branca' }),
+      textoDoEvento(
+        'erro-ligado',
+        { titulo: 'TypeError: x', issueId: '9', motivo: 'tela branca' },
+        {},
+        'fabrica',
+      ),
     ).toBe('A triagem ligou o erro "TypeError: x": tela branca')
+    expect(textoDoEvento('erro-ligado', { titulo: 'TypeError: x', motivo: 'm' }, {}, 'flow')).toBe(
+      'Erro parecido ligado: TypeError: x',
+    )
     expect(textoDoEvento('erro-ligado', { titulo: 'TypeError: x', link: 'https://e/1' })).toBe(
       'Erro parecido ligado: TypeError: x',
     )
@@ -930,6 +959,8 @@ describe('montarEvidencias', () => {
     tela: null,
     em: EM,
     sinais: [],
+    anexos: [],
+    autorNome: 'Maria Souza',
     ...o,
   })
   const erro = (id: string, issueId = `i-${id}`) => ({
@@ -946,7 +977,6 @@ describe('montarEvidencias', () => {
   test('sem relato nem erro, nada', () => {
     expect(
       montarEvidencias({
-        demandaId: 'a1',
         relatos: [],
         erros: [],
         juntadas: [],
@@ -957,7 +987,6 @@ describe('montarEvidencias', () => {
 
   test('agrupa em desta, juntada de B e ligado pela triagem, com as contagens', () => {
     const ev = montarEvidencias({
-      demandaId: 'a1',
       relatos: [
         relato('r1', {
           sinais: [
@@ -1001,19 +1030,42 @@ describe('montarEvidencias', () => {
       tipo: 'relato',
       id: 'r1',
       trecho: 'texto r1',
+      texto: 'texto r1',
+      anexos: 0,
       papel: 'Vendedora',
       canal: 'pelo sistema',
       tela: null,
       em: EM,
       reforcos: 2,
-      href: '/demandas/a1#relato-r1',
     })
-    expect(juntada!.itens[0]).toMatchObject({ canal: 'WhatsApp', href: '/demandas/b1#relato-r2' })
+    expect(juntada!.itens[0]).toMatchObject({ canal: 'WhatsApp' })
+  })
+
+  test('o texto troca o nome do autor e de quem deu sinal por [pessoa]; conta os anexos', () => {
+    const ev = montarEvidencias({
+      relatos: [
+        relato('r1', {
+          texto: 'Oi, sou a Maria e o João Lima viu também',
+          autorNome: 'Maria Souza',
+          sinais: [{ tipo: 'reforco', autor: { id: 'u', nome: 'João Lima', papel: 'p' } }],
+          anexos: [{ tipo: 'imagem' }, { tipo: 'audio' }],
+        }),
+      ],
+      erros: [],
+      juntadas: [],
+      ligadosPelaTriagem: [],
+    })!
+    const item = ev.grupos[0]!.itens[0]!
+    expect(item).toMatchObject({
+      texto: 'Oi, sou a [pessoa] e o [pessoa] viu também',
+      trecho: 'Oi, sou a [pessoa] e o [pessoa] viu também',
+      anexos: 2,
+    })
+    expect(JSON.stringify(ev)).not.toMatch(/Maria|João|Lima|Souza/)
   })
 
   test('o trecho usa a transcrição sem texto e corta em 120', () => {
     const ev = montarEvidencias({
-      demandaId: 'a1',
       relatos: [relato('r1', { texto: null, transcricao: 'a'.repeat(200) })],
       erros: [],
       juntadas: [],
@@ -1024,7 +1076,6 @@ describe('montarEvidencias', () => {
 
   test('grupo de juntada sem itens que ainda estão aqui some', () => {
     const ev = montarEvidencias({
-      demandaId: 'a1',
       relatos: [relato('r1')],
       erros: [],
       juntadas: [

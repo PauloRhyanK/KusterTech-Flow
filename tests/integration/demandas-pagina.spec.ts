@@ -465,7 +465,7 @@ test('triagem cruzada: Evidências de A batem com o ligar_erros e o juntar da F�
     canal: 'WHATSAPP',
     autorPapel: 'Gerente',
     texto: null,
-    transcricao: 'Pedido não fecha',
+    transcricao: 'Pedido não fecha, a Fulana Secreta viu',
   })
   const eB = await erro(b.id, '701')
   const eLivre = await erro(null, '702')
@@ -508,10 +508,10 @@ test('triagem cruzada: Evidências de A batem com o ligar_erros e o juntar da F�
   expect(juntada.podeSeparar).toBe(true)
   expect(juntada.itens[0]).toMatchObject({
     tipo: 'relato',
-    trecho: 'Pedido não fecha',
+    trecho: 'Pedido não fecha, a [pessoa] viu',
+    texto: 'Pedido não fecha, a [pessoa] viu',
     papel: 'Gerente',
     canal: 'WhatsApp',
-    href: `/demandas/${b.id}#relato-${rB.id}`,
   })
   // Nunca o nome de quem relatou (nem de quem reforçou).
   expect(JSON.stringify(pa.evidencias)).not.toMatch(/Fulana|Outro Nome/)
@@ -529,11 +529,11 @@ test('triagem cruzada: Evidências de A batem com o ligar_erros e o juntar da F�
     relatos: 1,
     podeSeparar: true,
   })
-  expect(pb.subtitulo).toBe('Projeto Alfa · encerrada: juntada')
+  expect(pb.subtitulo).toBe('Projeto Alfa · aberta em 19/11 · encerrada: juntada')
   expect(pb.evidencias).toBeNull()
   const textosB = pb.historico.map((h) => h.evento)
   expect(textosB).toContain(
-    'Juntada pela triagem a "Fechar pedido falha" (1 relatos e 1 erros foram junto)',
+    'Juntada pela triagem a "Fechar pedido falha" (1 relato e 1 erro foram junto)',
   )
   expect(textosB).not.toContain('juntar')
 })

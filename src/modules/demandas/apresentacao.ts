@@ -1,5 +1,6 @@
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { formatarIdade } from '@/modules/inicio/model'
+import { textoSemNomes } from '@/modules/relatos/model'
 import {
   FABRICA_SEM_BUSCAR_MS,
   type Destino,
@@ -988,6 +989,17 @@ export const EVENTOS_FORA_DO_HISTORICO: readonly string[] = ['juntar', 'dividir'
 
 const qtd = (v: unknown) => (Array.isArray(v) ? v.length : 0)
 
+/** " (2 relatos e 1 erro foram junto)"; sem parênteses quando nada foi junto. */
+function oQueFoiJunto(relatos: number, erros: number): string {
+  const partes = [
+    relatos > 0 && `${relatos} ${relatos === 1 ? 'relato' : 'relatos'}`,
+    erros > 0 && `${erros} ${erros === 1 ? 'erro' : 'erros'}`,
+  ].filter((x): x is string => typeof x === 'string')
+  if (partes.length === 0) return ''
+  const verbo = relatos + erros === 1 ? 'foi junto' : 'foram junto'
+  return ` (${partes.join(' e ')} ${verbo})`
+}
+
 /**
  * O texto de um evento na história. `titulos` traz os títulos das demandas citadas pelo id
  * (`juntada.em`, `evidencia_ligada.de`); sem o título, o texto diz "outra demanda".
@@ -996,6 +1008,7 @@ export function textoDoEvento(
   tipo: string,
   dados: unknown,
   titulos: Readonly<Record<string, string>> = {},
+  origem?: string,
 ): string {
   const d = (dados ?? {}) as Record<string, unknown>
   const outra = (id: unknown) => {
@@ -1003,16 +1016,15 @@ export function textoDoEvento(
     return t ? `"${t}"` : 'outra demanda'
   }
   if (tipo === 'juntada') {
-    return `Juntada pela triagem a ${outra(d.em)} (${qtd(d.relatos)} relatos e ${qtd(d.erros)} erros foram junto)`
+    return `Juntada pela triagem a ${outra(d.em)}${oQueFoiJunto(qtd(d.relatos), qtd(d.erros))}`
   }
   if (tipo === 'evidencia_ligada')
     return `A triagem juntou ${outra(d.de)}: ${String(d.motivo ?? '')}`
   if (tipo === 'dividida') {
     return `A triagem dividiu em ${qtd(d.novas) + 1} demandas: ${String(d.motivo ?? '')}`
   }
-  if (tipo === 'erro-ligado' && typeof d.titulo === 'string' && typeof d.motivo === 'string') {
-    // Só a triagem (Fábrica) manda o motivo; o GlitchTip liga sem ele.
-    return `A triagem ligou o erro "${d.titulo}": ${d.motivo}`
+  if (tipo === 'erro-ligado' && origem === 'fabrica' && typeof d.titulo === 'string') {
+    return `A triagem ligou o erro "${d.titulo}": ${String(d.motivo ?? '')}`
   }
   const daParte = TEXTO_DO_EVENTO_DA_PARTE[tipo]
   if (daParte && typeof d.chave === 'string') return daParte(d.chave)
@@ -1066,14 +1078,16 @@ export type ItemDeEvidencia =
   | {
       tipo: 'relato'
       id: string
-      /** Começo do texto (ou da transcrição); a tela põe entre aspas. Nunca o nome do autor. */
+      /** Começo do texto (ou da transcrição); a tela põe entre aspas. */
       trecho: string
+      /** O texto inteiro, com os nomes trocados por `[pessoa]` (aberto em "Ver relato"). */
+      texto: string
+      anexos: number
       papel: string
       canal: string
       tela: string | null
       em: Date
       reforcos: number
-      href: string
     }
   | {
       tipo: 'erro'
@@ -1109,6 +1123,9 @@ export interface RelatoNaEvidencia {
   tela: string | null
   em: Date
   sinais: unknown
+  anexos: unknown
+  /** Só para limpar o texto no servidor; nunca sai daqui. */
+  autorNome: string
 }
 
 export interface ErroNaEvidencia {
@@ -1142,8 +1159,20 @@ function reforcosDe(sinais: unknown): number {
   ).length
 }
 
-function trechoDe(r: RelatoNaEvidencia): string {
-  const t = (r.texto?.trim() || r.transcricao?.trim() || '').replace(/\s+/g, ' ')
+/** O autor e quem deu sinais: os nomes que não podem aparecer na tela. */
+function nomesDe(r: RelatoNaEvidencia): string[] {
+  const dosSinais = Array.isArray(r.sinais)
+    ? r.sinais.map((s) => (s as { autor?: { nome?: unknown } } | null)?.autor?.nome)
+    : []
+  return [r.autorNome, ...dosSinais.filter((n): n is string => typeof n === 'string')]
+}
+
+function textoLimpo(r: RelatoNaEvidencia): string {
+  return textoSemNomes(r.texto?.trim() || r.transcricao?.trim() || '', nomesDe(r))
+}
+
+function trechoDe(texto: string): string {
+  const t = texto.replace(/\s+/g, ' ')
   return t.length > LIMITE_DO_TRECHO ? `${t.slice(0, LIMITE_DO_TRECHO)}…` : t
 }
 
@@ -1153,7 +1182,6 @@ function trechoDe(r: RelatoNaEvidencia): string {
  * "Desta demanda". Sem relato nem erro, `null` (o bloco não aparece).
  */
 export function montarEvidencias(e: {
-  demandaId: string
   relatos: readonly RelatoNaEvidencia[]
   erros: readonly ErroNaEvidencia[]
   juntadas: readonly JuntadaNaEvidencia[]
@@ -1164,17 +1192,21 @@ export function montarEvidencias(e: {
   const juntadaDoRelato = (id: string) => e.juntadas.find((j) => j.relatos.includes(id))
   const juntadaDoErro = (id: string) => e.juntadas.find((j) => j.erros.includes(id))
 
-  const comoRelato = (r: RelatoNaEvidencia): ItemDeEvidencia => ({
-    tipo: 'relato',
-    id: r.id,
-    trecho: trechoDe(r),
-    papel: r.papel,
-    canal: ROTULO_DO_CANAL_DO_RELATO[r.canal],
-    tela: r.tela,
-    em: r.em,
-    reforcos: reforcosDe(r.sinais),
-    href: `/demandas/${juntadaDoRelato(r.id)?.de.id ?? e.demandaId}#relato-${r.id}`,
-  })
+  const comoRelato = (r: RelatoNaEvidencia): ItemDeEvidencia => {
+    const texto = textoLimpo(r)
+    return {
+      tipo: 'relato',
+      id: r.id,
+      trecho: trechoDe(texto),
+      texto,
+      anexos: Array.isArray(r.anexos) ? r.anexos.length : 0,
+      papel: r.papel,
+      canal: ROTULO_DO_CANAL_DO_RELATO[r.canal],
+      tela: r.tela,
+      em: r.em,
+      reforcos: reforcosDe(r.sinais),
+    }
+  }
   const comoErro = (x: ErroNaEvidencia): ItemDeEvidencia => ({
     tipo: 'erro',
     id: x.id,

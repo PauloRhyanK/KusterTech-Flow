@@ -1,6 +1,7 @@
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
+import { formatarDataHora } from '@/lib/data'
 import { db } from '@/lib/db'
 import { ErroDeDominio } from '@/lib/erros'
 import { moduloAtivo } from '@/lib/modulos'
@@ -599,7 +600,7 @@ export async function obterPaginaDaDemanda(
     subtitulo: fechada
       ? d.projeto.nome
       : d.encerrada === 'juntada'
-        ? `${d.projeto.nome} · encerrada: juntada`
+        ? `${d.projeto.nome} · aberta em ${formatarDataHora(d.criadaEm).slice(0, 5)} · encerrada: juntada`
         : `${d.projeto.nome} · aberta ${formatarIdade(d.criadaEm, agora)}`,
     entrega: entregue
       ? cabecalhoDaEntrega(publicacao, agora)
@@ -631,7 +632,7 @@ export async function obterPaginaDaDemanda(
     temTela: d.temTela,
     historico: d.eventos.map((e) => ({
       id: String(e.seq),
-      evento: textoDoEvento(e.tipo, e.dados, titulos),
+      evento: textoDoEvento(e.tipo, e.dados, titulos, e.origem),
       quem: quemFez(e.origem),
       quando: e.em,
     })),
@@ -655,14 +656,16 @@ async function evidenciasDaDemanda(
   podeAgir: boolean,
 ): Promise<Evidencias | null> {
   const [relatos, erros] = await Promise.all([
-    // Nunca o nome do autor: o bloco mostra o papel.
+    // O nome do autor (e os dos sinais) só serve para tirá-lo do texto; a tela mostra o papel.
     db.relato.findMany({
       where: { demandaId },
       select: {
         id: true,
         texto: true,
         transcricao: true,
+        autorNome: true,
         autorPapel: true,
+        anexos: true,
         canal: true,
         assunto: true,
         em: true,
@@ -723,7 +726,6 @@ async function evidenciasDaDemanda(
   })
 
   return montarEvidencias({
-    demandaId,
     relatos: relatos.map((r) => ({
       id: r.id,
       texto: r.texto,
@@ -733,6 +735,8 @@ async function evidenciasDaDemanda(
       tela: r.assunto,
       em: r.em,
       sinais: r.sinais,
+      anexos: r.anexos,
+      autorNome: r.autorNome,
     })),
     erros,
     juntadas: porJuntada,

@@ -22,7 +22,8 @@ const relato = (id: string, o: Partial<ItemDeEvidencia & { tipo: 'relato' }> = {
     tela: 'Pedidos',
     em: EM,
     reforcos: 0,
-    href: `/demandas/a#relato-${id}`,
+    texto: `Cliquei e a tela ficou branca ${id}. Depois tentei de novo e [pessoa] viu o mesmo.`,
+    anexos: 2,
     ...o,
   }) as ItemDeEvidencia
 
@@ -91,10 +92,21 @@ describe('EvidenciasDaDemanda', () => {
     expect(screen.getByText('"Cliquei e a tela ficou branca r1"')).toBeInTheDocument()
     expect(screen.getAllByText(/Vendedora · pelo sistema · tela Pedidos/)).toHaveLength(2)
     expect(screen.getByText(/Gerente · WhatsApp/)).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: 'Ver relato' })[0]).toHaveAttribute(
-      'href',
-      '/demandas/a#relato-r1',
-    )
+    // "Ver relato" abre o relato inteiro ali mesmo, sem levar a outra página.
+    expect(screen.queryByRole('link', { name: 'Ver relato' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Depois tentei de novo/)).not.toBeInTheDocument()
+    const ver = screen.getAllByRole('button', { name: 'Ver relato' })[0]!
+    expect(ver).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(ver)
+    expect(ver).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen.getByText(
+        'Cliquei e a tela ficou branca r1. Depois tentei de novo e [pessoa] viu o mesmo.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText('2 anexos')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar relato' }))
+    expect(screen.queryByText(/Depois tentei de novo/)).not.toBeInTheDocument()
   })
 
   test('nenhum nome de autor: só o papel', () => {
@@ -137,7 +149,7 @@ describe('EvidenciasDaDemanda', () => {
     // O grupo cujos itens estão todos escondidos também se esconde no celular.
     expect(screen.getByText(/Ligado pela triagem/).closest('[data-grupo]')).toHaveClass('hidden')
     const ver = screen.getByRole('button', { name: 'Ver as 2 outras' })
-    expect(ver).toHaveClass('md:hidden')
+    expect(ver.parentElement).toHaveClass('md:hidden')
     fireEvent.click(ver)
     expect(
       screen.getAllByRole('listitem').filter((i) => i.className.split(' ').includes('hidden')),
