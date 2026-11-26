@@ -18,9 +18,9 @@ const ROTULO_DO_ESTADO: Record<EstadoDaTabela, string> = {
 }
 
 const ROTULO_DO_PERIODO: Record<PeriodoDaTabela, string> = {
-  '30d': 'Últimos 30 dias',
-  '90d': 'Últimos 90 dias',
-  tudo: 'Todo o histórico',
+  '30d': '30 dias',
+  '90d': '90 dias',
+  tudo: 'Tudo',
 }
 
 export const ROTULO_DA_ORDEM: Record<OrdemDaTabela, string> = {

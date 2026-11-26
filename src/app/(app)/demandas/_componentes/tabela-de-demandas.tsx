@@ -63,7 +63,7 @@ function Cabecalho({
       scope="col"
       aria-sort={ativa ? (filtros.sentido === 'asc' ? 'ascending' : 'descending') : undefined}
       className={cn(
-        'px-3 py-2 text-left text-[11.5px] font-[600] text-text-tertiary first:pl-4 last:pr-4',
+        'whitespace-nowrap px-3 py-2 text-left text-[11.5px] font-[600] text-text-tertiary first:pl-4 last:pr-4',
         className,
       )}
     >
@@ -123,7 +123,7 @@ export function TabelaDeDemandas({
               <Cabecalho rotulo="Cliente" filtros={filtros} className="w-[130px]" />
               <Cabecalho rotulo="Repositório" filtros={filtros} className="w-[130px]" />
               <Cabecalho rotulo="Partes" filtros={filtros} className="w-[150px]" />
-              <Cabecalho rotulo="Trilho" filtros={filtros} className="w-[110px]" />
+              <Cabecalho rotulo="Trilho" filtros={filtros} className="w-[174px]" />
               <Cabecalho rotulo="Estado" ordem="estado" filtros={filtros} className="w-[170px]" />
               <Cabecalho
                 rotulo="Atualizada"
