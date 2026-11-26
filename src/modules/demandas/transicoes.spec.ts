@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   CONTEUDOS_ACEITOS,
+  URGENCIA_SEM_MUDANCA,
   avaliarArquivo,
   aplicarEvento,
   capturaVencida,
@@ -287,6 +288,67 @@ describe('encerrar demanda (descartada pelo Paulo)', () => {
     expect(recusa(ap(est(), encerrar, 'sessao'))).toBe('Este evento não pode vir deste ator.')
     const e = ok(ap(est(), encerrar, 'paulo'))
     expect(recusa(ap(e, encerrar, 'paulo'))).toBe('A demanda já foi encerrada.')
+  })
+})
+
+describe('urgencia_alterada', () => {
+  const urgencia = (urgente: boolean) =>
+    ({ tipo: 'urgencia_alterada', dados: { urgente } }) as EventoAplicavel
+
+  test('em qualquer etapa aberta muda só o destino, sem mexer na etapa nem na espera', () => {
+    for (const base of [
+      est({ destino: 'fila_de_agentes', etapaAtual: 'planejada' }),
+      est({
+        destino: 'lote_da_noite',
+        etapaAtual: 'desenho',
+        espera: 'aprovar_desenho',
+        versaoDoDesenho: 1,
+      }),
+      est({ destino: 'fila_de_agentes', etapaAtual: 'desenvolvida', espera: 'travada' }),
+    ]) {
+      const e = ok(ap(base, urgencia(true), 'paulo'))
+      expect(e).toEqual({ ...base, destino: 'urgente' })
+    }
+  })
+
+  test('urgente volta a fila_de_agentes', () => {
+    const base = est({ destino: 'urgente', etapaAtual: 'planejada' })
+    expect(ok(ap(base, urgencia(false), 'paulo'))).toEqual({ ...base, destino: 'fila_de_agentes' })
+  })
+
+  test('já no destino pedido: recusa com o motivo de nada a mudar (o service trata como idempotente)', () => {
+    expect(recusa(ap(est({ destino: 'urgente' }), urgencia(true), 'paulo'))).toBe(
+      URGENCIA_SEM_MUDANCA,
+    )
+    expect(recusa(ap(est({ destino: 'fila_de_agentes' }), urgencia(false), 'paulo'))).toBe(
+      URGENCIA_SEM_MUDANCA,
+    )
+    // lote da noite já não é urgente: "normal" não troca o modo de publicação
+    expect(recusa(ap(est({ destino: 'lote_da_noite' }), urgencia(false), 'paulo'))).toBe(
+      URGENCIA_SEM_MUDANCA,
+    )
+  })
+
+  test('sem destino decidido (antes da triagem ou esperando a decisão) recusa', () => {
+    const motivo = 'A demanda ainda não tem destino; decida o destino primeiro.'
+    expect(recusa(ap(est({ destino: null }), urgencia(true), 'paulo'))).toBe(motivo)
+    expect(
+      recusa(
+        ap(
+          est({ destino: 'decisao_do_paulo', espera: 'decidir_destino' }),
+          urgencia(true),
+          'paulo',
+        ),
+      ),
+    ).toBe(motivo)
+  })
+
+  test('só o Paulo; encerrada recusa', () => {
+    const base = est({ destino: 'fila_de_agentes' })
+    expect(recusa(ap(base, urgencia(true), 'fabrica'))).toBe('Este evento não pode vir deste ator.')
+    expect(recusa(ap({ ...base, encerrada: 'descartada' }, urgencia(true), 'paulo'))).toBe(
+      'A demanda já foi encerrada.',
+    )
   })
 })
 

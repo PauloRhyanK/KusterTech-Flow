@@ -918,6 +918,9 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
     return `Retomada com resposta: ${curta}`
   }
   if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
+  if (tipo === 'urgencia_alterada') {
+    return d.urgente === true ? 'Marcada como urgente' : 'Voltou à fila normal'
+  }
   if (tipo === 'teste')
     return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'
   if ((tipo === 'desenho_aprovado' || tipo === 'ajuste_pedido') && typeof d.versao === 'number') {

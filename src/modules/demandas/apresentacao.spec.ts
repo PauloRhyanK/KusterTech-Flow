@@ -449,6 +449,11 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
     expect(textoDoEvento('encerrada_pelo_paulo', {})).toBe('Demanda encerrada')
   })
 
+  test('histórico: urgência alterada', () => {
+    expect(textoDoEvento('urgencia_alterada', { urgente: true })).toBe('Marcada como urgente')
+    expect(textoDoEvento('urgencia_alterada', { urgente: false })).toBe('Voltou à fila normal')
+  })
+
   test('histórico: retomada com resposta mostra o texto, truncado em 120', () => {
     expect(textoDoEvento('retomada', {})).toBe('Retomada')
     expect(textoDoEvento('retomada', { resposta: 'use o token novo' })).toBe(

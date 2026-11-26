@@ -44,6 +44,7 @@ import {
 import {
   LIMITE_POR_ARQUIVO,
   LIMITE_POR_DEMANDA,
+  URGENCIA_SEM_MUDANCA,
   aplicarEvento,
   avaliarArquivo,
   compararEvento,
@@ -772,6 +773,25 @@ export async function retomarDemanda(
   const r = dadosDaRetomada(resposta)
   if (!r.ok) throw new ErroDeDominio(r.motivo)
   await decisaoDoPaulo(sujeito, demandaId, { tipo: 'retomada', dados: r.dados })
+}
+
+/**
+ * O interruptor "Urgente / normal": `true` grava o destino `urgente`, `false` volta a demanda urgente à
+ * `fila_de_agentes`. Já no valor pedido não grava nada (dois cliques não duplicam o evento).
+ */
+// Evento próprio `urgencia_alterada`: `destino_decidido` só vale em `decidir_destino` e concluiria a etapa.
+export async function alternarUrgencia(
+  sujeito: Sujeito,
+  demandaId: string,
+  urgente: boolean,
+): Promise<void> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  try {
+    await decisaoDoPaulo(sujeito, demandaId, { tipo: 'urgencia_alterada', dados: { urgente } })
+  } catch (erro) {
+    if (erro instanceof ErroDeDominio && erro.message === URGENCIA_SEM_MUDANCA) return
+    throw erro
+  }
 }
 
 /** O Paulo desiste da demanda: ela fica encerrada como `descartada` e a Fábrica para nela. */
