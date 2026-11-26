@@ -10,6 +10,7 @@ RAIZ = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ))
 
 import globs  # noqa: E402
+import executores  # noqa: E402
 import raias  # noqa: E402
 
 
@@ -204,6 +205,29 @@ class TestesPlano(unittest.TestCase):
         plano = plano_referencia()
         plano["fases"][0]["raias"].append("back-clientes")
         self.assertErro(plano, "mais de uma fase")
+
+    def test_executor_na_raia_aceito(self):
+        plano = plano_referencia()
+        raia_de(plano, "back-clientes")["executor"] = {
+            "agente": "codex",
+            "modelo": "m",
+            "conta": "claude-reserva",
+        }
+        self.assertEqual(raias.validar_plano(plano), [])
+
+    def test_agentes_de_executor_espelham_o_modulo_executores(self):
+        self.assertEqual(raias.AGENTES_DE_EXECUTOR, executores.AGENTES)
+
+    def test_executor_na_raia_invalido(self):
+        for invalido in (
+            {"agente": "gpt-cli", "modelo": "m"},
+            {"agente": "codex"},
+            "codex",
+            [],
+        ):
+            plano = plano_referencia()
+            raia_de(plano, "back-clientes")["executor"] = invalido
+            self.assertErro(plano, "raia 'back-clientes': executor inválido")
 
     def test_papel_revisor_e_rejeitado(self):
         plano = plano_referencia()
