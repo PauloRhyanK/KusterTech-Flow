@@ -86,6 +86,12 @@
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
       "maxCustoUsd": 2
+    },
+    "buscador": {
+      "agente": "claude-code",
+      "modelo": "claude-haiku-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 0.5
     }
   },
   "verificacao": {

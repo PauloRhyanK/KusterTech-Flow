@@ -224,6 +224,7 @@ class Base(unittest.TestCase):
             enviar=self.enviar,
             cliente_do_flow=lambda url, token_file: self.demandas,
             cliente_das_conversas=lambda url, token_file: conversas_flow.ClienteDasConversas(url, token_file, abrir=self.flow.abrir),
+            cliente_das_buscas=tc.BuscasVazias,  # o buscador fora do caminho: estes testes são do atendente
         )
 
     def protegido(self, passo):

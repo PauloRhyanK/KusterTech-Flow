@@ -42,6 +42,7 @@ TABELA = {
     "seguranca": (SONNET, "medium", 10),
     "fixer": (HAIKU, "medium", 5),
     "atendente": (SONNET, "medium", 2),
+    "buscador": (HAIKU, "medium", 0.5),
 }
 
 SETTINGS_ESPERADO = {
@@ -754,7 +755,7 @@ class TestesSettingsDoClaude(Base):
     def test_papel_sem_esforco_nao_gera_entrada(self):
         caminho = self.kit / "fabrica" / "modelos" / "config.json"
         dados = json.loads(caminho.read_text(encoding="utf-8"))
-        for papel in ("produto", "fixer"):
+        for papel in ("produto", "fixer", "buscador"):
             del dados["modelos"][papel]["esforco"]
         caminho.write_text(json.dumps(dados), encoding="utf-8")
         resultado = self.instalar()
@@ -797,7 +798,7 @@ class TestesModelos(unittest.TestCase):
 
     def test_tabela_de_modelos_do_paulo(self):
         self.assertEqual(set(self.config["modelos"]), set(TABELA))
-        self.assertEqual(len(self.config["modelos"]), 12)
+        self.assertEqual(len(self.config["modelos"]), 13)
         for papel, (modelo, esforco, custo) in TABELA.items():
             with self.subTest(papel=papel):
                 self.assertEqual(
