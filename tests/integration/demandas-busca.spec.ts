@@ -215,6 +215,22 @@ describe('pedirBusca', () => {
   })
 })
 
+test('clique duplo: a mesma pergunta ainda pendente ou em curso não cria outra busca paga', async () => {
+  await demanda('Bot')
+  const a = await pedirBusca(admin, { pergunta: 'bot do whatsapp', filtros: tudo() }, AGORA)
+  expect(
+    await pedirBusca(admin, { pergunta: 'Bot do WhatsApp', filtros: tudo() }, depois(1)),
+  ).toEqual({
+    id: a.id,
+    reaproveitada: true,
+  })
+  await buscarBuscaParaAFabrica(auth(), depois(2))
+  expect(
+    (await pedirBusca(admin, { pergunta: 'bot do whatsapp', filtros: tudo() }, depois(3))).id,
+  ).toBe(a.id)
+  expect(await db.buscaDeDemandas.count()).toBe(1)
+})
+
 describe('rotas da Fábrica', () => {
   test('buscar: token, nada pendente, a mais antiga com as fichas, e abandonada volta', async () => {
     expect((await buscarBuscaParaAFabrica('Bearer ruim', AGORA)).status).toBe(401)

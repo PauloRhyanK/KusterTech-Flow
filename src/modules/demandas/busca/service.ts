@@ -102,7 +102,8 @@ const contaNoTeto = (agora: Date) => ({
 })
 
 /**
- * Pede uma busca. A mesma pergunta no mesmo lote, concluída nas últimas 24 h, devolve a antiga.
+ * Pede uma busca. A mesma pergunta no mesmo lote, concluída, pendente ou em curso nas últimas 24 h,
+ * devolve a existente.
  * Lote vazio conclui na hora. O teto diário e o do lote são conferidos numa transação travada.
  */
 export async function pedirBusca(
@@ -134,7 +135,8 @@ export async function pedirBusca(
       where: {
         perguntaNormalizada,
         chaveDoLote: chave,
-        estado: 'CONCLUIDA',
+        // A concluída responde de novo; a pendente ou em curso é o mesmo pedido (clique duplo).
+        estado: { in: ['PENDENTE', 'EM_CURSO', 'CONCLUIDA'] },
         criadaEm: { gt: new Date(agora.getTime() - DIA_MS) },
       },
       orderBy: { criadaEm: 'desc' },
