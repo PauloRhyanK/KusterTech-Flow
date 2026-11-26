@@ -886,6 +886,7 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   no_ar: 'No ar',
   migrada: 'Demanda migrada',
   partes_planejadas: 'Partes planejadas',
+  'erro-voltou': 'O erro voltou depois de ir ao ar; abriu uma demanda nova',
 }
 
 const TEXTO_DO_EVENTO_DA_PARTE: Record<string, (chave: string) => string> = {
@@ -918,6 +919,9 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
     return `Retomada com resposta: ${curta}`
   }
   if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
+  if (tipo === 'erro-ligado' && typeof d.titulo === 'string') {
+    return `Erro parecido ligado: ${d.titulo}`
+  }
   if (tipo === 'teste')
     return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'
   if ((tipo === 'desenho_aprovado' || tipo === 'ajuste_pedido') && typeof d.versao === 'number') {

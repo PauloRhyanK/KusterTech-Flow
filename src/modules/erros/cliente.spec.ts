@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { type Buscar, lerIssue, listarIssues, proximaPagina } from './cliente'
+import { type Buscar, lerIssue, listarAmbientes, listarIssues, proximaPagina } from './cliente'
 import type { Configuracao } from './model'
 
 const config: Configuracao = {
@@ -7,6 +7,8 @@ const config: Configuracao = {
   org: 'minha-org',
   token: 'tok',
   projetos: [{ slug: 'app-vendas', repositorio: 'dono/app-vendas' }],
+  ambientes: ['production'],
+  limiares: { eventos: 10, horas: 2, porDia: 3 },
 }
 
 const PRIMEIRA =
@@ -86,6 +88,12 @@ describe('listarIssues', () => {
         },
       ],
     })
+  })
+
+  test('pede só os ambientes do filtro', async () => {
+    const { buscar, chamadas } = buscarFalso([() => json([])])
+    await listarIssues(config, 'app-vendas', buscar, ['LIVE', 'produção'])
+    expect(chamadas[0]!.url).toBe(`${PRIMEIRA}&environment=LIVE&environment=produ%C3%A7%C3%A3o`)
   })
 
   test('aceita count como string e monta o link sem permalink', async () => {
@@ -200,5 +208,35 @@ describe('lerIssue', () => {
   test('401 é token recusado', async () => {
     const { buscar } = buscarFalso([() => json({}, {}, 401)])
     expect(await lerIssue(config, '17', buscar)).toEqual({ ok: false, motivo: 'token recusado' })
+  })
+})
+
+describe('listarAmbientes', () => {
+  test('devolve os nomes', async () => {
+    const { buscar, chamadas } = buscarFalso([
+      () =>
+        json([
+          { name: 'LIVE', id: 6 },
+          { name: 'TEST', id: 1 },
+        ]),
+    ])
+    expect(await listarAmbientes(config, 'app-vendas', buscar)).toEqual({
+      ok: true,
+      nomes: ['LIVE', 'TEST'],
+    })
+    expect(chamadas[0]!.url).toBe(
+      'https://erros.exemplo.com/api/0/projects/minha-org/app-vendas/environments/',
+    )
+  })
+  test('404 (GlitchTip sem ambientes) é lista vazia', async () => {
+    const { buscar } = buscarFalso([() => json({ detail: 'Not found' }, {}, 404)])
+    expect(await listarAmbientes(config, 'app-vendas', buscar)).toEqual({ ok: true, nomes: [] })
+  })
+  test('formato errado é falha', async () => {
+    const { buscar } = buscarFalso([() => json({ detail: 'x' })])
+    expect(await listarAmbientes(config, 'app-vendas', buscar)).toEqual({
+      ok: false,
+      motivo: 'resposta fora do formato',
+    })
   })
 })

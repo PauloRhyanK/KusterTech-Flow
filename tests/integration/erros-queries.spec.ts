@@ -36,26 +36,31 @@ describe('obterQuadroDeErros', () => {
   })
 
   test('traz o erro lido com o estado da demanda e a leitura', async () => {
+    await db.leituraDoGlitchTip.create({
+      data: { projetoGlitchTip: 'app-vendas', ligadaEm: new Date('2026-11-01T00:00:00.000Z') },
+    })
     await buscarErrosDoGlitchTip(agora, {
       env,
-      buscar: async () =>
-        new Response(
-          JSON.stringify([
-            {
-              id: '17',
-              title: 'TypeError: x',
-              culprit: 'a.ts',
-              level: 'error',
-              status: 'unresolved',
-              count: '48',
-              userCount: 9,
-              firstSeen: '2026-11-26T10:00:00.000Z',
-              lastSeen: '2026-11-26T15:29:00.000Z',
-              permalink: `${BASE}/minha-org/issues/17`,
-            },
-          ]),
-          { status: 200 },
-        ),
+      buscar: async (url) =>
+        url.endsWith('/environments/')
+          ? new Response('[]', { status: 200 })
+          : new Response(
+              JSON.stringify([
+                {
+                  id: '17',
+                  title: 'TypeError: x',
+                  culprit: 'a.ts',
+                  level: 'error',
+                  status: 'unresolved',
+                  count: '48',
+                  userCount: 9,
+                  firstSeen: '2026-11-26T10:00:00.000Z',
+                  lastSeen: '2026-11-26T15:29:00.000Z',
+                  permalink: `${BASE}/minha-org/issues/17`,
+                },
+              ]),
+              { status: 200 },
+            ),
     })
     const demanda = await db.demanda.findFirstOrThrow()
     await db.demanda.update({
