@@ -1,0 +1,143 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>KusterTech Flow — Demandas até o ar (desenho 25/11)</title><style>
+  :root{
+    --background:#f5f7fa;--surface:#fff;--surface-subtle:#edf2f5;
+    --text-primary:#172033;--text-secondary:#607083;--text-tertiary:#8290a1;--text-link:#2d6be4;
+    --border:#dce4ea;--border-strong:#c6d2dc;--action:#2d6be4;--flow:#138d82;--midnight:#0b1120;
+    --sucesso:#287a50;--atencao:#a96011;--erro:#b34343;--neutro:#607083;--execucao:#7157a6;
+    --r:12px;--rc:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter Variable',Inter,system-ui,-apple-system,sans-serif;background:#dfe5ec;color:var(--text-primary);font-size:14px;line-height:1.4}
+  .mono{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px}
+  .barra{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:8px;align-items:center}
+  .barra b{margin-right:12px}
+  .barra button{font:inherit;border:1px solid var(--border-strong);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;color:var(--text-secondary)}
+  .barra button.on{background:var(--midnight);color:#fff;border-color:var(--midnight)}
+  .nota{margin-left:auto;color:var(--text-tertiary);font-size:12.5px}
+  .tela{display:none;max-width:1280px;margin:20px auto;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(11,17,32,.18);background:var(--background)}
+  .tela.on{display:grid;grid-template-columns:210px 1fr;min-height:760px}
+  aside{background:var(--midnight);color:#a7b4c9;padding:20px 12px}
+  .logo{color:#e8efff;font-weight:650;font-size:15px;padding:4px 10px 16px}
+  .logo span{color:#72d9c3}
+  aside small{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#5d6b84;padding:12px 10px 6px}
+  aside a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rc);color:#a7b4c9;margin-bottom:2px}
+  aside a.on{background:#1a2338;color:#e8efff}
+  aside a i{width:6px;height:6px;border-radius:50%;background:#34445f}
+  aside a.on i{background:#72d9c3}
+  aside .cont{margin-left:auto;background:#a96011;color:#fff;border-radius:999px;font-size:11px;padding:0 7px;font-weight:600}
+  main{padding:26px 32px 36px}
+  h1{font-size:24px;margin:0 0 18px;letter-spacing:-.02em;font-weight:650;display:flex;align-items:center;gap:12px}
+  h1 small{font-size:13px;font-weight:400;color:var(--text-tertiary);letter-spacing:0}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-secondary);margin:0 0 10px;font-weight:600}
+  .cartao{background:var(--surface);border:1px solid var(--border);border-radius:var(--r)}
+  .btn{border:1px solid var(--border-strong);background:#fff;border-radius:var(--rc);padding:8px 14px;font:inherit;font-weight:550;cursor:pointer}
+  .btn.p{background:var(--action);border-color:var(--action);color:#fff}
+  .dir{margin-left:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:6px;padding:2px 8px;background:var(--surface-subtle);color:var(--text-secondary);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:2px}
+  .tela.on{grid-template-columns:210px minmax(0,1fr)} main{min-width:0}
+  h1 .btn{font-size:14px;padding:8px 14px}
+  .btn.prim{background:var(--action);border-color:var(--action);color:#fff}
+  .resumo{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:26px}
+  .q{border-radius:var(--r);padding:16px;background:#fff;border:1px solid var(--border);border-top:4px solid var(--border-strong);cursor:pointer}
+  .q .n{font-size:34px;font-weight:650;letter-spacing:-.03em;line-height:1}
+  .q .r{font-size:13px;font-weight:600;margin-top:6px}.q .m{font-size:11.5px;color:var(--text-tertiary);margin-top:2px}
+  .q.ar{border-top-color:var(--sucesso)} .q.ar .n{color:var(--sucesso)}
+  .q.cam{border-top-color:var(--execucao)} .q.nao{border-top-color:var(--erro)} .q.nao .n{color:var(--erro)}
+  .q.voce{border-top-color:var(--atencao)} .q.voce .n{color:var(--atencao)}
+  .grupo{display:flex;align-items:center;gap:10px;margin:0 0 10px}.grupo b{font-size:15px}.grupo span{color:var(--text-tertiary);font-size:12.5px}
+  .linha{display:flex;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--border)}.linha:first-child{border-top:0}
+  .tit{font-weight:550}.cresce{flex:1;min-width:0}
+  .sub{font-size:12px;color:var(--text-tertiary);margin-top:2px}
+  .trilho4{display:flex;align-items:center;width:150px;flex:none}
+  .trilho4 i{width:10px;height:10px;border-radius:50%;background:var(--border-strong);flex:none}
+  .trilho4 u{height:2px;flex:1;background:var(--border)}
+  .trilho4 .f{background:var(--flow)} .trilho4 i.a{background:#fff;border:2.5px solid var(--execucao);width:13px;height:13px}
+  .trilho4 i.x{background:#fff;border:2.5px solid var(--erro);width:13px;height:13px}
+  .trilho4 i.ok{background:var(--sucesso);width:13px;height:13px}
+  .partes{display:flex;flex-wrap:wrap;gap:4px;width:150px;flex:none}
+  .pt{font-size:11.5px;border-radius:6px;padding:2px 7px;border:1px solid var(--border);background:var(--surface-subtle);color:var(--text-secondary);white-space:nowrap}
+  .pt.ok{background:#eef7f1;border-color:#c5e3d1;color:var(--sucesso)} .pt.nao{background:#fbf0f0;border-color:#efd0d0;color:var(--erro)} .pt.a{background:#f4f1fa;border-color:#ddd4ee;color:var(--execucao)}
+  .est{width:150px;flex:none;font-size:12.5px;font-weight:600;text-align:right}
+  .tempo{width:50px;flex:none;color:var(--text-tertiary);font-size:12px;text-align:right}
+  .leg{display:flex;gap:6px;width:150px;flex:none;justify-content:space-between;font-size:10.5px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em}
+  /* detalhe */
+  .voltar{color:var(--text-link);font-size:13px;margin-bottom:8px;display:block}
+  .falta{display:flex;gap:14px;align-items:center;background:#fbf0f0;border:1px solid #efd0d0;border-radius:var(--r);padding:14px 16px;margin:14px 0 22px}
+  .falta .ic{width:30px;height:30px;border-radius:50%;background:var(--erro);color:#fff;display:grid;place-items:center;font-weight:700;flex:none}
+  .falta b{display:block;font-size:16px}.falta span{color:var(--text-secondary);font-size:12.5px}
+  .grade{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .parte{padding:16px}
+  .parte .cab{display:flex;align-items:center;gap:10px;margin-bottom:14px}.parte .cab b{font-size:15px}
+  .passo{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border);font-size:13px}.passo:first-of-type{border-top:0}
+  .passo i{width:10px;height:10px;border-radius:50%;flex:none;background:var(--border-strong)}
+  .passo i.f{background:var(--flow)} .passo i.ok{background:var(--sucesso)} .passo i.x{background:var(--erro)} .passo i.a{background:var(--execucao)}
+  .passo em{margin-left:auto;font-style:normal;color:var(--text-tertiary);font-size:12px}
+  .passo a{color:var(--text-link)}
+  .ordem{font-size:12px;color:var(--text-tertiary);margin:-4px 0 12px}
+  .hist{margin-top:22px}
+  .hist .linha{font-size:13px;color:var(--text-secondary)}
+</style></head><body>
+<div class="barra"><b>Demandas até o ar</b><button class="on" onclick="v(0,this)">1 · Lista</button><button onclick="v(1,this)">2 · Demanda com parte faltando</button><span class="nota">Pronto = no ar e conferido no site. Nomes fictícios.</span></div>
+
+<section class="tela on"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início<span class="cont">3</span></a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<h1>Demandas <small>últimos 30 dias</small><button class="btn prim dir">Nova demanda</button></h1>
+<div class="resumo">
+ <div class="q ar"><div class="n">2</div><div class="r">No ar</div><div class="m">conferidas no site</div></div>
+ <div class="q cam"><div class="n">3</div><div class="r">A caminho</div><div class="m">Fábrica trabalhando</div></div>
+ <div class="q nao"><div class="n">4</div><div class="r">Não chegou ao ar</div><div class="m">feita, mas falta algo</div></div>
+ <div class="q voce"><div class="n">1</div><div class="r">Espera você</div><div class="m">há 4 dias</div></div>
+</div>
+
+<div class="grupo"><b>Não chegou ao ar</b><span>4</span></div>
+<div class="cartao" style="margin-bottom:20px">
+ <div class="linha" style="padding:6px 16px;border-top:0"><div class="cresce"></div><div class="partes" style="font-size:10.5px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em">partes</div><div class="leg"><span>pedida</span><span>plano</span><span>feita</span><span>no ar</span></div><div class="est"></div><div class="tempo"></div></div>
+ <div class="linha"><div class="cresce"><div class="tit">Modo editor com IA</div><div class="sub">Projeto Alfa</div></div><div class="partes"><span class="pt a">front · protótipo</span><span class="pt">back · 0 PR</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i><u></u><i></i></div><div class="est" style="color:var(--erro)">Falta a parte do back</div><div class="tempo">1 d</div></div>
+ <div class="linha"><div class="cresce"><div class="tit">Relatos e orientação pelo bot</div><div class="sub">Projeto Alfa</div></div><div class="partes"><span class="pt ok">back · no ar</span><span class="pt nao">1 PR aberto</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="x"></i></div><div class="est" style="color:var(--erro)">PR aberto há 1 d</div><div class="tempo">5 d</div></div>
+ <div class="linha"><div class="cresce"><div class="tit">Orientador por IA e fila de relatos</div><div class="sub">Projeto Alfa</div></div><div class="partes"><span class="pt nao">back · sem publicação</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="x"></i></div><div class="est" style="color:var(--erro)">Nunca foi publicada</div><div class="tempo">5 d</div></div>
+ <div class="linha"><div class="cresce"><div class="tit">Pedidos ignoram redirecionamento</div><div class="sub">Projeto Alfa</div></div><div class="partes"><span class="pt nao">front · dispensada</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="x"></i></div><div class="est" style="color:var(--erro)">Publicação dispensada</div><div class="tempo">1 d</div></div>
+</div>
+
+<div class="grupo"><b>A caminho</b><span>3</span></div>
+<div class="cartao" style="margin-bottom:20px">
+ <div class="linha"><div class="cresce"><div class="tit">Suporte por IA no CRM</div><div class="sub">Projeto Alfa</div></div><div class="partes"><span class="pt ok">front · no ar</span><span class="pt a">back · publicando</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i></div><div class="est" style="color:var(--execucao)">Conferindo o site</div><div class="tempo">2 min</div></div>
+</div>
+
+<div class="grupo"><b>No ar</b><span>2</span></div>
+<div class="cartao">
+ <div class="linha"><div class="cresce"><div class="tit">Nome da aba na ficha do lead</div><div class="sub">Projeto Alfa</div></div><div class="partes"><span class="pt ok">front · no ar</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="ok"></i></div><div class="est" style="color:var(--sucesso)">No ar · c5c01ba</div><div class="tempo">hoje</div></div>
+ <div class="linha"><div class="cresce"><div class="tit">Restauração do backup</div><div class="sub">Projeto Beta</div></div><div class="partes"><span class="pt ok">back · no ar</span></div><div class="trilho4"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="ok"></i></div><div class="est" style="color:var(--sucesso)">No ar · 9c127b7</div><div class="tempo">hoje</div></div>
+</div>
+</main></section>
+
+<section class="tela"><aside><div class="logo">KusterTech <span>Flow</span></div><small>Trabalho</small><a><i></i>Início<span class="cont">3</span></a><a class="on"><i></i>Demandas</a><a><i></i>Publicação</a><a><i></i>Fábrica</a><small>Cadastro</small><a><i></i>Clientes</a><a><i></i>Projetos</a><a><i></i>Máquinas</a></aside><main>
+<a class="voltar">← Demandas</a>
+<h1>Modo editor com IA <small>Projeto Alfa · aberta há 1 d</small></h1>
+<div class="trilho4" style="width:420px"><i class="f"></i><u class="f"></u><i class="f"></i><u class="f"></u><i class="a"></i><u></u><i></i></div>
+<div class="leg" style="width:420px;margin-top:6px"><span>pedida</span><span>plano</span><span>feita</span><span>no ar</span></div>
+<div class="falta"><div class="ic">!</div><div><b>Falta: a parte do back (aba, IA e envio)</b><span>A Fábrica já está planejando essa parte dentro desta demanda. Ela só fecha quando as duas partes estiverem no ar.</span></div></div>
+<div class="ordem">Ordem de publicação: back antes do front</div>
+<div class="grade">
+ <div class="cartao parte"><div class="cab"><b>1 · Back</b><span class="pt">repositório do núcleo</span><span class="pt dir" style="margin-left:auto">planejando</span></div>
+  <div class="passo"><i class="a"></i>Plano da parte<em>orquestrador · agora</em></div>
+  <div class="passo"><i></i>PRs mergeados<em>—</em></div>
+  <div class="passo"><i></i>Publicada e conferida no site<em>—</em></div>
+ </div>
+ <div class="cartao parte"><div class="cab"><b>2 · Front</b><span class="pt">repositório do CRM</span><span class="pt a" style="margin-left:auto">espera o back</span></div>
+  <div class="passo"><i class="f"></i>Desenho aprovado<em>24/11</em></div>
+  <div class="passo"><i class="f"></i>Protótipo · <a>3 PRs</a><em>25/11</em></div>
+  <div class="passo"><i></i>Ligar ao back · <a>pendente</a><em>—</em></div>
+  <div class="passo"><i class="x"></i>Publicação dispensada: o protótipo não muda o site<em>25/11</em></div>
+ </div>
+</div>
+<div class="hist"><div class="grupo"><b>Histórico</b><span>recolhido · 14 eventos</span></div></div>
+</main></section>
+
+<ol class="anot">
+ <li><b>Topo:</b> quatro números. "Não chegou ao ar" é a pilha que hoje se perde.</li>
+ <li><b>Trilho de 4 pontos</b> no lugar das 6 etapas: pedida → plano → feita → no ar. O último ponto só fica verde com a conferência no site.</li>
+ <li><b>Partes:</b> uma demanda pode ter uma parte por repositório. Cada uma tem o próprio estado; a demanda fecha quando todas estiverem no ar.</li>
+ <li><b>Detalhe:</b> uma faixa "Falta" em destaque, as partes lado a lado na ordem de publicação e o histórico recolhido.</li>
+</ol>
+<script>function v(i,b){document.querySelectorAll('.tela').forEach((t,j)=>t.classList.toggle('on',i===j));document.querySelectorAll('.barra button').forEach(x=>x.classList.remove('on'));b.classList.add('on')}</script>
+</body></html>

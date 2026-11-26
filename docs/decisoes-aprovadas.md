@@ -192,4 +192,9 @@ Este documento prevalece sobre os demais, então a mudança fica registrada aqui
 - **D75 — Etapas de demanda são modelo, não regra fixa.** Vale a partir do produto 3.
 - **D76 — A publicação confere o site no ar (exceção à D70).** Aprovada pelo Paulo em 25/11/2026. Depois de um deploy verde, o Flow lê a `urlDaVersao` do repositório (só GET, só https, sem credencial, URL definida por quem tem `configuracoes.gerenciar`) e só marca a publicação como publicada quando o site mostra o commit. Motivo: em 25/11 um deploy verde foi ao servidor antigo e o Flow marcou "Publicado" sem nada ter mudado no ar.
 
+- **D77 — Pronto é no ar e conferido no site.** Aprovada pelo Paulo em 25/11/2026. O "entregue" da Fábrica é etapa intermediária; a demanda só fecha quando todas as suas partes estão no ar, conferidas como na D76 (ou confirmadas pelo Paulo com "Conferi no ar"). Spec: [`2026-11-25-demanda-ate-o-ar-design.md`](superpowers/specs/2026-11-25-demanda-ate-o-ar-design.md).
+- **D78 — Nada fica "para depois".** Aprovada pelo Paulo em 25/11/2026. Quando falta uma parte, a demanda continua aberta e a Fábrica planeja tudo, até a entrega total, dentro da mesma demanda.
+- **D79 — Uma demanda pode ter partes em vários repositórios.** Aprovada pelo Paulo em 25/11/2026. Cada parte tem estado e ordem de publicação próprios; o pedido a outro repositório é uma parte, nunca um texto.
+- **D80 — Núcleo do Flow.ia primeiro, como versão.** Aprovada pelo Paulo em 25/11/2026. Uma mudança no núcleo entra primeiro no `flowia` de origem, como versão, e depois nos forks. O núcleo serve vários clientes e áreas, e todos os agentes da Fábrica seguem essa regra.
+
 **Invariantes:** 1, 4, 8, 9 e 10 seguem valendo para tudo. 2, 3, 5, 6 e 7 seguem valendo para os módulos congelados e voltam a ser exercitados quando eles forem religados.
