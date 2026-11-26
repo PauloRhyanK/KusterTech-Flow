@@ -89,6 +89,10 @@ export interface TelaDeDemandas {
   orientadasHoje: number
   fabricaSemBuscar: string | null
   podeCriar: boolean
+  /** As opções dos seletores de filtro. */
+  opcoes: { clientes: OpcaoDeFiltro[]; projetos: OpcaoDeFiltro[]; repositorios: OpcaoDeFiltro[] }
+  /** A tabela filtrada; `null` quando a tela está nos grupos. */
+  tabela: TabelaDeDemandas | null
 }
 
 const FUSO = 'America/Sao_Paulo'
@@ -399,7 +403,7 @@ export function estadoNaTabela(d: DemandaNaLista, agora: Date): EstadoDaTabela {
 }
 
 const primeiroEMais = (nomes: readonly string[]): string =>
-  nomes.length === 0 ? '—' : nomes.length === 1 ? nomes[0] : `${nomes[0]} +${nomes.length - 1}`
+  nomes.length === 0 ? '—' : nomes.length === 1 ? nomes[0]! : `${nomes[0]} +${nomes.length - 1}`
 
 export function linhaDaTabela(d: DemandaNaTabela, agora: Date): LinhaDaTabela {
   const estado = estadoNaTabela(d, agora)
