@@ -63,7 +63,7 @@ export function QuadrosAteOAr({ quadros }: { quadros: readonly QuadroAteOAr[] })
   )
 }
 
-function Linha({ linha }: { linha: LinhaDeDemanda }) {
+export function Linha({ linha }: { linha: LinhaDeDemanda }) {
   return (
     <li>
       <Link

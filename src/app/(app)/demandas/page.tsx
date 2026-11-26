@@ -6,9 +6,11 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { CabecalhoDePagina } from '@/lib/ui/cabecalho-de-pagina'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { DESTINOS } from '@/modules/demandas/contrato'
-import type { Destino } from '@/modules/demandas/model'
+import { ehModoTabela, lerFiltrosDaTabela, type Destino } from '@/modules/demandas/model'
 import { obterListaDeDemandas } from '@/modules/demandas/queries'
+import { BarraDeFiltros } from './_componentes/barra-de-filtros'
 import { ListaDeDemandas, QuadrosAteOAr } from './_componentes/lista-de-demandas'
+import { TabelaDeDemandas } from './_componentes/tabela-de-demandas'
 
 const TRILHAS = [{ rotulo: 'Demandas' }]
 
@@ -37,8 +39,17 @@ export default async function PaginaDasDemandas({
     )
   }
 
-  const filtro = lerDestino((await searchParams).destino)
-  const tela = await obterListaDeDemandas(sessao.sujeito, filtro, new Date())
+  const params = await searchParams
+  const filtro = lerDestino(params.destino)
+  // Qualquer filtro de tabela na URL troca os grupos pela tabela; `destino` sozinho fica nos grupos.
+  const filtros = lerFiltrosDaTabela(params)
+  const emTabela = ehModoTabela(params)
+  const tela = await obterListaDeDemandas(
+    sessao.sujeito,
+    filtro,
+    new Date(),
+    emTabela ? filtros : null,
+  )
 
   return (
     <div className="space-y-6">
@@ -62,13 +73,18 @@ export default async function PaginaDasDemandas({
         }
       />
       <QuadrosAteOAr quadros={tela.quadros} />
-      {filtro && (
+      <BarraDeFiltros filtros={filtros} opcoes={tela.opcoes} ativa={emTabela || filtro !== null} />
+      {!tela.tabela && filtro && (
         <Link href="/demandas" className="inline-block text-sm text-text-link hover:underline">
           <span aria-hidden="true">← </span>Todas as demandas
         </Link>
       )}
-      <ListaDeDemandas grupos={tela.grupos} filtrada={filtro !== null} />
-      {!filtro && tela.orientadasHoje > 0 && (
+      {tela.tabela ? (
+        <TabelaDeDemandas tabela={tela.tabela} filtros={filtros} />
+      ) : (
+        <ListaDeDemandas grupos={tela.grupos} filtrada={filtro !== null} />
+      )}
+      {!tela.tabela && !filtro && tela.orientadasHoje > 0 && (
         <Link
           href="/demandas?destino=orientada"
           className="inline-block text-[12.5px] text-text-tertiary hover:text-text-link hover:underline"
