@@ -206,6 +206,7 @@ model RepositorioGitHub {
   catalogadoEm               DateTime
   projeto                    Projeto?                  @relation(fields: [projetoId], references: [id], onDelete: SetNull)
   issues                     IssueGitHub[]
+  errosDoGlitchTip           ErroDoGlitchTip[]
   pullRequests               PullRequestGitHub[]
   demandas                   Demanda[]
   partes                     ParteDaDemanda[]
@@ -1004,6 +1005,7 @@ enum OrigemDaDemanda {
   SESSAO
   FABRICA
   USUARIO
+  GLITCHTIP
 }
 
 enum QuemConcluiEtapa {
@@ -1142,6 +1144,7 @@ model Demanda {
   conversas        Conversa[]
   partes           ParteDaDemanda[]
   consertos        PedidoDeConserto[]
+  erros            ErroDoGlitchTip[]     @relation("ErroDaDemanda")
 
   @@unique([fonteId, chaveDaFonte])
   @@index([encerrada, espera])
@@ -1303,4 +1306,41 @@ model CartaoDeFecho {
   confirmadoPor   Usuario?       @relation(fields: [confirmadoPorId], references: [id], onDelete: SetNull)
 
   @@index([conversaId, estado])
+}
+
+// Erros do GlitchTip (D81): uma linha por issue, atualizada a cada leitura; `demandaId` é a demanda
+// atual e `demandaAnteriorId` a que foi ao ar antes de o erro voltar. `serie` guarda até 6 pontos
+// `{ hora, total }` para as barrinhas.
+model ErroDoGlitchTip {
+  id                String            @id @default(uuid())
+  issueId           String            @unique
+  projetoGlitchTip  String
+  repositorioId     String
+  titulo            String
+  onde              String?
+  nivel             String
+  link              String
+  eventos           Int
+  usuarios          Int
+  primeiroEm        DateTime
+  ultimoEm          DateTime
+  resolvidoEm       DateTime?
+  demandaId         String?
+  demandaAnteriorId String?
+  esperaDesde       DateTime?
+  serie             Json              @default("[]")
+  criadoEm          DateTime          @default(now())
+  atualizadoEm      DateTime          @updatedAt
+  repositorio       RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
+  demanda           Demanda?          @relation("ErroDaDemanda", fields: [demandaId], references: [id], onDelete: SetNull)
+
+  @@index([projetoGlitchTip, resolvidoEm])
+  @@index([demandaId])
+}
+
+model LeituraDoGlitchTip {
+  projetoGlitchTip String    @id
+  ultimoSucessoEm  DateTime?
+  ultimaFalhaEm    DateTime?
+  motivo           String?
 }

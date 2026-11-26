@@ -2,7 +2,7 @@ export type Nivel = 'planejar_comigo' | 'aprovar_desenho' | 'vai_sozinho'
 export type Destino =
   'urgente' | 'lote_da_noite' | 'fila_de_agentes' | 'decisao_do_paulo' | 'orientada'
 export type TipoDeDemanda = 'defeito' | 'ideia' | 'ajuste' | 'funcao_nova'
-export type Origem = 'flow' | 'sessao' | 'fabrica' | 'usuario'
+export type Origem = 'flow' | 'sessao' | 'fabrica' | 'usuario' | 'glitchtip'
 /** A Fábrica só conhece etapas por marco; etapa com `marco: null` é do Paulo. */
 export type Marco =
   'recebida' | 'planejada' | 'desenho' | 'desenvolvida' | 'testada' | 'entregue' | 'no_ar'
