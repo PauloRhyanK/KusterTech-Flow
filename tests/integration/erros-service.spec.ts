@@ -531,6 +531,39 @@ describe('buscarErrosDoGlitchTip', () => {
     expect(eventos[0]).toMatchObject({ origem: 'glitchtip', dados: { horas: 24 }, em: depois(25) })
   })
 
+  test('demanda de outra origem que recebeu o erro pela triagem também vira corrigida', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const demanda = await db.demanda.findFirstOrThrow()
+    await db.demanda.update({
+      where: { id: demanda.id },
+      data: { origem: 'USUARIO', encerrada: 'no_ar', noArEm: agora },
+    })
+    const sem = await db.demanda.create({
+      data: {
+        projetoId: demanda.projetoId,
+        repositorioId: demanda.repositorioId,
+        titulo: 'Relato sem erro',
+        nivel: 'VAI_SOZINHO',
+        temTela: false,
+        origem: 'USUARIO',
+        etapas: [],
+        etapaAtual: 'triagem',
+        encerrada: 'no_ar',
+        noArEm: agora,
+      },
+    })
+    const contar = (id: string) =>
+      db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'erro-corrigido' } })
+    const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 25 * HORA), {
+      env: env(),
+      buscar,
+    })
+    expect(resumo.corrigidos).toBe(1)
+    expect(await contar(demanda.id)).toBe(1)
+    expect(await contar(sem.id)).toBe(0)
+  })
+
   test('erro que voltou não deixa a demanda anterior contar como corrigida', async () => {
     const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
     await buscarErrosDoGlitchTip(agora, { env: env(), buscar })

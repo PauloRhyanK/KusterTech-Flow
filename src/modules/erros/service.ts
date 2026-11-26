@@ -127,7 +127,8 @@ async function registrarCorrigidos(agora: Date, horasSemErro: number): Promise<n
   if (lidosAgora.size === 0) return 0
   const candidatas = await db.demanda.findMany({
     where: {
-      origem: 'GLITCHTIP',
+      // Também a demanda de outra origem que recebeu erro pela triagem cruzada (ligar/juntar).
+      OR: [{ origem: 'GLITCHTIP' }, { erros: { some: {} } }],
       encerrada: 'no_ar',
       noArEm: { lte: limite, gte: new Date(limite.getTime() - 7 * DIA_MS) },
       eventos: { none: { tipo: { in: ['erro-corrigido', 'erro-voltou'] } } },
