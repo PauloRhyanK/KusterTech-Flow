@@ -9,7 +9,7 @@ import { processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
 import { INTERVALO_PADRAO_MS, resumirErroParaLog } from '@/modules/github/model'
 import { executarCiclo } from '@/modules/github/reconciliacao'
 import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/modules/decidir/worker'
-import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
+import { limparArquivosDeDemandas, marcarPartesSemPublicacao } from '@/modules/demandas/worker'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
@@ -17,6 +17,7 @@ import { calcularComposicoes } from '@/modules/publicacao/composicoes'
 import { detectarDivergencias } from '@/modules/publicacao/divergencias'
 
 const INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS = 60 * 60_000
+const INTERVALO_DA_MARCACAO_DE_PARTES_MS = 10 * 60_000
 const INTERVALO_DO_ARQUIVAMENTO_MS = 5 * 60_000
 
 export interface TarefaDoWorker {
@@ -33,6 +34,7 @@ export function criarTarefasDoCiclo(d: {
   const ativos = d.ativos ?? modulosAtivos()
   // Em memória do processo: depois de reiniciar, a limpeza roda no primeiro ciclo.
   let ultimaLimpezaDeArquivos: number | null = null
+  let ultimaMarcacaoDePartes: number | null = null
   let ultimoArquivamento: number | null = null
   let ultimaLimpezaDeConversas: number | null = null
   const tarefas: readonly TarefaDoWorker[] = [
@@ -165,6 +167,23 @@ export function criarTarefasDoCiclo(d: {
             { tarefa: 'limpar-arquivos-de-demandas', ...resumo },
             'arquivos de demandas limpos',
           )
+        }
+      },
+    },
+    {
+      nome: 'marcar-partes-sem-publicacao',
+      modulo: 'demandas',
+      async executar(agora) {
+        if (
+          ultimaMarcacaoDePartes !== null &&
+          agora.getTime() - ultimaMarcacaoDePartes < INTERVALO_DA_MARCACAO_DE_PARTES_MS
+        ) {
+          return
+        }
+        const marcadas = await marcarPartesSemPublicacao(agora)
+        ultimaMarcacaoDePartes = agora.getTime()
+        if (marcadas > 0) {
+          log.info({ tarefa: 'marcar-partes-sem-publicacao', marcadas }, 'partes sem publicação')
         }
       },
     },

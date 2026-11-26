@@ -18,6 +18,7 @@
     "worker:uma-vez": "tsx src/worker/main.ts --uma-vez",
     "criar-admin": "node --import tsx scripts/criar-admin.ts",
     "importar-cadastro": "node --import tsx scripts/importar-cadastro.ts",
+    "migrar:ate-o-ar": "node --import tsx scripts/migrar-demandas-ate-o-ar.ts",
     "semear-intervalos": "node --import tsx scripts/semear-intervalos.ts",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",

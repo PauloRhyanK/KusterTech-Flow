@@ -1,7 +1,11 @@
 import { lstat, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { instanteDoLote } from '@/modules/fila-de-publicacao/model'
 import { apagarArquivo, diretorioDosArquivos, ehParcial, type Pasta } from './arquivos'
+import { MOTIVOS, nuncaPublicada, resultadoDoPedido, type Parte, type PrDaParte } from './partes'
+import { situacaoDoPedido, travarDemandas } from './partes-no-ar'
 import { capturaVencida, RETENCAO_DAS_CAPTURAS_MS } from './transicoes'
 
 const IDADE_MAXIMA_DO_PARCIAL_MS = 24 * 60 * 60_000
@@ -63,4 +67,156 @@ export async function limparParciais(agora: Date, pasta: Pasta = 'demandas'): Pr
     }
   }
   return apagados
+}
+
+const DIA_MS = 24 * 60 * 60_000
+
+/** O primeiro lote depois de `feitaEm` (hora local do repositório), para a regra das 2 h. */
+function proximoLoteDepois(feitaEm: Date, horaDoLote: string): Date {
+  const mesmoDia = instanteDoLote(feitaEm, horaDoLote)
+  return mesmoDia.getTime() > feitaEm.getTime() ? mesmoDia : new Date(mesmoDia.getTime() + DIA_MS)
+}
+
+/**
+ * Parte `feita` que não saiu: sem pedido de publicação além das 2 h (ou do lote da noite), ou dada
+ * como feita com PR ainda aberto (spec "demanda até o ar", 3.2). Vira `nao_chegou` e a demanda
+ * ganha `naoChegouDesde`. A ordem das travas é a da publicação: repositório → demanda → partes.
+ * Devolve quantas partes mudaram.
+ */
+export async function marcarPartesSemPublicacao(agora: Date): Promise<number> {
+  return (await marcarFeitasSemPedido(agora)) + (await marcarPublicandoSemSaida(agora))
+}
+
+async function marcarFeitasSemPedido(agora: Date): Promise<number> {
+  const candidatas = await db.parteDaDemanda.findMany({
+    where: {
+      estado: 'FEITA',
+      chegaAoAr: 'PUBLICACAO',
+      feitaEm: { not: null },
+      demanda: { encerrada: null },
+    },
+    select: {
+      id: true,
+      demandaId: true,
+      repositorioId: true,
+      feitaEm: true,
+      pedidoId: true,
+      prs: true,
+      repositorio: {
+        select: { configuracaoDePublicacao: { select: { modoPadrao: true, horaDoLote: true } } },
+      },
+    },
+    orderBy: { id: 'asc' },
+  })
+  if (candidatas.length === 0) return 0
+  const urlsAbertas = new Set(
+    (
+      await db.pullRequestGitHub.findMany({
+        where: {
+          estado: 'ABERTO',
+          urlHtml: {
+            in: candidatas.flatMap((c) => (c.prs as unknown as PrDaParte[]).map((p) => p.url)),
+          },
+        },
+        select: { urlHtml: true },
+      })
+    ).map((p) => p.urlHtml.toLowerCase()),
+  )
+
+  let marcadas = 0
+  for (const c of candidatas) {
+    const feitaEm = c.feitaEm!
+    const dias = Math.floor((agora.getTime() - feitaEm.getTime()) / DIA_MS)
+    const prs = c.prs as unknown as PrDaParte[]
+    let motivo: string | null = null
+    if (prs.some((p) => urlsAbertas.has(p.url.toLowerCase()))) {
+      // Com PR aberto nunca é "Nunca foi publicada": espera 1 dia e então "PR aberto há N d".
+      if (dias >= 1) motivo = MOTIVOS.prAberto(dias)
+    } else {
+      const config = c.repositorio.configuracaoDePublicacao
+      const lote = config?.modoPadrao === 'LOTE'
+      const parte = {
+        estado: 'feita',
+        feitaEm,
+        temPedido: c.pedidoId !== null,
+      } as Parte
+      if (
+        nuncaPublicada(parte, {
+          agora,
+          modo: lote ? 'lote' : 'imediato',
+          proximoLote: lote && config ? proximoLoteDepois(feitaEm, config.horaDoLote) : null,
+        })
+      ) {
+        motivo = MOTIVOS.nuncaPublicada
+      }
+    }
+    if (motivo === null) continue
+    if (await marcarNaoChegou(c, motivo, agora)) marcadas += 1
+  }
+  return marcadas
+}
+
+async function marcarNaoChegou(
+  c: { id: string; demandaId: string; repositorioId: string; pedidoId: string | null },
+  motivo: string,
+  agora: Date,
+): Promise<boolean> {
+  return db.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${c.repositorioId}))`
+    await travarDemandas(tx, [c.demandaId])
+    // Revalida sob as travas: um pedido que chegou entre a leitura e agora vence.
+    const { count } = await tx.parteDaDemanda.updateMany({
+      where: { id: c.id, estado: 'FEITA', pedidoId: c.pedidoId },
+      data: { estado: 'NAO_CHEGOU', motivo, naoChegouEm: agora },
+    })
+    if (count === 0) return false
+    await tx.demanda.updateMany({
+      where: { id: c.demandaId, naoChegouDesde: null },
+      data: { naoChegouDesde: agora },
+    })
+    return true
+  })
+}
+
+/**
+ * Parte `publicando` pela fila cujo pedido corrente já terminou sem que o resultado chegasse a ela
+ * (conserto que desistiu, pedido cancelado, resultado perdido): vai a `nao_chegou` com o motivo do
+ * resultado (seção 3.2). Pedido pendente, conserto em curso e publicação à espera da versão conferida
+ * ficam como estão. Mesma ordem de travas: repositório → demanda → partes. Devolve quantas mudaram.
+ */
+async function marcarPublicandoSemSaida(agora: Date): Promise<number> {
+  const candidatas = await db.parteDaDemanda.findMany({
+    where: {
+      estado: 'PUBLICANDO',
+      chegaAoAr: 'PUBLICACAO',
+      pedidoId: { not: null },
+      demanda: { encerrada: null },
+    },
+    select: { id: true, demandaId: true, repositorioId: true, pedidoId: true },
+    orderBy: { id: 'asc' },
+  })
+  let marcadas = 0
+  for (const c of candidatas) {
+    const mudou = await db.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${c.repositorioId}))`
+      await travarDemandas(tx, [c.demandaId])
+      const situacao = await situacaoDoPedido(tx, c.pedidoId!)
+      if (situacao.tipo !== 'resultado') return false
+      const novo = resultadoDoPedido(situacao.resultado)
+      if (novo.estado !== 'nao_chegou') return false
+      // Revalida sob as travas: a parte ainda está publicando com o mesmo pedido.
+      const { count } = await tx.parteDaDemanda.updateMany({
+        where: { id: c.id, estado: 'PUBLICANDO', pedidoId: c.pedidoId },
+        data: { estado: 'NAO_CHEGOU', motivo: novo.motivo, naoChegouEm: agora },
+      })
+      if (count === 0) return false
+      await tx.demanda.updateMany({
+        where: { id: c.demandaId, naoChegouDesde: null },
+        data: { naoChegouDesde: agora },
+      })
+      return true
+    })
+    if (mudou) marcadas += 1
+  }
+  return marcadas
 }

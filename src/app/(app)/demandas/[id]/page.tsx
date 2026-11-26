@@ -9,10 +9,11 @@ import { CanvasDoDesenho } from '../_componentes/canvas-do-desenho'
 import { EncerrarDemanda } from '../_componentes/encerrar-demanda'
 import { EntregaLadoALado } from '../_componentes/entrega-lado-a-lado'
 import { FaixaDaEspera } from '../_componentes/faixa-da-espera'
+import { FaixaDoQueFalta } from '../_componentes/faixa-do-que-falta'
 import { HistoricoDaDemanda } from '../_componentes/historico-da-demanda'
-import { IconeDoTipo } from '../_componentes/icone-do-tipo'
+import { PartesDaDemanda } from '../_componentes/partes-da-demanda'
 import { QuadrosDeImpacto } from '../_componentes/quadros-de-impacto'
-import { TrilhoGrande } from '../_componentes/trilho-grande'
+import { TrilhoAteOAr } from '../_componentes/trilho-ate-o-ar'
 
 export default async function PaginaDaDemanda({ params }: { params: Promise<{ id: string }> }) {
   const sessao = await obterSessao()
@@ -42,30 +43,20 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
         <Link href="/demandas" className="block text-[13px] text-text-link hover:underline">
           <span aria-hidden="true">← </span>Demandas
         </Link>
-        <div className="flex flex-wrap items-center gap-3.5">
-          <IconeDoTipo icone={p.icone} />
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 className="min-w-0 text-[21px] font-[650] leading-[1.25] tracking-[-0.02em] text-text-primary md:text-2xl">
             {p.titulo}
           </h1>
+          <span className="text-[13px] text-text-tertiary">{p.subtitulo}</span>
           {p.entrega && (
             <span className="ml-auto inline-flex items-center rounded-[6px] border border-sucesso/30 bg-tonal-sucesso px-2.5 py-0.5 text-[12.5px] font-[600] text-sucesso">
               {p.entrega}
             </span>
           )}
         </div>
-        <ul aria-label="Sobre a demanda" className="flex flex-wrap gap-2 pt-1">
-          {p.chips.map((c) => (
-            <li
-              key={c}
-              className="whitespace-nowrap rounded-[6px] bg-surface-subtle px-2 py-0.5 text-xs text-text-secondary"
-            >
-              {c}
-            </li>
-          ))}
-        </ul>
       </header>
 
-      <TrilhoGrande pontos={p.trilho} />
+      <TrilhoAteOAr grande pontos={p.trilho} />
 
       {p.descartada && (
         <p
@@ -86,6 +77,19 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
         />
       )}
 
+      {p.falta && <FaixaDoQueFalta demandaId={p.id} falta={p.falta} />}
+
+      {/* A triagem só ajuda quando a decisão é do Paulo. */}
+      {p.faixa && (
+        <QuadrosDeImpacto
+          quadros={p.impacto.quadros}
+          podeQuebrar={p.impacto.podeQuebrar}
+          pilulas={p.impacto.pilulas}
+        />
+      )}
+
+      <PartesDaDemanda ordem={p.ordem} partes={p.partes} />
+
       {p.entrega ? (
         <EntregaLadoALado
           demandaId={p.id}
@@ -94,28 +98,19 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
           capturas={p.capturas}
           capturasApagadasEm={p.capturasApagadasEm}
         />
+      ) : p.desenho ? (
+        <CanvasDoDesenho demandaId={p.id} desenho={p.desenho} artefatoUrl={p.artefatoUrl} />
       ) : (
-        <>
-          <QuadrosDeImpacto
-            quadros={p.impacto.quadros}
-            podeQuebrar={p.impacto.podeQuebrar}
-            pilulas={p.impacto.pilulas}
-          />
-          {p.desenho ? (
-            <CanvasDoDesenho demandaId={p.id} desenho={p.desenho} artefatoUrl={p.artefatoUrl} />
-          ) : (
-            p.artefatoUrl && (
-              <a
-                href={p.artefatoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block text-sm font-medium text-text-link hover:underline"
-              >
-                Ver o artefato do Claude <span aria-hidden="true">↗</span>
-              </a>
-            )
-          )}
-        </>
+        p.artefatoUrl && (
+          <a
+            href={p.artefatoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-sm font-medium text-text-link hover:underline"
+          >
+            Ver o artefato do Claude <span aria-hidden="true">↗</span>
+          </a>
+        )
       )}
 
       <HistoricoDaDemanda eventos={p.historico} />

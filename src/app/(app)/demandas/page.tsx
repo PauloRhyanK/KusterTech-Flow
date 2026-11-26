@@ -8,8 +8,7 @@ import { SemPermissao } from '@/lib/ui/sem-permissao'
 import { DESTINOS } from '@/modules/demandas/contrato'
 import type { Destino } from '@/modules/demandas/model'
 import { obterListaDeDemandas } from '@/modules/demandas/queries'
-import { FluxoDeEntrada } from './_componentes/fluxo-de-entrada'
-import { ListaDeDemandas } from './_componentes/lista-de-demandas'
+import { ListaDeDemandas, QuadrosAteOAr } from './_componentes/lista-de-demandas'
 
 const TRILHAS = [{ rotulo: 'Demandas' }]
 
@@ -46,7 +45,7 @@ export default async function PaginaDasDemandas({
       <CabecalhoDePagina
         trilhas={TRILHAS}
         titulo="Demandas"
-        contexto="hoje"
+        contexto="últimos 30 dias"
         situacao={
           tela.fabricaSemBuscar && (
             <p role="status" className="text-sm font-[550] text-atencao">
@@ -62,8 +61,21 @@ export default async function PaginaDasDemandas({
           )
         }
       />
-      <FluxoDeEntrada quadros={tela.quadros} filtro={filtro} />
+      <QuadrosAteOAr quadros={tela.quadros} />
+      {filtro && (
+        <Link href="/demandas" className="inline-block text-sm text-text-link hover:underline">
+          <span aria-hidden="true">← </span>Todas as demandas
+        </Link>
+      )}
       <ListaDeDemandas grupos={tela.grupos} filtrada={filtro !== null} />
+      {!filtro && tela.orientadasHoje > 0 && (
+        <Link
+          href="/demandas?destino=orientada"
+          className="inline-block text-[12.5px] text-text-tertiary hover:text-text-link hover:underline"
+        >
+          {tela.orientadasHoje} {tela.orientadasHoje === 1 ? 'orientada' : 'orientadas'} hoje
+        </Link>
+      )}
     </div>
   )
 }

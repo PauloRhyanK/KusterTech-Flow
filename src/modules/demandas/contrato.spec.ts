@@ -2,8 +2,10 @@ import { describe, expect, test } from 'vitest'
 import {
   demandaDaSessaoSchema,
   eventoDaFabricaSchema,
+  eventoDaFabricaV2Schema,
   planoDaSessaoSchema,
   triagemSchema,
+  versaoDoContrato,
 } from './contrato'
 
 const ID = '11111111-1111-4111-8111-111111111111'
@@ -98,5 +100,59 @@ describe('nomeDeArquivo (nos anexos)', () => {
       const anexo = { nome, conteudo: 'image/png', base64: 'AA==' }
       expect(demandaDaSessaoSchema.safeParse({ ...ok, anexos: [anexo] }).success).toBe(false)
     }
+  })
+})
+
+describe('versaoDoContrato', () => {
+  test('só "2" fala o contrato 2', () => {
+    expect(versaoDoContrato('2')).toBe(2)
+    expect(versaoDoContrato(null)).toBe(1)
+    expect(versaoDoContrato('1')).toBe(1)
+    expect(versaoDoContrato('3')).toBe(1)
+  })
+})
+
+describe('eventoDaFabricaV2Schema', () => {
+  const SHA = 'a'.repeat(40)
+  const parte = {
+    chave: 'back',
+    repositorio: 'exemplo/alfa-back',
+    objetivo: 'API',
+    ordem: 0,
+    dependeDe: [],
+    chegaAoAr: 'publicacao',
+  }
+  const feita = {
+    parte: 'back',
+    prs: [{ url: PR, numero: 1, mergeCommit: SHA }],
+    commit: SHA,
+    pendencias: [],
+  }
+  const ok = (tipo: string, dados: unknown) =>
+    eventoDaFabricaV2Schema.safeParse({ id: ID, em: EM, tipo, dados }).success
+
+  test('aceita os eventos novos', () => {
+    expect(ok('partes_planejadas', { partes: [parte] })).toBe(true)
+    expect(
+      ok('parte_planejada', { parte: 'back', plano: '.fabrica/planos/x.json', prUrl: null }),
+    ).toBe(true)
+    expect(ok('parte_feita', feita)).toBe(true)
+    expect(ok('destravada', {})).toBe(true)
+  })
+
+  test('recusa parte_feita sem commit, partes vazias e entregue', () => {
+    const semCommit: Record<string, unknown> = { ...feita }
+    delete semCommit.commit
+    expect(ok('parte_feita', semCommit)).toBe(false)
+    expect(ok('parte_feita', { ...feita, prs: [] })).toBe(false)
+    expect(ok('partes_planejadas', { partes: [] })).toBe(false)
+    expect(ok('entregue', { prs: [PR] })).toBe(false)
+  })
+
+  test('o v1 não aceita os eventos novos', () => {
+    expect(
+      eventoDaFabricaSchema.safeParse({ id: ID, em: EM, tipo: 'parte_feita', dados: feita })
+        .success,
+    ).toBe(false)
   })
 })

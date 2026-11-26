@@ -90,14 +90,24 @@ const triagem = (destino = 'fila_de_agentes') => ({
   },
 })
 
-function pedirEvento(demandaId: string, corpo: unknown, autorizacao: string | null = auth()) {
+function pedirEvento(
+  demandaId: string,
+  corpo: unknown,
+  autorizacao: string | null = auth(),
+  contrato: 1 | 2 = 1,
+) {
   const texto = typeof corpo === 'string' ? corpo : JSON.stringify(corpo)
-  return receberEventoDaFabrica(autorizacao, demandaId, {
-    authorization: autorizacao,
-    contentType: 'application/json',
-    contentLength: String(Buffer.byteLength(texto)),
-    corpo: async () => texto,
-  })
+  return receberEventoDaFabrica(
+    autorizacao,
+    demandaId,
+    {
+      authorization: autorizacao,
+      contentType: 'application/json',
+      contentLength: String(Buffer.byteLength(texto)),
+      corpo: async () => texto,
+    },
+    contrato,
+  )
 }
 
 function corpoDe(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -334,6 +344,103 @@ describe('GET /api/fabrica/demandas', () => {
     expect(d!.criadaEm).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
     const etapas = d!.etapas as { chave: string; puladaSemTela: boolean }[]
     expect(etapas.some((e) => e.puladaSemTela)).toBe(false)
+  })
+})
+
+describe('GET /api/fabrica/demandas: contrato 1 e 2', () => {
+  test('sem o cabeçalho não há contrato nem partes; com o cabeçalho 2 há os dois', async () => {
+    const id = await novaDemanda('Com parte')
+    // A demanda já nasce com a parte de entrada (chave = nome do repositório).
+    await db.parteDaDemanda.updateMany({
+      where: { demandaId: id, chave: 'alfa' },
+      data: { objetivo: 'Entrada', ordem: 0 },
+    })
+
+    const v1 = (await buscarDemandasParaAFabrica(auth(), null, AGORA)).corpo as {
+      contrato?: number
+      demandas: Record<string, unknown>[]
+    }
+    expect(v1).not.toHaveProperty('contrato')
+    expect(v1.demandas).toHaveLength(1)
+    expect(v1.demandas[0]).not.toHaveProperty('partes')
+
+    const v2 = (await buscarDemandasParaAFabrica(auth(), null, AGORA, 2)).corpo as {
+      contrato?: number
+      demandas: { partes: Record<string, unknown>[]; naoChegouDesde: string | null }[]
+    }
+    expect(v2.contrato).toBe(2)
+    expect(v2.demandas[0]!.naoChegouDesde).toBeNull()
+    expect(v2.demandas[0]!.partes).toEqual([
+      expect.objectContaining({
+        chave: 'alfa',
+        repositorio: 'kustertech-exemplo/alfa',
+        objetivo: 'Entrada',
+        estado: 'planejando',
+        chegaAoAr: 'publicacao',
+        publicacao: null,
+      }),
+    ])
+  })
+})
+
+describe('POST eventos: partes e entregue v1', () => {
+  test('partes_planejadas com ciclo é recusado com 422 e o motivo', async () => {
+    const id = await novaDemanda('Ciclo')
+    await repositorio('alfa-crm', projetoId)
+    const parte = (chave: string, repo: string, dependeDe: string[]) => ({
+      chave,
+      repositorio: `kustertech-exemplo/${repo}`,
+      objetivo: chave,
+      ordem: 1,
+      dependeDe,
+      chegaAoAr: 'publicacao',
+    })
+    const r = await pedirEvento(
+      id,
+      {
+        id: randomUUID(),
+        em: '2026-11-19T15:00:00Z',
+        tipo: 'partes_planejadas',
+        dados: {
+          partes: [parte('alfa', 'alfa', ['alfa-crm']), parte('alfa-crm', 'alfa-crm', ['alfa'])],
+        },
+      },
+      auth(),
+      2,
+    )
+    expect(r.status).toBe(422)
+    expect((r.corpo as { erro: string }).erro).toContain('ciclo em dependeDe')
+  })
+
+  test('entregue repetido não duplica PRs', async () => {
+    const id = await novaDemanda('Entrega repetida', { nivel: 'vai_sozinho', temTela: false })
+    const base = { id: randomUUID(), em: '2026-11-19T15:00:00Z' }
+    for (const corpo of [
+      { ...triagem(), id: randomUUID() },
+      {
+        id: randomUUID(),
+        em: base.em,
+        tipo: 'plano_criado',
+        dados: { plano: '.fabrica/planos/x.json', prUrl: null },
+      },
+      { id: randomUUID(), em: base.em, tipo: 'etapa_concluida', dados: { marco: 'desenvolvida' } },
+    ]) {
+      expect((await pedirEvento(id, corpo)).status).toBe(201)
+    }
+    const entregue = {
+      ...base,
+      tipo: 'entregue',
+      dados: { prs: ['https://github.com/kustertech-exemplo/alfa/pull/9'] },
+    }
+    expect((await pedirEvento(id, entregue)).status).toBe(201)
+    const segunda = await pedirEvento(id, entregue)
+    expect(segunda.status).toBe(200)
+    expect(segunda.corpo).toEqual({ resultado: 'repetido' })
+    const [parte] = await db.parteDaDemanda.findMany({ where: { demandaId: id } })
+    expect(parte!.prs).toEqual([
+      expect.objectContaining({ url: 'https://github.com/kustertech-exemplo/alfa/pull/9' }),
+    ])
+    expect(parte!.prs as unknown[]).toHaveLength(1)
   })
 })
 

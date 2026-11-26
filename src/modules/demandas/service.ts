@@ -19,12 +19,15 @@ import {
   promoverParcial,
 } from './arquivos'
 import { hashDoTokenDaFabrica, validarNomeDaFonteDaFabrica } from '@/modules/fabrica/model'
+import { aplicarEventoDeParte, conferirPartesDaEtapa, criarParteDeEntrada } from './partes-service'
+import { fecharDemandaSeNoAr } from './partes-no-ar'
 import { DESTINOS, NIVEIS, TIPOS, PREFIXO_DO_TOKEN_DE_DEMANDAS } from './contrato'
 import {
   LIMITE_DA_DESCRICAO,
   LIMITE_DO_TITULO,
   descricaoDaFilha,
   estadoInicial,
+  etapasComNoAr,
   tituloDaFilha,
   validarModelo,
   type Ator,
@@ -250,6 +253,7 @@ export async function abrirDemanda(
     },
     select: { id: true },
   })
+  await criarParteDeEntrada(tx, { id: demanda.id, repositorioId: e.repositorioId })
   await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
   await tx.eventoDaDemanda.create({
     data: {
@@ -508,7 +512,7 @@ export type ResultadoDoRegistro =
   | { resultado: 'recusado'; motivo: string }
 
 /** Campos que vêm dos dados do evento aplicado, não do estado. */
-function colunasDoEvento(evento: EventoAplicavel, demanda: LinhaDaDemanda) {
+function colunasDoEvento(evento: EventoAplicavel, demanda: LinhaDaDemanda, agora: Date) {
   switch (evento.tipo) {
     case 'triagem':
       return {
@@ -522,8 +526,9 @@ function colunasDoEvento(evento: EventoAplicavel, demanda: LinhaDaDemanda) {
         planoCaminho: evento.dados.plano,
         ...(evento.dados.artefato ? { artefatoUrl: evento.dados.artefato } : {}),
       }
+    // `Demanda.prs` fica como está (as partes guardam os PRs); a entrega v1 marca `entregueEm`.
     case 'entregue':
-      return { prs: evento.dados.prs }
+      return { entregueEm: agora }
     default:
       return {}
   }
@@ -533,12 +538,14 @@ interface RegistroDeEvento {
   demandaId: string
   idExterno: string
   evento: EventoAplicavel & { ator: Ator }
-  origem: 'fabrica' | 'paulo' | 'sessao'
+  origem: 'fabrica' | 'paulo' | 'sessao' | 'flow'
   em: Date
   usuarioId?: string
   fonteId?: string
   /** Grava `Demanda.tipo` na mesma transação (a decisão do Paulo na triagem que falhou). */
   tipo?: TipoDeDemanda
+  /** O contrato que a Fábrica falou; no 2, concluir etapa confere as partes (seção 7.2). */
+  contrato?: 1 | 2
 }
 
 /**
@@ -556,7 +563,7 @@ export async function registrarEvento(e: RegistroDeEvento): Promise<ResultadoDoR
 }
 
 /** O `registrarEvento` dentro de uma transação de quem chama (ela trava a linha da demanda). */
-async function registrarEventoNa(
+export async function registrarEventoNa(
   tx: Prisma.TransactionClient,
   e: RegistroDeEvento,
 ): Promise<ResultadoDoRegistro> {
@@ -600,10 +607,14 @@ async function registrarEventoNa(
     where: { demandaId: e.demandaId, tipo: 'CAPTURA', apagadoEm: null, tela: { not: null } },
     select: { id: true, tela: true },
   })
+  // Demanda aberta antes da regra "até o ar": o snapshot ganha a etapa "No ar" no fim (gravado
+  // junto com o evento), senão o `entregue` do kit v1 seria recusado.
+  const salvas = demanda.etapas as unknown as EtapaDefinida[]
+  const etapas = salvas.length > 0 ? etapasComNoAr(salvas) : salvas
   const r = aplicarEvento(
     estado,
     {
-      etapas: demanda.etapas as unknown as EtapaDefinida[],
+      etapas,
       temTela: demanda.temTela,
       capturas: capturas.map((c) => ({ id: c.id, tela: c.tela as 'desktop' | 'celular' })),
       artefato: demanda.artefatoUrl,
@@ -613,13 +624,25 @@ async function registrarEventoNa(
   if (!r.ok) return { resultado: 'recusado', motivo: r.motivo }
 
   const agora = new Date()
+  if (
+    e.contrato === 2 &&
+    e.evento.tipo === 'etapa_concluida' &&
+    (e.evento.dados.marco === 'desenvolvida' || e.evento.dados.marco === 'entregue')
+  ) {
+    const prontas = await conferirPartesDaEtapa(tx, e.demandaId, e.evento.dados.marco)
+    if (!prontas.ok) return { resultado: 'recusado', motivo: prontas.motivo }
+  }
+  const nasPartes = await aplicarEventoDeParte(tx, demanda, e.evento, agora)
+  if (!nasPartes.ok) return { resultado: 'recusado', motivo: nasPartes.motivo }
   await tx.demanda.update({
     where: { id: e.demandaId },
     data: {
       ...colunasDoEstado(r.estado, estado, demanda.esperaDesde, agora),
-      ...colunasDoEvento(e.evento, demanda),
+      ...colunasDoEvento(e.evento, demanda, agora),
       ...(e.tipo ? { tipo: doFio.tipo(e.tipo) } : {}),
-      ...(r.estado.encerrada === 'entregue' && !estado.encerrada ? { entregueEm: agora } : {}),
+      ...(etapas.length !== salvas.length
+        ? { etapas: etapas as unknown as Prisma.InputJsonValue }
+        : {}),
     },
   })
   await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
@@ -640,6 +663,14 @@ async function registrarEventoNa(
       where: { id: desenhoId },
       data: { versao: r.estado.versaoDoDesenho },
     })
+  }
+  // Entrou na etapa "No ar" com todas as partes já no ar: fecha na mesma transação.
+  if (
+    !r.estado.encerrada &&
+    r.estado.etapaAtual !== estado.etapaAtual &&
+    etapas.find((x) => x.chave === r.estado.etapaAtual)?.marco === 'no_ar'
+  ) {
+    await fecharDemandaSeNoAr(tx, e.demandaId, agora)
   }
   return { resultado: 'aplicado', estado: r.estado }
 }

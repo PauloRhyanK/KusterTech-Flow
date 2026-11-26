@@ -33,7 +33,7 @@ beforeEach(async () => {
 })
 
 describe('schema de Demandas', () => {
-  test('a migration deixa um único ModeloDeEtapas padrao com as seis etapas na ordem e esperaEm do MODELO_PADRAO', async () => {
+  test('a migration deixa um único ModeloDeEtapas padrao com as etapas do MODELO_PADRAO na ordem e esperaEm do MODELO_PADRAO', async () => {
     const modelos = await db.modeloDeEtapas.findMany({
       where: { padrao: true },
       include: { etapas: { orderBy: { ordem: 'asc' } } },
@@ -132,5 +132,37 @@ describe('schema de Demandas', () => {
     expect(await db.arquivoDaDemanda.count()).toBe(0)
     const depois = await db.pedidoDePublicacao.findUniqueOrThrow({ where: { id: pedido.id } })
     expect(depois.demandaId).toBeNull()
+  })
+
+  test('ParteDaDemanda: chave única por demanda e cascata ao apagar a demanda', async () => {
+    const { projeto, repositorio } = await cenario()
+    const d = await db.demanda.create({ data: dadosDaDemanda(projeto.id, repositorio.id) })
+    const parte = () =>
+      db.parteDaDemanda.create({
+        data: { demandaId: d.id, chave: 'back', repositorioId: repositorio.id, ordem: 1 },
+      })
+    const criada = await parte()
+    expect(criada).toMatchObject({ estado: 'PLANEJANDO', chegaAoAr: 'PUBLICACAO', prs: [] })
+    await expect(parte()).rejects.toMatchObject({ code: 'P2002' })
+    await db.demanda.delete({ where: { id: d.id } })
+    expect(await db.parteDaDemanda.count()).toBe(0)
+  })
+
+  test('a migration acrescenta a etapa no_ar ao fim do modelo padrao', async () => {
+    const modelo = await db.modeloDeEtapas.findFirstOrThrow({
+      where: { padrao: true },
+      include: { etapas: { orderBy: { ordem: 'asc' } } },
+    })
+    const ultima = modelo.etapas.at(-1)!
+    expect(ultima).toMatchObject({
+      chave: 'no_ar',
+      nome: 'No ar',
+      rotulo: 'No ar',
+      marco: 'no_ar',
+      quemConclui: 'FLOW',
+      puladaSemTela: false,
+      esperaEm: [],
+    })
+    expect(ultima.ordem).toBe(modelo.etapas.length)
   })
 })

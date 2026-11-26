@@ -106,6 +106,7 @@ Content-Type: application/json
 - `commit`: opcional, SHA completo de 40 caracteres em minúsculas. **Sem `commit`, o pedido vale o HEAD de `main`**, resolvido pelo worker no ciclo seguinte.
 - `modo`: opcional, `imediato` ou `lote`. Sem `modo`, vale o padrão configurado no projeto.
 - `descricao`: opcional, até 200 caracteres; aparece na tela.
+- `demanda` e `parte`: opcionais, só para quem pede por uma demanda do Flow. `demanda` é o id da demanda; `parte` é a chave da parte (obrigatória quando a demanda tem mais de uma parte neste repositório, e só vale junto com `demanda`). Sem `parte`, uma demanda com uma parte só neste repositório usa essa parte.
 
 Respostas:
 
@@ -162,7 +163,7 @@ Durante o conserto, não tente "resolver" publicando por fora nem reenviando o m
 
 ## Demandas
 
-Quando o trabalho vem de uma **demanda** do Flow, a publicação já faz parte da entrega: ao entregar, a Fábrica pede a publicação com o campo `demanda` (o id da demanda) no `POST /api/publicacoes`, e o pedido aparece ligado à demanda. A sessão não pede de novo a publicação dessa demanda. Para abrir, acompanhar e planejar demandas, siga o guia [Demandas pelo KusterTech Flow](demandas-pelo-flow.md).
+Quando o trabalho vem de uma **demanda** do Flow, a publicação já faz parte da entrega: ao entregar, a Fábrica pede a publicação com o campo `demanda` (o id da demanda) no `POST /api/publicacoes`, e o pedido aparece ligado à demanda (e à parte dela, pelo campo `parte`). O resultado do pedido volta para essa parte: com a versão **conferida no site** contendo o commit, a parte vai a "No ar"; sem a conferência (publicado sem endereço de versão, dispensado, recusado ou falhou), ela fica em "Não chegou ao ar" e o Paulo confere com **Conferi no ar**. A demanda fecha quando todas as partes estão no ar. A sessão não pede de novo a publicação dessa demanda. Para abrir, acompanhar e planejar demandas, siga o guia [Demandas pelo KusterTech Flow](demandas-pelo-flow.md).
 
 ## Resumo para a sessão
 

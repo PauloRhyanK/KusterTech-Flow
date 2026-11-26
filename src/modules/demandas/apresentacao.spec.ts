@@ -8,16 +8,21 @@ import {
   faixaDaEspera,
   linkDoArtefato,
   quadrosDeImpacto,
-  fluxoDeEntrada,
   grupoDaDemanda,
   iconeDoTipo,
+  cartoesDasPartes,
+  chipsDasPartes,
+  faixaDoQueFalta,
   montarGrupos,
+  ordemDePublicacao,
+  quadrosAteOAr,
+  trilhoDaDemanda,
   rotuloDoEstado,
   textoDoEvento,
-  trilho,
   type DemandaNaLista,
 } from './apresentacao'
-import { MODELO_PADRAO, etapasAplicaveis, type EtapaDefinida } from './model'
+import { MODELO_PADRAO, type EtapaDefinida } from './model'
+import type { Parte } from './partes'
 
 const AGORA = new Date('2026-11-20T15:00:00Z') // 12:00 em São Paulo
 const MIN = 60_000
@@ -38,101 +43,33 @@ function demanda(parcial: Partial<DemandaNaLista> = {}): DemandaNaLista {
     criadaEm: new Date(AGORA.getTime() - 10 * MIN),
     esperaDesde: null,
     atualizadaEm: new Date(AGORA.getTime() - 10 * MIN),
+    partes: [],
+    naoChegouDesde: null,
+    noArEm: null,
+    desenhoAprovado: null,
     ...parcial,
   }
 }
 
-describe('fluxoDeEntrada', () => {
-  test('12 hoje (4 flow, 8 sessao) → "12" / "você 4 · sessões 8"; lote "publica às 22:00"; vagas 3 de 5 → "3 de 5 vagas"; decisão mais antiga há 2 h → "a mais antiga: 2 h"', () => {
-    const hoje = [
-      ...Array.from({ length: 4 }, () => ({
-        origem: 'flow' as const,
-        destino: 'urgente' as const,
-        encerrada: null,
-      })),
-      ...Array.from({ length: 3 }, () => ({
-        origem: 'sessao' as const,
-        destino: 'orientada' as const,
-        encerrada: 'orientada',
-      })),
-      ...Array.from({ length: 2 }, () => ({
-        origem: 'sessao' as const,
-        destino: 'lote_da_noite' as const,
-        encerrada: null,
-      })),
-      ...Array.from({ length: 2 }, () => ({
-        origem: 'sessao' as const,
-        destino: 'fila_de_agentes' as const,
-        encerrada: null,
-      })),
-      { origem: 'sessao' as const, destino: null, encerrada: null },
-    ]
-    const quadros = fluxoDeEntrada({
-      hoje,
-      decidindo: [
-        { esperaDesde: new Date(AGORA.getTime() - 30 * MIN) },
-        { esperaDesde: new Date(AGORA.getTime() - 120 * MIN) },
-      ],
-      horaDoLote: '22:00',
-      vagas: { ocupadas: 3, efetivas: 5 },
-      agora: AGORA,
-    })
-    expect(quadros).toEqual([
-      {
-        chave: 'recebidas',
-        n: 12,
-        rotulo: 'Recebidas',
-        meta: 'você 4 · sessões 8',
-        filtro: null,
-      },
-      {
-        chave: 'orientadas',
-        n: 3,
-        rotulo: 'Orientadas',
-        meta: 'sem ir à Fábrica',
-        filtro: 'orientada',
-      },
-      { chave: 'urgente', n: 4, rotulo: 'Urgente', meta: 'na frente da fila', filtro: 'urgente' },
-      {
-        chave: 'lote',
-        n: 2,
-        rotulo: 'Lote da noite',
-        meta: 'publica às 22:00',
-        filtro: 'lote_da_noite',
-      },
-      {
-        chave: 'agentes',
-        n: 2,
-        rotulo: 'Fila de agentes',
-        meta: '3 de 5 vagas',
-        filtro: 'fila_de_agentes',
-      },
-      {
-        chave: 'decisao',
-        n: 2,
-        rotulo: 'Decisão sua',
-        meta: 'a mais antiga: 2 h',
-        filtro: 'decisao_do_paulo',
-      },
-    ])
-  })
-
-  test('sem retrato e sem decisão: "sem notícias da Fábrica" e "nada esperando"', () => {
-    const quadros = fluxoDeEntrada({
-      hoje: [],
-      decidindo: [],
-      horaDoLote: '21:30',
-      vagas: null,
-      agora: AGORA,
-    })
-    expect(quadros.find((q) => q.chave === 'agentes')?.meta).toBe('sem notícias da Fábrica')
-    expect(quadros.find((q) => q.chave === 'decisao')).toMatchObject({
-      n: 0,
-      meta: 'nada esperando',
-    })
-    expect(quadros.find((q) => q.chave === 'lote')?.meta).toBe('publica às 21:30')
-  })
-})
+function parte(chave: string, parcial: Partial<Parte> = {}): Parte {
+  return {
+    chave,
+    repositorio: `exemplo/alfa-${chave}`,
+    objetivo: '',
+    ordem: 1,
+    dependeDe: [],
+    chegaAoAr: 'publicacao',
+    estado: 'planejando',
+    prs: [],
+    commitAlvo: null,
+    commitNoAr: null,
+    motivo: null,
+    feitaEm: null,
+    noArEm: null,
+    temPedido: false,
+    ...parcial,
+  }
+}
 
 test('ehDeHoje usa o dia de America/Sao_Paulo', () => {
   // 02:30 UTC de 20/11 ainda é 19/11 em São Paulo.
@@ -199,117 +136,12 @@ describe('rotuloDoEstado', () => {
   })
 })
 
-describe('trilho', () => {
-  test('trilho sem tela tem 4 pontos; com espera aprovar_desenho o ponto de "desenho" é "espera" e os dois anteriores "feito"', () => {
-    const semTela = demanda({ temTela: false })
-    expect(trilho(etapasAplicaveis(semTela.etapas, false), semTela)).toHaveLength(4)
-
-    const d = demanda({
-      etapaAtual: 'desenho',
-      concluidas: ['recebida', 'planejada'],
-      espera: 'aprovar_desenho',
-    })
-    expect(trilho(etapasAplicaveis(d.etapas, true), d).map((p) => [p.chave, p.ponto])).toEqual([
-      ['recebida', 'feito'],
-      ['planejada', 'feito'],
-      ['desenho', 'espera'],
-      ['desenvolvida', 'futuro'],
-      ['testada', 'futuro'],
-      ['entregue', 'futuro'],
-    ])
-  })
-
-  test('travada e teste_falhou viram "travado"; sem espera o atual é "atual"', () => {
-    const d = demanda({ etapaAtual: 'desenvolvida', espera: 'travada' })
-    const etapas = etapasAplicaveis(d.etapas, true)
-    expect(trilho(etapas, d)[3]).toMatchObject({ chave: 'desenvolvida', ponto: 'travado' })
-    expect(trilho(etapas, d)[2]).toMatchObject({ chave: 'desenho', ponto: 'feito' })
-    const t = demanda({ etapaAtual: 'testada', espera: 'teste_falhou' })
-    expect(trilho(etapas, t)[4]?.ponto).toBe('travado')
-    const a = demanda({ etapaAtual: 'testada' })
-    expect(trilho(etapas, a)[4]).toEqual({ chave: 'testada', rotulo: 'Testada', ponto: 'atual' })
-  })
-})
-
 test('iconeDoTipo', () => {
   expect(iconeDoTipo('defeito')).toEqual({ letra: 'B', tom: 'erro' })
   expect(iconeDoTipo('ideia')).toEqual({ letra: 'I', tom: 'atencao' })
   expect(iconeDoTipo('ajuste')).toEqual({ letra: 'A', tom: 'informacao' })
   expect(iconeDoTipo('funcao_nova')).toEqual({ letra: 'F', tom: 'execucao' })
   expect(iconeDoTipo(null)).toEqual({ letra: '?', tom: 'neutro' })
-})
-
-describe('montarGrupos', () => {
-  test('três grupos na ordem, linhas com link, idade sem "há" e "Na fila" urgente primeiro', () => {
-    const grupos = montarGrupos(
-      [
-        demanda({
-          id: 'espera',
-          etapaAtual: 'desenho',
-          concluidas: ['recebida', 'planejada'],
-          espera: 'aprovar_desenho',
-          esperaDesde: new Date(AGORA.getTime() - 180 * MIN),
-        }),
-        demanda({
-          id: 'andando',
-          etapaAtual: 'desenvolvida',
-          atualizadaEm: new Date(AGORA.getTime() - 40 * MIN),
-        }),
-        demanda({ id: 'velha', criadaEm: new Date(AGORA.getTime() - 30 * MIN) }),
-        demanda({
-          id: 'urgente',
-          destino: 'urgente',
-          criadaEm: new Date(AGORA.getTime() - 5 * MIN),
-        }),
-        demanda({ id: 'fim', encerrada: 'entregue', etapaAtual: 'entregue' }),
-      ],
-      AGORA,
-    )
-    expect(grupos.map((g) => [g.chave, g.titulo, g.contagem])).toEqual([
-      ['espera_voce', 'Espera você', '1'],
-      ['em_andamento', 'Em andamento', '1'],
-      ['na_fila', 'Na fila', 'entram na ordem'],
-    ])
-    expect(grupos[0]?.linhas[0]).toMatchObject({
-      id: 'espera',
-      href: '/demandas/espera',
-      titulo: 'Tela de funil de vendas',
-      projeto: 'Projeto Alfa',
-      icone: { letra: 'F', tom: 'execucao' },
-      estado: { texto: 'Aprovar desenho', tom: 'atencao' },
-      idade: '3 h',
-    })
-    expect(grupos[1]?.linhas[0]?.idade).toBe('40 min')
-    expect(grupos[2]?.linhas.map((l) => l.id)).toEqual(['urgente', 'velha'])
-  })
-})
-
-describe('montarGrupos com o filtro "orientada"', () => {
-  test('quarto grupo "Orientadas hoje" com as orientadas, estado "Orientada" e o ponto da triagem feito', () => {
-    const orientada = demanda({
-      id: 'ori',
-      titulo: 'Como exportar o relatório',
-      tipo: 'ideia',
-      destino: 'orientada',
-      encerrada: 'orientada',
-      atualizadaEm: new Date(AGORA.getTime() - 20 * MIN),
-    })
-    const grupos = montarGrupos([], AGORA, [orientada])
-    expect(grupos.map((g) => [g.chave, g.titulo, g.contagem])).toEqual([
-      ['espera_voce', 'Espera você', '0'],
-      ['em_andamento', 'Em andamento', '0'],
-      ['na_fila', 'Na fila', 'entram na ordem'],
-      ['orientadas_hoje', 'Orientadas hoje', '1'],
-    ])
-    expect(grupos[3]?.linhas[0]).toMatchObject({
-      id: 'ori',
-      href: '/demandas/ori',
-      estado: { texto: 'Orientada', tom: 'neutro' },
-      idade: '20 min',
-    })
-    expect(grupos[3]?.linhas[0]?.trilho[0]?.ponto).toBe('feito')
-    expect(montarGrupos([], AGORA)).toHaveLength(3)
-  })
 })
 
 describe('avisoDeFabricaSemBuscar', () => {
@@ -660,4 +492,368 @@ describe('demandasQueVemAi', () => {
     ])
     expect(lista[1]).toMatchObject({ titulo: 'Bot de áudio', projeto: 'Projeto Alfa' })
   })
+})
+
+describe('montarGrupos até o ar', () => {
+  const triada = {
+    etapaAtual: 'entregue',
+    concluidas: ['recebida', 'planejada', 'desenho', 'desenvolvida', 'testada'],
+  }
+  const lista = () => [
+    demanda({
+      id: 'espera',
+      etapaAtual: 'desenho',
+      concluidas: ['recebida', 'planejada'],
+      espera: 'aprovar_desenho',
+      esperaDesde: new Date(AGORA.getTime() - 4 * 24 * 60 * MIN),
+      partes: [parte('alfa')],
+    }),
+    demanda({
+      id: 'falta',
+      titulo: 'Modo editor com IA',
+      ...triada,
+      naoChegouDesde: new Date(AGORA.getTime() - 24 * 60 * MIN),
+      partes: [
+        parte('front', {
+          ordem: 2,
+          dependeDe: ['back'],
+          estado: 'nao_chegou',
+          motivo: 'Publicação dispensada',
+        }),
+        parte('back', { ordem: 1 }),
+      ],
+    }),
+    demanda({
+      id: 'andando',
+      ...triada,
+      atualizadaEm: new Date(AGORA.getTime() - 2 * MIN),
+      partes: [parte('back', { estado: 'publicando', motivo: 'Conferindo o site' })],
+    }),
+    demanda({
+      id: 'triagem',
+      partes: [parte('alfa')],
+    }),
+    demanda({
+      id: 'noar',
+      ...triada,
+      encerrada: 'no_ar',
+      noArEm: new Date(AGORA.getTime() - 60 * MIN),
+      partes: [parte('front', { estado: 'no_ar', commitNoAr: 'c5c01ba9f00', noArEm: AGORA })],
+    }),
+    demanda({ id: 'velha', encerrada: 'no_ar', noArEm: new Date('2026-10-01T12:00:00Z') }),
+    demanda({ id: 'orientada', encerrada: 'orientada' }),
+  ]
+
+  test('Espera você no topo, depois Não chegou ao ar, A caminho e No ar; no ar há mais de 30 dias e orientada ficam fora', () => {
+    const grupos = montarGrupos(lista(), AGORA)
+    expect(grupos.map((g) => [g.chave, g.titulo, g.contagem])).toEqual([
+      ['espera_voce', 'Espera você', '1'],
+      ['nao_chegou', 'Não chegou ao ar', '1'],
+      ['a_caminho', 'A caminho', '2'],
+      ['no_ar', 'No ar', '1'],
+    ])
+    expect(grupos[2]?.linhas.map((l) => l.id)).toEqual(['andando', 'triagem'])
+  })
+
+  test('linha: chips das partes na ordem de publicação, trilho de 4 pontos, frase e idade', () => {
+    const grupos = montarGrupos(lista(), AGORA)
+    expect(grupos[1]?.linhas[0]).toEqual({
+      id: 'falta',
+      href: '/demandas/falta',
+      titulo: 'Modo editor com IA',
+      projeto: 'Projeto Alfa',
+      partes: [
+        { chave: 'back', texto: 'planejando', tom: 'neutro' },
+        { chave: 'front', texto: 'dispensada', tom: 'nao' },
+      ],
+      trilho: ['cheio', 'cheio', 'andando', 'vermelho'],
+      estado: { texto: 'Falta a parte do back', tom: 'erro' },
+      idade: '1 d',
+    })
+    expect(grupos[2]?.linhas[0]).toMatchObject({
+      estado: { texto: 'Conferindo o site', tom: 'execucao' },
+      trilho: ['cheio', 'cheio', 'cheio', 'andando'],
+      idade: '2 min',
+    })
+    // Sem motivo, a caminho fala da etapa, não de "falta".
+    expect(grupos[2]?.linhas[1]?.estado).toEqual({ texto: 'Triagem', tom: 'neutro' })
+    expect(
+      montarGrupos([demanda({ id: 'nova', atualizadaEm: AGORA })], AGORA)[2]?.linhas[0]?.idade,
+    ).toBe('agora')
+    expect(grupos[2]?.linhas[1]?.trilho).toEqual(['andando', 'vazio', 'vazio', 'vazio'])
+    expect(grupos[3]?.linhas[0]).toMatchObject({
+      estado: { texto: 'No ar · c5c01ba', tom: 'sucesso' },
+      partes: [{ chave: 'front', texto: 'no ar', tom: 'ok' }],
+      trilho: ['cheio', 'cheio', 'cheio', 'verde'],
+      idade: 'hoje',
+    })
+    expect(grupos[0]?.linhas[0]).toMatchObject({
+      estado: { texto: 'Aprovar desenho', tom: 'atencao' },
+      idade: '4 d',
+    })
+  })
+
+  test('com o filtro "orientada": grupo "Orientadas hoje" no fim', () => {
+    const orientada = demanda({
+      id: 'ori',
+      destino: 'orientada',
+      encerrada: 'orientada',
+      atualizadaEm: new Date(AGORA.getTime() - 20 * MIN),
+    })
+    const grupos = montarGrupos([], AGORA, [orientada])
+    expect(grupos.map((g) => g.chave)).toEqual([
+      'espera_voce',
+      'nao_chegou',
+      'a_caminho',
+      'no_ar',
+      'orientadas_hoje',
+    ])
+    expect(grupos[4]?.linhas[0]).toMatchObject({
+      id: 'ori',
+      estado: { texto: 'Orientada', tom: 'neutro' },
+      idade: '20 min',
+    })
+  })
+})
+
+test('trilhoDaDemanda: orientada para na triagem; entregue antiga tem tudo feito, sem o verde', () => {
+  expect(trilhoDaDemanda(demanda({ encerrada: 'orientada' }))).toEqual([
+    'cheio',
+    'vazio',
+    'vazio',
+    'vazio',
+  ])
+  expect(trilhoDaDemanda(demanda({ encerrada: 'entregue', etapaAtual: 'entregue' }))).toEqual([
+    'cheio',
+    'cheio',
+    'cheio',
+    'cheio',
+  ])
+})
+
+describe('quadrosAteOAr', () => {
+  test('quatro números na ordem do desenho, com as metas; Espera você conta a mais antiga', () => {
+    const espera = (id: string, dias: number) =>
+      demanda({
+        id,
+        espera: 'travada',
+        esperaDesde: new Date(AGORA.getTime() - dias * 24 * 60 * MIN),
+      })
+    const demandas = [espera('e', 4), espera('f', 1), demanda({ id: 'a' }), demanda({ id: 'b' })]
+    expect(quadrosAteOAr(demandas, AGORA)).toEqual([
+      { chave: 'no_ar', numero: 0, rotulo: 'No ar', meta: 'conferidas no site' },
+      { chave: 'a_caminho', numero: 2, rotulo: 'A caminho', meta: 'Fábrica trabalhando' },
+      { chave: 'nao_chegou', numero: 0, rotulo: 'Não chegou ao ar', meta: 'feita, mas falta algo' },
+      { chave: 'espera_voce', numero: 2, rotulo: 'Espera você', meta: 'há 4 dias' },
+    ])
+    expect(quadrosAteOAr([espera('f', 1)], AGORA)[3]?.meta).toBe('há 1 dia')
+    expect(quadrosAteOAr([espera('g', 0.25)], AGORA)[3]?.meta).toBe('há 6 h')
+    expect(quadrosAteOAr([], AGORA)[3]?.meta).toBe('nada esperando')
+  })
+})
+
+describe('chipsDasPartes', () => {
+  test('estado curto por parte; descartada some; dependência fora do ar não muda o chip', () => {
+    expect(
+      chipsDasPartes([
+        parte('a', { estado: 'em_curso' }),
+        parte('b', { estado: 'feita' }),
+        parte('c', { estado: 'nao_chegou', motivo: 'Nunca foi publicada' }),
+        parte('d', { estado: 'nao_chegou', motivo: 'PR aberto há 1 d' }),
+        parte('e', { estado: 'nao_chegou', motivo: 'Publicada sem conferir o site' }),
+        parte('f', { estado: 'nao_chegou', motivo: 'Publicação falhou' }),
+        parte('g', { estado: 'descartada' }),
+      ]),
+    ).toEqual([
+      { chave: 'a', texto: 'em curso', tom: 'andando' },
+      { chave: 'b', texto: 'feita', tom: 'neutro' },
+      { chave: 'c', texto: 'sem publicação', tom: 'nao' },
+      { chave: 'd', texto: 'PR aberto', tom: 'nao' },
+      { chave: 'e', texto: 'sem conferir', tom: 'nao' },
+      { chave: 'f', texto: 'falhou', tom: 'nao' },
+    ])
+  })
+})
+
+describe('ordemDePublicacao', () => {
+  test('segue dependeDe, desempata pela ordem; uma parte só → null', () => {
+    const back = parte('back', { ordem: 2 })
+    const front = parte('front', { ordem: 1, dependeDe: ['back'] })
+    expect(ordemDePublicacao([front, back]).map((p) => p.chave)).toEqual(['back', 'front'])
+    expect(
+      ordemDePublicacao([parte('z', { ordem: 2 }), parte('y', { ordem: 1 })]).map((p) => p.chave),
+    ).toEqual(['y', 'z'])
+  })
+})
+
+describe('faixaDoQueFalta', () => {
+  test('só com a demanda em "não chegou ao ar": a parte mais atrasada e o que a Fábrica faz', () => {
+    const partes = [
+      parte('back', { ordem: 1, objetivo: 'aba, IA e envio' }),
+      parte('front', {
+        ordem: 2,
+        dependeDe: ['back'],
+        estado: 'nao_chegou',
+        motivo: 'Publicação dispensada',
+      }),
+    ]
+    expect(faixaDoQueFalta({ grupo: 'nao_chegou', partes, podeConferir: true })).toEqual({
+      titulo: 'Falta: a parte do back (aba, IA e envio)',
+      contexto: 'A Fábrica está planejando essa parte. A demanda só fecha com as 2 partes no ar.',
+      conferir: 'front',
+    })
+    expect(faixaDoQueFalta({ grupo: 'a_caminho', partes, podeConferir: true })).toBeNull()
+  })
+
+  test('parte por versão esperando a versão: a ação "Conferi no ar" também a caminho', () => {
+    const partes = [
+      parte('back', { ordem: 1, estado: 'no_ar' }),
+      parte('nucleo', {
+        ordem: 2,
+        estado: 'publicando',
+        chegaAoAr: 'versao',
+        motivo: 'Esperando a versão',
+      }),
+    ]
+    expect(faixaDoQueFalta({ grupo: 'a_caminho', partes, podeConferir: true })).toEqual({
+      titulo: 'Falta: a parte do nucleo',
+      contexto: 'Esperando a versão. A demanda só fecha com as 2 partes no ar.',
+      conferir: 'nucleo',
+    })
+    expect(faixaDoQueFalta({ grupo: 'a_caminho', partes, podeConferir: false })).toBeNull()
+  })
+
+  test('parte publicada sem conferir: o motivo e a ação "Conferi no ar" (só uma, e só quem pode)', () => {
+    const partes = [
+      parte('alfa', { estado: 'nao_chegou', motivo: 'Publicada sem conferir o site' }),
+    ]
+    expect(faixaDoQueFalta({ grupo: 'nao_chegou', partes, podeConferir: true })).toEqual({
+      titulo: 'Falta: a parte do alfa',
+      contexto: 'Publicada sem conferir o site.',
+      conferir: 'alfa',
+    })
+    expect(faixaDoQueFalta({ grupo: 'nao_chegou', partes, podeConferir: false })?.conferir).toBe(
+      null,
+    )
+    const versao = [parte('nucleo', { estado: 'nao_chegou', chegaAoAr: 'versao', motivo: 'x' })]
+    expect(
+      faixaDoQueFalta({ grupo: 'nao_chegou', partes: versao, podeConferir: true })?.conferir,
+    ).toBe('nucleo')
+  })
+})
+
+describe('cartoesDasPartes', () => {
+  test('demanda com tela: "Desenho aprovado" com a data na parte da tela; pendente sem data', () => {
+    const partes = [parte('back', { ordem: 1 }), parte('front', { ordem: 2, estado: 'em_curso' })]
+    const extras = { planos: {}, consertos: {}, pedidos: {}, conferidas: {} }
+    const [back, front] = cartoesDasPartes(partes, {
+      ...extras,
+      desenho: { chave: 'front', aprovadoEm: new Date('2026-11-24T15:00:00Z') },
+    })
+    expect(back?.passos.map((p) => p.rotulo)).not.toContain('Desenho aprovado')
+    expect(front?.passos[0]).toEqual({
+      rotulo: 'Desenho aprovado',
+      ponto: 'cheio',
+      detalhe: '24/11',
+      links: [],
+    })
+    const pendente = cartoesDasPartes(partes, {
+      ...extras,
+      desenho: { chave: 'front', aprovadoEm: null },
+    })[1]
+    expect(pendente?.passos[0]).toEqual({
+      rotulo: 'Desenho aprovado',
+      ponto: 'vazio',
+      detalhe: null,
+      links: [],
+    })
+  })
+
+  test('um cartão por parte na ordem de publicação, com os passos e os links do GitHub', () => {
+    const cartoes = cartoesDasPartes(
+      [
+        parte('front', {
+          ordem: 1,
+          dependeDe: ['back'],
+          estado: 'nao_chegou',
+          motivo: 'Publicação dispensada',
+          prs: [
+            {
+              url: 'https://github.com/exemplo/alfa-front/pull/12',
+              repositorio: 'exemplo/alfa-front',
+              numero: 12,
+              estado: 'mergeado',
+              mergeCommit: null,
+            },
+          ],
+        }),
+        parte('back', { ordem: 2 }),
+      ],
+      { planos: {}, consertos: {}, pedidos: {}, conferidas: {}, desenho: null },
+    )
+    expect(cartoes.map((c) => [c.titulo, c.repositorio, c.estado])).toEqual([
+      ['1 · Back', 'alfa-back', { texto: 'planejando', tom: 'neutro' }],
+      ['2 · Front', 'alfa-front', { texto: 'espera o back', tom: 'andando' }],
+    ])
+    expect(cartoes[0]?.passos.map((p) => [p.rotulo, p.ponto])).toEqual([
+      ['Plano da parte', 'andando'],
+      ['PRs mergeados', 'vazio'],
+      ['Publicada e conferida no site', 'vazio'],
+    ])
+    expect(cartoes[1]?.passos.map((p) => [p.rotulo, p.ponto])).toEqual([
+      ['Plano da parte', 'cheio'],
+      ['PRs mergeados', 'cheio'],
+      ['Publicação dispensada', 'vermelho'],
+    ])
+    expect(cartoes[1]?.passos[1]?.links).toEqual([
+      { texto: '#12', href: 'https://github.com/exemplo/alfa-front/pull/12' },
+    ])
+  })
+
+  test('publicando com conserto: "Consertando a publicação" e o PR do conserto; no ar conferida por você', () => {
+    const [cartao] = cartoesDasPartes(
+      [parte('back', { estado: 'publicando', motivo: 'Consertando a publicação' })],
+      {
+        planos: { back: 'https://github.com/exemplo/alfa-back/pull/3' },
+        consertos: { back: 'https://github.com/exemplo/alfa-back/pull/9' },
+        pedidos: { back: 'publicando' },
+        conferidas: {},
+        desenho: null,
+      },
+    )
+    expect(cartao?.passos[0]?.links).toEqual([
+      { texto: 'plano', href: 'https://github.com/exemplo/alfa-back/pull/3' },
+    ])
+    expect(cartao?.passos[2]).toEqual({
+      rotulo: 'Consertando a publicação',
+      ponto: 'andando',
+      detalhe: 'publicando',
+      links: [{ texto: 'conserto', href: 'https://github.com/exemplo/alfa-back/pull/9' }],
+    })
+    const [noAr] = cartoesDasPartes(
+      [
+        parte('back', {
+          estado: 'no_ar',
+          commitNoAr: 'abcdef1234',
+          noArEm: new Date('2026-11-24T15:00:00Z'),
+        }),
+      ],
+      { planos: {}, consertos: {}, pedidos: {}, conferidas: { back: true }, desenho: null },
+    )
+    expect(noAr?.passos[2]).toEqual({
+      rotulo: 'No ar · abcdef1',
+      ponto: 'verde',
+      detalhe: 'conferida por você · 24/11',
+      links: [],
+    })
+  })
+})
+
+test('histórico: eventos das partes e "conferida pelo Paulo"', () => {
+  expect(textoDoEvento('no_ar', {})).toBe('No ar')
+  expect(textoDoEvento('parte_feita', { chave: 'back' })).toBe('Parte back feita')
+  expect(textoDoEvento('parte_conferida_pelo_paulo', { chave: 'back' })).toBe(
+    'Parte back conferida pelo Paulo',
+  )
+  expect(textoDoEvento('migrada', { texto: 'migrada: no ar' })).toBe('migrada: no ar')
 })

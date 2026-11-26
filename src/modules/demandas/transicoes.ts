@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { eventoDaFabricaSchema } from './contrato'
+import type { eventoDaFabricaSchema, eventoDaFabricaV2Schema } from './contrato'
 import {
   LIMITE_DE_FALHAS_DO_TESTE,
   LIMITE_DE_RECUSAS_DO_DESENHO,
@@ -13,7 +13,7 @@ import {
   type EtapaDefinida,
 } from './model'
 
-type EventoDoFio = z.infer<typeof eventoDaFabricaSchema>
+type EventoDoFio = z.infer<typeof eventoDaFabricaSchema> | z.infer<typeof eventoDaFabricaV2Schema>
 
 export type EventoAplicavel =
   | {
@@ -34,6 +34,8 @@ export type EventoAplicavel =
   | { tipo: 'retomada'; dados: { resposta?: string } }
   | { tipo: 'etapa_concluida_pelo_paulo'; dados: { chave: string } }
   | { tipo: 'encerrada_pelo_paulo'; dados: Record<string, never> }
+  /** A última parte chegou ao ar (regra da seção 4); só o Flow, e só na etapa "No ar". */
+  | { tipo: 'no_ar'; dados: Record<string, never> }
   /** O teste falhou duas vezes e o Paulo entrega o que funciona; `filha` é a demanda do que faltou. */
   | { tipo: 'entrega_parcial'; dados: { filha: string } }
 
@@ -58,6 +60,9 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   destravada: ['fabrica'],
   teste: ['fabrica'],
   entregue: ['fabrica'],
+  partes_planejadas: ['fabrica'],
+  parte_planejada: ['fabrica'],
+  parte_feita: ['fabrica'],
   destino_decidido: ['paulo'],
   desenho_aprovado: ['paulo'],
   ajuste_pedido: ['paulo'],
@@ -65,6 +70,7 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   retomada: ['paulo'],
   etapa_concluida_pelo_paulo: ['paulo'],
   encerrada_pelo_paulo: ['paulo'],
+  no_ar: ['flow'],
   entrega_parcial: ['paulo'],
 }
 
@@ -292,6 +298,11 @@ export function aplicarEvento(
         return recusa('A demanda não espera mais a decisão do teste.')
       }
       return concluir({ ...estado, espera: null, esperaMotivo: null })
+    // As escritas nas partes vêm do service; aqui o estado da demanda não muda.
+    case 'partes_planejadas':
+    case 'parte_planejada':
+    case 'parte_feita':
+      return aceita(estado)
     case 'entregue':
       if (atual.marco !== 'entregue') return naoE('entregue')
       return concluir(estado)
@@ -303,6 +314,9 @@ export function aplicarEvento(
       ) {
         return recusa(`A etapa atual não é ${evento.dados.chave}.`)
       }
+      return concluir(estado)
+    case 'no_ar':
+      if (atual.marco !== 'no_ar') return naoE('no ar')
       return concluir(estado)
     case 'encerrada_pelo_paulo':
       return aceita({

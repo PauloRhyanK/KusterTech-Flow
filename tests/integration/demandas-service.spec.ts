@@ -14,6 +14,7 @@ import {
   criarModeloDeEtapas,
   decidirDestino,
   definirDemandasDoProjeto,
+  encerrarDemanda,
   guardarArquivo,
   modeloDoProjeto,
   pedirAjuste,
@@ -520,7 +521,7 @@ describe('demandas / service (integração)', () => {
     ])
   })
 
-  test('troca de modelo com demandas em curso: definirDemandasDoProjeto com um modelo de 7 etapas → a demanda aberta antes segue com as 6 etapas do retrato; a nova nasce com 7', async () => {
+  test('troca de modelo com demandas em curso: definirDemandasDoProjeto com um modelo com etapa extra → a demanda aberta antes segue com as etapas do retrato; a nova nasce com a etapa extra', async () => {
     const { projeto, repositorio } = await cenario()
     const entrada = {
       projetoId: projeto.id,
@@ -545,6 +546,7 @@ describe('demandas / service (integração)', () => {
         esperaEm: [],
       },
       MODELO_PADRAO[5]!,
+      MODELO_PADRAO[6]!,
     ]
     const { id: modeloId } = await criarModeloDeEtapas(admin, 'Com conferência', sete)
     await expect(
@@ -557,7 +559,7 @@ describe('demandas / service (integração)', () => {
 
     const a = await db.demanda.findUniqueOrThrow({ where: { id: antiga.id } })
     const n = await db.demanda.findUniqueOrThrow({ where: { id: nova.id } })
-    expect((a.etapas as unknown[]).length).toBe(6)
+    expect((a.etapas as unknown[]).length).toBe(MODELO_PADRAO.length)
     expect(a.nivel).toBe('APROVAR_DESENHO')
     expect(n.etapas).toEqual(sete)
     expect(n.modeloId).toBe(modeloId)
@@ -799,5 +801,532 @@ describe('demandas / service (integração)', () => {
     ).toBe(0)
     const d = await db.demanda.findUniqueOrThrow({ where: { id } })
     expect(d).toMatchObject({ etapaAtual: 'desenvolvida', desenhoAprovado: 1, espera: null })
+  })
+})
+
+describe('demandas / eventos de parte e compatibilidade v1 (integração)', () => {
+  const sha = (c: string) => c.repeat(40)
+  const URL_PR = (repo: string, n: number) =>
+    `https://github.com/kustertech-exemplo/${repo}/pull/${n}`
+
+  async function demanda() {
+    const { projeto, repositorio } = await cenario()
+    const crm = await criarRepositorio('alfa-crm', projeto.id)
+    const { id } = await criarDemanda(admin, {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Exportar',
+      descricao: null,
+      nivel: 'vai_sozinho',
+      temTela: false,
+      anexos: [],
+    })
+    expect((await daFabrica(id, triagem('fila_de_agentes'))).resultado).toBe('aplicado')
+    return { id, repositorio, crm, projeto }
+  }
+
+  const v2 = (id: string, evento: Parameters<typeof registrarEvento>[0]['evento']) =>
+    registrarEvento({
+      demandaId: id,
+      idExterno: randomUUID(),
+      evento,
+      origem: 'fabrica',
+      em: new Date(),
+      contrato: 2,
+    })
+
+  const declarar = (chave: string, repo: string, o: Record<string, unknown> = {}) => ({
+    chave,
+    repositorio: `kustertech-exemplo/${repo}`,
+    objetivo: `Parte ${chave}`,
+    ordem: 1,
+    dependeDe: [] as string[],
+    chegaAoAr: 'publicacao' as const,
+    ...o,
+  })
+
+  const planejar = (id: string, partes: ReturnType<typeof declarar>[]) =>
+    v2(id, { tipo: 'partes_planejadas', ator: 'fabrica', dados: { partes } })
+
+  const feita = (id: string, parte: string, repo: string, commit = sha('a'), n = 1) =>
+    v2(id, {
+      tipo: 'parte_feita',
+      ator: 'fabrica',
+      dados: {
+        parte,
+        prs: [{ url: URL_PR(repo, n), numero: n, mergeCommit: commit }],
+        commit,
+        pendencias: [],
+      },
+    })
+
+  const partesDe = (id: string) =>
+    db.parteDaDemanda.findMany({ where: { demandaId: id }, orderBy: { ordem: 'asc' } })
+
+  test('criarDemanda cria a parte de entrada com a chave do repositório', async () => {
+    const { id, repositorio } = await demanda()
+    const partes = await partesDe(id)
+    expect(partes).toHaveLength(1)
+    expect(partes[0]).toMatchObject({
+      chave: 'alfa',
+      ordem: 1,
+      repositorioId: repositorio.id,
+      estado: 'PLANEJANDO',
+    })
+  })
+
+  test('partes_planejadas cria, atualiza e remove; o histórico guarda o evento', async () => {
+    const { id } = await demanda()
+    const r = await planejar(id, [
+      declarar('alfa', 'alfa'),
+      declarar('alfa-crm', 'alfa-crm', { ordem: 2, dependeDe: ['alfa'] }),
+    ])
+    expect(r.resultado).toBe('aplicado')
+    expect((await partesDe(id)).map((p) => [p.chave, p.dependeDe])).toEqual([
+      ['alfa', []],
+      ['alfa-crm', ['alfa']],
+    ])
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'partes_planejadas' } }),
+    ).toBe(1)
+
+    const r2 = await planejar(id, [declarar('alfa', 'alfa', { objetivo: 'Novo objetivo' })])
+    expect(r2.resultado).toBe('aplicado')
+    const depois = await partesDe(id)
+    expect(depois.map((p) => [p.chave, p.objetivo])).toEqual([['alfa', 'Novo objetivo']])
+  })
+
+  test('partes_planejadas com repositório fora do cadastro é recusado e nada muda', async () => {
+    const { id } = await demanda()
+    const r = await planejar(id, [declarar('alfa', 'alfa'), declarar('zeta', 'zeta', { ordem: 2 })])
+    expect(r).toEqual({ resultado: 'recusado', motivo: 'cadastre kustertech-exemplo/zeta no Flow' })
+    expect(await partesDe(id)).toHaveLength(1)
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'partes_planejadas' } }),
+    ).toBe(0)
+  })
+
+  test('partes_planejadas com ciclo é recusado', async () => {
+    const { id } = await demanda()
+    const r = await planejar(id, [
+      declarar('alfa', 'alfa', { dependeDe: ['alfa-crm'] }),
+      declarar('alfa-crm', 'alfa-crm', { ordem: 2, dependeDe: ['alfa'] }),
+    ])
+    expect(r.resultado).toBe('recusado')
+    expect(await partesDe(id)).toHaveLength(1)
+  })
+
+  test('partes_planejadas não remove parte com PR mergeado', async () => {
+    const { id } = await demanda()
+    await planejar(id, [declarar('alfa', 'alfa'), declarar('alfa-crm', 'alfa-crm', { ordem: 2 })])
+    expect((await feita(id, 'alfa-crm', 'alfa-crm')).resultado).toBe('aplicado')
+    const r = await planejar(id, [declarar('alfa', 'alfa')])
+    expect(r).toEqual({
+      resultado: 'recusado',
+      motivo: 'a parte alfa-crm já tem código em main',
+    })
+    expect(await partesDe(id)).toHaveLength(2)
+  })
+
+  test('parte_planejada grava o plano e põe a parte em curso', async () => {
+    const { id } = await demanda()
+    const r = await v2(id, {
+      tipo: 'parte_planejada',
+      ator: 'fabrica',
+      dados: { parte: 'alfa', plano: '.fabrica/planos/alfa.json', prUrl: URL_PR('alfa', 3) },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const [p] = await partesDe(id)
+    expect(p).toMatchObject({
+      estado: 'EM_CURSO',
+      planoCaminho: '.fabrica/planos/alfa.json',
+      planoPrUrl: URL_PR('alfa', 3),
+    })
+  })
+
+  test('parte_planejada de parte desconhecida é recusada', async () => {
+    const { id } = await demanda()
+    const r = await v2(id, {
+      tipo: 'parte_planejada',
+      ator: 'fabrica',
+      dados: { parte: 'fantasma', plano: '.fabrica/planos/x.json', prUrl: null },
+    })
+    expect(r.resultado).toBe('recusado')
+  })
+
+  test('parte_feita com pendência é recusada; sem pendência vira feita com PRs e commit', async () => {
+    const { id } = await demanda()
+    const recusa = await v2(id, {
+      tipo: 'parte_feita',
+      ator: 'fabrica',
+      dados: {
+        parte: 'alfa',
+        prs: [{ url: URL_PR('alfa', 1), numero: 1, mergeCommit: sha('a') }],
+        commit: sha('a'),
+        pendencias: ['falta o teste'],
+      },
+    })
+    expect(recusa).toEqual({
+      resultado: 'recusado',
+      motivo: 'parte com pendência: planeje-a na demanda',
+    })
+    expect((await partesDe(id))[0]!.estado).toBe('PLANEJANDO')
+
+    expect((await feita(id, 'alfa', 'alfa')).resultado).toBe('aplicado')
+    const [p] = await partesDe(id)
+    expect(p).toMatchObject({ estado: 'FEITA', commitAlvo: sha('a') })
+    expect(p!.feitaEm).not.toBeNull()
+    expect(p!.prs).toEqual([
+      expect.objectContaining({ url: URL_PR('alfa', 1), numero: 1, estado: 'mergeado' }),
+    ])
+  })
+
+  test('a última parte feita grava entregueEm; antes dela não', async () => {
+    const { id } = await demanda()
+    await planejar(id, [declarar('alfa', 'alfa'), declarar('alfa-crm', 'alfa-crm', { ordem: 2 })])
+    await feita(id, 'alfa', 'alfa')
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).entregueEm).toBeNull()
+    await feita(id, 'alfa-crm', 'alfa-crm', sha('b'))
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).entregueEm).not.toBeNull()
+  })
+
+  test('v1: plano_criado liga o plano à parte de entrada e a põe em curso', async () => {
+    const { id } = await demanda()
+    const r = await daFabrica(id, {
+      tipo: 'plano_criado',
+      ator: 'fabrica',
+      dados: { plano: '.fabrica/planos/exportar.json', prUrl: null },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const [p] = await partesDe(id)
+    expect(p).toMatchObject({ estado: 'EM_CURSO', planoCaminho: '.fabrica/planos/exportar.json' })
+  })
+
+  async function ateEntregue(id: string) {
+    await daFabrica(id, {
+      tipo: 'plano_criado',
+      ator: 'fabrica',
+      dados: { plano: '.fabrica/planos/exportar.json', prUrl: null },
+    })
+    const r = await daFabrica(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'desenvolvida' },
+    })
+    expect(r.resultado).toBe('aplicado')
+  }
+
+  test('v1: entregue distribui os PRs por repositório, cria parte nova, não sobrescreve prs e não encerra', async () => {
+    const { id } = await demanda()
+    await ateEntregue(id)
+    const r = await daFabrica(id, {
+      tipo: 'entregue',
+      ator: 'fabrica',
+      dados: { prs: [URL_PR('alfa', 5), URL_PR('alfa-crm', 6)] },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const partes = await partesDe(id)
+    expect(partes.map((p) => [p.chave, p.estado, p.motivo])).toEqual([
+      ['alfa', 'FEITA', null],
+      ['alfa-crm', 'FEITA', 'parte criada pela entrega, sem plano'],
+    ])
+    expect((partes[0]!.prs as { url: string }[]).map((x) => x.url)).toEqual([URL_PR('alfa', 5)])
+    expect((partes[1]!.prs as { url: string }[]).map((x) => x.url)).toEqual([URL_PR('alfa-crm', 6)])
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.prs).toEqual([])
+    expect(d.entregueEm).not.toBeNull()
+    expect(d.encerrada).toBeNull()
+    expect(d.etapaAtual).toBe('no_ar')
+  })
+
+  test('entrar na etapa no_ar com todas as partes no ar fecha a demanda na mesma transação', async () => {
+    const { id } = await demanda()
+    await ateEntregue(id)
+    await db.parteDaDemanda.updateMany({
+      where: { demandaId: id },
+      data: { estado: 'NO_AR', noArEm: new Date(), commitNoAr: sha('c') },
+    })
+    const r = await daFabrica(id, { tipo: 'entregue', ator: 'fabrica', dados: { prs: [] } })
+    expect(r.resultado).toBe('aplicado')
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).encerrada).toBe('no_ar')
+  })
+
+  test('v2: etapa_concluida desenvolvida só com todas as partes feitas', async () => {
+    const { id } = await demanda()
+    await daFabrica(id, {
+      tipo: 'plano_criado',
+      ator: 'fabrica',
+      dados: { plano: '.fabrica/planos/exportar.json', prUrl: null },
+    })
+    await planejar(id, [declarar('alfa', 'alfa'), declarar('alfa-crm', 'alfa-crm', { ordem: 2 })])
+    await feita(id, 'alfa', 'alfa')
+    const recusa = await v2(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'desenvolvida' },
+    })
+    expect(recusa.resultado).toBe('recusado')
+    await feita(id, 'alfa-crm', 'alfa-crm', sha('b'))
+    const ok = await v2(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'desenvolvida' },
+    })
+    expect(ok.resultado).toBe('aplicado')
+  })
+
+  test('v2: etapa_concluida entregue exige pedido de publicação em toda parte de publicação', async () => {
+    const { id, repositorio } = await demanda()
+    await daFabrica(id, {
+      tipo: 'plano_criado',
+      ator: 'fabrica',
+      dados: { plano: '.fabrica/planos/exportar.json', prUrl: null },
+    })
+    await feita(id, 'alfa', 'alfa')
+    expect(
+      (
+        await v2(id, {
+          tipo: 'etapa_concluida',
+          ator: 'fabrica',
+          dados: { marco: 'desenvolvida' },
+        })
+      ).resultado,
+    ).toBe('aplicado')
+    const recusa = await v2(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'entregue' },
+    })
+    expect(recusa.resultado).toBe('recusado')
+    const pedido = await db.pedidoDePublicacao.create({
+      data: { repositorioId: repositorio.id, modo: 'IMEDIATO', demandaId: id },
+    })
+    await db.parteDaDemanda.updateMany({ where: { demandaId: id }, data: { pedidoId: pedido.id } })
+    const ok = await v2(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'entregue' },
+    })
+    expect(ok.resultado).toBe('aplicado')
+  })
+
+  test('encerrar descarta as partes abertas e mantém as que já estão no ar', async () => {
+    const { id } = await demanda()
+    await planejar(id, [declarar('alfa', 'alfa'), declarar('alfa-crm', 'alfa-crm', { ordem: 2 })])
+    await db.parteDaDemanda.updateMany({
+      where: { demandaId: id, chave: 'alfa' },
+      data: { estado: 'NO_AR' },
+    })
+    await encerrarDemanda(admin, id)
+    expect((await partesDe(id)).map((p) => [p.chave, p.estado])).toEqual([
+      ['alfa', 'NO_AR'],
+      ['alfa-crm', 'DESCARTADA'],
+    ])
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).encerrada).toBe('descartada')
+  })
+
+  test('naoChegouDesde fica quando a parte volta a em_curso', async () => {
+    const { id } = await demanda()
+    const desde = new Date('2026-11-20T10:00:00Z')
+    await db.parteDaDemanda.updateMany({
+      where: { demandaId: id },
+      data: { estado: 'NAO_CHEGOU', motivo: 'Publicação falhou' },
+    })
+    await db.demanda.update({ where: { id }, data: { naoChegouDesde: desde } })
+    const r = await v2(id, {
+      tipo: 'parte_planejada',
+      ator: 'fabrica',
+      dados: { parte: 'alfa', plano: '.fabrica/planos/alfa.json', prUrl: null },
+    })
+    expect(r.resultado).toBe('aplicado')
+    expect((await partesDe(id))[0]!.estado).toBe('EM_CURSO')
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).naoChegouDesde).toEqual(desde)
+  })
+
+  test('v1: PR de repositório fora do cadastro vai para a parte de entrada', async () => {
+    const { id } = await demanda()
+    await ateEntregue(id)
+    const fora = 'https://github.com/outro-dono/fora/pull/7'
+    const r = await daFabrica(id, {
+      tipo: 'entregue',
+      ator: 'fabrica',
+      dados: { prs: [URL_PR('alfa-crm', 6), fora] },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const partes = await partesDe(id)
+    const entrada = partes.find((p) => p.chave === 'alfa')!
+    expect(entrada.prs).toEqual([
+      expect.objectContaining({
+        url: fora,
+        repositorio: 'outro-dono/fora',
+        numero: 7,
+        estado: 'mergeado',
+        mergeCommit: null,
+      }),
+    ])
+    expect(partes.find((p) => p.chave === 'alfa-crm')!.prs as unknown[]).toHaveLength(1)
+  })
+
+  test('v2: etapa_concluida sem nenhuma parte aberta é recusada', async () => {
+    const { id } = await demanda()
+    await daFabrica(id, {
+      tipo: 'plano_criado',
+      ator: 'fabrica',
+      dados: { plano: '.fabrica/planos/exportar.json', prUrl: null },
+    })
+    await db.parteDaDemanda.deleteMany({ where: { demandaId: id } })
+    const r = await v2(id, {
+      tipo: 'etapa_concluida',
+      ator: 'fabrica',
+      dados: { marco: 'desenvolvida' },
+    })
+    expect(r).toEqual({ resultado: 'recusado', motivo: 'a demanda não tem partes' })
+  })
+
+  describe('v1: entregue liga o pedido de publicação mandado antes (seção 7.3)', () => {
+    const entregar = (id: string, prs: string[] = [URL_PR('alfa', 5)]) =>
+      daFabrica(id, { tipo: 'entregue', ator: 'fabrica', dados: { prs } })
+    const pedidoDa = (
+      id: string,
+      repositorioId: string,
+      parteId: string | null,
+      extra: Record<string, unknown> = {},
+    ) =>
+      db.pedidoDePublicacao.create({
+        data: { repositorioId, modo: 'IMEDIATO', demandaId: id, parteId, ...extra } as never,
+      })
+
+    test('pedido na fila sem commit: a parte de entrada fica publicando com o pedido', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      const pedido = await pedidoDa(id, repositorio.id, entrada!.id)
+      expect((await entregar(id)).resultado).toBe('aplicado')
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'PUBLICANDO',
+        pedidoId: pedido.id,
+        commitAlvo: null,
+        motivo: null,
+      })
+    })
+
+    test('pedido com commit: o commitAlvo vem dele', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      const pedido = await pedidoDa(id, repositorio.id, entrada!.id, { commit: sha('d') })
+      await entregar(id)
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'PUBLICANDO',
+        pedidoId: pedido.id,
+        commitAlvo: sha('d'),
+      })
+    })
+
+    test('pedido repetido: a parte aponta para o atendente', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      const atendente = await pedidoDa(id, repositorio.id, null, { commit: sha('d') })
+      await pedidoDa(id, repositorio.id, entrada!.id, {
+        commit: sha('d'),
+        estado: 'DISPENSADO',
+        atendidoPorId: atendente.id,
+        criadoEm: new Date(Date.now() + 1000),
+      })
+      await entregar(id)
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'PUBLICANDO',
+        pedidoId: atendente.id,
+        commitAlvo: sha('d'),
+      })
+    })
+
+    test('pedido já terminado: o resultado vai para a parte (publicado sem conferir → nao_chegou)', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      const [entrada] = await partesDe(id)
+      await pedidoDa(id, repositorio.id, entrada!.id, {
+        commit: sha('d'),
+        estado: 'PUBLICADO',
+        concluidoEm: new Date(),
+      })
+      await entregar(id)
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'NAO_CHEGOU',
+        motivo: 'Publicada sem conferir o site',
+        commitAlvo: sha('d'),
+      })
+      expect((await db.demanda.findUniqueOrThrow({ where: { id } })).naoChegouDesde).not.toBeNull()
+    })
+
+    test('sem pedido: o commitAlvo é o mergeCommit mais novo dos PRs', async () => {
+      const { id, repositorio } = await demanda()
+      await ateEntregue(id)
+      for (const [n, merge, quando] of [
+        [5, sha('e'), new Date('2026-11-20T10:00:00Z')],
+        [6, sha('f'), new Date('2026-11-20T11:00:00Z')],
+      ] as const) {
+        await db.pullRequestGitHub.create({
+          data: {
+            githubId: BigInt(7000 + n),
+            repositorioId: repositorio.id,
+            numero: n,
+            titulo: `PR ${n}`,
+            estado: 'MERGEADO',
+            rascunho: false,
+            urlHtml: URL_PR('alfa', n),
+            branch: `b${n}`,
+            shaHead: sha('c'),
+            shaMerge: merge,
+            issuesReferenciadas: [],
+            atualizadoNoGitHub: quando,
+            mergeadoNoGitHub: quando,
+            sincronizadoEm: quando,
+          },
+        })
+      }
+      await entregar(id, [URL_PR('alfa', 5), URL_PR('alfa', 6)])
+      expect((await partesDe(id))[0]).toMatchObject({
+        estado: 'FEITA',
+        pedidoId: null,
+        commitAlvo: sha('f'),
+      })
+    })
+  })
+
+  test('parte por versão feita fica publicando com "Esperando a versão"', async () => {
+    const { id } = await demanda()
+    await planejar(id, [
+      declarar('alfa', 'alfa'),
+      declarar('alfa-crm', 'alfa-crm', { ordem: 2, chegaAoAr: 'versao' }),
+    ])
+    expect((await feita(id, 'alfa-crm', 'alfa-crm', sha('b'))).resultado).toBe('aplicado')
+    expect((await partesDe(id)).find((p) => p.chave === 'alfa-crm')).toMatchObject({
+      estado: 'PUBLICANDO',
+      motivo: 'Esperando a versão',
+      commitAlvo: sha('b'),
+      feitaEm: expect.any(Date),
+    })
+  })
+
+  test('demanda antiga sem a etapa no ar no snapshot aceita o entregue v1 e vai para o no ar', async () => {
+    const { id } = await demanda()
+    await ateEntregue(id)
+    const semNoAr = MODELO_PADRAO.filter((e) => e.marco !== 'no_ar')
+    await db.demanda.update({
+      where: { id },
+      data: { etapas: semNoAr as unknown as object },
+    })
+    const r = await daFabrica(id, {
+      tipo: 'entregue',
+      ator: 'fabrica',
+      dados: { prs: [URL_PR('alfa', 5)] },
+    })
+    expect(r.resultado).toBe('aplicado')
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.etapaAtual).toBe('no_ar')
+    expect(d.encerrada).toBeNull()
+    expect((d.etapas as unknown as EtapaDefinida[]).at(-1)?.marco).toBe('no_ar')
   })
 })

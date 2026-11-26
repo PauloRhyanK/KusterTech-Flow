@@ -4,9 +4,10 @@ export type Destino =
 export type TipoDeDemanda = 'defeito' | 'ideia' | 'ajuste' | 'funcao_nova'
 export type Origem = 'flow' | 'sessao' | 'fabrica' | 'usuario'
 /** A Fábrica só conhece etapas por marco; etapa com `marco: null` é do Paulo. */
-export type Marco = 'recebida' | 'planejada' | 'desenho' | 'desenvolvida' | 'testada' | 'entregue'
-export type QuemConclui = 'fabrica' | 'paulo' | 'qualquer'
-export type Ator = 'fabrica' | 'paulo' | 'sessao'
+export type Marco =
+  'recebida' | 'planejada' | 'desenho' | 'desenvolvida' | 'testada' | 'entregue' | 'no_ar'
+export type QuemConclui = 'fabrica' | 'paulo' | 'qualquer' | 'flow'
+export type Ator = 'fabrica' | 'paulo' | 'sessao' | 'flow'
 
 export interface EtapaDefinida {
   chave: string
@@ -27,7 +28,7 @@ export type Espera =
   | 'teste_falhou'
 
 /** `descartada`: o Paulo encerrou a demanda antes do fim (a Fábrica para de trabalhar nela). */
-export type Encerramento = 'entregue' | 'orientada' | 'descartada'
+export type Encerramento = 'entregue' | 'no_ar' | 'orientada' | 'descartada'
 
 export interface EstadoDaDemanda {
   etapaAtual: string
@@ -52,6 +53,7 @@ export const ORDEM_DOS_MARCOS: readonly Marco[] = [
   'desenvolvida',
   'testada',
   'entregue',
+  'no_ar',
 ]
 
 export const MODELO_PADRAO: readonly EtapaDefinida[] = [
@@ -109,6 +111,15 @@ export const MODELO_PADRAO: readonly EtapaDefinida[] = [
     puladaSemTela: false,
     esperaEm: [],
   },
+  {
+    chave: 'no_ar',
+    nome: 'No ar',
+    rotulo: 'No ar',
+    marco: 'no_ar',
+    quemConclui: 'flow',
+    puladaSemTela: false,
+    esperaEm: [],
+  },
 ]
 
 export const LIMITE_DE_RECUSAS_DO_DESENHO = 3
@@ -155,7 +166,7 @@ export function duracaoDaEspera(minutos: number): string {
   return resto === 0 ? `${dias} d` : `${dias} d ${resto} h`
 }
 
-const CHAVE_VALIDA = /^[a-z0-9-]{1,40}$/
+const CHAVE_VALIDA = /^[a-z0-9_-]{1,40}$/
 
 /** Lista os defeitos do modelo; vazio = válido. */
 export function validarModelo(etapas: readonly EtapaDefinida[]): string[] {
@@ -165,7 +176,9 @@ export function validarModelo(etapas: readonly EtapaDefinida[]): string[] {
   let ultimaPosicao = -1
   for (const e of etapas) {
     if (!CHAVE_VALIDA.test(e.chave)) {
-      erros.push(`chave inválida: "${e.chave}" (use a-z, 0-9 e hífen, até 40 caracteres)`)
+      erros.push(
+        `chave inválida: "${e.chave}" (use a-z, 0-9, hífen e sublinhado, até 40 caracteres)`,
+      )
     }
     if (chaves.has(e.chave)) erros.push(`chave repetida: "${e.chave}"`)
     chaves.add(e.chave)
@@ -177,8 +190,9 @@ export function validarModelo(etapas: readonly EtapaDefinida[]): string[] {
     ultimaPosicao = Math.max(ultimaPosicao, posicao)
   }
   if (etapas[0]?.marco !== 'recebida') erros.push('a primeira etapa precisa ser a "recebida"')
-  if (etapas[etapas.length - 1]?.marco !== 'entregue') {
-    erros.push('a última etapa precisa ser a "entregue"')
+  const ultimo = etapas[etapas.length - 1]?.marco
+  if (ultimo !== 'no_ar') {
+    erros.push('a última etapa precisa ser No ar')
   }
   return erros
 }
@@ -246,7 +260,7 @@ export function estadoInicial(
   }
 }
 
-/** Marca a etapa atual como concluída e entra na próxima aplicável; sem próxima, a demanda está entregue. */
+/** Marca a etapa atual como concluída e entra na próxima aplicável; sem próxima, só a "No ar" encerra a demanda. */
 export function concluirEtapaAtual(
   estado: EstadoDaDemanda,
   etapas: readonly EtapaDefinida[],
@@ -260,7 +274,9 @@ export function concluirEtapaAtual(
     : [...estado.concluidas, estado.etapaAtual]
   const proxima = etapas.slice(posicao + 1).find((e) => temTela || !e.puladaSemTela)
   if (!proxima) {
-    return { ...estado, concluidas, espera: null, esperaMotivo: null, encerrada: 'entregue' }
+    const etapa = etapas[posicao]
+    if (etapa?.marco !== 'no_ar') return estado
+    return { ...estado, concluidas, espera: null, esperaMotivo: null, encerrada: 'no_ar' }
   }
   return {
     ...estado,
@@ -323,4 +339,11 @@ export function descricaoDaFilha(resumo: string | null, demandaId: string): stri
   const link = `\n\nDemanda original: /demandas/${demandaId}`
   const corpo = (texto && trechoQueNaoFuncionou(texto)) || texto || SEM_RESUMO
   return `${cortar(corpo, LIMITE_DA_DESCRICAO - link.length)}${link}`
+}
+
+/** O snapshot de etapas da demanda ganha a etapa `no_ar` no fim, se ainda não a tem. */
+export function etapasComNoAr(etapas: readonly EtapaDefinida[]): EtapaDefinida[] {
+  if (etapas.some((e) => e.marco === 'no_ar' || e.chave === 'no_ar')) return [...etapas]
+  const noAr = MODELO_PADRAO.find((e) => e.marco === 'no_ar')!
+  return [...etapas, { ...noAr }]
 }

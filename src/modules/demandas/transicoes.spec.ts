@@ -478,10 +478,30 @@ describe('entregue e encerrada', () => {
     const ev = { tipo: 'entregue', dados: { prs: [] } } as EventoAplicavel
     expect(ap(est(), ev, 'fabrica').ok).toBe(false)
     const e = ok(ap(est({ etapaAtual: 'entregue' }), ev, 'fabrica'))
-    expect(e.encerrada).toBe('entregue')
-    expect(recusa(ap(e, { tipo: 'destravada', dados: {} }, 'fabrica'))).toBe(
+    expect(e.encerrada).toBeNull()
+    expect(e.etapaAtual).toBe('no_ar')
+    const fim = ok(ap(e, { tipo: 'no_ar', dados: {} }, 'flow'))
+    expect(fim.encerrada).toBe('no_ar')
+    expect(recusa(ap(fim, { tipo: 'destravada', dados: {} }, 'fabrica'))).toBe(
       'A demanda já foi encerrada.',
     )
+  })
+
+  test('modelo sem no_ar: entregue na última etapa é recusado', () => {
+    const modelo = MODELO_PADRAO.slice(0, 6)
+    const ev = { tipo: 'entregue', dados: { prs: [] } } as EventoAplicavel
+    expect(ap(est({ etapaAtual: 'entregue' }), ev, 'fabrica', ctx({ etapas: modelo })).ok).toBe(
+      false,
+    )
+  })
+
+  test('no_ar: só o Flow, e só na etapa no_ar', () => {
+    const ev = { tipo: 'no_ar', dados: {} } as EventoAplicavel
+    const naEtapa = est({ etapaAtual: 'no_ar' })
+    expect(ap(naEtapa, ev, 'fabrica').ok).toBe(false)
+    expect(ap(naEtapa, ev, 'paulo').ok).toBe(false)
+    expect(ap(est({ etapaAtual: 'entregue' }), ev, 'flow').ok).toBe(false)
+    expect(ok(ap(naEtapa, ev, 'flow')).encerrada).toBe('no_ar')
   })
 })
 

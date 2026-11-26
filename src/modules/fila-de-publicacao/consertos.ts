@@ -1,6 +1,7 @@
 import type { EstadoDoPedidoDeConserto, Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { moduloAtivo } from '@/lib/modulos'
+import { desistirDoConsertoNaParte, ligarCorrecaoNaParte } from '@/modules/demandas/partes-no-ar'
 import type { RetratoV1 } from '@/modules/fabrica/contrato'
 import { aplicarEstadoReportado, decidirConserto, MOTIVOS, type EstadoDoConserto } from './model'
 
@@ -13,6 +14,10 @@ export interface ConsertoParaAFabrica {
   trechoDoLog: string
   /** `AAAA-MM-DDTHH:MM:SSZ` */
   abertoEm: string
+  /** O id da demanda e a chave e o objetivo da parte, quando o pedido que falhou era de uma parte. */
+  demanda: string | null
+  parte: string | null
+  objetivo: string | null
 }
 
 export type ConsertoReportado = NonNullable<RetratoV1['consertos']>[number]
@@ -32,6 +37,11 @@ function comTrava<T>(repositorioId: string, fn: (tx: Tx) => Promise<T>): Promise
   })
 }
 
+/** O conserto desistiu: a parte que esperava por ele não chegou ao ar ("Publicação falhou"). */
+export async function desistirNaParte(tx: Tx, consertoId: string, agora: Date): Promise<void> {
+  if (moduloAtivo('demandas')) await desistirDoConsertoNaParte(tx, consertoId, agora)
+}
+
 const noContrato = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, 'Z')
 const paraModelo = (e: EstadoDoPedidoDeConserto) => e.toLowerCase() as EstadoDoConserto
 const paraBanco = (e: EstadoDoConserto) => e.toUpperCase() as EstadoDoPedidoDeConserto
@@ -43,7 +53,10 @@ export async function consertosParaAFabrica(): Promise<ConsertoParaAFabrica[]> {
     where: { estado: { in: [...PARA_A_FABRICA] } },
     orderBy: [{ abertoEm: 'asc' }, { id: 'asc' }],
     take: LIMITE_NA_RESPOSTA,
-    include: { repositorio: { select: { nomeCompleto: true } } },
+    include: {
+      repositorio: { select: { nomeCompleto: true } },
+      parte: { select: { chave: true, objetivo: true } },
+    },
   })
   return linhas.map((c) => ({
     id: c.id,
@@ -52,6 +65,9 @@ export async function consertosParaAFabrica(): Promise<ConsertoParaAFabrica[]> {
     execucaoUrl: c.execucaoUrl,
     trechoDoLog: c.trechoDoLog,
     abertoEm: noContrato(c.abertoEm),
+    demanda: c.demandaId,
+    parte: c.parte?.chave ?? null,
+    objetivo: c.parte?.objetivo ?? null,
   }))
 }
 
@@ -104,7 +120,10 @@ export async function aplicarConsertosDoRetrato(
           where: onde,
           data: { estado: paraBanco(novo), motivo: r.motivo, runId, encerradoEm: agora },
         })
-        if (count > 0) await pararAFila(tx, repositorioId, MOTIVOS.desistiu, agora)
+        if (count > 0) {
+          await pararAFila(tx, repositorioId, MOTIVOS.desistiu, agora)
+          await desistirNaParte(tx, id, agora)
+        }
       }
     })
   }
@@ -151,22 +170,30 @@ export async function avancarConsertosComPr(repositorioId: string, agora: Date):
           where: { id: c.id, estado: 'COM_PR' },
           data: { estado: 'DESISTIU', motivo: decisao.motivo, encerradoEm: agora },
         })
-        if (count > 0) await pararAFila(tx, repositorioId, decisao.motivo, agora)
+        if (count > 0) {
+          await pararAFila(tx, repositorioId, decisao.motivo, agora)
+          await desistirNaParte(tx, c.id, agora)
+        }
         return count > 0
       }
       const vivo = await tx.pedidoDeConserto.count({ where: { id: c.id, estado: 'COM_PR' } })
       const feito = await tx.pedidoDePublicacao.count({ where: { consertoId: c.id } })
       if (vivo === 0 || feito > 0) return false
-      await tx.pedidoDePublicacao.create({
+      // A correção leva a demanda e a parte do conserto e passa a ser o pedido corrente da parte.
+      const correcao = await tx.pedidoDePublicacao.create({
         data: {
           repositorioId,
           commit: decisao.sha,
           modo: 'IMEDIATO',
           descricao: DESCRICAO_DA_CORRECAO,
           consertoId: c.id,
+          demandaId: c.demandaId,
+          parteId: c.parteId,
           criadoEm: agora,
         },
+        select: { id: true },
       })
+      if (c.parteId && moduloAtivo('demandas')) await ligarCorrecaoNaParte(tx, c.id, correcao.id)
       await tx.pedidoDeConserto.update({
         where: { id: c.id },
         data: { shaDaCorrecao: decisao.sha },
@@ -200,6 +227,7 @@ async function encerrarPelaCorrecao(
         : { estado: 'DESISTIU', motivo, encerradoEm: agora },
     })
     if (count === 0) return false
+    if (!publicado) await desistirNaParte(tx, consertoId, agora)
     if (publicado) {
       await tx.configuracaoDePublicacao.updateMany({
         where: { repositorioId, situacao: 'CONSERTANDO' },

@@ -78,29 +78,93 @@ export const triagemSchema = z.strictObject({
 const evento = <T extends string, D extends z.ZodType>(tipo: T, dados: D) =>
   z.strictObject({ tipo: z.literal(tipo), dados })
 
+const chaveDaParte = z
+  .string()
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+  .max(60)
+const sha = z.string().regex(/^[0-9a-f]{40}$/)
+
+export const parteDeclaradaSchema = z.strictObject({
+  chave: chaveDaParte,
+  repositorio: z
+    .string()
+    .regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/)
+    .max(200),
+  objetivo: texto300,
+  ordem: z.number().int().min(0).max(1000),
+  dependeDe: z.array(chaveDaParte).max(10),
+  chegaAoAr: z.enum(['publicacao', 'versao']),
+})
+
+const eventosComuns = [
+  evento('triagem', triagemSchema),
+  evento('triagem_falhou', z.strictObject({ motivo: texto300 })),
+  evento('plano_criado', z.strictObject({ plano: caminhoDoPlano, prUrl: urlGithub.nullable() })),
+  evento('desenho_pronto', z.strictObject({ arquivoId: uuid })),
+  evento('etapa_concluida', z.strictObject({ marco: z.enum(['desenvolvida', 'entregue']) })),
+  evento('travada', z.strictObject({ motivo: texto300, url: urlGithub.nullable() })),
+  evento('destravada', z.strictObject({})),
+  evento(
+    'teste',
+    z.strictObject({
+      resultado: z.enum(['passou', 'falhou']),
+      resumo: texto2000,
+      capturas: z.array(uuid).max(20),
+    }),
+  ),
+] as const
+
+const cabecalho = z.strictObject({ id: uuid, em: instante })
+
 export const eventoDaFabricaSchema = z.intersection(
-  z.strictObject({ id: uuid, em: instante }),
+  cabecalho,
   z.discriminatedUnion('tipo', [
-    evento('triagem', triagemSchema),
-    evento('triagem_falhou', z.strictObject({ motivo: texto300 })),
-    evento('plano_criado', z.strictObject({ plano: caminhoDoPlano, prUrl: urlGithub.nullable() })),
-    evento('desenho_pronto', z.strictObject({ arquivoId: uuid })),
-    evento('etapa_concluida', z.strictObject({ marco: z.enum(['desenvolvida', 'entregue']) })),
-    evento('travada', z.strictObject({ motivo: texto300, url: urlGithub.nullable() })),
-    evento('destravada', z.strictObject({})),
-    evento(
-      'teste',
-      z.strictObject({
-        resultado: z.enum(['passou', 'falhou']),
-        resumo: texto2000,
-        capturas: z.array(uuid).max(20),
-      }),
-    ),
+    ...eventosComuns,
     evento('entregue', z.strictObject({ prs: z.array(urlGithub).max(20) })),
   ]),
 )
 
+/** Contrato 2: sem `entregue`; com as partes por repositório. */
+export const eventoDaFabricaV2Schema = z.intersection(
+  cabecalho,
+  z.discriminatedUnion('tipo', [
+    ...eventosComuns,
+    evento(
+      'partes_planejadas',
+      z.strictObject({ partes: z.array(parteDeclaradaSchema).min(1).max(10) }),
+    ),
+    evento(
+      'parte_planejada',
+      z.strictObject({ parte: chaveDaParte, plano: caminhoDoPlano, prUrl: urlGithub.nullable() }),
+    ),
+    evento(
+      'parte_feita',
+      z.strictObject({
+        parte: chaveDaParte,
+        prs: z
+          .array(
+            z.strictObject({
+              url: urlGithub,
+              numero: z.number().int().positive(),
+              mergeCommit: sha,
+            }),
+          )
+          .min(1)
+          .max(40),
+        commit: sha,
+        pendencias: z.array(texto300).max(20),
+      }),
+    ),
+  ]),
+)
+
+/** `X-Fabrica-Contrato: 2` fala o contrato 2; qualquer outra coisa, o 1. */
+export function versaoDoContrato(cabecalhoHttp: string | null): 1 | 2 {
+  return cabecalhoHttp?.trim() === '2' ? 2 : 1
+}
+
 export type EventoDaFabrica = z.infer<typeof eventoDaFabricaSchema>
+export type EventoDaFabricaV2 = z.infer<typeof eventoDaFabricaV2Schema>
 
 export const demandaDaSessaoSchema = z.strictObject({
   repositorio: repoSchema,

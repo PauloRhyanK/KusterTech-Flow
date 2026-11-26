@@ -43,6 +43,7 @@ model Usuario {
   fontesDePublicacaoCriadas FonteDePublicacao[]
   pedidosDePublicacao       PedidoDePublicacao[]
   demandasCriadas           Demanda[]
+  partesConferidas          ParteDaDemanda[]
   mensagensEscritas         Mensagem[]
   cartoesConfirmados        CartaoDeFecho[]
   fontesDeDemandasCriadas   FonteDeDemandas[]
@@ -207,6 +208,7 @@ model RepositorioGitHub {
   issues                     IssueGitHub[]
   pullRequests               PullRequestGitHub[]
   demandas                   Demanda[]
+  partes                     ParteDaDemanda[]
   versoes                    Versao[]
   tarefasGitHub              TarefaGitHub[]
   composicoesDePublicacao    ComposicaoDePublicacao[]
@@ -943,9 +945,12 @@ model PedidoDePublicacao {
   conserto         PedidoDeConserto?
   demandaId        String?
   demanda          Demanda?                   @relation(fields: [demandaId], references: [id], onDelete: SetNull)
+  parteId          String?
+  parte            ParteDaDemanda?            @relation(fields: [parteId], references: [id], onDelete: SetNull)
 
   @@index([repositorioId, estado])
   @@index([demandaId])
+  @@index([parteId])
 }
 
 model PedidoDeConserto {
@@ -965,6 +970,10 @@ model PedidoDeConserto {
   encerradoEm   DateTime?
   repositorio   RepositorioGitHub        @relation(fields: [repositorioId], references: [id], onDelete: Cascade)
   pedido        PedidoDePublicacao       @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  demandaId     String?
+  parteId       String?
+  demanda       Demanda?                 @relation(fields: [demandaId], references: [id], onDelete: SetNull)
+  parte         ParteDaDemanda?          @relation(fields: [parteId], references: [id], onDelete: SetNull)
 
   @@index([estado])
 }
@@ -1001,6 +1010,56 @@ enum QuemConcluiEtapa {
   FABRICA
   PAULO
   QUALQUER
+  FLOW
+}
+
+enum EstadoDaParte {
+  PLANEJANDO
+  EM_CURSO
+  FEITA
+  PUBLICANDO
+  NO_AR
+  NAO_CHEGOU
+  DESCARTADA
+}
+
+enum ChegadaAoAr {
+  PUBLICACAO
+  VERSAO
+}
+
+model ParteDaDemanda {
+  id             String               @id @default(uuid())
+  demandaId      String
+  chave          String
+  repositorioId  String
+  objetivo       String?
+  ordem          Int
+  dependeDe      String[]
+  chegaAoAr      ChegadaAoAr          @default(PUBLICACAO)
+  estado         EstadoDaParte        @default(PLANEJANDO)
+  planoCaminho   String?
+  planoPrUrl     String?
+  prs            Json                 @default("[]")
+  commitAlvo     String?
+  pedidoId       String?
+  motivo         String?
+  sobeParaVersao String?
+  feitaEm        DateTime?
+  naoChegouEm    DateTime?
+  noArEm         DateTime?
+  commitNoAr     String?
+  conferidaPorId String?
+  criadaEm       DateTime             @default(now())
+  atualizadaEm   DateTime             @updatedAt
+  demanda        Demanda              @relation(fields: [demandaId], references: [id], onDelete: Cascade)
+  repositorio    RepositorioGitHub    @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  conferidaPor   Usuario?             @relation(fields: [conferidaPorId], references: [id], onDelete: SetNull)
+  pedidos        PedidoDePublicacao[]
+  consertos      PedidoDeConserto[]
+
+  @@unique([demandaId, chave])
+  @@index([repositorioId, estado])
 }
 
 enum TipoDeArquivoDaDemanda {
@@ -1069,6 +1128,8 @@ model Demanda {
   prs              String[]
   encerrada        String?
   entregueEm       DateTime?
+  naoChegouDesde   DateTime?
+  noArEm           DateTime?
   criadaEm         DateTime              @default(now())
   atualizadaEm     DateTime              @updatedAt
   projeto          Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
@@ -1079,6 +1140,8 @@ model Demanda {
   arquivos         ArquivoDaDemanda[]
   pedidos          PedidoDePublicacao[]
   conversas        Conversa[]
+  partes           ParteDaDemanda[]
+  consertos        PedidoDeConserto[]
 
   @@unique([fonteId, chaveDaFonte])
   @@index([encerrada, espera])

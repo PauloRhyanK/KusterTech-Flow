@@ -204,11 +204,33 @@ O que muda depois: na etapa **Planejada**, o plano a conclui e a demanda segue p
 
 Só entregue plano quando o Paulo pedir, para a demanda que ele indicou.
 
+## Partes e "No ar"
+
+Uma demanda pode mexer em mais de um repositório. Cada repositório é uma **parte**, com `chave`, `objetivo`, `ordem` e `dependeDe` (a parte que precisa chegar ao ar antes). A parte de entrada leva o nome do repositório da demanda; a Fábrica declara as outras no plano. A demanda só está **No ar** quando todas as partes chegam ao ar, O Flow registra o `dependeDe` e mostra a ordem de publicação na página da demanda (por exemplo, "back antes do front"); quem publica nessa ordem é a Fábrica, ao pedir cada publicação. O Flow não segura nem recusa um pedido por causa da ordem.
+
+Cada parte passa por: planejando, em curso, feita, publicando, no ar. Ela chega ao ar quando a versão **conferida no site** (o endereço da versão no ar, configurado no projeto) contém o commit dela. O guia de publicação explica essa conferência. A tela **Demandas** mostra quatro números (No ar, A caminho, Não chegou ao ar, Espera você) e, em cada demanda, a faixa "Falta" com o que impede a próxima parte.
+
+Quando a publicação termina sem poder conferir o site (repositório sem endereço de versão), a parte fica em "Não chegou ao ar" com "Publicada sem conferir o site". Quem confere à mão aperta **Conferi no ar** na faixa "Falta": a parte e a demanda fecham com o commit conferido. Pedido dispensado ou recusado sem a versão conferida também leva a parte a "Não chegou ao ar" ("Publicação dispensada", "Publicação falhou"); nada disso é decidido pela sessão.
+
+### Contrato 2 da Fábrica
+
+A Fábrica nova manda `X-Fabrica-Contrato: 2` em `GET /api/fabrica/demandas` e em `POST /api/fabrica/demandas/<id>/eventos`. Sem o cabeçalho vale o contrato 1, que continua aceito. No contrato 2:
+
+- `partes_planejadas { partes: [{ chave, repositorio, objetivo, ordem, dependeDe, chegaAoAr }] }` declara as partes (precisa incluir a parte de entrada); `chegaAoAr` é `publicacao` ou `versao`.
+- `parte_planejada { parte, plano, prUrl }` registra o plano de cada parte.
+- `parte_feita { parte, prs: [{ url, numero, mergeCommit }], commit, pendencias }` entrega a parte; `commit` é o que a publicação vai pedir.
+- `etapa_concluida` com `desenvolvida` só vale com todas as partes feitas; com `entregue`, só com um pedido de publicação em cada parte que chega ao ar por publicação.
+- Não existe `entregue` como tipo: a entrega é a etapa `entregue` e a demanda ainda espera chegar ao ar (etapa "No ar").
+
 ## Demandas e a fila de publicação
 
-A entrega de uma demanda **já pede a publicação**: quando a Fábrica entrega, ela pede a publicação do commit de `main` com o campo `demanda` ligado ao id. O modo vem do destino: `urgente` publica imediatamente, `lote_da_noite` entra no lote, os outros seguem o padrão do projeto. O andamento aparece em `publicacao` no `GET` e na página da demanda.
+A entrega de uma demanda **já pede a publicação**: quando a Fábrica entrega, ela pede a publicação do commit de `main` com o campo `demanda` ligado ao id (e `parte`, a chave da parte, quando a demanda tem mais de uma). O modo vem do destino: `urgente` publica imediatamente, `lote_da_noite` entra no lote, os outros seguem o padrão do projeto. O andamento aparece em `publicacao` no `GET` e na página da demanda, e o resultado do pedido (publicado, dispensado, recusado, falhou) volta para a parte dele.
 
 Por isso, **a sessão não pede de novo pela fila a publicação de uma demanda**. Para todo o resto (mudanças que a sessão fez fora de uma demanda), vale o guia [Publicar pela fila do KusterTech Flow](publicar-pela-fila.md), com o token de publicação (`fp_`), que é outro.
+
+## Atualização do Flow
+
+Depois do deploy que traz a regra "até o ar", pare o worker, rode `pnpm migrar:ate-o-ar` **uma vez** e suba o worker de novo (a migração não trava os pedidos de publicação) (na imagem de produção: `node scripts/migrar-demandas-ate-o-ar.mjs`, como em `docs/infra/oficina.md`). Ele dá a parte de entrada às demandas antigas, leva ao no ar as entregues e publicadas e reabre, esperando o Paulo, as que nunca chegaram ao ar. Rodar de novo não duplica nada.
 
 ## O que você nunca deve fazer
 
