@@ -134,7 +134,9 @@ O retrato ganha, por execução, `agente`, `conta` e `substituiu` (o par anterio
 | Custo de uso | Assinaturas que o Paulo já tem | Por token |
 | É "Codex" e "Antigravity" de fato | Sim | Não: são os modelos da OpenAI e do Google dentro de outro agente |
 
-### Fases propostas
+**Decisões do Paulo (26/11/2026):** conta reserva como segunda instância do Warren; Codex e Antigravity por CLI direto, com assinatura, na Fase B.
+
+### Fases
 
 - **Fase A (pequena, acaba com a parada):** lista de executores, substituição automática, conta Claude reserva como segunda instância, toolstack por papel, registro e painel. Entrega o objetivo principal usando só Claude.
 - **Fase B:** executores Codex e Antigravity, pela forma escolhida acima. O mapa padrão da seção 3.2 só vale inteiro depois dela; até lá, os papéis de Codex e Antigravity rodam no Claude.
