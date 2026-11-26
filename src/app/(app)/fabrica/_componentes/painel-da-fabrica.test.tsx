@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
-import { normalizarRetrato, type RetratoV1 } from '@/modules/fabrica/contrato'
+import { normalizarRetrato, type RetratoV1, type RetratoV2 } from '@/modules/fabrica/contrato'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 import exemplo from '@/modules/fabrica/retrato-exemplo.json'
 import { PainelDaFabrica } from './painel-da-fabrica'
@@ -164,5 +164,76 @@ describe('PainelDaFabrica', () => {
 
     expect(screen.getByText(/A máquina parou de enviar/)).toHaveTextContent('há 6 min')
     expect(screen.getByText('Vagas reduzidas por falta de memória')).toBeInTheDocument()
+  })
+})
+
+describe('PainelDaFabrica: executor, troca e conta esgotada', () => {
+  function comExecucao(sobrepor: Partial<RetratoV2['execucoes'][number]>): RetratoRecebido {
+    const base = retratoRecebido()
+    const plano = base.retrato.planos[0]!
+    const raia = plano.fases[0]!.raias[0]!
+    base.retrato.execucoes = [
+      {
+        runId: 'run_1',
+        papel: null,
+        planoId: plano.id,
+        raia: raia.id,
+        demanda: null,
+        estado: 'running',
+        inicio: null,
+        custoUsd: null,
+        modelo: null,
+        ultimaAcao: null,
+        linhas: [],
+        ...sobrepor,
+      },
+    ]
+    return base
+  }
+
+  test('mostra o selo de troca', () => {
+    const recebido = comExecucao({
+      agente: 'claude-code',
+      conta: 'claude-reserva',
+      substituiu: { agente: 'claude-code', conta: 'claude-principal', motivo: 'cota' },
+    })
+    render(<PainelDaFabrica secao="planos" permitido retrato={recebido} agora={AGORA} />)
+
+    const planos = screen.getByRole('list', { name: 'Planos da Fábrica' })
+    expect(within(planos).getByText('Claude · reserva')).toBeInTheDocument()
+    expect(within(planos).getByText('trocou').closest('[title]')).toHaveAttribute(
+      'title',
+      'Trocou de Claude: cota',
+    )
+  })
+
+  test('sem troca mostra o executor e nenhum selo', () => {
+    const recebido = comExecucao({ agente: 'codex', conta: null })
+    render(<PainelDaFabrica secao="planos" permitido retrato={recebido} agora={AGORA} />)
+
+    expect(screen.getByText('Codex')).toBeInTheDocument()
+    expect(screen.queryByText('trocou')).not.toBeInTheDocument()
+  })
+
+  test('mostra uma linha por conta esgotada com o horário', () => {
+    const recebido = retratoRecebido()
+    recebido.retrato.contas = [
+      { agente: 'claude-code', conta: 'claude-principal', esgotadaAte: '2026-11-03T22:30:00Z' },
+      { agente: 'claude-code', conta: 'claude-reserva', esgotadaAte: '2026-11-03T21:00:00Z' },
+    ]
+    render(<PainelDaFabrica secao="planos" permitido retrato={recebido} agora={AGORA} />)
+
+    const linhas = within(screen.getByRole('list', { name: 'Contas esgotadas' })).getAllByRole(
+      'listitem',
+    )
+    expect(linhas).toHaveLength(1)
+    expect(linhas[0]).toHaveTextContent('Conta esgotada até 19:30 · Claude')
+  })
+
+  test('não mostra linha de conta quando nenhuma está esgotada', () => {
+    render(<PainelDaFabrica secao="planos" permitido retrato={retratoRecebido()} agora={AGORA} />)
+
+    expect(screen.queryByRole('list', { name: 'Contas esgotadas' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Conta esgotada/)).not.toBeInTheDocument()
   })
 })

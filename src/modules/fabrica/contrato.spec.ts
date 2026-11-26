@@ -233,3 +233,42 @@ describe('contrato do retrato v2 (escritório da Fábrica)', () => {
     })
   })
 })
+
+describe('contrato do retrato v2: executor, conta e troca', () => {
+  test('aceita retrato v2 sem os campos novos', () => {
+    const r = structuredClone(exemploV2) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(r.contas).toBeUndefined()
+    expect(r.execucoes[0].agente).toBeUndefined()
+    expect(retratoV2Schema.safeParse(r).success).toBe(true)
+  })
+
+  test('aceita execução com agente, conta e substituiu', () => {
+    const r = structuredClone(exemploV2) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    r.execucoes[0].agente = 'claude-code'
+    r.execucoes[0].conta = 'claude-reserva'
+    r.execucoes[0].substituiu = { agente: 'claude-code', conta: 'claude-principal', motivo: 'cota' }
+    r.contas = [
+      { agente: 'claude-code', conta: 'claude-principal', esgotadaAte: '2026-11-21T03:00:00Z' },
+      { agente: 'claude-code', conta: 'claude-reserva', esgotadaAte: null },
+    ]
+    const lido = retratoV2Schema.safeParse(r)
+    expect(lido.success).toBe(true)
+    r.execucoes[0].agente = null
+    r.execucoes[0].conta = null
+    r.execucoes[0].substituiu = null
+    expect(retratoV2Schema.safeParse(r).success).toBe(true)
+  })
+
+  test('recusa mais de 12 contas e campo desconhecido em substituiu', () => {
+    const r = structuredClone(exemploV2) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    r.contas = Array.from({ length: 13 }, (_, i) => ({
+      agente: 'claude-code',
+      conta: `c${i}`,
+      esgotadaAte: null,
+    }))
+    expect(retratoV2Schema.safeParse(r).success).toBe(false)
+    r.contas = []
+    r.execucoes[0].substituiu = { agente: 'a', conta: 'b', motivo: 'cota', extra: 1 }
+    expect(retratoV2Schema.safeParse(r).success).toBe(false)
+  })
+})

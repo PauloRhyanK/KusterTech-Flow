@@ -5,7 +5,12 @@ import { BadgeDeEstado, type TomDeEstado } from '@/lib/ui/badge-de-estado'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
 import { SemPermissao } from '@/lib/ui/sem-permissao'
 import type { RetratoV2 } from '@/modules/fabrica/contrato'
-import { minutosDeAtraso, retratoDesatualizado } from '@/modules/fabrica/model'
+import {
+  contasEsgotadas,
+  minutosDeAtraso,
+  retratoDesatualizado,
+  rotuloDoExecutor,
+} from '@/modules/fabrica/model'
 import type { RetratoRecebido } from '@/modules/fabrica/queries'
 
 export interface PainelDaFabricaProps {
@@ -16,6 +21,7 @@ export interface PainelDaFabricaProps {
 }
 
 type Plano = RetratoV2['planos'][number]
+type Execucao = RetratoV2['execucoes'][number]
 type EstadoDoPlano = Plano['estado']
 type EstadoDaRaia = Plano['fases'][number]['raias'][number]['estado']
 
@@ -34,6 +40,12 @@ const TOM_DA_RAIA: Record<EstadoDaRaia, TomDeEstado> = {
   concluida: 'neutro',
   falhou: 'erro',
 }
+
+const HORA = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  hour: '2-digit',
+  minute: '2-digit',
+})
 
 const PREFIXO_DO_GITHUB = 'https://github.com/'
 
@@ -92,7 +104,33 @@ function Decisao({ titulo, url }: { titulo: string; url: string }) {
   )
 }
 
-function CartaoDoPlano({ plano }: { plano: Plano }) {
+function LinhaDaRaia({
+  raia,
+  execucao,
+}: {
+  raia: Plano['fases'][number]['raias'][number]
+  execucao: Execucao | undefined
+}) {
+  const executor = execucao ? rotuloDoExecutor(execucao) : null
+  const troca = execucao?.substituiu
+  return (
+    <li className="flex flex-wrap items-center gap-2 text-[13px]">
+      <span className="text-text-primary">{raia.id}</span>
+      <BadgeDeEstado tom={TOM_DA_RAIA[raia.estado]}>{raia.estado}</BadgeDeEstado>
+      {executor && <span className="text-text-secondary">{executor}</span>}
+      {troca && (
+        <span
+          title={`Trocou de ${rotuloDoExecutor(troca) ?? troca.agente}: ${troca.motivo}`}
+          className="inline-flex"
+        >
+          <BadgeDeEstado tom="atencao">trocou</BadgeDeEstado>
+        </span>
+      )}
+    </li>
+  )
+}
+
+function CartaoDoPlano({ plano, execucoes }: { plano: Plano; execucoes: readonly Execucao[] }) {
   return (
     <li className="space-y-2 py-3">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -110,10 +148,11 @@ function CartaoDoPlano({ plano }: { plano: Plano }) {
           <p className="text-[13px] font-medium text-text-secondary">{fase.id}</p>
           <ul className="space-y-1">
             {fase.raias.map((raia) => (
-              <li key={raia.id} className="flex flex-wrap items-center gap-2 text-[13px]">
-                <span className="text-text-primary">{raia.id}</span>
-                <BadgeDeEstado tom={TOM_DA_RAIA[raia.estado]}>{raia.estado}</BadgeDeEstado>
-              </li>
+              <LinhaDaRaia
+                key={raia.id}
+                raia={raia}
+                execucao={execucoes.findLast((e) => e.planoId === plano.id && e.raia === raia.id)}
+              />
             ))}
           </ul>
         </div>
@@ -150,6 +189,7 @@ function Conteudo({
   const { retrato, recebidoEm, geradoEm } = recebido
   const { vagas, drenagem, warren, planos, avisos } = retrato
   const desatualizado = retratoDesatualizado(recebidoEm, agora)
+  const esgotadas = contasEsgotadas(retrato, agora)
 
   return (
     <div className="space-y-4">
@@ -175,6 +215,15 @@ function Conteudo({
 
       {secao === 'planos' && (
         <>
+          {esgotadas.length > 0 && (
+            <ul aria-label="Contas esgotadas" className="space-y-1">
+              {esgotadas.map((c) => (
+                <li key={c.rotulo} className="text-sm text-atencao">
+                  Conta esgotada até {HORA.format(c.ate)} · {c.rotulo}
+                </li>
+              ))}
+            </ul>
+          )}
           <Secao titulo="Vagas e memória" rotuloAcessivel="Vagas e memória">
             <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <Indicador rotulo="Efetivas" valor={vagas.efetivas} />
@@ -208,7 +257,7 @@ function Conteudo({
             ) : (
               <ul aria-label="Planos da Fábrica" className="divide-y divide-border">
                 {planos.map((plano) => (
-                  <CartaoDoPlano key={plano.id} plano={plano} />
+                  <CartaoDoPlano key={plano.id} plano={plano} execucoes={retrato.execucoes} />
                 ))}
               </ul>
             )}

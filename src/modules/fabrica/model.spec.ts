@@ -6,12 +6,14 @@ import {
   LIMITE_DO_CORPO_DO_RETRATO,
   minutosDeAtraso,
   PREFIXO_DO_TOKEN_DA_FABRICA,
+  contasEsgotadas,
   planosEmCurso,
   resumirPlano,
   retratoDesatualizado,
+  rotuloDoExecutor,
   validarNomeDaFonteDaFabrica,
 } from './model'
-import type { RetratoV1 } from './contrato'
+import type { ExecucaoV2, RetratoV1, RetratoV2 } from './contrato'
 
 const AGORA = new Date('2026-11-03T12:00:00Z')
 const em = (iso: string): Date => new Date(iso)
@@ -154,5 +156,39 @@ describe('fabrica / resumo dos planos', () => {
       ],
     } as RetratoV1
     expect(planosEmCurso(retrato).map((p) => p.id)).toEqual(['x1', 'x2', 'd', 'p', 'a'])
+  })
+})
+
+describe('fabrica / executor e contas', () => {
+  const exec = (agente: string | null, conta: string | null) => ({ agente, conta }) as ExecucaoV2
+
+  test('rotuloDoExecutor nomeia o executor e marca a conta reserva', () => {
+    expect(rotuloDoExecutor(exec('claude-code', 'claude-principal'))).toBe('Claude')
+    expect(rotuloDoExecutor(exec('claude-code', null))).toBe('Claude')
+    expect(rotuloDoExecutor(exec('claude-code', 'claude-reserva'))).toBe('Claude · reserva')
+    expect(rotuloDoExecutor(exec('codex', 'codex-principal'))).toBe('Codex')
+    expect(rotuloDoExecutor(exec('antigravity', null))).toBe('Antigravity')
+  })
+
+  test('rotuloDoExecutor devolve null sem agente', () => {
+    expect(rotuloDoExecutor(exec(null, 'claude-principal'))).toBeNull()
+    expect(rotuloDoExecutor({} as ExecucaoV2)).toBeNull()
+  })
+
+  test('contasEsgotadas lista só as contas com prazo no futuro', () => {
+    const r = {
+      contas: [
+        { agente: 'claude-code', conta: 'claude-principal', esgotadaAte: '2026-11-03T13:00:00Z' },
+        { agente: 'claude-code', conta: 'claude-reserva', esgotadaAte: '2026-11-03T11:59:00Z' },
+        { agente: 'codex', conta: 'codex-principal', esgotadaAte: null },
+      ],
+    } as RetratoV2
+    expect(contasEsgotadas(r, AGORA)).toEqual([
+      { rotulo: 'Claude', ate: new Date('2026-11-03T13:00:00Z') },
+    ])
+  })
+
+  test('contasEsgotadas sem o campo contas devolve vazio', () => {
+    expect(contasEsgotadas({} as RetratoV2, AGORA)).toEqual([])
   })
 })

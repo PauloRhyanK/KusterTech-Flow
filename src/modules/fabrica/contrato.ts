@@ -16,6 +16,7 @@ export const LIMITES = {
   criterios: 20,
   linhas: 30,
   dependencias: 20,
+  contas: 12,
 } as const
 
 export const ESTADOS_DA_FILA = [
@@ -142,6 +143,12 @@ const planoV2 = plano.extend({
 
 const linha = z.strictObject({ em: instante.nullable(), tipo: z.enum(TIPOS_DE_LINHA), texto })
 
+const contaDoExecutor = z.strictObject({
+  agente: texto,
+  conta: texto,
+  esgotadaAte: instante.nullable(),
+})
+
 const execucao = z.strictObject({
   runId: texto,
   papel: texto.nullable(),
@@ -152,6 +159,13 @@ const execucao = z.strictObject({
   inicio: instante.nullable(),
   custoUsd: z.number().nonnegative().max(1_000_000).nullable(),
   modelo: texto.nullable(),
+  /** Opcionais: o coordenador anterior ao executor por papel não manda estes três. */
+  agente: texto.nullable().optional(),
+  conta: texto.nullable().optional(),
+  substituiu: z
+    .strictObject({ agente: texto, conta: texto.nullable(), motivo: texto })
+    .nullable()
+    .optional(),
   ultimaAcao: z.strictObject({ texto, em: instante.nullable() }).nullable(),
   linhas: z.array(linha).max(LIMITES.linhas),
 })
@@ -160,6 +174,8 @@ export const retratoV2Schema = retratoV1Schema.extend({
   versao: z.literal(2),
   planos: z.array(planoV2).max(LIMITES.planos),
   execucoes: z.array(execucao).max(LIMITES.execucoes),
+  /** Opcional: sem ele, nenhuma conta esgotada é mostrada. */
+  contas: z.array(contaDoExecutor).max(LIMITES.contas).optional(),
 })
 
 export type RetratoV2 = z.infer<typeof retratoV2Schema>

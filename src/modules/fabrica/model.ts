@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { ESTADOS_DA_FILA, RetratoV1, RetratoV2 } from './contrato'
+import type { ESTADOS_DA_FILA, ExecucaoV2, RetratoV1, RetratoV2 } from './contrato'
 
 /** O v1 e o v2 têm os mesmos campos de plano que o painel e o Início leem. */
 type QualquerRetrato = RetratoV1 | RetratoV2
@@ -118,4 +118,32 @@ export function planosEmCurso(retrato: QualquerRetrato): ResumoDoPlano[] {
         Date.parse(a.entrouEm) - Date.parse(b.entrouEm),
     )
     .map(resumirPlano)
+}
+
+const NOME_DO_EXECUTOR: Record<string, string> = {
+  'claude-code': 'Claude',
+  codex: 'Codex',
+  antigravity: 'Antigravity',
+}
+
+const CONTA_PRINCIPAL = 'claude-principal'
+
+function rotuloDoPar(agente: string, conta: string | null | undefined): string {
+  const nome = NOME_DO_EXECUTOR[agente] ?? agente
+  const reserva = agente === 'claude-code' && conta && conta !== CONTA_PRINCIPAL
+  return reserva ? `${nome} · reserva` : nome
+}
+
+/** "Claude", "Claude · reserva", "Codex" ou "Antigravity"; null quando a execução não informa o agente. */
+export function rotuloDoExecutor(e: Pick<ExecucaoV2, 'agente' | 'conta'>): string | null {
+  return e.agente ? rotuloDoPar(e.agente, e.conta) : null
+}
+
+/** Contas com prazo de esgotamento ainda no futuro, para a linha "Conta esgotada até HH:MM". */
+export function contasEsgotadas(r: RetratoV2, agora: Date): { rotulo: string; ate: Date }[] {
+  return (r.contas ?? []).flatMap((c) => {
+    if (c.esgotadaAte === null) return []
+    const ate = new Date(c.esgotadaAte)
+    return ate.getTime() > agora.getTime() ? [{ rotulo: rotuloDoPar(c.agente, c.conta), ate }] : []
+  })
 }
