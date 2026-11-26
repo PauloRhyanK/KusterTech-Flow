@@ -58,6 +58,7 @@ export function Escritorio({ escritorio, gestao, publicacao, agora, tecnico }: E
     andares.find((a) => a.planoId === primeiro) ??
     null
 
+  const esperam = recepcao.filter((r) => r.esperaPaulo).length
   const agoraData = new Date(agora)
   const agenteDaTela = tela === null ? null : (andar?.agentes.find((a) => a.runId === tela) ?? null)
   const parteDaTela =
@@ -99,6 +100,21 @@ export function Escritorio({ escritorio, gestao, publicacao, agora, tecnico }: E
       )}
 
       <EsperasDoPaulo esperas={esperas} />
+
+      {/* celular: o prédio não aparece, então a fila abre por este botão */}
+      <button
+        type="button"
+        className="w-full rounded-padrao border border-border bg-surface px-3 py-2 text-left text-sm font-medium text-text-primary md:hidden"
+        aria-haspopup="dialog"
+        aria-expanded={filaAberta}
+        onClick={(e) => {
+          gatilhoDaFila.current = e.currentTarget
+          setFilaAberta(true)
+        }}
+      >
+        Fila · {recepcao.length} {recepcao.length === 1 ? 'demanda' : 'demandas'}
+        {esperam > 0 ? ` · ${esperam} ${esperam === 1 ? 'espera' : 'esperam'} você` : ''}
+      </button>
 
       {/* celular: lista simples, quem espera o Paulo há mais tempo primeiro */}
       <ul className="space-y-2 md:hidden">

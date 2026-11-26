@@ -74,3 +74,9 @@ test('clicar na recepção abre a gaveta com o foco; Esc fecha e devolve o foco'
   expect(screen.queryByRole('dialog', { name: 'Fila' })).toBeNull()
   expect(document.activeElement).toBe(recepcao)
 })
+
+test('no celular a fila abre por um botão próprio', () => {
+  render(montar())
+  fireEvent.click(screen.getByRole('button', { name: /^Fila · / }))
+  expect(screen.getByRole('dialog', { name: 'Fila' })).toBeInTheDocument()
+})

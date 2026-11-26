@@ -670,6 +670,7 @@ body,
   border: 2px solid var(--pixel-madeira-escura);
   border-radius: 3px;
   background: var(--pixel-toldo-claro);
+  z-index: 1;
   color: inherit;
   cursor: pointer;
   font:
