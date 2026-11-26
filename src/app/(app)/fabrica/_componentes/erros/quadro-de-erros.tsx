@@ -21,6 +21,7 @@ const ESTADO: Record<EstadoNoQuadro, { rotulo: string; cor: string; chip: string
     cor: 'text-text-secondary',
     chip: 'bg-surface-subtle text-text-secondary',
   },
+  no_ar: { rotulo: 'No ar', cor: 'text-sucesso', chip: 'bg-surface-subtle text-sucesso' },
   corrigido: { rotulo: 'Corrigido', cor: 'text-sucesso', chip: 'bg-tonal-sucesso text-sucesso' },
 }
 
@@ -30,6 +31,7 @@ const CHIPS: { estado: Exclude<EstadoNoQuadro, 'corrigido'>; texto: string }[] =
   { estado: 'voltou', texto: 'voltou' },
   { estado: 'na_espera', texto: 'na espera' },
   { estado: 'observando', texto: 'em observação' },
+  { estado: 'no_ar', texto: 'no ar' },
 ]
 
 function textoDaLeitura(q: QuadroDeErros, agora: Date): string {

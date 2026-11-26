@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest'
 import {
   acrescentarPonto,
   barrinhas,
+  comoVoltou,
+  corrigidoEm,
   decidir,
   descricaoDaDemanda,
   entra,
@@ -57,7 +59,7 @@ describe('lerConfiguracao', () => {
           { slug: 'portal', repositorio: 'dono/portal' },
         ],
         ambientes: ['production', 'producao', 'produção', 'prod', 'live'],
-        limiares: { eventos: 10, horas: 2, porDia: 3 },
+        limiares: { eventos: 10, horas: 2, porDia: 3, horasSemErro: 24 },
       },
     })
   })
@@ -69,9 +71,10 @@ describe('lerConfiguracao', () => {
       GLITCHTIP_LIMIAR_EVENTOS: '20',
       GLITCHTIP_LIMIAR_HORAS: '4',
       GLITCHTIP_DEMANDAS_POR_DIA: '1',
+      GLITCHTIP_HORAS_SEM_ERRO: '6',
     })
     expect(r.ok && r.config.ambientes).toEqual(['live', 'producao'])
-    expect(r.ok && r.config.limiares).toEqual({ eventos: 20, horas: 4, porDia: 1 })
+    expect(r.ok && r.config.limiares).toEqual({ eventos: 20, horas: 4, porDia: 1, horasSemErro: 6 })
   })
 
   test('limiar que não é número inteiro positivo é inválido', () => {
@@ -126,7 +129,7 @@ describe('entra', () => {
 
 describe('decidir', () => {
   const noAr = antes(DIA)
-  const limiares = { eventos: 10, horas: 2, porDia: 3 }
+  const limiares = { eventos: 10, horas: 2, porDia: 3, horasSemErro: 24 }
   const base = { demanda: null, demandaDoGrupo: null, abertasNoDia: 0, limiares }
   const recente = issue({ eventos: 3, primeiroEm: antes(HORA), ultimoEm: antes(60_000) })
   test('erro novo e passageiro fica em observação', () => {
@@ -183,10 +186,87 @@ describe('decidir', () => {
       }),
     ).toEqual({ tipo: 'atualizar' })
   })
-  test('descartada não reabre', () => {
-    expect(
-      decidir({ ...base, issue: issue(), demanda: { encerrada: 'descartada', noArEm: null } }),
-    ).toEqual({ tipo: 'atualizar' })
+  test('descartada sem evento depois do descarte só atualiza', () => {
+    const demanda = { encerrada: 'descartada', noArEm: null, descartadaEm: antes(30_000) }
+    expect(decidir({ ...base, issue: issue(), demanda })).toEqual({ tipo: 'atualizar' })
+  })
+  test('descartada com evento depois do descarte volta à triagem', () => {
+    const demanda = { encerrada: 'descartada', noArEm: null, descartadaEm: antes(HORA) }
+    expect(decidir({ ...base, issue: recente, demanda })).toEqual({ tipo: 'observar' })
+    expect(decidir({ ...base, issue: issue(), demanda })).toEqual({ tipo: 'abrir', voltou: false })
+    expect(decidir({ ...base, issue: recente, demanda, demandaDoGrupo: 'd3' })).toEqual({
+      tipo: 'ligar',
+      demandaId: 'd3',
+    })
+  })
+})
+
+describe('descrição do erro que voltou', () => {
+  test('conta as horas a partir de quando a volta foi vista, não do último evento', () => {
+    const noArEm = new Date('2026-11-26T19:48:00.000Z')
+    const texto = descricaoDaDemanda(
+      issue({ ultimoEm: new Date('2026-11-29T19:48:00.000Z') }),
+      { id: 'd1', noArEm, voltouEm: new Date('2026-11-26T21:48:00.000Z') },
+      [],
+      24,
+    )
+    expect(texto).toContain('voltou 2 h depois de ir ao ar, antes de contar como corrigido')
+  })
+})
+
+describe('corrigido só depois do ar e da espera sem o erro', () => {
+  // flowia#319: merge às 18h21, no ar (7619719) às 19h48; o último evento foi às 03h00.
+  const ultimoEm = new Date('2026-11-26T03:00:04.887Z')
+  const noArEm = new Date('2026-11-26T19:48:00.000Z')
+  const base = { resolvidoEm: null, esperaDesde: null, ultimoEm, voltou: false }
+  const emCorrecao = { encerrada: null, noArEm: null, naPrimeiraEtapa: false }
+  const noAr = { encerrada: 'no_ar', noArEm, naPrimeiraEtapa: false }
+  const em = (iso: string) => new Date(iso)
+
+  test('o merge não muda nada: a demanda continua em correção até ir ao ar', () => {
+    expect(estadoNoQuadro({ ...base, demanda: emCorrecao }, em('2026-11-26T18:22:00Z'), 24)).toBe(
+      'em_correcao',
+    )
+  })
+  test('no ar e ainda na espera de 24 h sem o erro', () => {
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-26T19:49:00Z'), 24)).toBe('no_ar')
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-27T19:47:59Z'), 24)).toBe('no_ar')
+  })
+  test('24 h no ar sem o erro: corrigido por mais 24 h, depois sai', () => {
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-27T19:48:00Z'), 24)).toBe(
+      'corrigido',
+    )
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-28T19:47:00Z'), 24)).toBe(
+      'corrigido',
+    )
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-28T19:49:00Z'), 24)).toBe(null)
+  })
+  test('a espera é configurável', () => {
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-26T21:00:00Z'), 1)).toBe(
+      'corrigido',
+    )
+  })
+  test('sem a terceira entrada vale o padrão de 24 h', () => {
+    expect(estadoNoQuadro({ ...base, demanda: noAr }, em('2026-11-27T10:00:00Z'))).toBe('no_ar')
+  })
+  test('evento depois de ir ao ar não é no ar nem corrigido', () => {
+    const voltou = { ...base, ultimoEm: em('2026-11-26T20:30:00Z') }
+    expect(estadoNoQuadro({ ...voltou, demanda: noAr }, em('2026-11-26T21:00:00Z'), 24)).toBe(null)
+  })
+  test('corrigidoEm: o fim da espera, ou nada se o erro voltou', () => {
+    expect(corrigidoEm({ noArEm, ultimoEm }, 24)).toEqual(em('2026-11-27T19:48:00Z'))
+    expect(corrigidoEm({ noArEm: null, ultimoEm }, 24)).toBe(null)
+    expect(corrigidoEm({ noArEm, ultimoEm: em('2026-11-26T20:00:00Z') }, 24)).toBe(null)
+  })
+  test('comoVoltou: na espera a correção falhou; depois dela é regressão', () => {
+    expect(comoVoltou(noArEm, em('2026-11-26T22:48:00Z'), 24)).toEqual({
+      horas: 3,
+      antesDeCorrigir: true,
+    })
+    expect(comoVoltou(noArEm, em('2026-11-29T19:48:00Z'), 24)).toEqual({
+      horas: 72,
+      antesDeCorrigir: false,
+    })
   })
 })
 
@@ -283,15 +363,16 @@ describe('estadoNoQuadro', () => {
       'em_correcao',
     )
   })
-  test('no ar há 23 h sem evento posterior é corrigido; há 25 h sai', () => {
-    const ultimoEm = antes(30 * HORA)
+  test('no ar há 23 h sem evento posterior está no ar; há 25 h é corrigido; há 49 h sai', () => {
+    const ultimoEm = antes(60 * HORA)
     const noAr = (h: number) => ({
       encerrada: 'no_ar',
       noArEm: antes(h * HORA),
       naPrimeiraEtapa: false,
     })
-    expect(estadoNoQuadro({ ...base, ultimoEm, demanda: noAr(23) }, agora)).toBe('corrigido')
-    expect(estadoNoQuadro({ ...base, ultimoEm, demanda: noAr(25) }, agora)).toBe(null)
+    expect(estadoNoQuadro({ ...base, ultimoEm, demanda: noAr(23) }, agora)).toBe('no_ar')
+    expect(estadoNoQuadro({ ...base, ultimoEm, demanda: noAr(25) }, agora)).toBe('corrigido')
+    expect(estadoNoQuadro({ ...base, ultimoEm, demanda: noAr(49) }, agora)).toBe(null)
   })
   test('descartada sai', () => {
     expect(

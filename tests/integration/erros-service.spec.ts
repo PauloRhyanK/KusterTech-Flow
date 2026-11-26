@@ -345,13 +345,194 @@ describe('buscarErrosDoGlitchTip', () => {
       where: { demandaId: anterior.id, tipo: 'erro-voltou' },
     })
     expect(evento?.origem).toBe('glitchtip')
-    expect(evento?.dados).toEqual({ demandaNova: nova.id })
+    expect(evento?.dados).toEqual({ demandaNova: nova.id, horas: 1, antesDeCorrigir: true })
   })
 
-  test('descartada não reabre', async () => {
+  async function descartar(demandaId: string, em: Date) {
+    await db.demanda.update({ where: { id: demandaId }, data: { encerrada: 'descartada' } })
+    await db.eventoDaDemanda.create({
+      data: {
+        idExterno: `teste:descarte:${demandaId}`,
+        demandaId,
+        tipo: 'encerrada_pelo_paulo',
+        origem: 'paulo',
+        dados: {},
+        em,
+      },
+    })
+  }
+
+  test('descartada com evento depois do descarte volta à triagem e abre demanda nova', async () => {
     const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
     await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
-    await db.demanda.updateMany({ data: { encerrada: 'descartada' } })
+    const descartada = await db.demanda.findFirstOrThrow()
+    await descartar(descartada.id, new Date(agora.getTime() + 30 * MIN))
+    const volta = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([issue('17', { lastSeen: new Date(agora.getTime() + HORA).toISOString() })]),
+    })
+    const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 2 * HORA), {
+      env: env(),
+      buscar: volta.buscar,
+    })
+    expect(resumo).toMatchObject({ abertas: 1, voltaram: 0 })
+    const erro = await db.erroDoGlitchTip.findUniqueOrThrow({ where: { issueId: '17' } })
+    expect(erro.demandaId).not.toBe(descartada.id)
+    expect(erro.demandaAnteriorId).toBe(null)
+  })
+
+  test('descartada com evento passageiro depois do descarte fica em observação', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const descartada = await db.demanda.findFirstOrThrow()
+    await descartar(descartada.id, new Date(agora.getTime() + 30 * MIN))
+    const volta = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([
+          issue('17', {
+            count: '2',
+            firstSeen: new Date(agora.getTime() + 50 * MIN).toISOString(),
+            lastSeen: new Date(agora.getTime() + HORA).toISOString(),
+          }),
+        ]),
+    })
+    const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 2 * HORA), {
+      env: env(),
+      buscar: volta.buscar,
+    })
+    expect(resumo).toMatchObject({ abertas: 0, observando: 1 })
+    const erro = await db.erroDoGlitchTip.findUniqueOrThrow({ where: { issueId: '17' } })
+    expect(erro.demandaId).toBe(null)
+  })
+
+  test('corrigido só depois de 24 h no ar sem o erro, com um evento só na demanda', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const demanda = await db.demanda.findFirstOrThrow()
+    await db.demanda.update({
+      where: { id: demanda.id },
+      data: { encerrada: 'no_ar', noArEm: agora },
+    })
+    const corrigidos = () =>
+      db.eventoDaDemanda.findMany({ where: { demandaId: demanda.id, tipo: 'erro-corrigido' } })
+    const depois = (h: number) => new Date(agora.getTime() + h * HORA)
+
+    expect(await buscarErrosDoGlitchTip(depois(23), { env: env(), buscar })).toMatchObject({
+      corrigidos: 0,
+    })
+    expect(await corrigidos()).toHaveLength(0)
+    expect(await buscarErrosDoGlitchTip(depois(25), { env: env(), buscar })).toMatchObject({
+      corrigidos: 1,
+    })
+    await buscarErrosDoGlitchTip(depois(26), { env: env(), buscar })
+    const eventos = await corrigidos()
+    expect(eventos).toHaveLength(1)
+    expect(eventos[0]).toMatchObject({ origem: 'glitchtip', dados: { horas: 24 }, em: depois(25) })
+  })
+
+  test('erro que voltou não deixa a demanda anterior contar como corrigida', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const anterior = await db.demanda.findFirstOrThrow()
+    await db.demanda.update({
+      where: { id: anterior.id },
+      data: { encerrada: 'no_ar', noArEm: agora },
+    })
+    const volta = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([issue('17', { lastSeen: new Date(agora.getTime() + HORA).toISOString() })]),
+    })
+    await buscarErrosDoGlitchTip(new Date(agora.getTime() + 2 * HORA), {
+      env: env(),
+      buscar: volta.buscar,
+    })
+    await buscarErrosDoGlitchTip(new Date(agora.getTime() + 30 * HORA), {
+      env: env(),
+      buscar: volta.buscar,
+    })
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: anterior.id, tipo: 'erro-corrigido' } }),
+    ).toBe(0)
+  })
+
+  test('solta da descartada e ligada a um parecido aberto não vira "voltou"', async () => {
+    const parecido = (id: string, p: Record<string, unknown> = {}) =>
+      issue(id, { title: 'TypeError igual', culprit: 'pedidos/igual.ts', ...p })
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([parecido('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const descartada = await db.demanda.findFirstOrThrow()
+    await descartar(descartada.id, new Date(agora.getTime() + 30 * MIN))
+    const depois = new Date(agora.getTime() + HORA).toISOString()
+    const segunda = glitchtip({
+      [LISTA('app-vendas')]: () => json([parecido('18', { firstSeen: depois, lastSeen: depois })]),
+    })
+    await buscarErrosDoGlitchTip(new Date(agora.getTime() + 2 * HORA), {
+      env: env(),
+      buscar: segunda.buscar,
+    })
+    const aberta = await db.erroDoGlitchTip.findUniqueOrThrow({ where: { issueId: '18' } })
+    expect(aberta.demandaId).not.toBe(null)
+    const terceira = glitchtip({
+      [LISTA('app-vendas')]: () =>
+        json([parecido('17', { lastSeen: depois }), parecido('18', { lastSeen: depois })]),
+    })
+    await buscarErrosDoGlitchTip(new Date(agora.getTime() + 3 * HORA), {
+      env: env(),
+      buscar: terceira.buscar,
+    })
+    const solta = await db.erroDoGlitchTip.findUniqueOrThrow({ where: { issueId: '17' } })
+    expect(solta.demandaId).toBe(aberta.demandaId)
+    expect(solta.demandaAnteriorId).toBe(null)
+  })
+
+  test('leitura com falha não grava erro-corrigido', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const demanda = await db.demanda.findFirstOrThrow()
+    await db.demanda.update({
+      where: { id: demanda.id },
+      data: { encerrada: 'no_ar', noArEm: agora },
+    })
+    const fora = glitchtip({ [LISTA('app-vendas')]: () => json({ detail: 'erro' }, 502) })
+    const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 25 * HORA), {
+      env: env(),
+      buscar: fora.buscar,
+    })
+    expect(resumo.corrigidos).toBe(0)
+    expect(
+      await db.eventoDaDemanda.count({ where: { demandaId: demanda.id, tipo: 'erro-corrigido' } }),
+    ).toBe(0)
+  })
+
+  test('demanda que recebeu erro-voltou nunca conta como corrigida', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    const anterior = await db.demanda.findFirstOrThrow()
+    await db.demanda.update({
+      where: { id: anterior.id },
+      data: { encerrada: 'no_ar', noArEm: agora },
+    })
+    await db.eventoDaDemanda.create({
+      data: {
+        idExterno: 'teste:voltou',
+        demandaId: anterior.id,
+        tipo: 'erro-voltou',
+        origem: 'glitchtip',
+        dados: {},
+        em: agora,
+      },
+    })
+    const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 25 * HORA), {
+      env: env(),
+      buscar,
+    })
+    expect(resumo.corrigidos).toBe(0)
+  })
+
+  test('descartada sem evento depois do descarte não reabre', async () => {
+    const { buscar } = glitchtip({ [LISTA('app-vendas')]: () => json([issue('17')]) })
+    await buscarErrosDoGlitchTip(agora, { env: env(), buscar })
+    await descartar((await db.demanda.findFirstOrThrow()).id, new Date(agora.getTime() + HORA))
     const resumo = await buscarErrosDoGlitchTip(new Date(agora.getTime() + 2 * HORA), {
       env: env(),
       buscar,
@@ -476,6 +657,7 @@ describe('buscarErrosDoGlitchTip', () => {
       naEspera: 0,
       atualizados: 0,
       resolvidos: 0,
+      corrigidos: 0,
       falhas: 0,
     })
     expect(chamadas).toEqual([])

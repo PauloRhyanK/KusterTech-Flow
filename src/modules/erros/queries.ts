@@ -20,13 +20,15 @@ export async function obterQuadroDeErros(
     return montarQuadro({ configurado: false, erros: [], leituras: [], slugs }, agora)
   }
 
+  const espera = (lida.ok ? lida.config.limiares.horasSemErro : 24) * 60 * 60_000
   const [erros, leituras] = await Promise.all([
     db.erroDoGlitchTip.findMany({
       where: {
         projetoGlitchTip: { in: slugs },
         OR: [
           { resolvidoEm: null },
-          { demanda: { noArEm: { gte: new Date(agora.getTime() - SETE_DIAS_MS) } } },
+          // Corrigido conta a partir do fim da espera sem o erro: a janela cresce junto.
+          { demanda: { noArEm: { gte: new Date(agora.getTime() - SETE_DIAS_MS - espera) } } },
         ],
       },
       select: {
