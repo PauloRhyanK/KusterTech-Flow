@@ -799,7 +799,7 @@ class TestesModelos(unittest.TestCase):
 
     def test_tabela_de_modelos_do_paulo(self):
         self.assertEqual(set(self.config["modelos"]), set(TABELA))
-        self.assertEqual(len(self.config["modelos"]), 13)
+        self.assertEqual(len(self.config["modelos"]), 14)
         for papel, (modelo, esforco, custo) in TABELA.items():
             with self.subTest(papel=papel):
                 self.assertEqual(
