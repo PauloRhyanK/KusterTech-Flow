@@ -1010,6 +1010,45 @@ class TriagemTest(unittest.TestCase):
         self.assertNotIn("extra", lido)
         self.assertEqual(set(lido), {"tipo", "destino", "tamanho", "mexeEm", "risco", "dados", "impacto", "resposta", "motivo"})
 
+    def test_prompt_triagem_pede_plano_para_avaliar_em_linguagem_simples(self):
+        texto = prompts.prompt_triagem(demanda=DEMANDA)
+        for frase in (
+            '"plano"',
+            "o que a pessoa quer",
+            "o que mudaria nas telas",
+            "opções",
+            "conflitos",
+            "recomendacao",
+            "explique em linguagem simples",
+            "nome de arquivo não é argumento",
+            "use null",
+        ):
+            with self.subTest(frase=frase):
+                self.assertIn(frase, texto)
+
+    def test_extrair_triagem_le_o_plano_e_corta_nos_limites_do_flow(self):
+        plano = {
+            "pedido": "Quer um texto pronto para conversar com o lead.",
+            "muda": ["Meu dia: aba de sugestões"] * 10,
+            "opcoes": [{"nome": "Texto fixo", "tamanho": "pequeno", "descricao": "d" * 400, "extra": 1}] * 6,
+            "conflitos": [{"decisao": "IA só por botão (15/11)", "explicacao": "Gerar sozinho contraria."}],
+            "recomendacao": "Texto fixo.",
+        }
+        lido = prompts.extrair_triagem(bloco_triagem(triagem_valida(destino="decisao_do_paulo", tipo="ideia", plano=plano)))
+        self.assertEqual(lido["plano"]["pedido"], plano["pedido"])
+        self.assertEqual(len(lido["plano"]["muda"]), 8)
+        self.assertEqual(len(lido["plano"]["opcoes"]), 4)
+        self.assertEqual(len(lido["plano"]["opcoes"][0]["descricao"]), 300)
+        self.assertEqual(set(lido["plano"]["opcoes"][0]), {"nome", "tamanho", "descricao"})
+        self.assertEqual(lido["plano"]["conflitos"], plano["conflitos"])
+
+    def test_extrair_triagem_com_plano_nulo_ou_torto_segue_sem_o_plano(self):
+        for plano in (None, "texto", {"pedido": "x"}, {"pedido": "x", "muda": [], "opcoes": [{"nome": "a", "tamanho": "xl", "descricao": "b"}], "conflitos": [], "recomendacao": "r"}):
+            with self.subTest(plano=plano):
+                lido = prompts.extrair_triagem(bloco_triagem(triagem_valida(plano=plano)))
+                self.assertIsNotNone(lido)
+                self.assertNotIn("plano", lido)
+
     def test_extrair_triagem_corta_pelo_tamanho_em_utf16_como_o_flow(self):
         lido = prompts.extrair_triagem(bloco_triagem(triagem_valida(mexeEm="😀" * 50)))
         self.assertEqual(lido["mexeEm"], "😀" * 40)
