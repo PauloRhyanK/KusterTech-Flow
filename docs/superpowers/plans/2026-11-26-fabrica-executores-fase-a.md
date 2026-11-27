@@ -18,7 +18,7 @@
 - Prazo padrão de um par esgotado: 1 hora. Aviso ao Paulo: papel inteiro esgotado há mais de 3 horas.
 - O estado `pausado="cota"` deixa de ser gravado. Um `estado.json` antigo com esse valor é retomado sozinho no primeiro ciclo.
 - Toda troca gera um aviso e entra no retrato. Nenhuma troca silenciosa.
-- `fabrica/**` é caminho protegido: o PR para para o Paulo.
+- `fabrica/**` deixou de ser caminho protegido no Flow (27/11): com revisor aprovado e verificação verde, o despachante mergeia sozinho. A trava que resta é a atualização manual do kit na oficina.
 - Testes do kit: `python3 -m unittest discover -s fabrica/scripts -p 'testes_*.py'`. Painel: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test`.
 - Commits com caminho explícito; nunca `git add -A`.
 
