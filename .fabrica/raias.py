@@ -15,6 +15,8 @@ import globs  # noqa: E402
 PAPEIS_DE_RAIA = ("produto", "arquiteto", "ux-ui", "frontend", "backend", "qa", "devops", "seguranca")
 # Nomes antigos ainda aceitos no plano; valem como o papel canônico (pacote, modelo e prompt).
 ALIASES_DE_PAPEL = {"ux-engineer": "ux-ui"}
+# Espelha `executores.AGENTES`: o instalador copia só `raias.py` e `globs.py`, então este módulo não importa `executores`.
+AGENTES_DE_EXECUTOR = ("claude-code", "codex", "antigravity")
 
 _PLANO_SEEDS = re.compile(r"pl-[0-9a-f]{4}")
 
@@ -30,6 +32,15 @@ def _texto_vazio(valor) -> bool:
 def papel_normalizado(papel):
     """O papel canônico de um alias (`ux-engineer` → `ux-ui`); qualquer outro valor volta como veio."""
     return ALIASES_DE_PAPEL.get(papel, papel) if isinstance(papel, str) else papel
+
+
+def _executor_valido(executor) -> bool:
+    return (
+        isinstance(executor, dict)
+        and executor.get("agente") in AGENTES_DE_EXECUTOR
+        and not _texto_vazio(executor.get("modelo"))
+        and (executor.get("conta") is None or not _texto_vazio(executor["conta"]))
+    )
 
 
 def _erros_da_raia(raia: dict) -> list[str]:
@@ -66,6 +77,8 @@ def _erros_da_raia(raia: dict) -> list[str]:
         or not all(isinstance(c, str) and c.strip() for c in criterios)
     ):
         erros.append(f"raia '{id_}': criteriosAceite deve ser uma lista não vazia")
+    if "executor" in raia and not _executor_valido(raia["executor"]):
+        erros.append(f"raia '{id_}': executor inválido")
     return erros
 
 
