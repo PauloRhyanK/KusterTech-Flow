@@ -30,6 +30,8 @@ PREFIXOS_DO_ORQUESTRADOR = (".fabrica/", ".seeds/")
 PERGUNTA_DO_ORQUESTRADOR = ".fabrica/pergunta.md"
 # F1: CI "ausente" logo depois de um head novo aguarda os checks por até 10 min antes de ir para o humano
 ESPERA_CI_AUSENTE = datetime.timedelta(minutes=10)
+# papel com todos os executores esgotados por mais tempo que isto chama o Paulo (uma issue)
+ESPERA_MAXIMA_SEM_EXECUTOR_MIN = 180
 # F2c: a partir de 2 replanejamentos da raia, a próxima falha dela vai para o Paulo, não para o orquestrador
 MAX_REPLANEJAMENTOS = 2
 
@@ -469,7 +471,7 @@ def registrar_verificacao(estado: dict, seed_id: str, verificacao: dict) -> dict
 
 
 def _contar_interrupcao(estado: dict, seed_id: str, seed: dict, motivo_falha) -> None:
-    """OOM repetido na mesma seed vai para o Paulo; a cota não conta (já pausa tudo)."""
+    """OOM repetido na mesma seed vai para o Paulo; a cota não conta (o executor esgotado é trocado)."""
     if motivo_falha != OOM:
         return
     n = seed.get("interrupcoes")
@@ -537,9 +539,7 @@ def registrar_fim_de_run(
         _avisar(estado, f"registrar_fim_de_run: run desconhecido {run_id!r}")
     if motivo_falha == OOM:
         _baixar_limite_por_oom(estado, run_id)
-    if cota:  # pausar é o lado seguro: qualquer valor verdadeiro pausa
-        estado["pausado"] = "cota"
-        _avisar(estado, f"run {run_id!r} bateu cota do provedor: despachante pausado")
+    # a cota não pausa: o despachante marca o par esgotado e redespacha com o próximo executor
     return estado
 
 
@@ -760,6 +760,22 @@ def _fase_atual(plano: dict):
     return None, []
 
 
+def _aguardando_executor(raia: dict, agora) -> bool:
+    """A raia espera um executor voltar do limite de uso: só concorre de novo a partir de `ate`."""
+    espera = raia.get("aguardandoExecutor")
+    if not isinstance(espera, dict) or agora is None:
+        return False
+    try:
+        ate = datetime.datetime.fromisoformat(espera["ate"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if ate.tzinfo is None:
+        ate = ate.replace(tzinfo=datetime.timezone.utc)
+    if agora.tzinfo is None:
+        agora = agora.astimezone()
+    return agora < ate
+
+
 def proximas_acoes(
     estado: dict, plano: dict, protegidos: list[str], agora=None, ci_opcional=False, resolver_travas=False
 ) -> list[dict]:
@@ -838,7 +854,9 @@ def proximas_acoes(
         prontas = [
             i
             for i in raias.raias_prontas(plano, concluidas, set(executando), raias_reabertas)
-            if i in raias_do_estado and raias_do_estado[i].get("estado") == "planejada"
+            if i in raias_do_estado
+            and raias_do_estado[i].get("estado") == "planejada"
+            and not _aguardando_executor(raias_do_estado[i], agora)
         ]
         acoes.extend({"tipo": "despachar_raia", "raia": i} for i in prontas[:vagas])
 

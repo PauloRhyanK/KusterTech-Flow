@@ -752,18 +752,15 @@ class TestPausaEAvisos(unittest.TestCase):
         e = est.registrar_fim_de_run(e, "x", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
         self.assertEqual(dos_tipos(acoes(e), "despachar_raia"), [])
 
-    def test_cota_pausa_e_nao_emite_acoes(self):
+    def test_cota_nao_pausa_e_o_run_volta_a_ser_emitido(self):
         e = est.aplicar(tudo_verde(), {"tipo": "revisar", "seed": "s1", "sha": "bbb"}, {"runId": "rv2"})
         e = est.registrar_fim_de_run(e, "rv2", estado_run="failed", motivo_falha="provider_error", veredito=None, cota=True)
-        self.assertEqual(e["pausado"], "cota")
-        self.assertEqual(len(e["avisos"]), 1)
+        self.assertIsNone(e["pausado"])
+        self.assertEqual(e["avisos"], [])
         self.assertIsNone(e["seeds"]["s1"]["revisaoRunId"])
         self.assertEqual(e["limiteParalelo"], 3)
-        self.assertEqual(acoes(e), [])
-        e["pausado"] = None
         self.assertNotEqual(acoes(e), [])
-        self.assertEqual(est.registrar_fim_de_run(e, "x", estado_run="failed", motivo_falha=None, veredito=None, cota=False)["pausado"], None)
-        self.assertEqual(est.registrar_fim_de_run(e, "x", estado_run="failed", motivo_falha=None, veredito=None, cota="sim")["pausado"], "cota")
+        self.assertIsNone(est.registrar_fim_de_run(e, "x", estado_run="failed", motivo_falha=None, veredito=None, cota="sim")["pausado"])
 
     def test_fim_de_run_desconhecido_nao_quebra(self):
         e = com_pr()
@@ -1536,13 +1533,11 @@ class TestCotaEOomNoRun(unittest.TestCase):
         self.assertEqual(corrigir["tipo"], "corrigir")
         return est.aplicar(e, corrigir, {"runId": "fx1"}), corrigir
 
-    def test_fixer_com_cota_volta_depois_da_pausa(self):
+    def test_fixer_com_cota_volta_na_hora_sem_pausar(self):
         e, corrigir = self.com_fixer()
         e = est.registrar_fim_de_run(e, "fx1", estado_run="failed", motivo_falha="provider_error", veredito=None, cota=True)
         s = e["seeds"]["s1"]
-        self.assertEqual((s["estado"], s["fixerUsado"], s["fixerRunId"], e["pausado"]), ("corrigindo", False, None, "cota"))
-        self.assertEqual(acoes(e), [])
-        e["pausado"] = None  # o `retomar` do despachante
+        self.assertEqual((s["estado"], s["fixerUsado"], s["fixerRunId"], e["pausado"]), ("corrigindo", False, None, None))
         self.assertEqual(da_seed(acoes(e)), [corrigir])
 
     def test_fixer_com_oom_volta_na_hora_e_baixa_o_limite(self):
@@ -1591,14 +1586,10 @@ class TestCotaEOomNoRun(unittest.TestCase):
         e = est.registrar_fim_de_run(e, "rv1", estado_run="failed", motivo_falha="oom_killed", veredito=None, cota=False)
         self.assertEqual(e["seeds"]["s1"]["tentativasRevisao"], 0)
 
-    def test_cenario_cota_no_fixer_retomar_e_merge(self):
-        """cenarios1 S5b: cota no fixer, pausa, retomar, fixer de novo, revisão nova e merge."""
+    def test_cenario_cota_no_fixer_troca_de_executor_e_merge(self):
+        """cenarios1 S5b: cota no fixer, fixer de novo (outro executor), revisão nova e merge."""
         e, _ = self.com_fixer()
         e = est.registrar_fim_de_run(e, "fx1", estado_run="failed", motivo_falha="provider_error", veredito=None, cota=True)
-        for _ in range(2):
-            e, feitas = ciclo(e, executor())
-            self.assertEqual(feitas, [])
-        e["pausado"] = None
         e, feitas = ciclo(e, executor())
         self.assertEqual([a["tipo"] for a in da_seed(feitas)], ["corrigir"])
         e = est.registrar_fim_de_run(e, e["seeds"]["s1"]["fixerRunId"], estado_run="succeeded", motivo_falha=None, veredito=None, cota=False)
@@ -1609,6 +1600,35 @@ class TestCotaEOomNoRun(unittest.TestCase):
         e, feitas = ciclo(e, executor())
         self.assertEqual(da_seed(feitas), [{"tipo": "mergear", "seed": "s1", "sha": "ccc"}])
         self.assertEqual(e["seeds"]["s1"]["estado"], "mergeada")
+
+
+class TestEsperaPorExecutor(unittest.TestCase):
+    """Papel sem executor: só as raias dele esperam, até o prazo, e as outras seguem."""
+
+    AGORA = datetime.datetime(2026, 11, 27, 12, 0, tzinfo=datetime.timezone.utc)
+
+    def despachaveis(self, e, agora):
+        acoes_ = est.proximas_acoes(e, plano(), PROTEGIDOS, agora=agora)
+        return sorted(a["raia"] for a in acoes_ if a["tipo"] == "despachar_raia")
+
+    def test_espera_maxima_sem_executor_e_de_180_minutos(self):
+        self.assertEqual(est.ESPERA_MAXIMA_SEM_EXECUTOR_MIN, 180)
+
+    def test_raia_aguardando_executor_so_concorre_a_partir_do_prazo(self):
+        e = estado_inicial()
+        ate = self.AGORA + datetime.timedelta(minutes=30)
+        e["raias"]["d"]["aguardandoExecutor"] = {"desde": self.AGORA.isoformat(), "ate": ate.isoformat()}
+        self.assertEqual(self.despachaveis(e, self.AGORA), ["a", "b", "c"])
+        self.assertEqual(self.despachaveis(e, ate - datetime.timedelta(seconds=1)), ["a", "b", "c"])
+        e["limiteParalelo"] = 4
+        self.assertEqual(self.despachaveis(e, ate), ["a", "b", "c", "d"])
+
+    def test_espera_ilegivel_ou_sem_relogio_nao_trava_a_raia(self):
+        e = estado_inicial(limite=4)
+        e["raias"]["d"]["aguardandoExecutor"] = {"desde": "x", "ate": "ontem"}
+        self.assertEqual(self.despachaveis(e, self.AGORA), ["a", "b", "c", "d"])
+        e["raias"]["d"]["aguardandoExecutor"] = {"ate": (self.AGORA + datetime.timedelta(hours=1)).isoformat()}
+        self.assertEqual(est.proximas_acoes(e, plano(), PROTEGIDOS)[-1]["raia"], "d")
 
 
 class TestOrdemDosPassos(unittest.TestCase):
@@ -1807,7 +1827,7 @@ class TestConcluirOrquestrador(unittest.TestCase):
         novo = est.registrar_fim_de_run(e, "orq1", estado_run="failed", motivo_falha="provider_error", veredito=None, cota=True)
         self.assertEqual(novo["orquestrador"]["runId"], "orq1")  # quem limpa é concluir_orquestrador
         self.assertFalse(any("desconhecido" in a for a in novo["avisos"]))
-        self.assertEqual(novo["pausado"], "cota")
+        self.assertIsNone(novo["pausado"])
 
 
 class TestPerguntaDoOrquestrador(unittest.TestCase):
