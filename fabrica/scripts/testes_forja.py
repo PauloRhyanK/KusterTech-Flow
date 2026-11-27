@@ -2,6 +2,7 @@ import datetime
 import http.client
 import inspect
 import io
+import base64
 import json
 import os
 import pathlib
@@ -1567,3 +1568,55 @@ class TestesExecucaoDireta(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestesProporArquivo(unittest.TestCase):
+    """O despachante abre um PR que muda só um arquivo (o avanço de fase sem orquestrador)."""
+
+    SHA_BASE = "a" * 40
+    SHA_COMMIT = "b" * 40
+    PR_URL = "https://github.com/acme/app/pull/42"
+
+    def test_cria_branch_grava_o_arquivo_e_abre_o_pr(self):
+        f, t = novo(
+            ok({"object": {"sha": self.SHA_BASE}}),
+            ok({"ref": "refs/heads/fabrica/x"}, 201),
+            ok({"sha": "c" * 40}),
+            ok({"commit": {"sha": self.SHA_COMMIT}}),
+            ok({"html_url": self.PR_URL, "number": 42}, 201),
+        )
+        r = f.propor_arquivo("acme/app", "main", "fabrica/x", ".fabrica/planos/p.json", "{}\n", "msg", "título", "corpo")
+        self.assertEqual(r, {"pr": self.PR_URL, "headSha": self.SHA_COMMIT})
+        t.exigir(self, 5)
+        metodos = [(m, u.replace(API, "")) for m, u, _, _ in t.requisicoes]
+        self.assertEqual(
+            metodos,
+            [
+                ("GET", "/repos/acme/app/git/ref/heads/main"),
+                ("POST", "/repos/acme/app/git/refs"),
+                ("GET", "/repos/acme/app/contents/.fabrica/planos/p.json?ref=fabrica%2Fx"),
+                ("PUT", "/repos/acme/app/contents/.fabrica/planos/p.json"),
+                ("POST", "/repos/acme/app/pulls"),
+            ],
+        )
+        self.assertEqual(json.loads(t.requisicoes[1][3]), {"ref": "refs/heads/fabrica/x", "sha": self.SHA_BASE})
+        put = json.loads(t.requisicoes[3][3])
+        self.assertEqual((put["branch"], put["sha"], put["message"]), ("fabrica/x", "c" * 40, "msg"))
+        self.assertEqual(base64.b64decode(put["content"]).decode("utf-8"), "{}\n")
+        self.assertEqual(
+            json.loads(t.requisicoes[4][3]), {"title": "título", "body": "corpo", "head": "fabrica/x", "base": "main"}
+        )
+
+    def test_falha_do_github_vira_erro_sem_segredo(self):
+        f, t = novo(ok({"message": SEGREDO}, 404))
+        with self.assertRaises(RuntimeError) as ctx:
+            f.propor_arquivo("acme/app", "main", "fabrica/x", "a.json", "{}", "m", "t", "c")
+        self.assertNotIn(SEGREDO, str(ctx.exception))
+
+    def test_forja_falsa_abre_pr_com_o_arquivo_no_head(self):
+        falsa = forja.ForjaFalsa()
+        r = falsa.propor_arquivo("acme/app", "main", "fabrica/x", "a.json", "{}\n", "m", "t", "c")
+        pr = falsa.pr(r["pr"])
+        self.assertEqual((pr["aberto"], pr["headSha"], pr["arquivos"]), (True, r["headSha"], ["a.json"]))
+        self.assertEqual(falsa.arquivo("acme/app", r["headSha"], "a.json"), "{}\n")
+        self.assertTrue(falsa.mergear(r["pr"], r["headSha"]))

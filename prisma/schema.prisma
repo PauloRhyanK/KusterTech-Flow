@@ -1111,6 +1111,7 @@ model Demanda {
   tipo             TipoDeDemanda?
   destino          DestinoDaDemanda?
   nivel            NivelDeAcompanhamento
+  planejamentoPesado Boolean             @default(false)
   temTela          Boolean
   origem           OrigemDaDemanda
   fonteId          String?

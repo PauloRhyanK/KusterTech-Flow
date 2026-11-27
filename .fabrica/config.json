@@ -20,11 +20,17 @@
   "modelos": {
     "orquestrador": {
       "agente": "claude-code",
-      "modelo": "claude-fable-5-1",
-      "esforco": "high",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
       "maxCustoUsd": 1000
     },
     "arbitro": {
+      "agente": "claude-code",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 1000
+    },
+    "planejador-pesado": {
       "agente": "claude-code",
       "modelo": "claude-fable-5-1",
       "esforco": "high",

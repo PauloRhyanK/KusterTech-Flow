@@ -30,8 +30,9 @@ SONNET = "claude-sonnet-5-5"
 HAIKU = "claude-haiku-5-5"
 
 TABELA = {
-    "orquestrador": (FABLE, "high", 20),
-    "arbitro": (FABLE, "high", 20),
+    "orquestrador": (OPUS, "medium", 20),
+    "arbitro": (OPUS, "medium", 20),
+    "planejador-pesado": (FABLE, "high", 20),
     "arquiteto": (SONNET, "medium", 15),
     "produto": (HAIKU, "medium", 5),
     "ux-ui": (SONNET, "medium", 10),
@@ -827,7 +828,7 @@ class TestesModelos(unittest.TestCase):
 
     def test_tabela_de_modelos_do_paulo(self):
         self.assertEqual(set(self.config["modelos"]), set(TABELA))
-        self.assertEqual(len(self.config["modelos"]), 14)
+        self.assertEqual(len(self.config["modelos"]), 15)
         for papel, (modelo, esforco, custo) in TABELA.items():
             with self.subTest(papel=papel):
                 entrada = self.config["modelos"][papel]

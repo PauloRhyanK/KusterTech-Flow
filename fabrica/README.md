@@ -53,7 +53,7 @@ systemctl --user enable --now fabrica-despachante
 ```
 
 - `iniciar` sem `--spec` lê `.fabrica/plano.json` de `main`, recusa um plano inválido e cria o estado sem acordar o orquestrador.
-- `iniciar --spec` acorda o orquestrador com `nova_spec`; o PR de plano dele vai para a aprovação do Paulo.
+- `iniciar --spec` acorda o orquestrador com `nova_spec`; o PR de plano dele vai para a aprovação do Paulo. Com `--pesado`, essa acordada roda no `planejador-pesado` (Fable), se a config o tiver; todas as outras acordadas são do `orquestrador` (Opus). Uma demanda do Flow com "Planejamento pesado" ligado faz o mesmo no plano dela.
 - Com o serviço já rodando, `iniciar --spec` e `retomar` entram pela caixa de entrada (`<FABRICA_RAIZ>/entrada/`) e valem no próximo ciclo.
 
 ## Operar (zero manual)
@@ -80,6 +80,8 @@ O despachante faz sozinho:
 - **Resíduos de gate:** cada despachante, ao partir, remove contêineres, redes e pastas `fabrica-verif-*` com mais de 2 h. O teto do gate é 30 min, então o gate que outro despachante roda naquele momento nunca é removido. Antes da correção, a partida de um plano matava o gate do outro com 137.
 - **Orquestrador resolve as travas, se a config pedir:** com `"orquestradorResolveTravas": true`, o que travaria num PR vai primeiro ao orquestrador (`seed_parada`): merge recusado por conflito de verdade, revisor sem veredito válido, falha repetida de ambiente, PR fechado sem merge e PR sem nenhuma mudança há 20 minutos. CI pendente, pausa, drenagem e decisão aberta não contam como parada. Se ele já foi chamado para aquela seed e nada mudou em 1 hora, vai ao Paulo. `maxReplanejamentos` (padrão 2, de 1 a 20) é o teto de replanejamentos por raia. Caminho protegido continua indo ao Paulo.
 - **Merge sem CI, se a config pedir:** com `"ciObrigatorioNasSeeds": false` em `.fabrica/config.json`, um repositório sem CI mergeia as seeds só com o veredito do revisor e a verificação da raia. CI vermelho ou pendente continua valendo, e caminho protegido continua parando no Paulo. O padrão é `true`: sem CI, a seed vai para o Paulo. Se o CI for religado, volte para `true`, porque o despachante não espera os checks aparecerem.
+- **Fase sem orquestrador, se a config pedir:** com `"homologacaoDeFase": false`, a fase concluída cuja próxima fase já está no plano avança sem run: o despachante abre um PR que só troca `faseAtual` no plano de `main` (mesma formatação) e o mergeia. O plano em `main` diferente do que ele lê, a última fase e 3 recusas do merge voltam ao orquestrador, como antes.
+- **Teto com pergunta direta:** quando uma raia bate no teto de replanejamentos, o orquestrador acorda uma última vez (`teto_da_raia`) só para escrever `.fabrica/pergunta.md` com o que aconteceu, as opções e a recomendação; ela vai ao Paulo sem o árbitro. Sem a pergunta, o PR fecha e vale a decisão genérica. Pergunta fora do formato direto (`equipes/arbitro.md`) vai assim mesmo, com aviso.
 - **Limita o custo das falhas:** CI ausente logo depois de um push espera 10 min pelos checks; uma verificação que nem executou (Docker fora, código 125 ou 126, ou erro do próprio verificador) pausa a fábrica com uma issue, e um comando que não existe na imagem (código 127) abre uma decisão da raia, sem fixer nem orquestrador; depois de 2 replanejamentos de uma raia, a próxima falha dela vai para o Paulo em vez de acordar o orquestrador.
 - Registra cada acordada em `acordadas.jsonl` e cada ação em `log.jsonl`, na `FABRICA_RAIZ`.
 
@@ -397,22 +399,23 @@ O teto de buscas por dia e o tamanho do lote ficam no Flow: `FLOW_BUSCAS_IA_POR_
 
 A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o Paulo pode mudá-la por projeto):
 
-| Papel          | Modelo              | Esforço | maxCustoUsd |
-| -------------- | ------------------- | ------- | ----------- |
-| `orquestrador` | `claude-fable-5-1`  | high    | 20          |
-| `arbitro`      | `claude-fable-5-1`  | high    | 20          |
-| `arquiteto`    | `claude-sonnet-5-5` | medium  | 15          |
-| `produto`      | `claude-haiku-5-5`  | medium  | 5           |
-| `ux-ui`        | `claude-sonnet-5-5` | medium  | 10          |
-| `frontend`     | `claude-sonnet-5-5` | medium  | 10          |
-| `backend`      | `claude-sonnet-5-5` | medium  | 10          |
-| `qa`           | `claude-sonnet-5-5` | medium  | 10          |
-| `revisor`      | `claude-opus-5-5`   | medium  | 5           |
-| `devops`       | `claude-sonnet-5-5` | medium  | 10          |
-| `seguranca`    | `claude-sonnet-5-5` | medium  | 10          |
-| `fixer`        | `claude-haiku-5-5`  | medium  | 5           |
-| `atendente`    | `claude-sonnet-5-5` | medium  | 2           |
-| `buscador`     | `claude-haiku-5-5`  | medium  | 0.5         |
+| Papel               | Modelo              | Esforço | maxCustoUsd |
+| ------------------- | ------------------- | ------- | ----------- |
+| `orquestrador`      | `claude-opus-5-5`   | medium  | 20          |
+| `arbitro`           | `claude-opus-5-5`   | medium  | 20          |
+| `planejador-pesado` | `claude-fable-5-1`  | high    | 20          |
+| `arquiteto`         | `claude-sonnet-5-5` | medium  | 15          |
+| `produto`           | `claude-haiku-5-5`  | medium  | 5           |
+| `ux-ui`             | `claude-sonnet-5-5` | medium  | 10          |
+| `frontend`          | `claude-sonnet-5-5` | medium  | 10          |
+| `backend`           | `claude-sonnet-5-5` | medium  | 10          |
+| `qa`                | `claude-sonnet-5-5` | medium  | 10          |
+| `revisor`           | `claude-opus-5-5`   | medium  | 5           |
+| `devops`            | `claude-sonnet-5-5` | medium  | 10          |
+| `seguranca`         | `claude-sonnet-5-5` | medium  | 10          |
+| `fixer`             | `claude-haiku-5-5`  | medium  | 5           |
+| `atendente`         | `claude-sonnet-5-5` | medium  | 2           |
+| `buscador`          | `claude-haiku-5-5`  | medium  | 0.5         |
 
 ### Executores e conta reserva
 

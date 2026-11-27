@@ -19,24 +19,43 @@
   "modelos": {
     "orquestrador": {
       "agente": "claude-code",
-      "modelo": "claude-fable-5-1",
-      "esforco": "high",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
       "maxCustoUsd": 20,
       "executores": [
         {
           "agente": "claude-code",
-          "modelo": "claude-fable-5-1",
+          "modelo": "claude-opus-5-5",
           "conta": "claude-principal"
         },
         {
           "agente": "claude-code",
-          "modelo": "claude-fable-5-1",
+          "modelo": "claude-opus-5-5",
           "conta": "claude-reserva"
         }
       ],
       "ferramentas": ["superpowers", "rtk"]
     },
     "arbitro": {
+      "agente": "claude-code",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 20,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-opus-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-opus-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
+    },
+    "planejador-pesado": {
       "agente": "claude-code",
       "modelo": "claude-fable-5-1",
       "esforco": "high",

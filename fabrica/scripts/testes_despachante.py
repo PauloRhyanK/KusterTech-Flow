@@ -805,6 +805,9 @@ class TestesJornada(Base):
         d.estado["raias"]["a"]["replanejamentos"] = 1
         self.instante += despachante.SEM_PROGRESSO + datetime.timedelta(seconds=1)
         d.ciclo()
+        self.assertEqual(self.estado()["orquestrador"]["acordada"]["motivo"], "teto_da_raia")
+        self.pr_do_orquestrador(self.estado()["orquestrador"]["runId"], [".fabrica/pergunta.md"], pergunta=PERGUNTA_DIRETA)
+        d.ciclo()
         self.assertEqual(len(self.forja.decisoes), 1)
         self.instante += despachante.SEM_PROGRESSO * 3
         d.ciclo()
@@ -5734,8 +5737,15 @@ class TestesCorrecaoFinal(Base):
             d.ciclo()
             d.ciclo()
             self.assertEqual(self.estado()["raias"]["a"]["replanejamentos"], it + 1)
-        self.assertEqual(len(self.runs(FABLE)), 2)
-        self.assertNotIn("acordar", [a["tipo"] for a in acoes])
+        # no teto, o orquestrador acorda uma última vez só para a pergunta direta (teto_da_raia)
+        self.assertEqual([a.get("motivo") for a in acoes if a["tipo"] == "acordar"], ["teto_da_raia"])
+        self.assertEqual(len(self.runs(FABLE)), 3)
+        self.assertIn("Motivo: teto_da_raia", self.runs(FABLE)[-1]["prompt"])
+        self.assertEqual([x for x in self.estado()["decisoes"] if x.get("tipo") == "replanejamento"], [])
+        # o run do teto não trouxe pergunta: vale a decisão genérica
+        orq = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(orq, [".fabrica/plano.json"], plano_atual, head=H3, url="https://github.com/dono/cliente/pull/99")
+        d.ciclo()
         (decisao,) = [x for x in self.estado()["decisoes"] if x.get("tipo") == "replanejamento"]
         self.assertEqual(decisao["alvo"], "gate_falhou_apos_fixer:s2")
         titulo, corpo = self.forja.decisoes[-1]
@@ -5757,9 +5767,11 @@ class TestesCorrecaoFinal(Base):
                 self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
                 d.ciclo()
                 d.ciclo()
-                self.assertEqual(len(self.runs(FABLE)), 1 if acorda else 0)
+                (run,) = self.runs(FABLE)
+                # no teto, a última acordada é a da pergunta direta; a decisão sai do run dela
+                self.assertIn("Motivo: %s" % ("raia_falhou" if acorda else "teto_da_raia"), run["prompt"])
                 tipos = [x.get("tipo") for x in self.estado()["decisoes"]]
-                self.assertEqual(tipos.count("replanejamento"), 0 if acorda else 1)
+                self.assertEqual(tipos.count("replanejamento"), 0)
                 if not acorda:
                     self.assertIn("raia_falhou:a", self.estado()["chavesAcordadas"])
 
@@ -5799,28 +5811,83 @@ class TestesCorrecaoFinal(Base):
         self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
         self.assertEqual(self.forja.decisoes, [])
 
-    def _fase_sem_homologacao(self, plano_do_pr):
-        self.publicar(_plano_de_duas_fases())
+    def _fase_sem_homologacao(self, plano_=None):
+        """Sem homologação, a fase concluída com a próxima já planejada avança sem acordar o orquestrador."""
+        self.publicar(plano_ or _plano_de_duas_fases())
         d = self.novo(config=dict(CONFIG, homologacaoDeFase=False))
         d.iniciar()
         d.ciclo()
         self.motor.definir_plano("plano-1", "succeeded", [])
         d.ciclo()
-        rid = self.estado()["orquestrador"]["runId"]
-        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
-        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano_do_pr)
-        d.ciclo()
         return d
 
-    def test_sem_homologacao_avancar_para_a_fase_seguinte_mergeia_sozinho(self):
-        self._fase_sem_homologacao(_plano_de_duas_fases(fase="f2"))
+    def _propostas(self):
+        return [a for nome, a in self.forja.chamadas if nome == "propor_arquivo"]
+
+    def test_sem_homologacao_avancar_para_a_fase_seguinte_e_um_pr_do_despachante_sem_run(self):
+        d = self._fase_sem_homologacao()
+        self.assertEqual(self.runs(FABLE), [])
+        (proposta,) = self._propostas()
+        self.assertEqual(proposta["caminho"], ".fabrica/plano.json")
+        self.assertEqual(json.loads(proposta["conteudo"]), _plano_de_duas_fases(fase="f2"))
+        self.assertEqual(len(self.forja.merges), 1)
         self.assertEqual(self.forja.decisoes, [])
-        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.assertIn("fase_concluida:f1", self.estado()["chavesAcordadas"])
+        self.assertIn("fase_avancada", [l.get("evento") for l in self.log()])
+        # o main já traz a fase 2: a raia dela é despachada, sem nova proposta
+        self.publicar(_plano_de_duas_fases(fase="f2"))
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual([p["plano_seeds"] for p in self.planos_despachados()], ["pl-000a", "pl-000b"])
+        self.assertEqual(len(self._propostas()), 1)
+        self.assertEqual(self.runs(FABLE), [])
+
+    def test_sem_homologacao_ultima_fase_acorda_o_orquestrador(self):
+        self._fase_sem_homologacao(plano(raia("a")))
+        self.assertEqual(self._propostas(), [])
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+
+    def test_com_homologacao_a_fase_continua_com_o_orquestrador(self):
+        self.publicar(_plano_de_duas_fases())
+        d = self.novo()
+        d.iniciar()
+        d.ciclo()
+        self.motor.definir_plano("plano-1", "succeeded", [])
+        d.ciclo()
+        self.assertEqual(self._propostas(), [])
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+
+    def test_avanco_recusado_tres_vezes_acorda_o_orquestrador(self):
+        self.forja.mergear = lambda url, sha: False
+        d = self._fase_sem_homologacao()
+        self.assertEqual(self.runs(FABLE), [])
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+        self.assertEqual(len(self._propostas()), 1)
+
+    def test_plano_em_main_diferente_do_lido_acorda_o_orquestrador(self):
+        self.publicar(_plano_de_duas_fases())
+        d = self.novo(config=dict(CONFIG, homologacaoDeFase=False))
+        d.iniciar()
+        d.ciclo()
+        self.motor.definir_plano("plano-1", "succeeded", [])
+        outro = _plano_de_duas_fases()
+        outro["raias"][1]["planoSeeds"] = "pl-0bbb"
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/plano.json", json.dumps(outro))
+        d.plano = _plano_de_duas_fases()
+        d._recarregar_plano = lambda: None  # o despachante ainda segue o plano lido antes da mudança em main
+        d.ciclo()
+        self.assertEqual(self._propostas(), [])
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
 
     def test_sem_homologacao_remover_fase_continua_indo_ao_paulo(self):
+        self.config_padrao = dict(CONFIG, homologacaoDeFase=False)
+        d, rid = self.acordar_por_falha(_plano_de_duas_fases())
         novo = _plano_de_duas_fases(fase="f2")
         novo["fases"] = [f for f in novo["fases"] if f["id"] != "f1"]
-        self._fase_sem_homologacao(novo)
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo)
+        d.ciclo()
         self.assertEqual(self.forja.merges, [])
 
     def test_sem_homologacao_voltar_de_fase_nao_conta_como_seguinte(self):
@@ -7570,3 +7637,110 @@ class TestesMergeDepoisDoPrazo(Base):
         d.ciclo()
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
         self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+
+
+class TestesPlanejamentoPesado(Base):
+    def _config(self, com_pesado=True):
+        config = copy.deepcopy(CONFIG)
+        if com_pesado:
+            config["modelos"]["planejador-pesado"] = _modelo(FABLE, 30, "high")
+        return config
+
+    def _iniciar(self, pesado, com_pesado=True):
+        self.publicar(plano(raia("a")))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo(config=self._config(com_pesado))
+        d.iniciar()
+        d.iniciar(spec="docs/spec.md", pesado=pesado)
+        return d
+
+    def test_spec_pesada_acorda_o_planejador_pesado(self):
+        self._iniciar(True)
+        (run,) = self.runs()
+        self.assertEqual((run["modelo"], run["max_custo_usd"]), (FABLE, 30))
+        self.assertIn("Motivo: nova_spec", run["prompt"])
+
+    def test_spec_normal_acorda_o_orquestrador(self):
+        self._iniciar(False)
+        (run,) = self.runs()
+        self.assertEqual(run["modelo"], CONFIG["modelos"]["orquestrador"]["modelo"])
+
+    def test_spec_pesada_sem_o_papel_usa_o_orquestrador(self):
+        self._iniciar(True, com_pesado=False)
+        (run,) = self.runs()
+        self.assertEqual(run["modelo"], CONFIG["modelos"]["orquestrador"]["modelo"])
+
+    def test_cli_pesado_exige_spec(self):
+        self.assertEqual(despachante._parser().parse_args(["iniciar", "--spec", "x.md", "--pesado"]).pesado, True)
+        self.assertEqual(despachante._parser().parse_args(["iniciar", "--spec", "x.md"]).pesado, False)
+
+
+PERGUNTA_DIRETA = (
+    "# Entregar sem a etapa de pagamentos?\n\n"
+    "**O que aconteceu:** a etapa de pagamentos falhou cinco vezes no mesmo ponto.\n\n"
+    "**O que preciso de você:** decidir se o pedido vai ao ar sem pagamentos.\n\n"
+    "**Opções:**\n\n"
+    "1. **Entregar sem pagamentos** — o resto vai ao ar; pagamentos vira outro pedido.\n"
+    "2. **Tentar outra abordagem** — mais um ciclo, sem garantia.\n\n"
+    "**Recomendo:** a opção 1, porque o resto já funciona.\n"
+)
+
+
+class TestesTetoDaRaia(Base):
+    """No teto de replanejamentos, o Opus acorda uma última vez só para escrever a pergunta direta ao Paulo."""
+
+    config_padrao = CONFIG_COM_ARBITRO
+
+    def no_teto(self):
+        d = self.preparar_raia()
+        d.estado["raias"]["a"]["replanejamentos"] = 2
+        d._salvar()
+        self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+        d.ciclo()
+        d.ciclo()
+        return d
+
+    def test_teto_acorda_o_orquestrador_com_teto_da_raia_e_nao_abre_decisao_ainda(self):
+        d = self.no_teto()
+        (run,) = self.runs(FABLE)
+        self.assertIn("Motivo: teto_da_raia", run["prompt"])
+        self.assertIn('"raia": "a"', run["prompt"])
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertIn("raia_falhou:a", self.estado()["chavesAcordadas"])
+
+    def test_pergunta_do_teto_vai_direto_ao_paulo_sem_arbitro(self):
+        d = self.no_teto()
+        rid = self.orquestrador()["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/pergunta.md"], pergunta=PERGUNTA_DIRETA)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.runs(ARBITRO), [])
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertIn("Recomendo", corpo)
+        self.assertEqual(self.forja.merges, [])
+
+    def test_teto_sem_pergunta_vira_a_decisao_generica(self):
+        d = self.no_teto()
+        rid = self.orquestrador()["runId"]
+        novo = plano(raia("a", plano_seeds="pl-00aa"))
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+        tipos = [x.get("tipo") for x in self.estado()["decisoes"]]
+        self.assertEqual(tipos.count("replanejamento"), 1)
+        self.assertEqual(len(self.runs(FABLE)), 1)
+
+
+class TestesFormatoDaPergunta(unittest.TestCase):
+    def test_pergunta_direta_valida(self):
+        self.assertEqual(despachante.problemas_da_pergunta(PERGUNTA_DIRETA), [])
+
+    def test_pergunta_fora_do_formato(self):
+        problemas = despachante.problemas_da_pergunta("# Dúvida\nEmendo ou refaço?")
+        self.assertIn("falta O que aconteceu", problemas)
+        self.assertIn("falta a recomendação (Recomendo)", problemas)
+        self.assertIn("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência", problemas)
+
+    def test_opcoes_de_duas_a_tres(self):
+        uma = PERGUNTA_DIRETA.replace("2. **Tentar outra abordagem** — mais um ciclo, sem garantia.\n", "")
+        self.assertIn("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência", despachante.problemas_da_pergunta(uma))

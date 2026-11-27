@@ -34,6 +34,8 @@ export interface LinhaParaAFabrica {
   destino: string | null
   escopo: string | null
   nivel: string
+  /** Liga o planejador pesado do kit na acordada `nova_spec`. */
+  planejamentoPesado: boolean
   temTela: boolean
   origem: string
   criadaEm: string

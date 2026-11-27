@@ -210,6 +210,7 @@ export async function buscarDemandasParaAFabrica(
               destino,
               escopo: escopos.get(d.id) ?? null,
               nivel: paraOFio.nivel(d.nivel),
+              planejamentoPesado: d.planejamentoPesado,
               temTela: d.temTela,
               origem: paraOFio.origem(d.origem),
               criadaEm: instanteNoFio(d.criadaEm),

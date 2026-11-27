@@ -193,6 +193,8 @@ export interface AberturaDeDemanda {
   descricao: string | null
   tipo: TipoDeDemanda | null
   nivel: Nivel | null
+  /** Planeja com o modelo mais forte; só a criação pelo Flow liga. */
+  planejamentoPesado?: boolean
   temTela: boolean
   origem: Origem
   fonteId?: string
@@ -243,6 +245,7 @@ export async function abrirDemanda(
       titulo: e.titulo,
       descricao: e.descricao,
       tipo: e.tipo ? doFio.tipo(e.tipo) : null,
+      planejamentoPesado: e.planejamentoPesado ?? false,
       temTela: e.temTela,
       origem: doFio.origem(e.origem),
       fonteId: e.fonteId ?? null,
@@ -287,6 +290,7 @@ export async function criarDemanda(
     titulo: string
     descricao: string | null
     nivel?: Nivel | null
+    planejamentoPesado?: boolean
     temTela: boolean
     anexos: File[]
   },
@@ -341,6 +345,7 @@ export async function criarDemanda(
         descricao,
         tipo: null,
         nivel,
+        planejamentoPesado: e.planejamentoPesado ?? false,
         temTela: e.temTela,
         origem: 'flow',
         usuarioId: sujeito.usuarioId,
