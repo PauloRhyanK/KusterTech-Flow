@@ -805,6 +805,9 @@ class TestesJornada(Base):
         d.estado["raias"]["a"]["replanejamentos"] = 1
         self.instante += despachante.SEM_PROGRESSO + datetime.timedelta(seconds=1)
         d.ciclo()
+        self.assertEqual(self.estado()["orquestrador"]["acordada"]["motivo"], "teto_da_raia")
+        self.pr_do_orquestrador(self.estado()["orquestrador"]["runId"], [".fabrica/pergunta.md"], pergunta=PERGUNTA_DIRETA)
+        d.ciclo()
         self.assertEqual(len(self.forja.decisoes), 1)
         self.instante += despachante.SEM_PROGRESSO * 3
         d.ciclo()
@@ -5734,8 +5737,15 @@ class TestesCorrecaoFinal(Base):
             d.ciclo()
             d.ciclo()
             self.assertEqual(self.estado()["raias"]["a"]["replanejamentos"], it + 1)
-        self.assertEqual(len(self.runs(FABLE)), 2)
-        self.assertNotIn("acordar", [a["tipo"] for a in acoes])
+        # no teto, o orquestrador acorda uma última vez só para a pergunta direta (teto_da_raia)
+        self.assertEqual([a.get("motivo") for a in acoes if a["tipo"] == "acordar"], ["teto_da_raia"])
+        self.assertEqual(len(self.runs(FABLE)), 3)
+        self.assertIn("Motivo: teto_da_raia", self.runs(FABLE)[-1]["prompt"])
+        self.assertEqual([x for x in self.estado()["decisoes"] if x.get("tipo") == "replanejamento"], [])
+        # o run do teto não trouxe pergunta: vale a decisão genérica
+        orq = self.estado()["orquestrador"]["runId"]
+        self.pr_do_orquestrador(orq, [".fabrica/plano.json"], plano_atual, head=H3, url="https://github.com/dono/cliente/pull/99")
+        d.ciclo()
         (decisao,) = [x for x in self.estado()["decisoes"] if x.get("tipo") == "replanejamento"]
         self.assertEqual(decisao["alvo"], "gate_falhou_apos_fixer:s2")
         titulo, corpo = self.forja.decisoes[-1]
@@ -5757,9 +5767,11 @@ class TestesCorrecaoFinal(Base):
                 self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
                 d.ciclo()
                 d.ciclo()
-                self.assertEqual(len(self.runs(FABLE)), 1 if acorda else 0)
+                (run,) = self.runs(FABLE)
+                # no teto, a última acordada é a da pergunta direta; a decisão sai do run dela
+                self.assertIn("Motivo: %s" % ("raia_falhou" if acorda else "teto_da_raia"), run["prompt"])
                 tipos = [x.get("tipo") for x in self.estado()["decisoes"]]
-                self.assertEqual(tipos.count("replanejamento"), 0 if acorda else 1)
+                self.assertEqual(tipos.count("replanejamento"), 0)
                 if not acorda:
                     self.assertIn("raia_falhou:a", self.estado()["chavesAcordadas"])
 
@@ -7606,3 +7618,74 @@ class TestesPlanejamentoPesado(Base):
     def test_cli_pesado_exige_spec(self):
         self.assertEqual(despachante._parser().parse_args(["iniciar", "--spec", "x.md", "--pesado"]).pesado, True)
         self.assertEqual(despachante._parser().parse_args(["iniciar", "--spec", "x.md"]).pesado, False)
+
+
+PERGUNTA_DIRETA = (
+    "# Entregar sem a etapa de pagamentos?\n\n"
+    "**O que aconteceu:** a etapa de pagamentos falhou cinco vezes no mesmo ponto.\n\n"
+    "**O que preciso de você:** decidir se o pedido vai ao ar sem pagamentos.\n\n"
+    "**Opções:**\n\n"
+    "1. **Entregar sem pagamentos** — o resto vai ao ar; pagamentos vira outro pedido.\n"
+    "2. **Tentar outra abordagem** — mais um ciclo, sem garantia.\n\n"
+    "**Recomendo:** a opção 1, porque o resto já funciona.\n"
+)
+
+
+class TestesTetoDaRaia(Base):
+    """No teto de replanejamentos, o Opus acorda uma última vez só para escrever a pergunta direta ao Paulo."""
+
+    config_padrao = CONFIG_COM_ARBITRO
+
+    def no_teto(self):
+        d = self.preparar_raia()
+        d.estado["raias"]["a"]["replanejamentos"] = 2
+        d._salvar()
+        self.motor.definir_plano("plano-1", "failed", [], falha="cancelado")
+        d.ciclo()
+        d.ciclo()
+        return d
+
+    def test_teto_acorda_o_orquestrador_com_teto_da_raia_e_nao_abre_decisao_ainda(self):
+        d = self.no_teto()
+        (run,) = self.runs(FABLE)
+        self.assertIn("Motivo: teto_da_raia", run["prompt"])
+        self.assertIn('"raia": "a"', run["prompt"])
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertIn("raia_falhou:a", self.estado()["chavesAcordadas"])
+
+    def test_pergunta_do_teto_vai_direto_ao_paulo_sem_arbitro(self):
+        d = self.no_teto()
+        rid = self.orquestrador()["runId"]
+        self.pr_do_orquestrador(rid, [".fabrica/pergunta.md"], pergunta=PERGUNTA_DIRETA)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.runs(ARBITRO), [])
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertIn("Recomendo", corpo)
+        self.assertEqual(self.forja.merges, [])
+
+    def test_teto_sem_pergunta_vira_a_decisao_generica(self):
+        d = self.no_teto()
+        rid = self.orquestrador()["runId"]
+        novo = plano(raia("a", plano_seeds="pl-00aa"))
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo)
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+        tipos = [x.get("tipo") for x in self.estado()["decisoes"]]
+        self.assertEqual(tipos.count("replanejamento"), 1)
+        self.assertEqual(len(self.runs(FABLE)), 1)
+
+
+class TestesFormatoDaPergunta(unittest.TestCase):
+    def test_pergunta_direta_valida(self):
+        self.assertEqual(despachante.problemas_da_pergunta(PERGUNTA_DIRETA), [])
+
+    def test_pergunta_fora_do_formato(self):
+        problemas = despachante.problemas_da_pergunta("# Dúvida\nEmendo ou refaço?")
+        self.assertIn("falta O que aconteceu", problemas)
+        self.assertIn("falta a recomendação (Recomendo)", problemas)
+        self.assertIn("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência", problemas)
+
+    def test_opcoes_de_duas_a_tres(self):
+        uma = PERGUNTA_DIRETA.replace("2. **Tentar outra abordagem** — mais um ciclo, sem garantia.\n", "")
+        self.assertIn("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência", despachante.problemas_da_pergunta(uma))

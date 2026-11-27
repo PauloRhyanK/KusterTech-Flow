@@ -123,6 +123,7 @@ PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 # Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
 PAPEL_DO_ARBITRO = "arbitro"
 PAPEL_PESADO = "planejador-pesado"
+MOTIVO_DO_TETO = "teto_da_raia"  # a última acordada de uma raia: só escreve a pergunta direta ao Paulo
 MOTIVO_DA_ARBITRAGEM = "arbitragem"
 TITULO_DA_PERGUNTA = "[fábrica] orquestrador: pergunta para o Paulo"
 LIMITE_TITULO_DA_PERGUNTA = 120
@@ -213,6 +214,24 @@ MOTIVO_PROTEGIDO = "toca arquivos protegidos"
 MOTIVOS_MERGE_DO_PAULO = (MOTIVO_PROTEGIDO, "merge recusado pelo GitHub")
 PAUSA_ENTRE_DRENAGENS = datetime.timedelta(hours=6)
 ACOES_SEGURAS_NA_DRENAGEM = ("despachar_raia", "revisar", "corrigir", "acordar", "mergear")
+
+def problemas_da_pergunta(texto) -> list[str]:
+    """O que falta para a pergunta ser direta, no formato que o Flow mostra (`equipes/arbitro.md`).
+
+    Pede o que aconteceu, a recomendação e de 2 a 3 opções `N. **Nome** — consequência` (viram botões no Decidir).
+    """
+    if not _texto(texto):
+        return ["pergunta vazia"]
+    problemas = []
+    if not re.search(r"O que aconteceu", texto, re.IGNORECASE):
+        problemas.append("falta O que aconteceu")
+    if not re.search(r"Recomendo", texto, re.IGNORECASE):
+        problemas.append("falta a recomendação (Recomendo)")
+    opcoes = re.findall(r"(?m)^\s*\d+\.\s+\*\*[^*]+\*\*\s*[—-]", texto)
+    if not 2 <= len(opcoes) <= 3:
+        problemas.append("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência")
+    return problemas
+
 
 class OutroDespachante(Exception):
     """A trava da raiz já está com outro processo."""
@@ -2746,11 +2765,20 @@ class Despachante:
             return self._sem_resultado(self._decidir_humano_orquestrador(pr_url, motivo, motivos), motivos)
         if est.PERGUNTA_DO_ORQUESTRADOR in arquivos:
             pergunta = self.forja.arquivo(self.repo, head, est.PERGUNTA_DO_ORQUESTRADOR)
-            do_arbitro = _acordada_do_arbitro(orquestrador.get("acordada")) or motivo == MOTIVO_DA_ARBITRAGEM
+            # a pergunta do teto é do Paulo por definição: não passa pelo árbitro
+            do_arbitro = _acordada_do_arbitro(orquestrador.get("acordada")) or motivo in (MOTIVO_DA_ARBITRAGEM, MOTIVO_DO_TETO)
             if not do_arbitro and PAPEL_DO_ARBITRO in self.config["modelos"] and _texto(pergunta):
                 self._arbitrar(pr_url, pergunta)
             else:  # sem árbitro na config, pergunta ilegível ou pergunta do próprio árbitro: é do Paulo
                 self._abrir_pergunta(pr_url, pergunta)
+            return {"r": "neutro"}
+        if motivo == MOTIVO_DO_TETO:
+            # o run do teto não muda o plano: sem pergunta, o PR fecha e vale a decisão genérica
+            self._fechar_depois(pr_url, "PR fechado pelo despachante: a acordada do teto só escreve a pergunta ao Paulo.")
+            original = _dict(_dict(_dict(orquestrador.get("acordada")).get("contexto")).get("acordadaOriginal"))
+            self._escalar_teto_de_replanejamento(
+                {"tipo": "acordar", "motivo": original.get("motivo") or "raia_falhou", "alvo": original.get("alvo")}
+            )
             return {"r": "neutro"}
 
         motivos = []
@@ -3100,6 +3128,9 @@ class Despachante:
 
     def _abrir_pergunta(self, pr_url: str, conteudo) -> str:
         pergunta = conteudo if _texto(conteudo) else "(%s não foi encontrado no head do PR)" % est.PERGUNTA_DO_ORQUESTRADOR
+        problemas = problemas_da_pergunta(conteudo)
+        if problemas:  # vai assim mesmo: travar o Paulo por formato custaria mais que a pergunta torta
+            self._aviso("pergunta ao Paulo fora do formato direto (%s): %s" % ("; ".join(problemas), pr_url))
         corpo = "%s\n\nPR: %s\n\nFeche esta issue com um comentário: ele volta para o orquestrador." % (
             pergunta,
             pr_url,
@@ -3376,6 +3407,28 @@ class Despachante:
         n = raia.get("replanejamentos")
         return _inteiro(n) and n >= self.config["maxReplanejamentos"]
 
+    def _pedir_pergunta_do_teto(self, acao: dict) -> bool:
+        """No teto, o orquestrador acorda uma última vez (`teto_da_raia`) só para escrever a pergunta direta.
+
+        A chave da acordada original fica gasta; sem pergunta no PR, vale a decisão genérica (`_escalar_teto...`).
+        """
+        chave = "%s:%s" % (acao.get("motivo"), acao.get("alvo"))
+        raia_id = self._raia_da_acordada(acao)
+        n = _dict(_dict(self.estado.get("raias")).get(raia_id)).get("replanejamentos")
+        contexto = {
+            "raia": raia_id,
+            "replanejamentos": n,
+            "acordadaOriginal": {"motivo": acao.get("motivo"), "alvo": acao.get("alvo")},
+            "contexto": self._contexto(acao),
+        }
+        self._enfileirar_acordar(MOTIVO_DO_TETO, raia_id, contexto, salvar=False)
+        chaves = self.estado.setdefault("chavesAcordadas", [])
+        if isinstance(chaves, list) and chave not in chaves:
+            chaves.append(chave)
+        self._salvar()
+        self._log({"evento": "teto_de_replanejamento", "chave": chave, "raia": raia_id, "replanejamentos": n, "pergunta": True})
+        return True
+
     def _escalar_teto_de_replanejamento(self, acao: dict) -> bool:
         """F2c: decisão rastreada para o Paulo no lugar da acordada; a chave fica gasta (como se tivesse acordado)."""
         chave = "%s:%s" % (acao.get("motivo"), acao.get("alvo"))
@@ -3483,7 +3536,7 @@ class Despachante:
         # F2c: a raia já replanejada 2 vezes não acorda o orquestrador de novo: a falha vai para o Paulo
         no_teto = [a for a in acoes if self._no_teto_de_replanejamento(a)]
         for acao in no_teto:
-            if self._escalar_teto_de_replanejamento(acao):
+            if self._pedir_pergunta_do_teto(acao):
                 executadas.append({"tipo": "decidir_replanejamento", "motivo": acao.get("motivo"), "alvo": acao.get("alvo")})
         acoes = [a for a in acoes if a not in no_teto]
         if self._bloqueado():
