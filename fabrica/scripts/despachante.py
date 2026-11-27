@@ -123,6 +123,7 @@ PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 # Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
 PAPEL_DO_ARBITRO = "arbitro"
 PAPEL_PESADO = "planejador-pesado"
+MAX_RECUSAS_DO_AVANCO = 3
 MOTIVO_DO_TETO = "teto_da_raia"  # a última acordada de uma raia: só escreve a pergunta direta ao Paulo
 MOTIVO_DA_ARBITRAGEM = "arbitragem"
 TITULO_DA_PERGUNTA = "[fábrica] orquestrador: pergunta para o Paulo"
@@ -2776,9 +2777,8 @@ class Despachante:
             # o run do teto não muda o plano: sem pergunta, o PR fecha e vale a decisão genérica
             self._fechar_depois(pr_url, "PR fechado pelo despachante: a acordada do teto só escreve a pergunta ao Paulo.")
             original = _dict(_dict(_dict(orquestrador.get("acordada")).get("contexto")).get("acordadaOriginal"))
-            self._escalar_teto_de_replanejamento(
-                {"tipo": "acordar", "motivo": original.get("motivo") or "raia_falhou", "alvo": original.get("alvo")}
-            )
+            # a acordada original (só motivo e alvo): a decisão genérica do teto é aberta em nome dela
+            self._escalar_teto_de_replanejamento({"motivo": original.get("motivo") or "raia_falhou", "alvo": original.get("alvo")})
             return {"r": "neutro"}
 
         motivos = []
@@ -3407,6 +3407,93 @@ class Despachante:
         n = raia.get("replanejamentos")
         return _inteiro(n) and n >= self.config["maxReplanejamentos"]
 
+    def _avancar_fases_sem_orquestrador(self, acoes: list[dict], executadas: list[dict]) -> list[dict]:
+        """Sem homologação, `fase_concluida` com a próxima fase já no plano vira um PR do despachante, sem run."""
+        if self.config["homologacaoDeFase"] is not False:
+            return acoes
+        saida = []
+        for acao in acoes:
+            if acao.get("tipo") == "acordar" and acao.get("motivo") == "fase_concluida":
+                resultado = self._avancar_fase(acao.get("alvo"))
+                if resultado == "feito":
+                    executadas.append({"tipo": "avancar_fase", "fase": acao.get("alvo")})
+                    continue
+                if resultado == "esperar":
+                    continue
+            saida.append(acao)
+        return saida
+
+    def _proxima_fase(self, fase_id):
+        ids = [f.get("id") for f in _lista(self.plano.get("fases")) if isinstance(f, dict)]
+        if fase_id not in ids or ids.index(fase_id) + 1 >= len(ids):
+            return None
+        return ids[ids.index(fase_id) + 1]
+
+    def _avancar_fase(self, fase_id) -> str:
+        """`feito` (mergeado), `esperar` (tenta no próximo ciclo) ou `acordar` (o orquestrador decide, como antes)."""
+        proxima = self._proxima_fase(fase_id)
+        if proxima is None:
+            return "acordar"  # última fase: o relatório final é do orquestrador
+        avanco = _dict(self.estado.get("avancoDeFase"))
+        if avanco.get("fase") != fase_id:
+            avanco = self._propor_avanco(fase_id, proxima)
+            if avanco is None:
+                return "acordar"
+        try:
+            mergeado = self.forja.mergear(avanco["pr"], avanco["headSha"]) is True
+        except Exception as exc:  # noqa: BLE001 - conta como recusa
+            self._erro_de_etapa("avancar_fase", avanco["pr"], exc)
+            mergeado = False
+        if mergeado:
+            chaves = self.estado.setdefault("chavesAcordadas", [])
+            chave = "fase_concluida:%s" % fase_id
+            if isinstance(chaves, list) and chave not in chaves:
+                chaves.append(chave)
+            self.estado.pop("avancoDeFase", None)
+            self._salvar()
+            self._log({"evento": "fase_avancada", "de": fase_id, "para": proxima, "pr": avanco["pr"]})
+            return "feito"
+        avanco["recusas"] = (avanco.get("recusas") if _inteiro(avanco.get("recusas")) else 0) + 1
+        self.estado["avancoDeFase"] = avanco
+        if avanco["recusas"] < MAX_RECUSAS_DO_AVANCO:
+            self._salvar()
+            return "esperar"
+        self.estado.pop("avancoDeFase", None)
+        self._salvar()
+        self._fechar_depois(avanco["pr"], "PR fechado pelo despachante: o avanço de fase foi recusado; o orquestrador decide.")
+        self._aviso("avanço da fase %s recusado %d vezes: o orquestrador decide" % (fase_id, MAX_RECUSAS_DO_AVANCO))
+        return "acordar"
+
+    def _propor_avanco(self, fase_id, proxima):
+        """PR que só troca `faseAtual` no plano de `main`, com o texto original (mesma formatação)."""
+        try:
+            texto = self.forja.arquivo(self.repo, self.branch, self.caminho_plano)
+            if not _texto(texto) or json.loads(texto) != self.plano:
+                return None  # o plano em main mudou desde a leitura: o orquestrador decide
+            padrao = re.compile(r'("faseAtual"\s*:\s*)"%s"' % re.escape(str(fase_id)))
+            novo, n = padrao.subn(lambda m: m.group(1) + json.dumps(proxima, ensure_ascii=False), texto)
+            if n != 1:
+                return None
+            resultado = self.forja.propor_arquivo(
+                self.repo,
+                self.branch,
+                "fabrica/avanca-fase-%s-%s" % (re.sub(r"[^A-Za-z0-9._-]", "-", str(proxima)), uuid.uuid4().hex[:8]),
+                self.caminho_plano,
+                novo,
+                "fabrica(plano): avança para a fase %s" % proxima,
+                "fabrica(plano): fase %s concluída, avança para %s" % (fase_id, proxima),
+                "A fase `%s` terminou com todas as raias mergeadas e a fase `%s` já está no plano. "
+                "Sem homologação de fase na config, o despachante avança sozinho, sem acordar o orquestrador." % (fase_id, proxima),
+            )
+        except Exception as exc:  # noqa: BLE001 - sem o PR, o orquestrador decide como antes
+            self._erro_de_etapa("propor_avanco", fase_id, exc)
+            return None
+        avanco = {"fase": fase_id, "proxima": proxima, "pr": resultado["pr"], "headSha": resultado["headSha"], "recusas": 0}
+        self.estado["avancoDeFase"] = avanco
+        self._salvar()
+        self._log({"evento": "avanco_de_fase_proposto", "de": fase_id, "para": proxima, "pr": resultado["pr"]})
+        return avanco
+
     def _pedir_pergunta_do_teto(self, acao: dict) -> bool:
         """No teto, o orquestrador acorda uma última vez (`teto_da_raia`) só para escrever a pergunta direta.
 
@@ -3421,7 +3508,7 @@ class Despachante:
             "acordadaOriginal": {"motivo": acao.get("motivo"), "alvo": acao.get("alvo")},
             "contexto": self._contexto(acao),
         }
-        self._enfileirar_acordar(MOTIVO_DO_TETO, raia_id, contexto, salvar=False)
+        self._enfileirar_acordar("teto_da_raia", raia_id, contexto, salvar=False)
         chaves = self.estado.setdefault("chavesAcordadas", [])
         if isinstance(chaves, list) and chave not in chaves:
             chaves.append(chave)
@@ -3539,6 +3626,7 @@ class Despachante:
             if self._pedir_pergunta_do_teto(acao):
                 executadas.append({"tipo": "decidir_replanejamento", "motivo": acao.get("motivo"), "alvo": acao.get("alvo")})
         acoes = [a for a in acoes if a not in no_teto]
+        acoes = self._avancar_fases_sem_orquestrador(acoes, executadas)
         if self._bloqueado():
             acoes = [a for a in acoes if a.get("tipo") != "acordar"]
         if not any(a.get("tipo") == "acordar" for a in acoes):

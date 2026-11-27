@@ -5811,28 +5811,83 @@ class TestesCorrecaoFinal(Base):
         self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
         self.assertEqual(self.forja.decisoes, [])
 
-    def _fase_sem_homologacao(self, plano_do_pr):
-        self.publicar(_plano_de_duas_fases())
+    def _fase_sem_homologacao(self, plano_=None):
+        """Sem homologação, a fase concluída com a próxima já planejada avança sem acordar o orquestrador."""
+        self.publicar(plano_ or _plano_de_duas_fases())
         d = self.novo(config=dict(CONFIG, homologacaoDeFase=False))
         d.iniciar()
         d.ciclo()
         self.motor.definir_plano("plano-1", "succeeded", [])
         d.ciclo()
-        rid = self.estado()["orquestrador"]["runId"]
-        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
-        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], plano_do_pr)
-        d.ciclo()
         return d
 
-    def test_sem_homologacao_avancar_para_a_fase_seguinte_mergeia_sozinho(self):
-        self._fase_sem_homologacao(_plano_de_duas_fases(fase="f2"))
+    def _propostas(self):
+        return [a for nome, a in self.forja.chamadas if nome == "propor_arquivo"]
+
+    def test_sem_homologacao_avancar_para_a_fase_seguinte_e_um_pr_do_despachante_sem_run(self):
+        d = self._fase_sem_homologacao()
+        self.assertEqual(self.runs(FABLE), [])
+        (proposta,) = self._propostas()
+        self.assertEqual(proposta["caminho"], ".fabrica/plano.json")
+        self.assertEqual(json.loads(proposta["conteudo"]), _plano_de_duas_fases(fase="f2"))
+        self.assertEqual(len(self.forja.merges), 1)
         self.assertEqual(self.forja.decisoes, [])
-        self.assertEqual(self.forja.merges, [(PR_ORQ, H3)])
+        self.assertIn("fase_concluida:f1", self.estado()["chavesAcordadas"])
+        self.assertIn("fase_avancada", [l.get("evento") for l in self.log()])
+        # o main já traz a fase 2: a raia dela é despachada, sem nova proposta
+        self.publicar(_plano_de_duas_fases(fase="f2"))
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual([p["plano_seeds"] for p in self.planos_despachados()], ["pl-000a", "pl-000b"])
+        self.assertEqual(len(self._propostas()), 1)
+        self.assertEqual(self.runs(FABLE), [])
+
+    def test_sem_homologacao_ultima_fase_acorda_o_orquestrador(self):
+        self._fase_sem_homologacao(plano(raia("a")))
+        self.assertEqual(self._propostas(), [])
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+
+    def test_com_homologacao_a_fase_continua_com_o_orquestrador(self):
+        self.publicar(_plano_de_duas_fases())
+        d = self.novo()
+        d.iniciar()
+        d.ciclo()
+        self.motor.definir_plano("plano-1", "succeeded", [])
+        d.ciclo()
+        self.assertEqual(self._propostas(), [])
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+
+    def test_avanco_recusado_tres_vezes_acorda_o_orquestrador(self):
+        self.forja.mergear = lambda url, sha: False
+        d = self._fase_sem_homologacao()
+        self.assertEqual(self.runs(FABLE), [])
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
+        self.assertEqual(len(self._propostas()), 1)
+
+    def test_plano_em_main_diferente_do_lido_acorda_o_orquestrador(self):
+        self.publicar(_plano_de_duas_fases())
+        d = self.novo(config=dict(CONFIG, homologacaoDeFase=False))
+        d.iniciar()
+        d.ciclo()
+        self.motor.definir_plano("plano-1", "succeeded", [])
+        outro = _plano_de_duas_fases()
+        outro["raias"][1]["planoSeeds"] = "pl-0bbb"
+        self.forja.definir_arquivo(REPO, "main", ".fabrica/plano.json", json.dumps(outro))
+        d.plano = _plano_de_duas_fases()
+        d._recarregar_plano = lambda: None  # o despachante ainda segue o plano lido antes da mudança em main
+        d.ciclo()
+        self.assertEqual(self._propostas(), [])
+        self.assertEqual(self.estado()["orquestrador"]["motivo"], "fase_concluida")
 
     def test_sem_homologacao_remover_fase_continua_indo_ao_paulo(self):
+        self.config_padrao = dict(CONFIG, homologacaoDeFase=False)
+        d, rid = self.acordar_por_falha(_plano_de_duas_fases())
         novo = _plano_de_duas_fases(fase="f2")
         novo["fases"] = [f for f in novo["fases"] if f["id"] != "f1"]
-        self._fase_sem_homologacao(novo)
+        self.pr_do_orquestrador(rid, [".fabrica/plano.json"], novo)
+        d.ciclo()
         self.assertEqual(self.forja.merges, [])
 
     def test_sem_homologacao_voltar_de_fase_nao_conta_como_seguinte(self):
