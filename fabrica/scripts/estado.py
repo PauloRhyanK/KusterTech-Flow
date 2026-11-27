@@ -685,6 +685,73 @@ def _reabertura(seed_id: str, seed, plano: dict, raias_do_estado: dict):
     return {"tipo": "reabrir_seed", "seed": seed_id, "contra": nova}
 
 
+MOTIVO_PROTEGIDO = "toca arquivos protegidos"
+
+
+def so_falta_o_merge(seed, protegidos) -> list[str]:
+    """Os arquivos protegidos que o PR toca quando o head está aprovado e verificado: só falta o merge do Paulo.
+
+    Vem do estado dos gates, não de um motivo lembrado. Qualquer outro quadro (head sem veredito, revisão pedindo
+    correção, verificação vermelha ou de outro head) devolve `[]`.
+    """
+    seed = _dict(seed)
+    head = seed.get("headSha")
+    veredito, verificado = _dict(seed.get("veredito")), _dict(seed.get("verificacao"))
+    if not _texto(head) or not _texto(seed.get("pr")):
+        return []
+    if veredito.get("sha") != head or veredito.get("resultado") != "aprovado":
+        return []
+    if verificado.get("sha") != head or verificado.get("codigo") != 0:
+        return []
+    return gates.toca_protegidos([a for a in _lista(seed.get("arquivos")) if _texto(a)], list(protegidos or []))
+
+
+def _merge_do_paulo(seed_id: str, tocados: list[str]) -> dict:
+    return {"tipo": "aguardar_humano", "seed": seed_id, "motivos": ["%s: %s" % (MOTIVO_PROTEGIDO, ", ".join(tocados))]}
+
+
+def _seeds_da_raia(estado: dict, raia_id: str) -> dict:
+    return {i: s for i, s in _seeds(estado).items() if isinstance(s, dict) and s.get("raia") == raia_id}
+
+
+def _vivas(seeds: dict) -> dict:
+    return {i: s for i, s in seeds.items() if s.get("estado") != "obsoleta"}
+
+
+def raias_mergeadas_depois_do_timeout(estado: dict) -> list[str]:
+    """Raias que caíram só pelo prazo do merge e cujas seeds foram todas mergeadas depois."""
+    saida = []
+    for id_, raia in _raias(estado).items():
+        if not isinstance(raia, dict) or raia.get("estado") != "falhou" or raia.get("falha") != TIMEOUT_DE_MERGE:
+            continue
+        vivas = _vivas(_seeds_da_raia(estado, id_))
+        if vivas and all(s.get("estado") == "mergeada" for s in vivas.values()):
+            saida.append(id_)
+    return saida
+
+
+def concluir_raias_mergeadas(estado: dict) -> dict:
+    """O Plan Run desistiu de esperar o merge, mas o PR entrou depois: a raia está pronta, sem replanejar nada."""
+    estado = copy.deepcopy(estado)
+    for id_ in raias_mergeadas_depois_do_timeout(estado):
+        raia = estado["raias"][id_]
+        raia["estado"] = "concluida"
+        raia["retomar"] = False
+        _avisar(estado, f"raia {id_!r}: PR mergeado depois do prazo do Plan Run; raia concluída sem replanejar")
+    return estado
+
+
+def _raia_espera_so_o_paulo(estado: dict, raia_id: str, protegidos) -> bool:
+    """Raia caída pelo prazo do merge em que toda seed viva está mergeada ou só espera o merge do Paulo."""
+    raia = _dict(_raias(estado).get(raia_id))
+    if raia.get("falha") != TIMEOUT_DE_MERGE:
+        return False
+    vivas = _vivas(_seeds_da_raia(estado, raia_id))
+    return bool(vivas) and all(
+        s.get("estado") == "mergeada" or so_falta_o_merge(s, protegidos) for s in vivas.values()
+    )
+
+
 def _fase_atual(plano: dict):
     """(id, ids de raia) da fase atual, ou (None, []) se ela não existir."""
     for fase in _lista(plano.get("fases")):
@@ -786,12 +853,29 @@ def proximas_acoes(
             and _texto(seed.get("pr"))
             and _dict(raias_do_estado.get(seed.get("raia"))).get("estado") == "executando"
         ):
-            acoes.append({"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id})
+            tocados = so_falta_o_merge(seed, protegidos)
+            # head aprovado e verificado: o orquestrador não tem o que decidir, só o merge do Paulo
+            acoes.append(
+                _merge_do_paulo(seed_id, tocados)
+                if tocados
+                else {"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": seed_id}
+            )
 
     # 5. raias que falharam
     for id_, raia in raias_do_estado.items():
-        if raia.get("estado") == "falhou":
-            acoes.append({"tipo": "acordar", "motivo": "raia_falhou", "alvo": id_})
+        if raia.get("estado") != "falhou":
+            continue
+        if _raia_espera_so_o_paulo(estado, id_, protegidos):
+            # o Plan Run desistiu de esperar, mas o PR está pronto: replanejar refaria o mesmo trabalho
+            for seed_id, seed in _vivas(_seeds_da_raia(estado, id_)).items():
+                # já pedido (bloqueada_humano) ou mergeado: nada a repetir a cada ciclo
+                ja_pedido = seed.get("estado") in ("mergeada", "bloqueada_humano")
+                tocados = [] if ja_pedido else so_falta_o_merge(seed, protegidos)
+                pedido = _merge_do_paulo(seed_id, tocados) if tocados else None
+                if pedido is not None and pedido not in acoes:
+                    acoes.append(pedido)
+            continue
+        acoes.append({"tipo": "acordar", "motivo": "raia_falhou", "alvo": id_})
 
     # 6. fase atual concluída (e nenhuma raia de fase anterior reaberta ainda em curso)
     fase_id, membros = _fase_atual(plano)

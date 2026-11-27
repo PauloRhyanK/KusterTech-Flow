@@ -941,13 +941,7 @@ class Despachante:
 
         Vem do estado dos gates, não de um motivo lembrado: uma decisão genérica anterior pode ter apagado o motivo.
         """
-        head = seed.get("headSha")
-        veredito, verificado = _dict(seed.get("veredito")), _dict(seed.get("verificacao"))
-        if not _texto(head) or veredito.get("sha") != head or veredito.get("resultado") != "aprovado":
-            return None
-        if verificado.get("sha") != head or verificado.get("codigo") != 0:
-            return None
-        tocados = gates.toca_protegidos([a for a in _lista(seed.get("arquivos")) if _texto(a)], self._protegidos_do_gate())
+        tocados = est.so_falta_o_merge(seed, self._protegidos_do_gate())
         return "%s: %s" % (MOTIVO_PROTEGIDO, ", ".join(tocados)) if tocados else None
 
     def _protegidos(self) -> list[str]:
@@ -1189,6 +1183,7 @@ class Despachante:
         self._observar_planos()
         self._sincronizar_capacidade()
         self._observar_prs()
+        self._observar_merges_depois_do_prazo()
         self._observar_decisoes()
         # Q2: as falhas da busca pelo nonce entram na contabilidade do ciclo, por isso antes de _contabilizar_warren
         self._resolver_incertos()
@@ -2218,6 +2213,36 @@ class Despachante:
             self._marcar_progresso(seed_id)
             self._restaurar_tentativa(seed_id)
             self._observadas.add(seed_id)
+
+    def _observar_merges_depois_do_prazo(self) -> None:
+        """Raia caída pelo prazo do merge: o Warren não informa mais o filho, então o merge do Paulo é lido aqui.
+
+        Com todas as seeds vivas mergeadas, a raia conclui sem acordar o orquestrador (nada a replanejar).
+        """
+        caidas = {
+            i
+            for i, r in _dict(self.estado.get("raias")).items()
+            if isinstance(r, dict) and r.get("estado") == "falhou" and r.get("falha") == est.TIMEOUT_DE_MERGE
+        }
+        if not caidas:
+            return
+        for seed_id, seed in list(_dict(self.estado.get("seeds")).items()):
+            if not isinstance(seed, dict) or seed.get("raia") not in caidas or not _texto(seed.get("pr")):
+                continue
+            if seed.get("estado") in est.TERMINAIS:
+                continue
+            try:
+                pr = _dict(self.forja.pr(seed["pr"]))
+            except Exception as exc:  # noqa: BLE001 - tenta no próximo ciclo
+                self._erro_de_etapa("observar_merge_depois_do_prazo", seed_id, exc)
+                continue
+            if self._mesmo_repo(pr.get("repo")) and pr.get("mergeado") is True:
+                est.marcar_estado_da_seed(seed, "mergeada", agora=self._agora())
+                self._log({"evento": "pr_mergeado_depois_do_prazo", "seed": seed_id, "pr": seed["pr"]})
+        for raia_id in est.raias_mergeadas_depois_do_timeout(self.estado):
+            self._log({"evento": "raia_concluida_apos_prazo", "raia": raia_id})
+        self.estado = est.concluir_raias_mergeadas(self.estado)
+        self._salvar()
 
     def _marcar_progresso(self, seed_id: str) -> None:
         """Guarda quando o estado de gate da seed mudou pela última vez: é o que o vigia de seed parada olha."""
