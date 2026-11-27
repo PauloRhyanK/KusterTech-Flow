@@ -74,7 +74,14 @@ function PlanoParaAvaliar({ plano }: { plano: PlanoDaTriagem }) {
 }
 
 /** O que é e o que preciso de você: linha pequena, título, pergunta, fatos e o relato recolhido. */
-export function CabecalhoDoItem({ item }: { item: ItemDaPilha }) {
+export function CabecalhoDoItem({
+  item,
+  pergunta,
+}: {
+  item: ItemDaPilha
+  /** A frase de "O que preciso de você" lida da mensagem; quando vem, vale no lugar da do item. */
+  pergunta?: string | null
+}) {
   const publicacao = item.ref.tipo === 'publicacao'
   const mostraPedido = item.tipo === 'pedido' || item.tipo === 'nao_classificada'
   return (
@@ -121,7 +128,7 @@ export function CabecalhoDoItem({ item }: { item: ItemDaPilha }) {
             O QUE PRECISO DE VOCÊ
           </p>
           <p className="break-words text-base font-[650] leading-snug text-text-primary">
-            {item.pergunta || item.titulo}
+            {pergunta || item.pergunta || item.titulo}
           </p>
         </div>
       </section>

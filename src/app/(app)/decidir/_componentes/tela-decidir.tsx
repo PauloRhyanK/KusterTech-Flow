@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import { buttonVariants } from '@/components/ui/button'
 import { EstadoVazio } from '@/lib/ui/estado-vazio'
+import { perguntaDoCorpo } from '@/modules/decidir/leitura'
 import { respostasDoItem, type ItemDaPilha } from '@/modules/decidir/model'
 import {
   abrirItemAcao,
@@ -421,6 +422,33 @@ function ItemAberto({
     }
   }
 
+  // Na decisão da Fábrica, o toque numa opção envia a resposta e já propõe o cartão "Responder".
+  const escolhendo = useRef(false)
+  const escolherOpcao = async (rotulo: string) => {
+    if (conversaId === null || pendente || escolhendo.current) return
+    escolhendo.current = true
+    setPendente(true)
+    setErro(null)
+    try {
+      const enviada = await enviar({ id: crypto.randomUUID(), texto: rotulo, imagens: [] })
+      if (enviada.erro) {
+        setErro(enviada.erro)
+        return
+      }
+      const r = await responderRapidoAcao(
+        conversaId,
+        crypto.randomUUID(),
+        RESPONDER_COM_MENSAGEM.chave,
+      )
+      if (r.erro) setErro(r.erro)
+      else setAjuste(null)
+      void consultar()
+    } finally {
+      escolhendo.current = false
+      setPendente(false)
+    }
+  }
+
   const textoRapido = async (texto: string) => {
     const r = await enviar({ id: crypto.randomUUID(), texto, imagens: [] })
     if (r.erro) setErro(r.erro)
@@ -456,9 +484,17 @@ function ItemAberto({
   }
 
   const fechado = encerrada || !podeAgir
+  const decisaoDaFabrica = item.tipo === 'decisao_da_fabrica'
   return (
     <article className="min-w-0 overflow-hidden rounded-amplo border border-border bg-surface">
-      <CabecalhoDoItem item={item} />
+      <CabecalhoDoItem
+        item={item}
+        pergunta={
+          decisaoDaFabrica && mensagens[0]?.autor === 'flow'
+            ? perguntaDoCorpo(mensagens[0].texto)
+            : null
+        }
+      />
       <div className="space-y-4 bg-background p-4 md:p-6">
         {conversaId === null && !erro && (
           <p role="status" className="text-sm text-text-secondary">
@@ -473,6 +509,8 @@ function ItemAberto({
           respostasDoFlow={respostasDoFlow(item)}
           onRespostaRapida={(c) => void responderRapido(c)}
           onTextoRapido={(t) => void textoRapido(t)}
+          decisaoDaFabrica={decisaoDaFabrica}
+          onOpcao={(rotulo) => void escolherOpcao(rotulo)}
           desabilitado={fechado || pendente || conversaId === null}
         />
         {encerrada && (
