@@ -112,8 +112,8 @@
   - `interface Reserva { execucaoId: string; workerId: string; geracao: number; expiraEm: string }`
   - `const DURACAO_DA_RESERVA_MS = 120_000` (heartbeat do worker a cada 30 s; 4 batidas perdidas vencem)
   - `reservaVencida(r: Reserva, agora: Date): boolean`
-  - `renovar(r: Reserva, workerId: string, geracao: number, agora: Date): Reserva | null` (outro worker ou geração diferente → `null`)
-  - `novaGeracao(r: Reserva | null, workerId: string, agora: Date): Reserva` (geração anterior + 1, ou 1)
+  - `renovar(r: Reserva, workerId: string, geracao: number, agora: Date): Reserva | null` (outro worker, geração diferente ou reserva vencida → `null`)
+  - `novaGeracao(anterior: Reserva | null, execucaoId: string, workerId: string, agora: Date): Reserva` (geração anterior + 1, ou 1)
   - `classificarEnvio(atual: { geracao: number }, envio: { geracao: number }): 'aceito' | 'obsoleto'`
 
 - [ ] **Step 1: Escrever os testes**: vence exatamente em `expiraEm` (`>=`); `renovar` estende `expiraEm` para `agora + DURACAO`; `renovar` por outro worker → `null`; `novaGeracao(null, …)` → `geracao: 1`; `novaGeracao` de reserva vencida → `geracao + 1`; envio de geração menor → `obsoleto`; igual → `aceito`; maior (impossível) → `obsoleto`.
