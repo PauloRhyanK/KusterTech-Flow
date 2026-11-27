@@ -28,10 +28,33 @@ def _pacote_do_papel(papel) -> str:
     return ".fabrica/equipes/" + canonico + ".md"
 
 
-def prompt_template_raia(papel: str) -> str:
+FERRAMENTAS = {
+    "superpowers": "Superpowers: TDD, diagnóstico de falha e verificação antes de declarar concluído.",
+    "rtk": "RTK: prefixe comandos de terminal longos com `rtk` para receber a saída condensada.",
+    "ponytail": "Ponytail Lite: prefira a solução pequena e reutilize o que existe, sem mexer no escopo.",
+    "playwright": "Playwright: confira fluxos reais e a tela no navegador antes de entregar.",
+    "security-audit": "Security Audit: rode no fim de fase e antes de publicar.",
+    "archify": "Archify: desenhe e consulte fluxos e arquitetura do projeto.",
+    "floorplan": "Floorplan: mapeie um repositório existente antes de planejar.",
+}
+
+
+def bloco_ferramentas(nomes, ausentes=frozenset()) -> str:
+    """Bloco `## Ferramentas desta raia` com as ferramentas presentes; `""` se não sobra nenhuma."""
+    nomes = list(nomes)
+    desconhecidas = [n for n in list(nomes) + list(ausentes) if n not in FERRAMENTAS]
+    if desconhecidas:
+        raise ValueError("ferramenta desconhecida: %r" % (desconhecidas[0],))
+    presentes = [n for n in nomes if n not in ausentes]
+    if not presentes:
+        return ""
+    return "## Ferramentas desta raia\n\n" + "\n".join("- " + FERRAMENTAS[n] for n in presentes)
+
+
+def prompt_template_raia(papel: str, ferramentas=(), ausentes=frozenset()) -> str:
     """Prompt de uma raia; o `{seed_id}` é preenchido pelo despachante."""
     pacote = _pacote_do_papel(papel)
-    return (
+    texto = (
         "Você executa uma raia da fábrica de agentes.\n"
         "\n"
         "1. Leia `AGENTS.md` e o seu pacote de papel `" + pacote + "`.\n"
@@ -40,6 +63,8 @@ def prompt_template_raia(papel: str) -> str:
         "4. Rode a verificação da raia (descrita na seed) e cole a saída no corpo do PR.\n"
         "5. Abra o PR da seed e pare."
     )
+    bloco = bloco_ferramentas(ferramentas, ausentes)
+    return texto + "\n\n" + bloco if bloco else texto
 
 
 def prompt_revisor(*, seed_id: str, raia: dict, sha: str) -> str:

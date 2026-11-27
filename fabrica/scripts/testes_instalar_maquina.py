@@ -4,9 +4,11 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 RAIZ = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ))
@@ -19,6 +21,16 @@ UNITS = ("fabrica-fila.service", "fabrica-plano@.service")
 URL_PADRAO = "https://github.com/PauloRhyanK/KusterTech-Flow.git"
 TOKEN_WARREN = "segredo-do-warren-123"
 TOKEN_GH = "segredo-do-github-456"
+COMO_RAIAS = ["sudo", "-n", "-H", "-u", "agentops"]
+PREFIXO_RAIAS = " ".join(COMO_RAIAS)
+CHECA_RTK = " ".join(COMO_RAIAS + ["sh", "-c", 'rtk --version >/dev/null 2>&1 || [ -f "$HOME/.local/bin/rtk" ]'])
+INSTALA_RTK = " ".join(COMO_RAIAS + ["sh", "-c", instalar_maquina.INSTALADOR_RTK])
+
+
+def colocar_rtk(home):
+    destino = pathlib.Path(home) / ".local" / "bin" / "rtk"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text("#!/bin/sh\n", encoding="utf-8")
 
 
 class Executor:
@@ -35,8 +47,10 @@ class Executor:
         falhas=None,
         fila=("active",),
         legado=("disabled", "inactive"),
+        instalador_rtk=(0, ""),
     ):
         self.home = pathlib.Path(home)
+        self.raias = self.home / "agentops"  # home do usuário das raias: `sudo -H` aponta HOME para cá
         self.chamadas = []
         self.grupos = grupos
         self.grupos_das_units = grupos if grupos_das_units is None else grupos_das_units
@@ -45,6 +59,7 @@ class Executor:
         self.falhas = falhas or {}
         self.fila = list(fila)  # respostas sucessivas do is-active fabrica-fila (a última se repete)
         self.legado = legado
+        self.instalador_rtk = instalador_rtk
 
     def __call__(self, argv):
         argv = list(argv)
@@ -52,6 +67,8 @@ class Executor:
         for prefixo, resposta in self.falhas.items():
             if argv[: len(prefixo)] == list(prefixo):
                 return resposta
+        if argv[:5] == COMO_RAIAS:
+            return self.como_raias(argv[5:])
         if argv[:2] == ["git", "clone"]:
             copiar_units(pathlib.Path(argv[-1]))
             (pathlib.Path(argv[-1]) / ".git").mkdir()
@@ -74,6 +91,21 @@ class Executor:
         if argv == ["systemctl", "--user", "is-active", "fabrica-despachante.service"]:
             return (0 if self.legado[1] == "active" else 3), self.legado[1] + "\n"
         return 0, ""
+
+    def como_raias(self, argv):
+        if argv == ["sh", "-c", instalar_maquina.INSTALADOR_RTK]:
+            codigo, saida = self.instalador_rtk
+            if codigo == 0:
+                colocar_rtk(self.raias)
+            return codigo, saida
+        resultado = subprocess.run(
+            argv,
+            env={"HOME": str(self.raias), "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return resultado.returncode, resultado.stdout + resultado.stderr
 
     def comandos(self):
         return [" ".join(c) for c in self.chamadas]
@@ -107,6 +139,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = pathlib.Path(self.tmp.name)
+        self.raias = self.home / "agentops"
         self.fabrica = self.home / "fabrica"
         self.kit = self.fabrica / "kit"
         self.unidades = self.home / ".config" / "systemd" / "user"
@@ -141,6 +174,61 @@ class Base(unittest.TestCase):
         return codigo
 
 
+class TestesFerramentas(Base):
+    def arquivo(self):
+        return self.fabrica / "ferramentas-presentes.json"
+
+    def presentes(self):
+        return json.loads(self.arquivo().read_text(encoding="utf-8"))["presentes"]
+
+    def test_instalador_grava_ferramentas_presentes(self):
+        (self.raias / ".claude" / "skills" / "ponytail").mkdir(parents=True)
+        (self.raias / ".claude" / "plugins" / "cache" / "x" / "superpowers").mkdir(parents=True)
+        with mock.patch.object(instalar_maquina, "DIRETORIO_PLAYWRIGHT", self.home / "inexistente"):
+            self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertEqual(json.loads(self.arquivo().read_text(encoding="utf-8")), {"presentes": ["superpowers", "rtk", "ponytail"]})
+
+    def test_rtk_presente_nao_reinstala(self):
+        colocar_rtk(self.raias)
+        self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertIn("rtk", self.presentes())
+        self.assertFalse([c for c in self.executor.comandos() if instalar_maquina.INSTALADOR_RTK in c])
+
+    def test_instala_o_rtk_como_o_usuario_das_raias(self):
+        self.assertEqual(self.rodar(), 0, self.erro)
+        raias = [c for c in self.executor.comandos() if c.startswith(PREFIXO_RAIAS)]
+        self.assertEqual(raias[:3], [CHECA_RTK, INSTALA_RTK, CHECA_RTK])
+        self.assertIn("rtk", self.presentes())
+
+    def test_rtk_do_home_do_instalador_nao_conta(self):
+        colocar_rtk(self.home)
+        executor = Executor(self.home, instalador_rtk=(1, "sem rede"))
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertIn(INSTALA_RTK, executor.comandos())
+        self.assertNotIn("rtk", self.presentes())
+
+    def test_falha_ao_instalar_o_rtk_nao_derruba_a_instalacao(self):
+        executor = Executor(self.home, instalador_rtk=(1, "sem rede"))
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertNotIn("rtk", self.presentes())
+        self.assertIn("rtk", self.saida)
+
+    def test_skill_do_home_do_instalador_nao_conta(self):
+        (self.home / ".claude" / "skills" / "archify").mkdir(parents=True)
+        self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertNotIn("archify", self.presentes())
+
+    def test_arquivo_sai_mesmo_com_requisito_faltando(self):
+        self.assertEqual(self.rodar(executor=Executor(self.home, grupos="devops")), 2)
+        self.assertTrue(self.arquivo().is_file())
+
+    def test_reexecucao_atualiza_o_arquivo(self):
+        self.assertEqual(self.rodar(), 0, self.erro)
+        (self.raias / ".claude" / "skills" / "archify").mkdir(parents=True)
+        self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertIn("archify", self.presentes())
+
+
 class TestesInstalacao(Base):
     def test_primeira_instalacao_clona_e_liga_a_fila(self):
         self.assertEqual(self.rodar(), 0, self.erro)
@@ -157,7 +245,7 @@ class TestesInstalacao(Base):
 
     def test_ordem_dos_comandos(self):
         self.assertEqual(self.rodar(), 0, self.erro)
-        comandos = self.executor.comandos()
+        comandos = [c for c in self.executor.comandos() if not c.startswith(PREFIXO_RAIAS)]
         # final M9: o linger vem antes do daemon-reload; no fim, confere que a fila ficou active
         esperado = [
             "git clone --branch main %s %s" % (URL_PADRAO, self.kit),

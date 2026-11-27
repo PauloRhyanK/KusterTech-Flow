@@ -2652,7 +2652,8 @@ class TestesAtendente(Base):
         self.assertIs(argumentos["cliente"], self.cliente)
         self.assertIs(argumentos["motor"], self.motor)
         self.assertEqual(argumentos["projetos"], {REPO: "cliente"})
-        self.assertEqual(argumentos["modelos"]["atendente"], {"agente": "claude-code", "modelo": "claude-sonnet-5-5", "esforco": "medium", "maxCustoUsd": 2})
+        atendente = argumentos["modelos"]["atendente"]
+        self.assertEqual({k: atendente[k] for k in ("agente", "modelo", "esforco", "maxCustoUsd")}, {"agente": "claude-code", "modelo": "claude-sonnet-5-5", "esforco": "medium", "maxCustoUsd": 2})
         self.assertEqual((argumentos["capacidade_path"], argumentos["agora"], argumentos["mem_disponivel_mb"]), (self.raiz / "capacidade.json", INICIO, 4096))
         self.assertIs(argumentos["salvar"].__self__, c)
 

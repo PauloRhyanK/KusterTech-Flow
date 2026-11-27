@@ -414,6 +414,30 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 | `atendente`    | `claude-sonnet-5-5` | medium  | 2           |
 | `buscador`     | `claude-haiku-5-5`  | medium  | 0.5         |
 
+### Executores e conta reserva
+
+Cada papel pode ter `executores`, uma lista ordenada de `{agente, modelo, conta}`. O padrão do kit tem dois itens por papel, com o mesmo modelo: `claude-principal` e `claude-reserva` (Codex e Antigravity entram na Fase B). Sem `executores`, vale o formato antigo `{agente, modelo}`, como lista de um item.
+
+- **Arquivo de contas** (`FABRICA_CONTAS_FILE`, opcional): diz onde cada `conta` está logada. O coordenador só repassa o caminho ao despachante quando o arquivo existe.
+- **Arquivo de esgotados** (`FABRICA_ESGOTADOS_FILE`, mantido pelo kit): guarda os pares `agente|conta` que bateram o limite de uso, com o horário de retorno (o informado pelo fornecedor ou 1 hora). Vale para a máquina inteira, não por plano.
+- **Fim da pausa por cota:** o limite de uso não pausa mais a Fábrica até o Paulo fechar uma issue. O par esgotado entra no arquivo de esgotados e a raia é redespachada com o próximo executor da lista, sem gastar tentativa. Se a lista do papel inteira está esgotada, só as raias daquele papel esperam, e retomam sozinhas quando o primeiro prazo vence.
+
+### Ferramentas por papel
+
+`modelos.<papel>.ferramentas` lista as ferramentas da toolstack do papel, e o briefing da raia ganha o bloco `## Ferramentas desta raia` só com as que existem na máquina. Nome fora de `prompts.FERRAMENTAS` é recusado.
+
+| Ferramenta       | Papéis                         |
+| ---------------- | ------------------------------ |
+| `superpowers`    | todos                          |
+| `rtk`            | todos                          |
+| `ponytail`       | `frontend`, `backend`, `fixer` |
+| `playwright`     | `frontend`, `ux-ui`, `qa`      |
+| `security-audit` | `seguranca`                    |
+| `archify`        | `arquiteto`, `produto`         |
+| `floorplan`      | `arquiteto`                    |
+
+O `instalar_maquina.py` instala o `rtk` quando falta (a falha só vira aviso) e grava `~/fabrica/ferramentas-presentes.json` (`{"presentes": [...]}`) a cada execução. Ferramenta declarada e ausente não trava a raia: ela roda sem a ferramenta.
+
 Limitações:
 
 - O esforço vale **por modelo**, não por papel: o instalador grava em `.claude/settings.json` o maior esforço entre os papéis que usam o mesmo modelo, e avisa quando eles diferem.

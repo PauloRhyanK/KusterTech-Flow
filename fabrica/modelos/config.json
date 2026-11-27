@@ -2,7 +2,9 @@
   "limiteParalelo": 3,
   "branchPadrao": "main",
   "ciObrigatorioNoPlano": false,
-  "warren": { "prepararAutomatico": true },
+  "warren": {
+    "prepararAutomatico": true
+  },
   "protegidos": [
     "**/migrations/**",
     ".github/**",
@@ -19,85 +21,267 @@
       "agente": "claude-code",
       "modelo": "claude-fable-5-1",
       "esforco": "high",
-      "maxCustoUsd": 20
+      "maxCustoUsd": 20,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-fable-5-1",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-fable-5-1",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
     },
     "arbitro": {
       "agente": "claude-code",
       "modelo": "claude-fable-5-1",
       "esforco": "high",
-      "maxCustoUsd": 20
+      "maxCustoUsd": 20,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-fable-5-1",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-fable-5-1",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
     },
     "arquiteto": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 15
+      "maxCustoUsd": 15,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "archify", "floorplan"]
     },
     "produto": {
       "agente": "claude-code",
       "modelo": "claude-haiku-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 5
+      "maxCustoUsd": 5,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-haiku-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-haiku-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "archify"]
     },
     "ux-ui": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 10,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "playwright"]
     },
     "frontend": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 10,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "ponytail", "playwright"]
     },
     "backend": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 10,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "ponytail"]
     },
     "qa": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 10,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "playwright"]
     },
     "revisor": {
       "agente": "claude-code",
       "modelo": "claude-opus-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 5
+      "maxCustoUsd": 5,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-opus-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-opus-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
     },
     "devops": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 10,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
     },
     "seguranca": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 10
+      "maxCustoUsd": 10,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "security-audit"]
     },
     "fixer": {
       "agente": "claude-code",
       "modelo": "claude-haiku-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 5
+      "maxCustoUsd": 5,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-haiku-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-haiku-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk", "ponytail"]
     },
     "atendente": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 2
+      "maxCustoUsd": 2,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-sonnet-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
     },
     "buscador": {
       "agente": "claude-code",
       "modelo": "claude-haiku-5-5",
       "esforco": "medium",
-      "maxCustoUsd": 0.5
+      "maxCustoUsd": 0.5,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-haiku-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-haiku-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
     }
   },
   "verificacao": {
