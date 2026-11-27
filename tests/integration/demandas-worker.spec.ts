@@ -249,11 +249,11 @@ describe('anexos de relatos', () => {
     expect(await existe(demanda.id, id)).toBe(true)
   })
 
-  test('conta da data do último evento quando a demanda foi descartada sem ir ao ar', async () => {
+  async function descartadaComEventos(dias: number[]) {
     const s = await sistema()
     const demanda = await demandaEntregue(null)
     await db.demanda.update({ where: { id: demanda.id }, data: { encerrada: 'descartada' } })
-    for (const [i, dias] of [100, 91].entries()) {
+    for (const [i, d] of dias.entries()) {
       await db.eventoDaDemanda.create({
         data: {
           idExterno: `ev-${demanda.id}-${i}`,
@@ -261,16 +261,29 @@ describe('anexos de relatos', () => {
           tipo: 'x',
           origem: 'flow',
           dados: {},
-          em: new Date(agora.getTime() - dias * DIA),
+          em: new Date(agora.getTime() - d * DIA),
         },
       })
     }
-    const id = await relatoComAnexo(demanda.id, s.id, 'r1')
+    return { demanda, id: await relatoComAnexo(demanda.id, s.id, 'r1') }
+  }
+
+  test('conta da data do último evento quando a demanda foi descartada sem ir ao ar', async () => {
+    const { demanda, id } = await descartadaComEventos([100, 91])
 
     const r = await limparArquivosDeDemandas(agora)
 
     expect(r.anexosDeRelatos).toBe(1)
     expect(await existe(demanda.id, id)).toBe(false)
+  })
+
+  test('não usa o primeiro evento: último há 89 dias mantém o anexo', async () => {
+    const { demanda, id } = await descartadaComEventos([100, 89])
+
+    const r = await limparArquivosDeDemandas(agora)
+
+    expect(r.anexosDeRelatos).toBe(0)
+    expect(await existe(demanda.id, id)).toBe(true)
   })
 
   test('segunda rodada não apaga de novo', async () => {
