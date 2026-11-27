@@ -369,6 +369,34 @@ class TestesSemCi(Base):
         config.pop("ciObrigatorioNasSeeds")
         self.assertEqual(config, padrao)
 
+    def test_config_padrao_e_valida_e_tem_reserva_em_todo_papel(self):
+        import executores
+        import prompts
+
+        padrao = json.loads((MODELOS_REAIS / "config.json").read_text(encoding="utf-8"))
+        for papel, entrada in padrao["modelos"].items():
+            with self.subTest(papel=papel):
+                lista = executores.normalizar(entrada, papel)
+                self.assertEqual([i["conta"] for i in lista], ["claude-principal", "claude-reserva"])
+                self.assertEqual({i["agente"] for i in lista}, {"claude-code"})
+                self.assertEqual({i["modelo"] for i in lista}, {entrada["modelo"]})
+                self.assertTrue({"superpowers", "rtk"} <= set(entrada["ferramentas"]))
+                self.assertTrue(set(entrada["ferramentas"]) <= set(prompts.FERRAMENTAS))
+
+    def test_ferramentas_por_papel_da_config_padrao(self):
+        padrao = json.loads((MODELOS_REAIS / "config.json").read_text(encoding="utf-8"))["modelos"]
+        extras = {
+            "ponytail": {"frontend", "backend", "fixer"},
+            "playwright": {"frontend", "ux-ui", "qa"},
+            "security-audit": {"seguranca"},
+            "archify": {"arquiteto", "produto"},
+            "floorplan": {"arquiteto"},
+        }
+        for ferramenta, papeis in extras.items():
+            with self.subTest(ferramenta=ferramenta):
+                com = {p for p, e in padrao.items() if ferramenta in e["ferramentas"]}
+                self.assertEqual(com, papeis)
+
     def test_ainda_exige_seeds(self):
         shutil.rmtree(self.destino / ".seeds")
         with self.assertRaises(ValueError):
@@ -802,8 +830,9 @@ class TestesModelos(unittest.TestCase):
         self.assertEqual(len(self.config["modelos"]), 14)
         for papel, (modelo, esforco, custo) in TABELA.items():
             with self.subTest(papel=papel):
+                entrada = self.config["modelos"][papel]
                 self.assertEqual(
-                    self.config["modelos"][papel],
+                    {k: entrada[k] for k in ("agente", "modelo", "esforco", "maxCustoUsd")},
                     {"agente": "claude-code", "modelo": modelo, "esforco": esforco, "maxCustoUsd": custo},
                 )
 

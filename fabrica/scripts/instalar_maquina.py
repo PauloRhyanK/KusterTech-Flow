@@ -29,6 +29,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import coordenador  # noqa: E402
+import prompts  # noqa: E402
 
 KIT_URL_PADRAO = "https://github.com/PauloRhyanK/KusterTech-Flow.git"
 BRANCH_PADRAO = "main"
@@ -36,6 +37,13 @@ VERSAO_WARREN = "0.19.3"
 WARREN_API = "http://127.0.0.1:8080"
 VAGAS_PADRAO = 3
 RAM_MINIMA_MB = 2048
+ARQUIVO_FERRAMENTAS = "ferramentas-presentes.json"
+DIRETORIO_PLAYWRIGHT = pathlib.Path("/opt/agent-tools")
+INSTALADOR_RTK = "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"
+USUARIO_DAS_RAIAS = "agentops"
+COMANDO_RTK_PRESENTE = 'rtk --version >/dev/null 2>&1 || [ -f "$HOME/.local/bin/rtk" ]'
+COMANDO_SKILL_PRESENTE = 'for d in "$HOME/.claude/skills" "$HOME/.claude/plugins"; do [ -d "$d" ] && find "$d" -name "$1" -print -quit 2>/dev/null; done; true'
+SKILLS_DA_TOOLSTACK = ("superpowers", "ponytail", "security-audit", "archify", "floorplan")
 UNITS = ("fabrica-fila.service", "fabrica-plano@.service")
 SERVICO_DA_FILA = "fabrica-fila"
 SERVICO_LEGADO = "fabrica-despachante.service"
@@ -123,6 +131,53 @@ def _criar_estado(fabrica: pathlib.Path) -> None:
     arquivo = fabrica / "capacidade.json"
     if not (arquivo.exists() or arquivo.is_symlink()):
         capacidade.configurar(arquivo, vagas=VAGAS_PADRAO, ram_minima_mb=RAM_MINIMA_MB)
+
+
+def _como_raias(*argv: str) -> list[str]:
+    return ["sudo", "-n", "-H", "-u", USUARIO_DAS_RAIAS, *argv]
+
+
+def _rtk_presente(executar) -> bool:
+    codigo, _ = executar(_como_raias("sh", "-c", COMANDO_RTK_PRESENTE))
+    return codigo == 0
+
+
+def _skill_presente(executar, nome: str) -> bool:
+    codigo, saida = executar(_como_raias("sh", "-c", COMANDO_SKILL_PRESENTE, "sh", nome))
+    return codigo == 0 and bool(saida.strip())
+
+
+def _gravar_ferramentas(executar, fabrica: pathlib.Path, saida) -> None:
+    """Instala o rtk como o usuário das raias se faltar e grava `ferramentas-presentes.json` com o que existe nelas."""
+    rtk = _rtk_presente(executar)
+    if not rtk:
+        executar(_como_raias("sh", "-c", INSTALADOR_RTK))
+        rtk = _rtk_presente(executar)
+    presentes = []
+    for nome in prompts.FERRAMENTAS:
+        if nome == "rtk":
+            achada = rtk
+        elif nome == "playwright":
+            achada = DIRETORIO_PLAYWRIGHT.is_dir()
+        else:
+            achada = _skill_presente(executar, nome)
+        if achada:
+            presentes.append(nome)
+        else:
+            print("aviso: ferramenta %s ausente na máquina" % nome, file=saida)
+    arquivo = fabrica / ARQUIVO_FERRAMENTAS
+    descritor, temporario = tempfile.mkstemp(dir=fabrica, prefix=arquivo.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(descritor, "w", encoding="utf-8") as destino:
+            destino.write(json.dumps({"presentes": presentes}, indent=2) + "\n")
+        os.chmod(temporario, 0o644)
+        os.replace(temporario, arquivo)
+    except BaseException:
+        try:
+            os.unlink(temporario)
+        except OSError:
+            pass
+        raise
 
 
 def _primeira_linha(saida: str) -> str:
@@ -272,6 +327,7 @@ def instalar(*, executar, http, home: pathlib.Path, branch: str, kit_url: str, s
     _atualizar_kit(executar, kit, branch, kit_url)
     print("kit em %s (branch %s)" % (kit, branch), file=saida)
     _criar_estado(fabrica)
+    _gravar_ferramentas(executar, fabrica, saida)
     try:
         config = _configuracao(home, ambiente)
     except coordenador.ErroDeEntrada as exc:

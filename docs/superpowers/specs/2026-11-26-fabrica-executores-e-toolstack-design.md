@@ -158,7 +158,7 @@ No Flow: teste do contrato novo e teste de componente do selo de troca.
 
 ## 7. Entrega e riscos
 
-- `fabrica/**` é caminho protegido: o PR para para o Paulo.
+- `fabrica/**` deixou de ser caminho protegido no Flow (27/11): com revisor aprovado e verificação verde, o despachante mergeia sozinho. A trava que resta é a atualização manual do kit na oficina.
 - Depois do merge: instalar o kit na oficina e reiniciar `fabrica-fila`.
 - Projetos já instalados seguem com o formato antigo até alguém editar `.fabrica/config.json`.
 
