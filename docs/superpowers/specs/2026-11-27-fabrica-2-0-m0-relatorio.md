@@ -2,6 +2,8 @@
 
 **Data:** 27/11/2026 · **Plano:** [`2026-11-27-fabrica-2-0-plano-de-implementacao.md`](../plans/2026-11-27-fabrica-2-0-plano-de-implementacao.md) · **Arquitetura:** [`2026-11-27-fabrica-2-0-arquitetura.md`](2026-11-27-fabrica-2-0-arquitetura.md)
 
+**M0 concluído em 27/11/2026.** Pendências não bloqueantes: login da conta reserva (o dono faz depois), baseline pós-27/11 em coleta até 11/12, termos da reserva/Codex/Antigravity (P3, antes do M5).
+
 O M0 não altera a execução atual. Nada do Warren, do kit ou do Flow foi desligado ou modificado na oficina.
 
 ## Situação dos critérios de saída
