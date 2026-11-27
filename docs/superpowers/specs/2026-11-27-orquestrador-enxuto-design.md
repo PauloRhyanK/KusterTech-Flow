@@ -16,11 +16,11 @@ Decisões do Paulo (27/11):
 
 | Papel | Antes | Depois |
 |---|---|---|
-| `orquestrador` (falhas, respostas, plano normal) | Fable, alto | `claude-opus-5-5`, alto |
-| `arbitro` | Fable, alto | `claude-opus-5-5`, alto |
+| `orquestrador` (falhas, respostas, plano normal) | Fable, alto | `claude-opus-5-5`, médio |
+| `arbitro` | Fable, alto | `claude-opus-5-5`, médio |
 | `planejador-pesado` (novo) | — | `claude-fable-5-1`, alto |
 
-Vale no padrão do kit (`fabrica/modelos/config.json`) e no `.fabrica/config.json` dos projetos registrados (Flow, CAISv2, flowia). `planejador-pesado` é opcional na config: sem ele, o pedido pesado usa `orquestrador` e o despachante avisa no `status`.
+Vale no padrão do kit (`fabrica/modelos/config.json`) e no `.fabrica/config.json` dos projetos registrados (Flow, CAISv2, flowia). O esforço é configurado por modelo na máquina (`modelSettings` do Claude), e o revisor já roda Opus com esforço médio: o orquestrador e o árbitro seguem o mesmo esforço. `planejador-pesado` é opcional na config: sem ele, o pedido pesado usa `orquestrador` e o despachante avisa no `status`.
 
 ## 3. Onde o Paulo escolhe o pesado
 

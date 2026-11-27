@@ -399,8 +399,9 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 
 | Papel          | Modelo              | Esforço | maxCustoUsd |
 | -------------- | ------------------- | ------- | ----------- |
-| `orquestrador` | `claude-fable-5-1`  | high    | 20          |
-| `arbitro`      | `claude-fable-5-1`  | high    | 20          |
+| `orquestrador` | `claude-opus-5-5`   | medium  | 20          |
+| `arbitro`      | `claude-opus-5-5`   | medium  | 20          |
+| `planejador-pesado` | `claude-fable-5-1` | high | 20     |
 | `arquiteto`    | `claude-sonnet-5-5` | medium  | 15          |
 | `produto`      | `claude-haiku-5-5`  | medium  | 5           |
 | `ux-ui`        | `claude-sonnet-5-5` | medium  | 10          |
