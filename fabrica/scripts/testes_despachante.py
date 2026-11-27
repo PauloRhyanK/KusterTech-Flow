@@ -7521,3 +7521,52 @@ class TestesDoTituloDaPergunta(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestesMergeDepoisDoPrazo(Base):
+    """Produção, 27/11 (fase A de executores): o Plan Run desistiu de esperar o merge de um PR pronto; o orquestrador
+    era acordado para replanejar a raia e refazia (ou só "confirmava") o trabalho que o Paulo mergeou em seguida."""
+
+    PROTEGIDO = ("prisma/migrations/001.sql",)
+
+    def _pr_pronto_e_plano_desistiu(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1, arquivos=self.PROTEGIDO)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        acoes = d.ciclo()
+        self.assertEqual([a["tipo"] for a in acoes], ["aguardar_humano"])
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+        d.estado["raias"]["a"]["retomadas"] = despachante.est.MAX_RETOMADAS
+        d._salvar()
+        self.motor.definir_plano(
+            "plano-1", "failed", [{"seedId": "s-1", "estado": "pr_open", "runId": "run-filho", "prUrl": PR}],
+            falha="child_pr_merge_timeout",
+        )
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
+        return d
+
+    def test_pr_pronto_nao_acorda_o_orquestrador_quando_o_plano_desiste(self):
+        d = self._pr_pronto_e_plano_desistiu()
+        d.ciclo()
+        self.assertEqual(self.runs(FABLE), [])
+        self.assertEqual(self.acordadas(), [])
+
+    def test_merge_depois_do_prazo_conclui_a_raia_sem_replanejar(self):
+        d = self._pr_pronto_e_plano_desistiu()
+        self.forja.definir_pr(PR, head_sha=H1, branch="warren/s-1", arquivos=list(self.PROTEGIDO), aberto=False, mergeado=True)
+        d.ciclo()
+        e = self.estado()
+        self.assertEqual(e["seeds"]["s-1"]["estado"], "mergeada")
+        self.assertEqual(e["raias"]["a"]["estado"], "concluida")
+        # o orquestrador só volta para o fim da fase (homologação), nunca para replanejar a raia
+        self.assertEqual([a["motivo"] for a in self.acordadas()], ["fase_concluida"])
+        self.assertIn("raia_concluida_apos_prazo", [l.get("evento") for l in self.log()])
+
+    def test_pr_fechado_sem_merge_nao_conclui_a_raia(self):
+        d = self._pr_pronto_e_plano_desistiu()
+        self.forja.definir_pr(PR, head_sha=H1, branch="warren/s-1", arquivos=list(self.PROTEGIDO), aberto=False)
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
+        self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")

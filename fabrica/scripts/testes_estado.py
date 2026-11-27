@@ -2501,3 +2501,101 @@ class TestHorariosDaSeed(unittest.TestCase):
         est.marcar_estado_da_seed(seed, "em_revisao", agora=datetime.datetime(2026, 11, 21, 3, 0, tzinfo=datetime.timezone.utc))
         self.assertIsNone(seed.get("inicio"))
         self.assertEqual(seed["estado"], "em_revisao")
+
+
+class TestSoFaltaOMergeDoPaulo(unittest.TestCase):
+    """Produção, 26–27/11 (fase A de executores): PR pronto que só esperava o merge do Paulo acordava o orquestrador."""
+
+    PROTEGIDO = ["prisma/migrations/001.sql"]
+
+    def pronto(self):
+        return tudo_verde(arquivos=self.PROTEGIDO)
+
+    def test_so_falta_o_merge_le_os_fatos_do_head(self):
+        e = self.pronto()
+        self.assertEqual(est.so_falta_o_merge(e["seeds"]["s1"], PROTEGIDOS), self.PROTEGIDO)
+        sem_protegido = tudo_verde()
+        self.assertEqual(est.so_falta_o_merge(sem_protegido["seeds"]["s1"], PROTEGIDOS), [])
+        vermelho = verificar(com_pr(arquivos=self.PROTEGIDO), "bbb", codigo=1)
+        self.assertEqual(est.so_falta_o_merge(vermelho["seeds"]["s1"], PROTEGIDOS), [])
+        velho = copy.deepcopy(e["seeds"]["s1"])
+        velho["headSha"] = "ccc"
+        self.assertEqual(est.so_falta_o_merge(velho, PROTEGIDOS), [])
+
+    def test_fixer_seguido_de_trava_de_protegido_vai_ao_paulo_sem_acordar(self):
+        e = self.pronto()
+        e["seeds"]["s1"].update(estado="falhou", fixerUsado=True, fixersUsados=1)
+        lista = da_seed(acoes(e))
+        self.assertNotIn({"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}, lista)
+        self.assertIn(
+            {"tipo": "aguardar_humano", "seed": "s1", "motivos": ["toca arquivos protegidos: prisma/migrations/001.sql"]},
+            lista,
+        )
+
+    def test_fixer_com_gate_vermelho_continua_acordando(self):
+        e = verificar(com_pr(), "bbb", codigo=1)
+        e["seeds"]["s1"].update(estado="falhou", fixerUsado=True, fixersUsados=1)
+        self.assertIn({"tipo": "acordar", "motivo": "gate_falhou_apos_fixer", "alvo": "s1"}, acoes(e))
+
+    def raia_caida_por_timeout(self, e):
+        e["raias"]["a"].update(estado="falhou", falha=est.TIMEOUT_DE_MERGE, retomadas=3, retomar=False)
+        return e
+
+    def test_raia_caida_por_timeout_com_pr_pronto_espera_o_paulo_sem_acordar(self):
+        e = self.raia_caida_por_timeout(self.pronto())
+        lista = acoes(e)
+        self.assertNotIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, lista)
+        self.assertIn(
+            {"tipo": "aguardar_humano", "seed": "s1", "motivos": ["toca arquivos protegidos: prisma/migrations/001.sql"]},
+            lista,
+        )
+
+    def test_raia_caida_por_timeout_com_seed_falha_e_pr_pronto_tambem_vai_ao_paulo(self):
+        e = self.raia_caida_por_timeout(self.pronto())
+        e["seeds"]["s1"].update(estado="falhou", fixerUsado=True, fixersUsados=1)
+        lista = acoes(e)
+        self.assertNotIn("acordar", [a["tipo"] for a in lista])
+        self.assertIn("aguardar_humano", [a["tipo"] for a in da_seed(lista)])
+
+    def test_raia_caida_por_timeout_com_gate_vermelho_continua_acordando(self):
+        e = self.raia_caida_por_timeout(verificar(com_pr(), "bbb", codigo=1))
+        self.assertIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, acoes(e))
+
+    def test_raia_caida_por_outra_falha_continua_acordando(self):
+        e = self.pronto()
+        e["raias"]["a"].update(estado="falhou", falha="cancelado")
+        self.assertIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, acoes(e))
+
+    def test_raia_caida_por_timeout_sem_seed_continua_acordando(self):
+        e = self.raia_caida_por_timeout(despachar(estado_inicial(), "a"))
+        self.assertIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, acoes(e))
+
+    def test_concluir_raia_mergeada_depois_do_timeout(self):
+        e = self.raia_caida_por_timeout(self.pronto())
+        e["seeds"]["s1"]["estado"] = "mergeada"
+        e2 = est.concluir_raias_mergeadas(e)
+        self.assertEqual(e2["raias"]["a"]["estado"], "concluida")
+        self.assertEqual(e["raias"]["a"]["estado"], "falhou")  # não muta a entrada
+        self.assertNotIn({"tipo": "acordar", "motivo": "raia_falhou", "alvo": "a"}, acoes(e2))
+        self.assertIn("a", est.raias_mergeadas_depois_do_timeout(e))
+        self.assertEqual(est.raias_mergeadas_depois_do_timeout(e2), [])
+
+    def test_nao_conclui_com_seed_aberta_nem_por_outra_falha(self):
+        aberta = self.raia_caida_por_timeout(self.pronto())
+        self.assertEqual(est.concluir_raias_mergeadas(aberta)["raias"]["a"]["estado"], "falhou")
+        outra = self.pronto()
+        outra["seeds"]["s1"]["estado"] = "mergeada"
+        outra["raias"]["a"].update(estado="falhou", falha="cancelado")
+        self.assertEqual(est.concluir_raias_mergeadas(outra)["raias"]["a"]["estado"], "falhou")
+        obsoletas = self.raia_caida_por_timeout(self.pronto())
+        obsoletas["seeds"]["s1"]["estado"] = "obsoleta"
+        self.assertEqual(est.concluir_raias_mergeadas(obsoletas)["raias"]["a"]["estado"], "falhou")
+
+    def test_pedido_ao_paulo_nao_se_repete_depois_de_aplicado(self):
+        e = self.raia_caida_por_timeout(self.pronto())
+        e["seeds"]["s1"].update(estado="falhou", fixerUsado=True, fixersUsados=1)
+        (pedido,) = dos_tipos(acoes(e), "aguardar_humano")
+        e = est.aplicar(e, pedido, {"url": "https://github.com/dono/nome/issues/9"})
+        self.assertEqual(e["seeds"]["s1"]["estado"], "bloqueada_humano")
+        self.assertEqual(da_seed(acoes(e)), [])
+        self.assertEqual(dos_tipos(acoes(e), "acordar"), [])
