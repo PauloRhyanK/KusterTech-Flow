@@ -66,12 +66,16 @@ def tipos(valor):
     return type(valor).__name__
 
 
+# campos opcionais do v2 (executor, conta e trocas): o exemplo do Flow só os ganha com a raia do painel
+OPCIONAIS_DO_EXECUTOR = ("contas", "agente", "conta", "substituiu")
+
+
 def confere(testes, gerado, exemplo, caminho="retrato"):
     if exemplo is None or gerado is None:
         return
     if isinstance(exemplo, dict):
         testes.assertIsInstance(gerado, dict, caminho)
-        testes.assertEqual(sorted(gerado), sorted(exemplo), caminho)
+        testes.assertEqual(sorted(k for k in gerado if k in exemplo or k not in OPCIONAIS_DO_EXECUTOR), sorted(exemplo), caminho)
         for chave in exemplo:
             confere(testes, gerado[chave], exemplo[chave], "%s.%s" % (caminho, chave))
     elif isinstance(exemplo, list):
@@ -657,13 +661,69 @@ def execucao(**extra):
     return base
 
 
-def montar_v2(execucoes=None, planos=None, fila=None):
+def montar_v2(execucoes=None, planos=None, fila=None, **extra):
     fila_estado = {"fila": fila or [entrada(ID_D, repo="PauloRhyanK/CAISv2", feature="Suporte por IA no CRM", demanda=DEMANDA)], "avisos": [], "warren": {}}
     return retrato.montar(
         agora=AGORA, fila_estado=fila_estado, capacidade=capacidade_com(), mem_disponivel_mb=5120,
         planos=planos if planos is not None else {ID_D: {"estado": estado_v2(), "plano": plano_v2()}},
-        versao=2, execucoes=execucoes if execucoes is not None else [execucao()],
+        versao=2, execucoes=execucoes if execucoes is not None else [execucao()], **extra,
     )
+
+
+class RetratoExecutorTest(unittest.TestCase):
+    MODELOS = {
+        "backend": {"executores": [{"agente": "claude-code", "modelo": "m", "conta": "claude-principal"}, {"agente": "claude-code", "modelo": "m", "conta": "claude-reserva"}]},
+        "qa": {"agente": "claude-code", "modelo": "m2"},
+        "torto": {"executores": []},
+    }
+
+    def test_execucao_traz_agente_e_conta(self):
+        e = montar_v2(execucoes=[execucao(agente="claude-code", conta="claude-reserva")])["execucoes"][0]
+        self.assertEqual((e["agente"], e["conta"], e["substituiu"]), ("claude-code", "claude-reserva", None))
+
+    def test_execucao_sem_registro_traz_nulos(self):
+        e = montar_v2()["execucoes"][0]
+        self.assertEqual((e["agente"], e["conta"], e["substituiu"]), (None, None, None))
+
+    def test_execucao_depois_de_troca_traz_substituiu(self):
+        troca = {"agente": "claude-code", "conta": "claude-principal", "motivo": "cota"}
+        e = montar_v2(execucoes=[execucao(agente="claude-code", conta="claude-reserva", substituiu=troca)])["execucoes"][0]
+        self.assertEqual(e["substituiu"], troca)
+        e = montar_v2(execucoes=[execucao(substituiu={"agente": "x"})])["execucoes"][0]
+        self.assertEqual(e["substituiu"], {"agente": "x", "conta": None, "motivo": None})
+
+    def test_campos_novos_passam_por_redigir(self):
+        segredo = "ghp_abcdefgh12345678"
+        troca = {"agente": "a", "conta": "c", "motivo": "usou " + segredo}
+        e = montar_v2(execucoes=[execucao(agente=segredo, conta=segredo, substituiu=troca)])["execucoes"][0]
+        self.assertNotIn(segredo, json.dumps(e))
+
+    def test_contas_mostram_esgotada_ate(self):
+        esgotados = {
+            "claude-code|claude-principal": {"ate": "2026-11-03T23:00:00+00:00"},
+            "claude-code|claude-reserva": {"ate": "2026-11-03T20:00:00+00:00"},
+        }
+        r = montar_v2(esgotados=esgotados, modelos=self.MODELOS)
+        self.assertEqual(
+            r["contas"],
+            [
+                {"agente": "claude-code", "conta": "claude-principal", "esgotadaAte": "2026-11-03T23:00:00Z"},
+                {"agente": "claude-code", "conta": "claude-reserva", "esgotadaAte": None},
+            ],
+        )
+
+    def test_contas_sao_distintas_e_no_maximo_12(self):
+        modelos = {"p%d" % i: {"executores": [{"agente": "codex", "modelo": "m", "conta": "c%d" % i}]} for i in range(20)}
+        modelos["repetido"] = {"executores": [{"agente": "codex", "modelo": "outro", "conta": "c0"}]}
+        contas = montar_v2(modelos=modelos)["contas"]
+        self.assertEqual(len(contas), 12)
+        self.assertEqual(len({(c["agente"], c["conta"]) for c in contas}), 12)
+
+    def test_retrato_sem_dados_novos_continua_valido(self):
+        r = montar_v2()
+        self.assertEqual(r["contas"], [])
+        self.assertEqual(montar_v2(esgotados="lixo", modelos="lixo")["contas"], [])
+        self.assertNotIn("contas", montar())
 
 
 class RetratoV2Test(unittest.TestCase):

@@ -30,6 +30,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import despachante  # noqa: E402
 import gates  # noqa: E402
 import estado as est  # noqa: E402
+import esgotados as esg  # noqa: E402
+import executores  # noqa: E402
 import fila  # noqa: E402
 import capacidade as cap  # noqa: E402
 import motor_warren  # noqa: E402
@@ -39,6 +41,7 @@ LIMITES = {"planos": 50, "avisos": 50, "decisoes": 50, "fases": 20, "raias": 50,
 LIMITE_BYTES = 256 * 1024
 LIMITE_DA_RESPOSTA = 262_144
 LIMITE_CONSERTOS = 20
+LIMITE_CONTAS = 12
 ESTADOS_DO_CONSERTO = ("em_curso", "com_pr", "desistiu")
 TIMEOUT_S = 10
 ESTADOS_DA_RAIA = ("planejada", "executando", "concluida", "falhou")
@@ -333,6 +336,43 @@ def _custo(valor):
     return round(float(valor), 4)
 
 
+def _troca(valor):
+    """A troca de executor de uma execução (`{agente, conta, motivo}`, cada um texto ou None), ou None."""
+    if not isinstance(valor, dict):
+        return None
+    return {c: _texto(redigir(valor[c]) if isinstance(valor.get(c), str) else None, LIMITES["texto"]) for c in ("agente", "conta", "motivo")}
+
+
+def _redigido(valor):
+    return _texto(redigir(valor) if isinstance(valor, str) else None, LIMITES["texto"])
+
+
+def _contas(modelos, esgotados: dict, agora: str) -> list:
+    """Um item por par (agente, conta) das listas de executores do kit; `esgotadaAte` quando o par está vigente."""
+    try:
+        agora_dt = datetime.datetime.strptime(agora, FORMATO_INSTANTE).replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        agora_dt = datetime.datetime.now(datetime.timezone.utc)
+    dados = {k: v for k, v in _dict(esgotados).items() if isinstance(v, dict)}
+    vigentes_ = esg.vigentes(dados, agora_dt)
+    contas, vistos = [], set()
+    for papel, entrada in _dict(modelos).items():
+        try:
+            lista = executores.normalizar(entrada, str(papel))
+        except ValueError:
+            continue
+        for item in lista:
+            par = (item["agente"], item["conta"])
+            if par in vistos:
+                continue
+            vistos.add(par)
+            ate = None
+            if par in vigentes_:
+                ate = esg._instante(dados["%s|%s" % par].get("ate")).astimezone(datetime.timezone.utc).strftime(FORMATO_INSTANTE)
+            contas.append({"agente": _redigido(par[0]), "conta": _redigido(par[1]), "esgotadaAte": ate})
+    return contas[:LIMITE_CONTAS]
+
+
 def _execucao(item):
     """Uma execução ativa do retrato v2, limpa; None se faltar o `runId`."""
     item = _dict(item)
@@ -360,17 +400,21 @@ def _execucao(item):
         "inicio": _instante(item.get("inicio")),
         "custoUsd": _custo(item.get("custoUsd")),
         "modelo": _texto(item.get("modelo"), LIMITES["texto"]),
+        "agente": _redigido(item.get("agente")),
+        "conta": _redigido(item.get("conta")),
+        "substituiu": _troca(item.get("substituiu")),
         "ultimaAcao": {"texto": ultima_texto, "em": _instante(ultima.get("em"))} if ultima_texto else None,
         "linhas": linhas,
     }
 
 
-def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem_disponivel_mb, consertos=None, versao: int = 1, execucoes=None) -> dict:
+def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem_disponivel_mb, consertos=None, versao: int = 1, execucoes=None, esgotados=None, modelos=None) -> dict:
     """O retrato v1. Pura: tudo vem dos argumentos, já lidos.
 
     `fila_estado` é o `fila-estado.json`; `capacidade`, o `capacidade.json` já validado; `planos`, o
     `{id: {"estado", "plano"}}` de `ler_planos` (id ausente conta como sem os dois arquivos). `consertos` (de
     `consertos.para_o_retrato`) vira o campo opcional `consertos`, com no máximo 20; vazio, o campo não vai.
+    No v2, `modelos` (o `modelos` da config do kit) e `esgotados` (o `executores-esgotados.json`) dão as `contas`.
     """
     fila_estado = _dict(fila_estado)
     preparado = _dict(_dict(fila_estado.get("warren")).get("preparado"))
@@ -405,6 +449,7 @@ def montar(*, agora: str, fila_estado: dict, capacidade: dict, planos: dict, mem
         resultado["consertos"] = limpos[:LIMITE_CONSERTOS]
     if versao >= 2:
         resultado["execucoes"] = [e for e in (_execucao(i) for i in _lista(execucoes)) if e is not None][: LIMITES["execucoes"]]
+        resultado["contas"] = _contas(modelos, esgotados, agora)
     return resultado
 
 
