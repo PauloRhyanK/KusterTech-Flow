@@ -40,6 +40,9 @@ RAM_MINIMA_MB = 2048
 ARQUIVO_FERRAMENTAS = "ferramentas-presentes.json"
 DIRETORIO_PLAYWRIGHT = pathlib.Path("/opt/agent-tools")
 INSTALADOR_RTK = "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"
+USUARIO_DAS_RAIAS = "agentops"
+COMANDO_RTK_PRESENTE = 'rtk --version >/dev/null 2>&1 || [ -f "$HOME/.local/bin/rtk" ]'
+COMANDO_SKILL_PRESENTE = 'for d in "$HOME/.claude/skills" "$HOME/.claude/plugins"; do [ -d "$d" ] && find "$d" -name "$1" -print -quit 2>/dev/null; done; true'
 SKILLS_DA_TOOLSTACK = ("superpowers", "ponytail", "security-audit", "archify", "floorplan")
 UNITS = ("fabrica-fila.service", "fabrica-plano@.service")
 SERVICO_DA_FILA = "fabrica-fila"
@@ -130,25 +133,26 @@ def _criar_estado(fabrica: pathlib.Path) -> None:
         capacidade.configurar(arquivo, vagas=VAGAS_PADRAO, ram_minima_mb=RAM_MINIMA_MB)
 
 
-def _rtk_presente(executar, home: pathlib.Path) -> bool:
-    codigo, _ = executar(["rtk", "--version"])
-    return codigo == 0 or (home / ".local" / "bin" / "rtk").is_file()
+def _como_raias(*argv: str) -> list[str]:
+    return ["sudo", "-n", "-H", "-u", USUARIO_DAS_RAIAS, *argv]
 
 
-def _skill_presente(home: pathlib.Path, nome: str) -> bool:
-    claude = home / ".claude"
-    if (claude / "skills" / nome).exists():
-        return True
-    plugins = claude / "plugins"
-    return plugins.is_dir() and any(plugins.glob("**/" + nome))
+def _rtk_presente(executar) -> bool:
+    codigo, _ = executar(_como_raias("sh", "-c", COMANDO_RTK_PRESENTE))
+    return codigo == 0
 
 
-def _gravar_ferramentas(executar, fabrica: pathlib.Path, home: pathlib.Path, saida) -> None:
-    """Instala o rtk se faltar e grava `ferramentas-presentes.json` com o que existe no ambiente das raias."""
-    rtk = _rtk_presente(executar, home)
+def _skill_presente(executar, nome: str) -> bool:
+    codigo, saida = executar(_como_raias("sh", "-c", COMANDO_SKILL_PRESENTE, "sh", nome))
+    return codigo == 0 and bool(saida.strip())
+
+
+def _gravar_ferramentas(executar, fabrica: pathlib.Path, saida) -> None:
+    """Instala o rtk como o usuário das raias se faltar e grava `ferramentas-presentes.json` com o que existe nelas."""
+    rtk = _rtk_presente(executar)
     if not rtk:
-        executar(["sh", "-c", INSTALADOR_RTK])
-        rtk = _rtk_presente(executar, home)
+        executar(_como_raias("sh", "-c", INSTALADOR_RTK))
+        rtk = _rtk_presente(executar)
     presentes = []
     for nome in prompts.FERRAMENTAS:
         if nome == "rtk":
@@ -156,7 +160,7 @@ def _gravar_ferramentas(executar, fabrica: pathlib.Path, home: pathlib.Path, sai
         elif nome == "playwright":
             achada = DIRETORIO_PLAYWRIGHT.is_dir()
         else:
-            achada = _skill_presente(home, nome)
+            achada = _skill_presente(executar, nome)
         if achada:
             presentes.append(nome)
         else:
@@ -323,7 +327,7 @@ def instalar(*, executar, http, home: pathlib.Path, branch: str, kit_url: str, s
     _atualizar_kit(executar, kit, branch, kit_url)
     print("kit em %s (branch %s)" % (kit, branch), file=saida)
     _criar_estado(fabrica)
-    _gravar_ferramentas(executar, fabrica, home, saida)
+    _gravar_ferramentas(executar, fabrica, saida)
     try:
         config = _configuracao(home, ambiente)
     except coordenador.ErroDeEntrada as exc:
