@@ -786,6 +786,11 @@ MOTIVO_TRIAGEM_RECUSADA = "o Flow recusou a triagem da Fábrica"
 LIMITE_MOTIVO_DO_AGENTE = 200
 PAPEL_DO_PLANO = "orquestrador"
 PAPEL_DO_PLANO_PESADO = "planejador-pesado"  # só com "Planejamento pesado" ligado na demanda
+PAPEL_DO_CRITICO = "critico"  # liga o crítico do plano e a devolução do erro de forma ao planejador
+DEVOLUCOES_DO_PLANO = 1  # o planejador refaz uma vez (guarda de forma ou crítico); na seguinte, vai ao Paulo
+TENTATIVAS_DO_CRITICO = 2  # run sem veredito válido: despacha de novo uma vez
+MOTIVO_CRITICO_REPROVOU = "o crítico reprovou o plano de novo: %s"
+MOTIVO_CRITICO_SEM_VEREDITO = "o crítico do plano não deu veredito válido duas vezes"
 CI_PENDENTE_MAXIMO_S = 2 * 3600
 TENTATIVAS_SEM_PR = 2  # a primeira e uma nova tentativa
 CAMINHO_CONFIG_DO_REPO = ".fabrica/config.json"
@@ -1141,6 +1146,7 @@ class _Passo:
         self.modelo_da_triagem = _modelo(modelos, PAPEL_DA_TRIAGEM)
         self.modelo_do_plano = _modelo(modelos, PAPEL_DO_PLANO)
         self.modelo_do_plano_pesado = _modelo(modelos, PAPEL_DO_PLANO_PESADO)
+        self.modelo_do_critico = _modelo(modelos, PAPEL_DO_CRITICO)
         self.modelo_do_desenho = _modelo(modelos, PAPEL_DO_DESENHO)
         self.modelo_do_teste = _modelo(modelos, PAPEL_DO_TESTE)
         self.modelo_da_correcao = _modelo(modelos, PAPEL_DA_CORRECAO)
@@ -1796,8 +1802,10 @@ class _Passo:
         if not capacidade.tomar_orquestrador(self.capacidade, repo, chave(id_)):
             return  # outro plano do repositório tem a trava: o próximo ciclo tenta de novo (na espera FIFO)
         tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
-        it.update(fase="planejando", alvo="planejando", projeto=projeto, repo=repo, semPr=0, prUrl=None, runId=None)
+        it.update(fase="planejando", alvo="planejando", projeto=projeto, repo=repo, semPr=0, prUrl=None, runId=None, devolucoes=0)
         it.pop("ciPendenteDesde", None)
+        it.pop("devolvido", None)
+        it.pop("critica", None)
         self.novo_run_do_plano(id_, it, demanda, tentativa)
 
     def novo_run_do_plano(self, id_: str, it: dict, demanda: dict, tentativa: int) -> None:
@@ -1816,7 +1824,9 @@ class _Passo:
                     "Demandas: a demanda %s pediu planejamento pesado, mas a config não tem modelos.%s; planejo com o orquestrador"
                     % (id_[:8], PAPEL_DO_PLANO_PESADO),
                 )
-        prompt = prompts.prompt_plano_da_demanda(demanda=demanda, triagem=it.get("triagem") or {}, conversa=it.get("conversa"))
+        prompt = prompts.prompt_plano_da_demanda(
+            demanda=demanda, triagem=it.get("triagem") or {}, conversa=it.get("conversa"), devolvido=it.get("devolvido")
+        )
         run_id = self.motor.despachar_run(
             projeto=it["projeto"],
             agente=modelo["agente"],
@@ -1941,7 +1951,7 @@ class _Passo:
             raise RuntimeError("PR do plano ilegível")
         fora = [a for a in arquivos if not _permitido_ao_plano(a, caminho)]
         if fora:
-            self.travar_plano(id_, it, MOTIVO_FORA % fora[0], url)
+            self.devolver_ou_travar(id_, it, demanda, MOTIVO_FORA % fora[0], url)
             return
         if CAMINHO_DA_PERGUNTA in arquivos:
             texto = self.forja.arquivo(repo, head, CAMINHO_DA_PERGUNTA)
@@ -1956,7 +1966,7 @@ class _Passo:
             if desfecho is not None:
                 self.travar_plano(id_, it, motivo_do_desfecho(desfecho), url, desfecho=desfecho)
             else:
-                self.travar_plano(id_, it, MOTIVO_SEM_PLANO % caminho, url)
+                self.devolver_ou_travar(id_, it, demanda, MOTIVO_SEM_PLANO % caminho, url)
             return
         config = self.config_do_repo(repo)
         if config is None:
@@ -1969,7 +1979,7 @@ class _Passo:
             return
         motivo = self.motivo_do_plano(id_, repo, head, caminho)
         if motivo is not None:
-            self.travar_plano(id_, it, motivo, url)
+            self.devolver_ou_travar(id_, it, demanda, motivo, url)
             return
         ci = self.forja.ci(repo, head)
         if ci == "pendente":
@@ -1986,10 +1996,110 @@ class _Passo:
         if ci not in ("verde", "ausente"):
             self.travar_plano(id_, it, MOTIVO_CI_VERMELHO, url)
             return
+        if self.modelo_do_critico is not None:
+            veredito = self.criticar(id_, it, demanda, pr, head, caminho)
+            if veredito is None:
+                return  # o crítico ainda roda (ou a demanda travou)
+            if veredito.get("resultado") != "aprovado":
+                achados = [a.get("motivo") for a in veredito.get("achados") or [] if isinstance(a, dict)]
+                achados = [" ".join(a.split()) for a in achados if isinstance(a, str) and a.strip()] or ["(sem motivo)"]
+                self.devolver_ou_travar(id_, it, demanda, "; ".join(achados)[:280], url, critico=True)
+                return
         if self.forja.mergear(url, head) is True:  # o GitHub recusa se o head andou desde a leitura
             self.plano_criado(id_, it, caminho, url)
         else:
             self.travar_plano(id_, it, MOTIVO_MERGE_RECUSADO, url)
+
+    def devolver_ou_travar(self, id_: str, it: dict, demanda: dict, motivo: str, url, *, critico: bool = False) -> None:
+        """Erro do planejador (forma do PR ou reprovação do crítico): com o crítico ligado, o PR fecha e o planejador
+        refaz uma vez com o motivo (`devolvido`); na segunda, ou sem o crítico na config, trava para o Paulo."""
+        devolucoes = it.get("devolucoes") if isinstance(it.get("devolucoes"), int) else 0
+        texto = MOTIVO_CRITICO_REPROVOU % motivo if critico else motivo
+        if self.modelo_do_critico is None or self.modelo_do_plano is None or devolucoes >= DEVOLUCOES_DO_PLANO:
+            self.travar_plano(id_, it, texto, url)
+            return
+        try:
+            self.forja.fechar_pr(url, "PR do plano fechado pela Fábrica: %s. O planejador refaz o plano com este motivo." % motivo)
+        except Exception as exc:  # noqa: BLE001 - o PR aberto não impede o plano novo
+            self.aviso("demandas:fechar:%s" % id_, "Demandas: não fechei o PR %s do plano devolvido (%s)" % (url, type(exc).__name__))
+        it.update(devolucoes=devolucoes + 1, devolvido=[motivo], prUrl=None, semPr=0)
+        it.pop("critica", None)
+        it.pop("ciPendenteDesde", None)
+        self.eventos.append({"evento": "demanda_plano_devolvido", "id": id_, "motivo": motivo, "critico": critico})
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        self.novo_run_do_plano(id_, it, demanda, tentativa + 1)
+
+    def criticar(self, id_: str, it: dict, demanda: dict, pr: dict, head: str, caminho: str):
+        """O veredito do crítico para o plano no `head`, ou `None` enquanto ele roda (ou quando a demanda travou).
+
+        `critica` guarda `head`, `nonce`, `inicio`, `runId`, `falhas` e o `veredito`, gravados antes do POST pago (sem
+        `runId`, o run é achado pelo nonce). O head que andou pede outra crítica. O run roda sob a trava de orquestrador
+        da demanda, sem vaga, como o planejamento."""
+        c = it.get("critica") if isinstance(it.get("critica"), dict) else None
+        if c is None or c.get("head") != head:
+            self.despachar_critica(id_, it, demanda, pr, head, caminho, falhas=0)
+            return None
+        if isinstance(c.get("veredito"), dict):
+            return c["veredito"]
+        if not c.get("runId"):
+            run_id = self.motor.procurar_run(it["projeto"], c["nonce"], self.desde({"inicio": c.get("inicio")}))
+            if run_id is None:
+                self.enviar_critica(id_, it, demanda, pr, caminho)
+                return None
+            c["runId"] = run_id
+            self.salvar()
+        try:
+            run = despachante._dict(self.motor.run(c["runId"]))
+        except Exception as exc:
+            if not despachante._eh_404(exc):
+                raise
+            run = {"estado": "failed"}
+        if run.get("estado") not in despachante.TERMINAIS_DE_RUN:
+            return None
+        valido = run.get("estado") == "succeeded" or (run.get("estado") == "failed" and run.get("motivoFalha") in despachante.MOTIVOS_SEM_COMMIT)
+        texto = self.motor.ultimo_texto(c["runId"]) if valido else None
+        veredito = despachante._veredito_limpo(prompts.extrair_veredito(texto)) if valido else None
+        if not isinstance(veredito, dict) or veredito.get("sha") != head:
+            falhas = (c.get("falhas") if isinstance(c.get("falhas"), int) else 0) + 1
+            if falhas >= TENTATIVAS_DO_CRITICO:
+                self.travar_plano(id_, it, MOTIVO_CRITICO_SEM_VEREDITO, it.get("prUrl"))
+            else:
+                self.despachar_critica(id_, it, demanda, pr, head, caminho, falhas=falhas)
+            return None
+        c["veredito"] = veredito
+        self.salvar()
+        self.eventos.append({"evento": "demanda_plano_criticado", "id": id_, "resultado": veredito.get("resultado")})
+        return veredito
+
+    def despachar_critica(self, id_: str, it: dict, demanda: dict, pr: dict, head: str, caminho: str, *, falhas: int) -> None:
+        tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
+        it["critica"] = {
+            "head": head,
+            "nonce": nonce_do_motor(id_, "critica%d" % falhas, tentativa),
+            "inicio": self.agora_texto,
+            "runId": None,
+            "falhas": falhas,
+        }
+        self.salvar()  # antes do POST pago
+        self.enviar_critica(id_, it, demanda, pr, caminho)
+
+    def enviar_critica(self, id_: str, it: dict, demanda: dict, pr: dict, caminho: str) -> None:
+        c, modelo = it["critica"], self.modelo_do_critico
+        prompt = prompts.prompt_critico_do_plano(
+            demanda=demanda, triagem=it.get("triagem") or {}, caminho=caminho, sha=c["head"], pr_url=it["prUrl"]
+        )
+        branch = pr.get("branch") if isinstance(pr.get("branch"), str) and pr.get("branch") else None
+        c["runId"] = self.motor.despachar_run(
+            projeto=it["projeto"],
+            agente=modelo["agente"],
+            modelo=modelo["modelo"],
+            prompt=despachante._com_nonce(prompt, c["nonce"]),
+            branch_existente=branch,
+            max_custo_usd=modelo["maxCustoUsd"],
+            chave_idempotencia=c["nonce"],
+        )
+        self.salvar()
+        self.eventos.append({"evento": "demanda_critica", "id": id_, "runId": c["runId"]})
 
     def sair_do_planejamento(self, id_: str, it: dict, *, vivo: bool = False, **campos) -> None:
         """Toda saída de `planejando`: solta a trava do orquestrador e grava (soltar duas vezes não faz mal).

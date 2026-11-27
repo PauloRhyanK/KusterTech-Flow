@@ -458,6 +458,8 @@ class TestesSaida(unittest.TestCase):
 
 
 CONFIG_DO_KIT = json.loads((pathlib.Path(__file__).resolve().parent.parent / "modelos" / "config.json").read_text())
+# o crítico do plano só liga com `modelos.critico`: os testes de antes dele rodam sem o papel
+MODELOS_SEM_CRITICO = {k: v for k, v in CONFIG_DO_KIT["modelos"].items() if k != "critico"}
 INSTANTE = datetime.datetime(2026, 11, 20, 10, 0, 0, tzinfo=datetime.timezone.utc)
 REPO = "kustertech-exemplo/app"
 
@@ -524,7 +526,7 @@ class BasePasso(unittest.TestCase):
             forja=self.forja,
             capacidade_path=self.capacidade,
             projetos={REPO: "app"} if projetos is None else projetos,
-            modelos=CONFIG_DO_KIT["modelos"] if modelos is None else modelos,
+            modelos=MODELOS_SEM_CRITICO if modelos is None else modelos,
             raiz=self.raiz,
             agora=self.agora,
             mem_disponivel_mb=None,
@@ -3089,3 +3091,94 @@ class TestesEntrega(BasePasso):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestesCriticoDoPlano(BasePasso):
+    """Com `modelos.critico`: erro de forma volta ao planejador uma vez e o crítico confere o plano antes do merge."""
+
+    planejar = TestesPlano.planejar
+    com_pr = TestesPlano.com_pr
+
+    def passo(self, cliente, **kw):
+        kw.setdefault("modelos", CONFIG_DO_KIT["modelos"])
+        return super().passo(cliente, **kw)
+
+    def critica(self):
+        return self.item().get("critica") or {}
+
+    def plano_pronto(self):
+        run_id = self.planejar()
+        self.com_pr(run_id)
+        self.passo(ClienteDeBusca())  # guardas ok: o crítico é despachado, sem merge
+        return run_id
+
+    def responder_critico(self, resultado="aprovado", achados=(), sha=HEAD):
+        rid = self.critica()["runId"]
+        corpo = json.dumps({"sha": sha, "resultado": resultado, "achados": list(achados)})
+        self.motor.definir_run(rid, estado="succeeded")
+        self.motor.definir_texto(rid, "Li o plano.\n%s\n%s\n%s\n" % (prompts.INICIO_VEREDITO, corpo, prompts.FIM_VEREDITO))
+        self.passo(ClienteDeBusca())
+
+    def test_critico_e_despachado_antes_do_merge(self):
+        self.plano_pronto()
+        self.assertEqual(self.forja.merges, [])
+        critico = self.despachos()[-1]
+        self.assertEqual(critico["modelo"], CONFIG_DO_KIT["modelos"]["critico"]["modelo"])
+        self.assertIn(CAMINHO, critico["prompt"])
+        self.assertIn(prompts.INICIO_VEREDITO, critico["prompt"])
+        self.assertEqual(self.critica()["head"], HEAD)
+
+    def test_critico_aprova_e_o_plano_e_mergeado(self):
+        self.plano_pronto()
+        self.responder_critico()
+        self.assertEqual(self.forja.merges, [(PR, HEAD)])
+        self.assertEqual(self.saida()[-1]["tipo"], "plano_criado")
+
+    def test_critico_reprova_e_o_planejador_refaz_com_os_achados(self):
+        self.plano_pronto()
+        self.responder_critico("correcoes", [{"arquivo": CAMINHO, "motivo": "o plano deixa a tela de pagamento para depois"}])
+        self.assertEqual(self.forja.merges, [])
+        self.assertIn(PR, [u for u, _ in self.forja.fechados])
+        replano = self.despachos()[-1]
+        self.assertIn("Motivo: nova_spec", replano["prompt"])
+        self.assertIn("o plano deixa a tela de pagamento para depois", replano["prompt"])
+        self.assertEqual(self.item()["fase"], "planejando")
+        self.assertEqual(self.saida(), [])  # nada foi ao Paulo
+
+    def test_critico_reprova_duas_vezes_e_vai_ao_paulo_com_o_achado(self):
+        self.plano_pronto()
+        self.responder_critico("correcoes", [{"arquivo": CAMINHO, "motivo": "falta a etapa do e-mail"}])
+        run2 = self.item()["runId"]
+        self.com_pr(run2)
+        self.passo(ClienteDeBusca())
+        self.responder_critico("correcoes", [{"arquivo": CAMINHO, "motivo": "ainda falta a etapa do e-mail"}])
+        self.assertEqual(self.forja.merges, [])
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "travada")
+        self.assertIn("ainda falta a etapa do e-mail", evento["dados"]["motivo"])
+        self.assertEqual(self.item()["fase"], "esperando_paulo")
+
+    def test_critico_sem_veredito_duas_vezes_trava(self):
+        self.plano_pronto()
+        for _ in range(2):
+            rid = self.critica()["runId"]
+            self.motor.definir_run(rid, estado="succeeded")
+            self.motor.definir_texto(rid, "esqueci o veredito")
+            self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "travada")
+        self.assertEqual(evento["dados"]["motivo"], demandas.MOTIVO_CRITICO_SEM_VEREDITO)
+
+    def test_erro_de_forma_volta_ao_planejador_uma_vez(self):
+        run_id = self.planejar()
+        self.com_pr(run_id, arquivos=(".seeds/issues.jsonl",))  # sem o plano
+        self.passo(ClienteDeBusca())
+        self.assertEqual(self.saida(), [])
+        self.assertIn(PR, [u for u, _ in self.forja.fechados])
+        replano = self.despachos()[-1]
+        self.assertIn("o PR não traz o plano", replano["prompt"])
+        run2 = self.item()["runId"]
+        self.com_pr(run2, arquivos=(".seeds/issues.jsonl",))
+        self.passo(ClienteDeBusca())
+        (evento,) = self.saida()
+        self.assertEqual(evento["tipo"], "travada")

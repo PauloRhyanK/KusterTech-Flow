@@ -78,6 +78,12 @@
       "esforco": "medium",
       "maxCustoUsd": 1000
     },
+    "critico": {
+      "agente": "claude-code",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 1000
+    },
     "devops": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",

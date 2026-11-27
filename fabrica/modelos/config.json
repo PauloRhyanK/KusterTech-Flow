@@ -207,6 +207,25 @@
       ],
       "ferramentas": ["superpowers", "rtk"]
     },
+    "critico": {
+      "agente": "claude-code",
+      "modelo": "claude-opus-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 5,
+      "executores": [
+        {
+          "agente": "claude-code",
+          "modelo": "claude-opus-5-5",
+          "conta": "claude-principal"
+        },
+        {
+          "agente": "claude-code",
+          "modelo": "claude-opus-5-5",
+          "conta": "claude-reserva"
+        }
+      ],
+      "ferramentas": ["superpowers", "rtk"]
+    },
     "devops": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",

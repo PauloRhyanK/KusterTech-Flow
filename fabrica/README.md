@@ -411,6 +411,7 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 | `backend`           | `claude-sonnet-5-5` | medium  | 10          |
 | `qa`                | `claude-sonnet-5-5` | medium  | 10          |
 | `revisor`           | `claude-opus-5-5`   | medium  | 5           |
+| `critico`           | `claude-opus-5-5`   | medium  | 5           |
 | `devops`            | `claude-sonnet-5-5` | medium  | 10          |
 | `seguranca`         | `claude-sonnet-5-5` | medium  | 10          |
 | `fixer`             | `claude-haiku-5-5`  | medium  | 5           |
