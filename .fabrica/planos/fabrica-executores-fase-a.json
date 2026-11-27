@@ -84,7 +84,7 @@
     {
       "id": "toolstack",
       "papel": "backend",
-      "planoSeeds": "pl-3817",
+      "planoSeeds": "pl-e5e8",
       "dependeDe": [
         "executores-config"
       ],
