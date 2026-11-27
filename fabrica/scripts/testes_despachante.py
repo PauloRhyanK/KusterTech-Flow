@@ -7570,3 +7570,39 @@ class TestesMergeDepoisDoPrazo(Base):
         d.ciclo()
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "falhou")
         self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
+
+
+class TestesPlanejamentoPesado(Base):
+    def _config(self, com_pesado=True):
+        config = copy.deepcopy(CONFIG)
+        if com_pesado:
+            config["modelos"]["planejador-pesado"] = _modelo(FABLE, 30, "high")
+        return config
+
+    def _iniciar(self, pesado, com_pesado=True):
+        self.publicar(plano(raia("a")))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo(config=self._config(com_pesado))
+        d.iniciar()
+        d.iniciar(spec="docs/spec.md", pesado=pesado)
+        return d
+
+    def test_spec_pesada_acorda_o_planejador_pesado(self):
+        self._iniciar(True)
+        (run,) = self.runs()
+        self.assertEqual((run["modelo"], run["max_custo_usd"]), (FABLE, 30))
+        self.assertIn("Motivo: nova_spec", run["prompt"])
+
+    def test_spec_normal_acorda_o_orquestrador(self):
+        self._iniciar(False)
+        (run,) = self.runs()
+        self.assertEqual(run["modelo"], CONFIG["modelos"]["orquestrador"]["modelo"])
+
+    def test_spec_pesada_sem_o_papel_usa_o_orquestrador(self):
+        self._iniciar(True, com_pesado=False)
+        (run,) = self.runs()
+        self.assertEqual(run["modelo"], CONFIG["modelos"]["orquestrador"]["modelo"])
+
+    def test_cli_pesado_exige_spec(self):
+        self.assertEqual(despachante._parser().parse_args(["iniciar", "--spec", "x.md", "--pesado"]).pesado, True)
+        self.assertEqual(despachante._parser().parse_args(["iniciar", "--spec", "x.md"]).pesado, False)

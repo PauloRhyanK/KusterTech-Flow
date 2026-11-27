@@ -122,6 +122,7 @@ ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 # Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
 PAPEL_DO_ARBITRO = "arbitro"
+PAPEL_PESADO = "planejador-pesado"
 MOTIVO_DA_ARBITRAGEM = "arbitragem"
 TITULO_DA_PERGUNTA = "[fábrica] orquestrador: pergunta para o Paulo"
 LIMITE_TITULO_DA_PERGUNTA = 120
@@ -1090,7 +1091,7 @@ class Despachante:
         self.estado["acordarPendentes"] = []
         self._salvar()
 
-    def iniciar(self, *, spec: str | None = None) -> str:
+    def iniciar(self, *, spec: str | None = None, pesado: bool = False) -> str:
         with self._sob_trava():
             if spec is None:
                 plano, erros, _ = self._ler_plano(self.branch)
@@ -1111,7 +1112,7 @@ class Despachante:
                     self._adotar_plano(plano)
                 self._novo_estado()
             self._recuperar_acao_interrompida()
-            return self._iniciar_spec(spec, executar=True)
+            return self._iniciar_spec(spec, executar=True, pesado=pesado)
 
     def _validar_spec(self, spec) -> None:
         if not _texto(spec):
@@ -1123,7 +1124,17 @@ class Despachante:
         if conteudo is None:
             raise ErroDeEntrada(["a spec %r não existe no branch %s" % (spec, self.branch)])
 
-    def _iniciar_spec(self, spec: str, *, executar: bool) -> str:
+    def _papel_da_acordada(self, acao: dict) -> str:
+        """`planejador-pesado` só na `nova_spec` pedida como pesada e com o papel na config; o resto é do orquestrador."""
+        pesado = acao.get("motivo") == "nova_spec" and _dict(acao.get("contexto")).get("pesado") is True
+        if not pesado:
+            return "orquestrador"
+        if PAPEL_PESADO in _dict(self.config.get("modelos")):
+            return PAPEL_PESADO
+        self._aviso("a spec %s pediu planejamento pesado, mas a config não tem modelos.%s; uso o orquestrador" % (acao.get("alvo"), PAPEL_PESADO))
+        return "orquestrador"
+
+    def _iniciar_spec(self, spec: str, *, executar: bool, pesado: bool = False) -> str:
         chave = "nova_spec:%s" % spec
         pendentes = _lista(self.estado.get("acordarPendentes"))
         if chave in _lista(self.estado.get("chavesAcordadas")) or any(
@@ -1132,7 +1143,8 @@ class Despachante:
             return "spec já iniciada: %s" % spec
         self._validar_spec(spec)
         self._log({"evento": "iniciar", "spec": spec})
-        self._enfileirar_acordar("nova_spec", spec, {"spec": spec})
+        # "pesado": o Paulo pediu o planejador-pesado (Fable) só para montar este plano
+        self._enfileirar_acordar("nova_spec", spec, dict({"spec": spec}, **({"pesado": True} if pesado else {})))
         if executar and not self._drenando():
             acao = self._proposta_de_pendente()
             if (
@@ -1447,7 +1459,7 @@ class Despachante:
                     self.retomar()
                 elif comando == "iniciar" and _texto(pedido.get("spec")):
                     try:
-                        self._log({"evento": "pedido", "resultado": self._iniciar_spec(pedido["spec"], executar=False)})
+                        self._log({"evento": "pedido", "resultado": self._iniciar_spec(pedido["spec"], executar=False, pesado=pedido.get("pesado") is True)})
                     except ErroDeEntrada as exc:
                         self._aviso("pedido iniciar --spec %s recusado: %s" % (pedido["spec"], exc))
                 else:
@@ -4158,7 +4170,7 @@ class Despachante:
 
         if tipo == "acordar":
             arbitragem = _acordada_do_arbitro(acao)
-            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else "orquestrador")
+            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else self._papel_da_acordada(acao))
             prompt = (prompts.prompt_arbitro if arbitragem else prompts.prompt_orquestrador)(
                 motivo=acao.get("motivo"),
                 estado_compacto=compactar(self.estado, self.plano),
@@ -4376,6 +4388,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="comando", required=True)
     iniciar = sub.add_parser("iniciar", help="cria o estado; com --spec acorda o orquestrador")
     iniciar.add_argument("--spec", help="caminho da spec no repositório do cliente")
+    iniciar.add_argument("--pesado", action="store_true", help="com --spec: planeja com o planejador-pesado (Fable)")
     rodar = sub.add_parser("rodar", help="repete o ciclo")
     rodar.add_argument("--intervalo", type=int, default=30, help="segundos entre ciclos (padrão 30)")
     sub.add_parser("status", help="resumo do estado")
@@ -4400,6 +4413,9 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abr
         spec = getattr(args, "spec", None)
         if args.comando == "iniciar" and spec is not None and not _texto(spec):
             raise ErroDeEntrada(["--spec vazio"])
+        pesado = bool(getattr(args, "pesado", False))
+        if pesado and spec is None:
+            raise ErroDeEntrada(["--pesado só vale com --spec"])
         try:
             with travar(raiz):
                 if args.comando == "retomar":
@@ -4409,7 +4425,7 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abr
                 despachante = construir(ambiente)
                 despachante.trava_externa = True  # este processo já tem a trava da raiz
                 if args.comando == "iniciar":
-                    print(despachante.iniciar(spec=spec), file=saida)
+                    print(despachante.iniciar(spec=spec, pesado=pesado), file=saida)
                     return 0
                 try:
                     despachante.rodar(intervalo=args.intervalo)
@@ -4422,6 +4438,8 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abr
                 pedido = {"comando": args.comando}
                 if spec is not None:
                     pedido["spec"] = spec
+                if pesado:
+                    pedido["pesado"] = True
                 enfileirar_pedido(raiz, pedido)
                 print(MENSAGEM_PEDIDO, file=saida)
                 return 0

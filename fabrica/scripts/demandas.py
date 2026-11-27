@@ -785,6 +785,7 @@ MOTIVO_RUN_SUMIU = "run não encontrado no Warren"
 MOTIVO_TRIAGEM_RECUSADA = "o Flow recusou a triagem da Fábrica"
 LIMITE_MOTIVO_DO_AGENTE = 200
 PAPEL_DO_PLANO = "orquestrador"
+PAPEL_DO_PLANO_PESADO = "planejador-pesado"  # só com "Planejamento pesado" ligado na demanda
 CI_PENDENTE_MAXIMO_S = 2 * 3600
 TENTATIVAS_SEM_PR = 2  # a primeira e uma nova tentativa
 CAMINHO_CONFIG_DO_REPO = ".fabrica/config.json"
@@ -1139,6 +1140,7 @@ class _Passo:
         self.projetos = {str(k).lower(): v for k, v in (projetos or {}).items()}
         self.modelo_da_triagem = _modelo(modelos, PAPEL_DA_TRIAGEM)
         self.modelo_do_plano = _modelo(modelos, PAPEL_DO_PLANO)
+        self.modelo_do_plano_pesado = _modelo(modelos, PAPEL_DO_PLANO_PESADO)
         self.modelo_do_desenho = _modelo(modelos, PAPEL_DO_DESENHO)
         self.modelo_do_teste = _modelo(modelos, PAPEL_DO_TESTE)
         self.modelo_da_correcao = _modelo(modelos, PAPEL_DA_CORRECAO)
@@ -1805,6 +1807,15 @@ class _Passo:
 
     def despachar_plano(self, id_: str, it: dict, demanda: dict) -> None:
         modelo = self.modelo_do_plano
+        if demanda.get("planejamentoPesado") is True:
+            if self.modelo_do_plano_pesado is not None:
+                modelo = self.modelo_do_plano_pesado
+            else:
+                self.aviso(
+                    "demandas:pesado:%s" % id_,
+                    "Demandas: a demanda %s pediu planejamento pesado, mas a config não tem modelos.%s; planejo com o orquestrador"
+                    % (id_[:8], PAPEL_DO_PLANO_PESADO),
+                )
         prompt = prompts.prompt_plano_da_demanda(demanda=demanda, triagem=it.get("triagem") or {}, conversa=it.get("conversa"))
         run_id = self.motor.despachar_run(
             projeto=it["projeto"],

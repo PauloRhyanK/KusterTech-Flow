@@ -793,6 +793,24 @@ class TestesPlano(BasePasso):
         self.assertEqual((antes[0]["nonce"], antes[0]["runId"]), (hexa, None))  # no disco antes do POST
         self.assertEqual((self.item()["fase"], self.item()["runId"]), ("planejando", "run-1"))
 
+    def test_planejamento_pesado_usa_o_planejador_pesado(self):
+        self.planejar(planejamentoPesado=True)
+        (despacho,) = self.despachos()
+        pesado = CONFIG_DO_KIT["modelos"]["planejador-pesado"]
+        self.assertEqual((despacho["modelo"], despacho["max_custo_usd"]), (pesado["modelo"], pesado["maxCustoUsd"]))
+        self.assertIn("Motivo: nova_spec", despacho["prompt"])
+
+    def test_planejamento_normal_usa_o_orquestrador(self):
+        self.planejar(planejamentoPesado=False)
+        (despacho,) = self.despachos()
+        self.assertEqual(despacho["modelo"], CONFIG_DO_KIT["modelos"]["orquestrador"]["modelo"])
+
+    def test_planejamento_pesado_sem_o_papel_na_config_usa_o_orquestrador(self):
+        modelos = {k: v for k, v in CONFIG_DO_KIT["modelos"].items() if k != "planejador-pesado"}
+        self.passo(ClienteDeBusca(pagina(retrato("planejada", planejamentoPesado=True))), modelos=modelos)
+        (despacho,) = self.despachos()
+        self.assertEqual(despacho["modelo"], CONFIG_DO_KIT["modelos"]["orquestrador"]["modelo"])
+
     def test_triagem_da_demanda_vai_no_contexto_do_plano(self):
         self.triar()
         self.motor.definir_run("run-1", estado="succeeded")
