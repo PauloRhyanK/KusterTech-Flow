@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /** O conteúdo de uma figura da mensagem (diagrama ou imagem) em tela cheia. Esc e "Fechar" fecham. */
 export function VisorAmpliado({
@@ -76,5 +76,32 @@ export function Figura({
         </button>
       </figcaption>
     </figure>
+  )
+}
+
+/** Uma imagem anexada à mensagem, em miniatura; "Ampliar" abre em tela cheia. */
+export function MiniaturaDoAnexo({
+  id,
+  nome,
+  legenda,
+}: {
+  id: string
+  nome: string
+  legenda?: string
+}) {
+  const [ampliada, setAmpliada] = useState(false)
+  const src = `/decidir/anexos/${id}`
+  const titulo = legenda || nome
+  return (
+    <>
+      <Figura legenda={titulo} onAmpliar={() => setAmpliada(true)}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- arquivo privado servido pela rota com sessão */}
+        <img src={src} alt={titulo} loading="lazy" className="max-h-56 max-w-full rounded-[4px]" />
+      </Figura>
+      <VisorAmpliado titulo={titulo} aberto={ampliada} onFechar={() => setAmpliada(false)}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- arquivo privado servido pela rota com sessão */}
+        <img src={src} alt={titulo} className="mx-auto w-full max-w-6xl" />
+      </VisorAmpliado>
+    </>
   )
 }

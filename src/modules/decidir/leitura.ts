@@ -29,6 +29,36 @@ const FECHA_DETALHES = /<\/details>/i
 // O fim que o despachante acrescenta ao corpo da issue: vale no GitHub, não no Decidir.
 const RODAPE_DO_DESPACHANTE =
   /\n+PR: https:\/\/github\.com\/\S+\n+Feche esta issue com um comentário[^\n]*\s*$/
+const RODAPES_DE_DECISAO = [
+  /\n+Feche esta issue com um comentário[^\n]*\s*$/,
+  /\n+Revise e mergeie ou feche o PR [^\n]*\s*$/,
+]
+const COMENTARIO_HTML = /<!--[\s\S]*?-->/g
+// A decisão de seed que o despachante escrevia antes de `pergunta_da_seed`.
+const DECISAO_ANTIGA_DE_SEED =
+  /^Seed: (\S+)\nRaia: (\S+)\nPR: (\S+|\(sem PR\))\nHead: (\S+)\n\nMotivos:\n((?:- [^\n]*\n?)+)$/
+
+function decisaoAntigaDeSeed(corpo: string): string | null {
+  const m = DECISAO_ANTIGA_DE_SEED.exec(corpo)
+  if (!m) return null
+  const [, seed, raia, pr, head, motivos] = m
+  const numero = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)$/.exec(pr!)?.[1]
+  return [
+    `**O que aconteceu:** A etapa \`${raia}\` parou e espera você.`,
+    motivos!.trim(),
+    ...(numero ? [`**Onde olhar:** [PR #${numero}](${pr})`] : []),
+    `<details><summary>Detalhes técnicos</summary>\n\nSeed: ${seed}\nRaia: ${raia}\nHead: ${head}\n\n</details>`,
+  ].join('\n\n')
+}
+
+/** Tira os comentários HTML que estão fora de cerca de código (o nonce do despachante). */
+function semComentarios(texto: string): string {
+  const linhas: string[] = []
+  porLinha(texto, (linha, emCodigo) =>
+    linhas.push(emCodigo ? linha : linha.replace(COMENTARIO_HTML, '')),
+  )
+  return linhas.join('\n')
+}
 const O_QUE_PRECISO = /^\*\*o que preciso de você:\*\*[ \t]*(.*)$/i
 
 /** A frase que vem depois de um rótulo começa com maiúscula, como frase que é. */
@@ -212,9 +242,51 @@ export function corpoParaLeitura(texto: string): string {
     if (!emCodigo && O_QUE_PRECISO.test(linha.trim()) && perguntaDoCorpo(linha) !== null) return
     linhas.push(linha)
   })
-  return linhas
-    .join('\n')
-    .replace(RODAPE_DO_DESPACHANTE, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  let corpo = semComentarios(linhas.join('\n')).trimEnd().replace(RODAPE_DO_DESPACHANTE, '')
+  for (const rodape of RODAPES_DE_DECISAO) corpo = corpo.trimEnd().replace(rodape, '')
+  corpo = corpo.replace(/\n{3,}/g, '\n\n').trim()
+  return decisaoAntigaDeSeed(corpo) ?? corpo
+}
+
+// ---------------------------------------------------------------------------------------------
+// Arquivos que o agente manda junto da pergunta (no PR dela)
+
+export const MAXIMO_DE_ANEXOS_DA_PERGUNTA = 6
+
+const ANEXO_DA_PERGUNTA = /^\.fabrica\/planejamento\/[^/]+\/anexos\/([A-Za-z0-9._-]{1,100})$/
+const TIPO_PELA_EXTENSAO: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+}
+
+/** Dos arquivos do PR da pergunta, as imagens em `.fabrica/planejamento/<feature>/anexos/`. */
+export function anexosDaPergunta(
+  arquivos: readonly string[],
+): { caminho: string; nome: string; conteudo: string }[] {
+  const achados: { caminho: string; nome: string; conteudo: string }[] = []
+  for (const caminho of [...arquivos].sort()) {
+    const nome = ANEXO_DA_PERGUNTA.exec(caminho)?.[1]
+    const conteudo = nome ? TIPO_PELA_EXTENSAO[nome.split('.').pop()!.toLowerCase()] : undefined
+    if (nome && conteudo) achados.push({ caminho, nome, conteudo })
+  }
+  return achados.slice(0, MAXIMO_DE_ANEXOS_DA_PERGUNTA)
+}
+
+const IMAGEM_DE_MARKDOWN = /!\[[^\]\n]*\]\(([^)\s]+)\)/g
+
+/** O nome do arquivo de cada imagem de markdown com caminho relativo (`![x](anexos/fluxo.svg)`). */
+export function imagensCitadas(texto: string): string[] {
+  const nomes: string[] = []
+  porLinha(texto, (linha, emCodigo) => {
+    if (emCodigo) return
+    for (const m of linha.matchAll(IMAGEM_DE_MARKDOWN)) {
+      const src = m[1]!
+      if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('/')) continue
+      nomes.push(src.split('/').pop()!)
+    }
+  })
+  return nomes
 }

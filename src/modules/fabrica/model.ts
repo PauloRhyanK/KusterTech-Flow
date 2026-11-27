@@ -147,3 +147,14 @@ export function contasEsgotadas(r: RetratoV2, agora: Date): { rotulo: string; at
     return ate.getTime() > agora.getTime() ? [{ rotulo: rotuloDoPar(c.agente, c.conta), ate }] : []
   })
 }
+
+const SEMANA_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Quantas arbitragens do retrato são dos últimos 7 dias ("A Fábrica resolveu N sem você"). */
+export function resolvidasNaSemana(
+  arbitragens: readonly { em: string }[] | undefined,
+  agora: Date,
+): number {
+  const desde = agora.getTime() - SEMANA_MS
+  return (arbitragens ?? []).filter((a) => Date.parse(a.em) > desde).length
+}

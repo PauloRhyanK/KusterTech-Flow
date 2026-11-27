@@ -89,7 +89,19 @@ PR, seed, critério, saída do teste: tudo o que o orquestrador precisa para apl
 </details>
 ```
 
-A primeira linha vira o título que o Paulo lê na fila de decisões: ela diz o assunto, não "pergunta do orquestrador". Sem sha, sem id de run e sem jargão fora do bloco de detalhes. Diagrama ou tabela só quando encurtam a leitura.
+A primeira linha vira o título que o Paulo lê na fila de decisões: ela diz o assunto, não "pergunta do orquestrador". Sem sha, sem id de run e sem jargão fora do bloco de detalhes.
+
+O Flow mostra essa pergunta formatada: as opções viram botões de um toque (por isso o formato `N. **Nome** — consequência` é exato), e o bloco `<details>` fica recolhido.
+
+## Desenho na pergunta
+
+Use desenho quando ele encurta a leitura: um fluxo, o antes e o depois, onde a coisa quebra. O Paulo entende um fluxo desenhado mais rápido que três parágrafos.
+
+- **Fluxo pequeno (até uns oito passos):** um bloco ` ```mermaid ` no próprio texto. O Flow desenha na mensagem. Use `flowchart LR` ou `sequenceDiagram`, com nomes que o Paulo reconhece (telas, etapas do negócio), não nomes de arquivo.
+- **Fluxo maior ou mais complexo:** gere o diagrama com a skill `archify`, exporte em **SVG** e grave em `.fabrica/planejamento/<feature>/anexos/<nome>.svg`, no mesmo PR da pergunta. Cite-o no texto com `![legenda](anexos/<nome>.svg)`, no ponto em que ele ajuda. O HTML do Archify não serve: o Flow não roda script de conteúdo de fora.
+- **Captura de tela ou imagem:** PNG, JPEG ou WebP na mesma pasta `anexos/`, citada do mesmo jeito.
+
+Limites: até 6 arquivos, cada um com até 2 MB, nomes só com letras, números, ponto, hífen e sublinhado. O que passar disso não aparece. Nunca ponha dado pessoal, token ou segredo num desenho ou captura.
 
 ## Pronto quando
 

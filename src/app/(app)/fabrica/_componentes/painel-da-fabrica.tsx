@@ -265,6 +265,58 @@ function Conteudo({
         </>
       )}
 
+      {secao === 'avisos' && (retrato.arbitragens?.length ?? 0) > 0 && (
+        <Secao titulo="Resolvido sem você" rotuloAcessivel="Resolvido sem você">
+          <p className="text-[13px] text-text-secondary">
+            Perguntas técnicas que a Fábrica resolveu sozinha. Só para você olhar: não pedem
+            resposta.
+          </p>
+          <ul className="space-y-2.5">
+            {retrato.arbitragens!.map((a) => (
+              <li
+                key={`${a.em}-${a.repo}-${a.assunto}`}
+                className="space-y-2 rounded-compacto border border-border bg-surface-subtle px-3.5 py-3 text-sm"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[12.5px] text-text-secondary">
+                  <span className="break-words">
+                    {a.repo} · {a.feature}
+                  </span>
+                  <span>{formatarDataHora(new Date(a.em))}</span>
+                </div>
+                <p className="break-words font-[650] text-text-primary">{a.assunto}</p>
+                <dl className="grid gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[150px_1fr]">
+                  {(
+                    [
+                      ['O que travou', a.travou],
+                      ['O que foi decidido', a.decidido],
+                      ['Muda para o produto', a.muda],
+                    ] as const
+                  ).map(
+                    ([rotulo, valor]) =>
+                      valor && (
+                        <div key={rotulo} className="contents">
+                          <dt className="text-text-secondary">{rotulo}</dt>
+                          <dd className="break-words text-text-primary">{valor}</dd>
+                        </div>
+                      ),
+                  )}
+                </dl>
+                {a.prUrl && (
+                  <a
+                    href={a.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-[13px] font-[600] text-text-link underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                  >
+                    Ver o PR ↗
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Secao>
+      )}
+
       {secao === 'avisos' && (
         <Secao titulo="Avisos" rotuloAcessivel="Avisos da Fábrica">
           {avisos.length === 0 ? (

@@ -96,9 +96,18 @@ export interface PropsDaTela {
   conversas: Record<string, string>
   inicial: string | null
   podeAgir: boolean
+  /** Perguntas técnicas que a Fábrica resolveu sozinha nos últimos 7 dias. */
+  resolvidasSemVoce?: number
 }
 
-export function TelaDecidir({ itens, guardados, conversas, inicial, podeAgir }: PropsDaTela) {
+export function TelaDecidir({
+  itens,
+  guardados,
+  conversas,
+  inicial,
+  podeAgir,
+  resolvidasSemVoce = 0,
+}: PropsDaTela) {
   const router = useRouter()
   const [chave, setChave] = useState<string | null>(inicial ?? itens[0]?.chave ?? null)
   const [erro, setErro] = useState<string | null>(null)
@@ -197,6 +206,7 @@ export function TelaDecidir({ itens, guardados, conversas, inicial, podeAgir }: 
           onEscolher={irPara}
           onTrazerDeVolta={trazerDeVolta}
           pendente={pendente}
+          resolvidasSemVoce={resolvidasSemVoce}
         />
         {item.ref.tipo === 'publicacao' ? (
           <AvisoDaPublicacao

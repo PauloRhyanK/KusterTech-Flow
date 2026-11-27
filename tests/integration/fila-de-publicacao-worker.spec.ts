@@ -105,6 +105,7 @@ function criarFonteFalsa() {
     listarPullRequestsAtualizados: naoUsado,
     listarDeployments: naoUsado,
     lerArquivo: naoUsado,
+    lerArquivoBinario: naoUsado,
     reabrirIssue: naoUsado,
     criarIssue: naoUsado,
     lerIssue: naoUsado,

@@ -4,7 +4,7 @@ import { ErroDeAutorizacao } from '@/lib/auth/autorizar'
 import { obterSessao } from '@/lib/auth/sessao'
 import { moduloAtivo } from '@/lib/modulos'
 import { obterAnexoParaExibir } from '@/modules/decidir/queries'
-import { cabecalhosDoArquivo, lerArquivo } from '@/modules/demandas/arquivos'
+import { cabecalhosDoArquivo, cabecalhosDoSvg, lerArquivo } from '@/modules/demandas/arquivos'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +37,9 @@ export async function GET(
   if (!corpo) return resposta(404, 'Não encontrado.')
   return new Response(corpo, {
     status: 200,
-    headers: cabecalhosDoArquivo(anexo.conteudo, anexo.nome),
+    headers:
+      anexo.conteudo === 'image/svg+xml'
+        ? cabecalhosDoSvg(anexo.nome)
+        : cabecalhosDoArquivo(anexo.conteudo, anexo.nome),
   })
 }

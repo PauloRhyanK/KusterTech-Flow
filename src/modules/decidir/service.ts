@@ -8,6 +8,7 @@ import { ROTULO_DO_DESTINO } from '@/modules/demandas/apresentacao'
 import {
   apagarArquivo,
   exigirArmazenamento,
+  gravarArquivo,
   gravarParcial,
   promoverParcial,
 } from '@/modules/demandas/arquivos'
@@ -39,6 +40,7 @@ import {
   numeroDoPrDaTrava,
   textoDaTrava,
 } from './model'
+import { anexosDaPergunta } from './leitura'
 import { localizarItem, type ItemLocalizado } from './queries'
 
 /** O que fica em `Conversa.contexto`: o lido ao abrir (PR do fim de fase e o relato até 4000). */
@@ -63,6 +65,7 @@ const LIMITE_DO_RELATO = 4000
 const LIMITE_DA_DECISAO = LIMITE_DO_RELATO
 /** O corte antigo da abertura da decisão da Fábrica: a mensagem com esse tamanho é regravada inteira. */
 const CORTE_ANTIGO_DA_DECISAO = 600
+const LIMITE_DO_ANEXO_DA_PERGUNTA = 2_000_000
 const CONTINUA_NA_ISSUE = '\n\n_Continua na issue._'
 
 function corpoDaDecisao(corpo: string): string {
@@ -157,6 +160,47 @@ interface Leitura {
   aviso: string | null
   /** Na trava: o PR que ela cita e o estado lido dele, para a mensagem de abertura. */
   prDaTrava?: string
+  /** Na decisão da Fábrica: as imagens que o agente mandou no PR da pergunta. */
+  anexos?: AnexoDaAbertura[]
+}
+
+interface AnexoDaAbertura {
+  nome: string
+  conteudo: string
+  bytes: Uint8Array
+}
+
+/**
+ * As imagens que acompanham a pergunta, lidas do head do PR que a issue cita. É complemento: PR
+ * ausente, de outro repositório, arquivo grande ou falha do GitHub só deixam a pergunta sem imagem.
+ */
+async function lerAnexosDaPergunta(
+  fonte: FonteGitHub,
+  repo: RefRepositorio & { nomeCompleto: string },
+  corpo: string | null,
+): Promise<AnexoDaAbertura[]> {
+  const linha = new RegExp(
+    `^PR: https://github\\.com/${escaparRegex(repo.nomeCompleto)}/pull/(\\d+)$`,
+    'm',
+  ).exec(corpo ?? '')
+  if (!linha) return []
+  const anexos: AnexoDaAbertura[] = []
+  try {
+    const pr = await fonte.lerPullRequestParaMerge(repo, Number(linha[1]))
+    if (!pr || pr.repositorio.toLowerCase() !== repo.nomeCompleto.toLowerCase()) return []
+    for (const a of anexosDaPergunta(pr.arquivos)) {
+      try {
+        const bytes = await fonte.lerArquivoBinario(repo, a.caminho, pr.head)
+        if (bytes && bytes.byteLength > 0)
+          anexos.push({ nome: a.nome, conteudo: a.conteudo, bytes })
+      } catch (erro) {
+        log.warn({ erro: resumirErroParaLog(erro), arquivo: a.nome }, 'anexo da pergunta não lido')
+      }
+    }
+  } catch (erro) {
+    log.warn({ erro: resumirErroParaLog(erro) }, 'anexos da pergunta não lidos')
+  }
+  return anexos
 }
 
 function contextoSemGitHub(l: ItemLocalizado): ContextoDaConversa {
@@ -300,7 +344,14 @@ async function lerContexto(l: ItemLocalizado, fonte: FonteGitHub | null): Promis
     return vazio(prefixo + mensagemDoErro(erro))
   }
   const relato = corpo?.trim() ? corpo.trim().slice(0, LIMITE_DO_RELATO) : null
-  if (!fimDeFase) return { contexto: { pr: null, relato }, corpo, aviso: null }
+  if (!fimDeFase) {
+    return {
+      contexto: { pr: null, relato },
+      corpo,
+      aviso: null,
+      anexos: await lerAnexosDaPergunta(fonte, repo, corpo),
+    }
+  }
 
   const linha = new RegExp(
     `^PR: (https://github\\.com/${escaparRegex(repo.nomeCompleto)}/pull/(\\d+))$`,
@@ -467,7 +518,7 @@ async function criarOuCompletar(
   abertura: Abertura | null,
   cartao: Cartao | null,
   agora: Date,
-): Promise<string> {
+): Promise<{ conversaId: string; aberturaId: string | null }> {
   const { item } = l
   return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`decidir-conversa:${item.chave}`}))`
@@ -479,7 +530,7 @@ async function criarOuCompletar(
     if (existente) {
       const c = await conversaAberta(tx, existente.id)
       conversaId = c.id
-      if (abertura === null) return conversaId
+      if (abertura === null) return { conversaId, aberturaId: null }
       const gravadas = await tx.mensagem.findMany({
         where: { conversaId },
         orderBy: { seq: 'asc' },
@@ -501,7 +552,7 @@ async function criarOuCompletar(
             data: { texto: abertura.texto, impressao: jsonCanonico(abertura) },
           })
         }
-        return conversaId
+        return { conversaId, aberturaId: null }
       }
       await tx.conversa.update({ where: { id: conversaId }, data: { contexto: json(contexto) } })
     } else {
@@ -518,11 +569,12 @@ async function criarOuCompletar(
         select: { id: true },
       })
       conversaId = criada.id
-      if (abertura === null) return conversaId
+      if (abertura === null) return { conversaId, aberturaId: null }
     }
+    const aberturaId = randomUUID()
     const mensagem = await tx.mensagem.create({
       data: {
-        id: randomUUID(),
+        id: aberturaId,
         conversaId,
         autor: abertura.autor,
         texto: abertura.texto,
@@ -533,8 +585,46 @@ async function criarOuCompletar(
       select: { seq: true },
     })
     if (cartao !== null) await substituirCartao(tx, conversaId, cartao, 'flow', mensagem.seq)
-    return conversaId
+    return { conversaId, aberturaId }
   })
+}
+
+/**
+ * Guarda na mensagem de abertura as imagens que vieram com a pergunta. Só quem acabou de criar a
+ * abertura chama. É complemento: sem armazenamento ou com falha de disco, a pergunta fica sem a
+ * imagem, e nenhum arquivo fica sem a linha dele.
+ */
+async function anexarNaAbertura(
+  conversaId: string,
+  mensagemId: string,
+  anexos: readonly AnexoDaAbertura[],
+): Promise<void> {
+  for (const a of anexos) {
+    const id = randomUUID()
+    try {
+      const r = await gravarArquivo(
+        conversaId,
+        id,
+        new Blob([a.bytes as BlobPart]).stream(),
+        LIMITE_DO_ANEXO_DA_PERGUNTA,
+        'conversas',
+      )
+      if (!r.ok) continue
+      await db.anexoDaMensagem.create({
+        data: {
+          id,
+          conversaId,
+          mensagemId,
+          nome: a.nome,
+          conteudo: a.conteudo,
+          tamanho: r.tamanho,
+        },
+      })
+    } catch (erro) {
+      await apagarArquivo(conversaId, id, 'conversas').catch(() => {})
+      log.warn({ erro: resumirErroParaLog(erro), arquivo: a.nome }, 'anexo da pergunta não gravado')
+    }
+  }
 }
 
 async function localizarOuResolvido(chave: string, agora: Date): Promise<ItemLocalizado> {
@@ -573,7 +663,16 @@ export async function abrirItem(
   const leitura = await lerContexto(l, deps.fonte())
   const abertura = mensagemDeAbertura(l, leitura)
   const cartao = cartaoDeAbertura(l, leitura.contexto)
-  const conversaId = await criarOuCompletar(l, leitura.contexto, abertura, cartao, agora)
+  const { conversaId, aberturaId } = await criarOuCompletar(
+    l,
+    leitura.contexto,
+    abertura,
+    cartao,
+    agora,
+  )
+  if (aberturaId !== null && leitura.anexos && leitura.anexos.length > 0) {
+    await anexarNaAbertura(conversaId, aberturaId, leitura.anexos)
+  }
   return { conversaId }
 }
 
@@ -931,7 +1030,7 @@ async function garantirConversa(chave: string, agora: Date): Promise<string> {
     return existente.id
   }
   const l = await localizarOuResolvido(chave, agora)
-  return criarOuCompletar(l, contextoSemGitHub(l), null, null, agora)
+  return (await criarOuCompletar(l, contextoSemGitHub(l), null, null, agora)).conversaId
 }
 
 async function marcar(

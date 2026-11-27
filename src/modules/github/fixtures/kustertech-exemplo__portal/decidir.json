@@ -38,7 +38,7 @@
       "id": 8100043,
       "number": 43,
       "title": "[fábrica] pergunta: Em que ordem a ficha do lead mostra os campos extras do formulário?",
-      "body": "# Em que ordem a ficha do lead mostra os campos extras do formulário?\n\n**O que aconteceu:** a ficha do lead já recebe os campos extras do formulário. O plano pedia que eles aparecessem **na ordem em que o cliente montou o formulário**, mas hoje o sistema não guarda essa ordem: ela se perde no caminho.\n\n```mermaid\nflowchart LR\n  A[Formulário] --> B[Recebimento]\n  B --> C[Ficha do lead]\n```\n\n**O que preciso de você:** escolher a ordem dos campos extras na ficha: a do formulário ou alfabética.\n\n**Opções:**\n\n1. **Ordem alfabética** — fica pronto hoje. O cliente vê os campos sempre na mesma ordem, mas não a que ele montou.\n2. **Ordem do formulário** — o cliente vê como montou. Custa mais uma etapa de trabalho, cerca de meio dia.\n\n**Recomendo:** a opção 1, porque já funciona e a ordem pode entrar depois sem refazer nada.\n\n<details><summary>Detalhes técnicos</summary>\n\n| Item | Valor |\n| ---- | ----- |\n| PR | #308, revisor aprovou |\n| Testes | 116 passam, 1 falha |\n| Onde falha | `recebimento.test.ts:717` |\n\n```\nesperado: [\"origem\", \"cargo\", \"faturamento\"]\nrecebido: [\"cargo\", \"faturamento\", \"origem\"]\n```\n\n</details>\n\nPR: https://github.com/kustertech-exemplo/portal/pull/308\n\nFeche esta issue com um comentário: ele volta para o orquestrador.",
+      "body": "# Em que ordem a ficha do lead mostra os campos extras do formulário?\n\n**O que aconteceu:** a ficha do lead já recebe os campos extras do formulário. O plano pedia que eles aparecessem **na ordem em que o cliente montou o formulário**, mas hoje o sistema não guarda essa ordem: ela se perde no caminho.\n\n```mermaid\nflowchart LR\n  A[Formulário] --> B[Recebimento]\n  B --> C[Ficha do lead]\n```\n\n![O caminho completo dos campos, do formulário à ficha](anexos/fluxo.svg)\n\n**O que preciso de você:** escolher a ordem dos campos extras na ficha: a do formulário ou alfabética.\n\n**Opções:**\n\n1. **Ordem alfabética** — fica pronto hoje. O cliente vê os campos sempre na mesma ordem, mas não a que ele montou.\n2. **Ordem do formulário** — o cliente vê como montou. Custa mais uma etapa de trabalho, cerca de meio dia.\n\n**Recomendo:** a opção 1, porque já funciona e a ordem pode entrar depois sem refazer nada.\n\n<details><summary>Detalhes técnicos</summary>\n\n| Item | Valor |\n| ---- | ----- |\n| PR | #308, revisor aprovou |\n| Testes | 116 passam, 1 falha |\n| Onde falha | `recebimento.test.ts:717` |\n\n```\nesperado: [\"origem\", \"cargo\", \"faturamento\"]\nrecebido: [\"cargo\", \"faturamento\", \"origem\"]\n```\n\n</details>\n\nPR: https://github.com/kustertech-exemplo/portal/pull/308\n\nFeche esta issue com um comentário: ele volta para o orquestrador.",
       "state": "open",
       "user": {
         "login": "exemplo-bia",
@@ -183,6 +183,46 @@
         {
           "filename": ".seeds/issues.jsonl",
           "status": "modified"
+        }
+      ]
+    },
+    {
+      "pull": {
+        "id": 8200308,
+        "number": 308,
+        "title": "Pergunta ao Paulo",
+        "body": null,
+        "state": "open",
+        "merged": false,
+        "merged_at": null,
+        "draft": false,
+        "user": {
+          "login": "exemplo-bia",
+          "id": 200002
+        },
+        "html_url": "https://github.com/kustertech-exemplo/portal/pull/308",
+        "head": {
+          "ref": "warren/pergunta-308",
+          "sha": "308c9e20123456789abcdef0123456789abcdef0"
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "kustertech-exemplo/portal"
+          }
+        },
+        "changed_files": 2,
+        "updated_at": "2026-11-20T10:00:00Z",
+        "merge_commit_sha": null
+      },
+      "files": [
+        {
+          "filename": ".fabrica/pergunta.md",
+          "status": "added"
+        },
+        {
+          "filename": ".fabrica/planejamento/lead-de-formulario-na-ficha/anexos/fluxo.svg",
+          "status": "added"
         }
       ]
     }

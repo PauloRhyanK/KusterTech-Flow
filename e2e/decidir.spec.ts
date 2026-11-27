@@ -320,6 +320,20 @@ test.describe('Decidir', () => {
     await expect(figura.locator('svg')).toBeVisible()
     await expect(figura.locator('svg')).toContainText('Recebimento')
 
+    // O SVG que o agente mandou no PR aparece no lugar da citação, e o script dentro dele não roda.
+    const desenho = page.getByRole('img', {
+      name: 'O caminho completo dos campos, do formulário à ficha',
+    })
+    await expect(desenho).toBeVisible()
+    await expect
+      .poll(() => desenho.evaluate((img: HTMLImageElement) => img.naturalWidth))
+      .toBeGreaterThan(0)
+    const src = await desenho.getAttribute('src')
+    const resposta = await page.request.get(src!)
+    expect(resposta.headers()['content-type']).toBe('image/svg+xml')
+    expect(resposta.headers()['content-security-policy']).toMatch(/^sandbox;/)
+    expect(await page.title()).not.toContain('script do svg rodou')
+
     const detalhes = page.locator('details', { hasText: 'Detalhes técnicos' })
     await expect(detalhes.getByRole('table')).toBeHidden()
     await semRolagemHorizontal(page)
@@ -343,6 +357,45 @@ test.describe('Decidir', () => {
     await expect(cartao(page)).toContainText('1. Ordem alfabética')
     await semRolagemHorizontal(page)
     await capturar(page, testInfo.project.name, 'leitura-cartao', PASTA_DA_LEITURA)
+  })
+
+  test('resolvido sem você: o retrato com arbitragens mostra a contagem na pilha e a lista em Fábrica › Avisos; captura', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const retrato = retratoComDecisoes('lead-de-formulario-na-ficha', [PERGUNTA_43])
+    const em = new Date(Date.now() - 3_600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    const r = await enviarRetratoDaFabrica(request, c.token, {
+      ...retrato,
+      arbitragens: [
+        {
+          em,
+          repo: REPO,
+          feature: 'lead-de-formulario-na-ficha',
+          assunto: 'Teste cobrava a ordem das chaves de um objeto',
+          travou: 'Um teste exigia uma ordem que a linguagem não garante.',
+          decidido: 'O teste passa a conferir o conteúdo dos campos, não a ordem.',
+          muda: 'Nada.',
+          prUrl: 'https://github.com/kustertech-exemplo/portal/pull/309',
+        },
+      ],
+    })
+    expect(r, JSON.stringify(r.json)).toMatchObject({ status: 200 })
+    await entrar(page)
+    await page.goto('/decidir')
+    if (testInfo.project.name === 'desktop') {
+      await expect(page.getByText('A Fábrica resolveu 1 sem você nesta semana.')).toBeVisible()
+      await page.getByRole('link', { name: /Ver o que foi decidido/ }).click()
+    } else {
+      await page.goto('/fabrica/avisos')
+    }
+    await expect(page).toHaveURL(/\/fabrica\/avisos$/)
+    const secao = page.getByRole('region', { name: 'Resolvido sem você' })
+    await expect(secao).toContainText('Teste cobrava a ordem das chaves de um objeto')
+    await expect(secao).toContainText('O teste passa a conferir o conteúdo dos campos')
+    await expect(secao.getByRole('link', { name: /Ver o PR/ })).toBeVisible()
+    await semRolagemHorizontal(page)
+    await capturar(page, testInfo.project.name, 'resolvido-sem-voce', PASTA_DA_LEITURA)
   })
 
   test('atendente parado: mensagem fica "Enviada, aguardando o agente"; com o relógio adiantado 61 s aparece "O agente está demorando…" e "Não vamos fazer" leva ao cartão e à confirmação sem o agente; captura sem-agente', async ({

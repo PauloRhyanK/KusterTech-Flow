@@ -8,6 +8,7 @@ import {
   ArmazenamentoNaoConfigurado,
   apagarArquivo,
   cabecalhosDoArquivo,
+  cabecalhosDoSvg,
   caminhoDoArquivo,
   diretorioDosArquivos,
   gravarArquivo,
@@ -152,6 +153,18 @@ describe('arquivos de demandas no volume', () => {
   test('gravarArquivo com id que não é uuid não toca o disco', async () => {
     await expect(gravarArquivo('../x', randomUUID(), corpoEmPedacos(1), 10)).rejects.toThrow()
     expect(await readdir(dir)).toEqual([])
+  })
+
+  test('cabecalhosDoSvg: imagem inline sob o mesmo sandbox do desenho; pelo caminho comum o svg continua só download', () => {
+    const svg = cabecalhosDoSvg('fluxo.svg')
+    expect(svg['Content-Type']).toBe('image/svg+xml')
+    expect(svg['Content-Security-Policy']).toMatch(/^sandbox; default-src 'none'/)
+    expect(svg['X-Content-Type-Options']).toBe('nosniff')
+    expect(svg['Content-Disposition']).toBe("inline; filename*=UTF-8''fluxo.svg")
+
+    const comum = cabecalhosDoArquivo('image/svg+xml', 'fluxo.svg')
+    expect(comum['Content-Type']).toBe('application/octet-stream')
+    expect(comum['Content-Disposition']).toMatch(/^attachment/)
   })
 
   test('Review Focus 3: cabecalhosDoArquivo("text/html", "d.html") traz Content-Security-Policy começando por "sandbox" e nosniff; image/png não traz CSP', () => {
