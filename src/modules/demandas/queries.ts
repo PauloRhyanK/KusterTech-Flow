@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client'
 import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { estadoNoFio } from '@/modules/fila-de-publicacao/contrato'
 import { autorizar, exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
@@ -137,6 +138,55 @@ const COM_AS_PARTES = {
   partes: { include: { repositorio: { select: { nomeCompleto: true } } } },
 } as const
 
+export const SELECAO_DA_DEMANDA_NA_LISTA = {
+  id: true,
+  titulo: true,
+  tipo: true,
+  etapas: true,
+  temTela: true,
+  etapaAtual: true,
+  concluidas: true,
+  espera: true,
+  encerrada: true,
+  destino: true,
+  criadaEm: true,
+  esperaDesde: true,
+  atualizadaEm: true,
+  naoChegouDesde: true,
+  noArEm: true,
+  desenhoAprovado: true,
+  projeto: { select: { nome: true } },
+  ...COM_AS_PARTES,
+} as const
+
+type LinhaDaDemandaNaLista = Prisma.DemandaGetPayload<{
+  select: typeof SELECAO_DA_DEMANDA_NA_LISTA
+}>
+
+/** A linha do banco (selecionada com `SELECAO_DA_DEMANDA_NA_LISTA`) como `DemandaNaLista`. */
+export function paraDemandaNaLista(d: LinhaDaDemandaNaLista): DemandaNaLista {
+  return {
+    id: d.id,
+    titulo: d.titulo,
+    tipo: d.tipo ? minusculo<TipoDeDemanda>(d.tipo) : null,
+    projeto: d.projeto.nome,
+    etapas: d.etapas as unknown as EtapaDefinida[],
+    temTela: d.temTela,
+    etapaAtual: d.etapaAtual,
+    concluidas: d.concluidas,
+    espera: d.espera as Espera | null,
+    encerrada: d.encerrada as DemandaNaLista['encerrada'],
+    destino: d.destino ? minusculo<Destino>(d.destino) : null,
+    criadaEm: d.criadaEm,
+    esperaDesde: d.esperaDesde,
+    atualizadaEm: d.atualizadaEm,
+    partes: d.partes.map(comoParte),
+    naoChegouDesde: d.naoChegouDesde,
+    noArEm: d.noArEm,
+    desenhoAprovado: d.desenhoAprovado,
+  }
+}
+
 /**
  * A tela Demandas (spec "demanda até o ar", 5.3): os quatro números e os grupos — as abertas e as
  * que fecharam no ar nos últimos 30 dias. As encerradas como `entregue` antes das partes ficam
@@ -151,26 +201,7 @@ export async function obterListaDeDemandas(
 ): Promise<TelaDeDemandas> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
   const ativo = { projeto: { arquivadoEm: null } }
-  const selecao = {
-    id: true,
-    titulo: true,
-    tipo: true,
-    etapas: true,
-    temTela: true,
-    etapaAtual: true,
-    concluidas: true,
-    espera: true,
-    encerrada: true,
-    destino: true,
-    criadaEm: true,
-    esperaDesde: true,
-    atualizadaEm: true,
-    naoChegouDesde: true,
-    noArEm: true,
-    desenhoAprovado: true,
-    projeto: { select: { nome: true } },
-    ...COM_AS_PARTES,
-  } as const
+  const selecao = SELECAO_DA_DEMANDA_NA_LISTA
   const umDiaEMeio = new Date(agora.getTime() - 1.5 * DIA_MS)
   const trintaDias = new Date(agora.getTime() - 30 * DIA_MS)
   const [abertas, noAr, orientadas, recebidas, fonte, opcoes, daTabela] = await Promise.all([
@@ -215,29 +246,8 @@ export async function obterListaDeDemandas(
       : null,
   ])
 
-  const naLista = (d: (typeof abertas)[number]): DemandaNaLista => ({
-    id: d.id,
-    titulo: d.titulo,
-    tipo: d.tipo ? minusculo<TipoDeDemanda>(d.tipo) : null,
-    projeto: d.projeto.nome,
-    etapas: d.etapas as unknown as EtapaDefinida[],
-    temTela: d.temTela,
-    etapaAtual: d.etapaAtual,
-    concluidas: d.concluidas,
-    espera: d.espera as Espera | null,
-    encerrada: d.encerrada as DemandaNaLista['encerrada'],
-    destino: d.destino ? minusculo<Destino>(d.destino) : null,
-    criadaEm: d.criadaEm,
-    esperaDesde: d.esperaDesde,
-    atualizadaEm: d.atualizadaEm,
-    partes: d.partes.map(comoParte),
-    naoChegouDesde: d.naoChegouDesde,
-    noArEm: d.noArEm,
-    desenhoAprovado: d.desenhoAprovado,
-  })
-
-  const todas = [...abertas, ...noAr].map(naLista)
-  const deHoje = orientadas.filter((d) => ehDeHoje(d.atualizadaEm, agora)).map(naLista)
+  const todas = [...abertas, ...noAr].map(paraDemandaNaLista)
+  const deHoje = orientadas.filter((d) => ehDeHoje(d.atualizadaEm, agora)).map(paraDemandaNaLista)
   const semFiltro = montarGrupos(todas, agora)
   return {
     // Os números contam todas; o filtro só muda a lista.
@@ -269,7 +279,7 @@ export async function obterListaDeDemandas(
     quando: Date,
   ): TabelaDeDemandas {
     const visiveis = linhas.slice(0, LIMITE_DA_TABELA).map((d): DemandaNaTabela => ({
-      ...naLista(d),
+      ...paraDemandaNaLista(d),
       clientes: d.projeto.clientes.map((c) => c.cliente.nome).sort((a, b) => a.localeCompare(b)),
       repositorios: [
         ...new Set([
@@ -471,28 +481,8 @@ export async function obterPaginaDaDemanda(
   // `entregue` é a encerrada antes das partes; até a migração ela aparece como fechada.
   const entregue = d.encerrada === 'entregue'
   const fechada = entregue || d.encerrada === 'no_ar'
-  const destino = d.destino ? minusculo<Destino>(d.destino) : null
   const partes = d.partes.map(comoParte)
-  const naLista: DemandaNaLista = {
-    id: d.id,
-    titulo: d.titulo,
-    tipo: d.tipo ? minusculo<TipoDeDemanda>(d.tipo) : null,
-    projeto: d.projeto.nome,
-    etapas,
-    temTela: d.temTela,
-    etapaAtual: d.etapaAtual,
-    concluidas: d.concluidas,
-    espera: d.espera as Espera | null,
-    encerrada: d.encerrada as DemandaNaLista['encerrada'],
-    destino,
-    criadaEm: d.criadaEm,
-    esperaDesde: d.esperaDesde,
-    atualizadaEm: d.atualizadaEm,
-    partes,
-    naoChegouDesde: d.naoChegouDesde,
-    noArEm: d.noArEm,
-    desenhoAprovado: d.desenhoAprovado,
-  }
+  const naLista = paraDemandaNaLista(d)
 
   // O último ajuste vem do histórico inteiro, não só da página dele.
   const ajuste =
@@ -606,6 +596,9 @@ export async function obterPaginaDaDemanda(
     artefatoUrl: linkDoArtefato(d.artefatoUrl),
     capturas: capturasPorTela(vivas),
     capturasApagadasEm: vivas.length === 0 ? apagadasEm : null,
+    ticketsDeOrigem: moduloAtivo('tickets')
+      ? await db.relato.count({ where: { demandaId: d.id } })
+      : null,
     temTela: d.temTela,
     historico: d.eventos.map((e) => ({
       id: String(e.seq),
