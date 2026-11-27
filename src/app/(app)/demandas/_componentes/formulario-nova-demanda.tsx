@@ -157,6 +157,7 @@ export function FormularioNovaDemanda({ projetos }: FormularioNovaDemandaProps) 
   const [projetoId, setProjetoId] = useState(projetos[0]?.id ?? '')
   const [nivelEscolhido, setNivelEscolhido] = useState<string | null>(null)
   const [temTela, setTemTela] = useState('sim')
+  const [planejamentoPesado, setPlanejamentoPesado] = useState(false)
   // Controlados: o React 19 limpa campos não controlados ao fim da ação, mesmo quando ela volta com erro.
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
@@ -305,6 +306,25 @@ export function FormularioNovaDemanda({ projetos }: FormularioNovaDemandaProps) 
         valor={temTela}
         aoMudar={setTemTela}
       />
+
+      <div className="space-y-1">
+        <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+          <input
+            type="checkbox"
+            name="planejamentoPesado"
+            value="sim"
+            checked={planejamentoPesado}
+            onChange={(e) => setPlanejamentoPesado(e.target.checked)}
+            aria-describedby="nova-demanda-pesado-ajuda"
+            className="size-4 accent-text-primary"
+          />
+          Planejamento pesado (Fable)
+        </label>
+        <p id="nova-demanda-pesado-ajuda" className="pl-6 text-xs text-text-secondary">
+          Usa o modelo mais forte só para montar o plano. Mais caro; use em pedido grande ou
+          difícil.
+        </p>
+      </div>
 
       <Button type="submit" aria-busy={criando} disabled={criando}>
         Criar demanda

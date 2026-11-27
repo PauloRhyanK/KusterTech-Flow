@@ -127,4 +127,29 @@ describe('FormularioNovaDemanda', () => {
     const form = vi.mocked(criarDemandaAction).mock.calls.at(-1)![1] as FormData
     expect((form.getAll('anexos') as File[]).map((f) => f.name)).toEqual(['tela.png'])
   })
+
+  test('planejamento pesado começa desligado e não vai no envio', async () => {
+    render(<FormularioNovaDemanda projetos={PROJETOS} />)
+    const opcao = screen.getByRole('checkbox', { name: /Planejamento pesado \(Fable\)/ })
+    expect(opcao).not.toBeChecked()
+    expect(screen.getByText(/Usa o modelo mais forte só para montar o plano/)).toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('O que você quer'), 'Nova tela')
+    await userEvent.click(screen.getByRole('button', { name: 'Criar demanda' }))
+
+    await waitFor(() => expect(criarDemandaAction).toHaveBeenCalled())
+    const form = vi.mocked(criarDemandaAction).mock.calls.at(-1)![1] as FormData
+    expect(form.get('planejamentoPesado')).toBeNull()
+  })
+
+  test('ligar o planejamento pesado envia sim', async () => {
+    render(<FormularioNovaDemanda projetos={PROJETOS} />)
+    await userEvent.type(screen.getByLabelText('O que você quer'), 'Pedido grande')
+    await userEvent.click(screen.getByRole('checkbox', { name: /Planejamento pesado \(Fable\)/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Criar demanda' }))
+
+    await waitFor(() => expect(criarDemandaAction).toHaveBeenCalled())
+    const form = vi.mocked(criarDemandaAction).mock.calls.at(-1)![1] as FormData
+    expect(form.get('planejamentoPesado')).toBe('sim')
+  })
 })

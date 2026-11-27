@@ -15,6 +15,7 @@ const linha = (o: Partial<LinhaParaAFabrica> = {}): LinhaParaAFabrica => ({
   destino: 'fila_de_agentes',
   escopo: null,
   nivel: 'vai_sozinho',
+  planejamentoPesado: false,
   temTela: false,
   origem: 'flow',
   criadaEm: '2026-11-25T10:00:00Z',
@@ -77,5 +78,14 @@ describe('demandaParaAFabrica', () => {
     expect(v2.naoChegouDesde).toBe('2026-11-25T11:00:00Z')
     expect(v2.encerrada).toBe('no_ar')
     expect(v2.etapaAtual).toEqual({ chave: 'no_ar', marco: 'no_ar' })
+  })
+
+  test('v1 e v2 levam planejamentoPesado ao lado de nivel', () => {
+    const l = linha({ planejamentoPesado: true })
+    const v1 = demandaParaAFabrica(l, [], 1) as Record<string, unknown>
+    const v2 = demandaParaAFabrica(l, [], 2) as Record<string, unknown>
+    expect(v1.planejamentoPesado).toBe(true)
+    expect(v2.planejamentoPesado).toBe(true)
+    expect(demandaParaAFabrica(linha(), [], 2)).toHaveProperty('planejamentoPesado', false)
   })
 })

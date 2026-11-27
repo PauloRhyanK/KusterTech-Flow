@@ -36,6 +36,8 @@ const schema = z.object({
     .max(4000, 'Os detalhes podem ter até 4000 caracteres.'),
   nivel: z.enum(NIVEIS, { error: 'Escolha quanto você quer acompanhar.' }),
   temTela: z.enum(['sim', 'nao'], { error: 'Diga se a demanda tem tela.' }),
+  // Caixa marcada chega como 'sim'; desmarcada não chega.
+  planejamentoPesado: z.literal('sim', { error: DADOS_INVALIDOS }).nullable(),
 })
 
 export async function criarDemandaAction(
@@ -54,6 +56,7 @@ export async function criarDemandaAction(
     descricao: form.get('descricao') ?? '',
     nivel: form.get('nivel'),
     temTela: form.get('temTela'),
+    planejamentoPesado: form.get('planejamentoPesado'),
   })
   if (!parse.success) return { erro: parse.error.issues[0]?.message ?? DADOS_INVALIDOS }
 
@@ -69,6 +72,7 @@ export async function criarDemandaAction(
       titulo: parse.data.titulo,
       descricao: parse.data.descricao,
       nivel: parse.data.nivel,
+      planejamentoPesado: parse.data.planejamentoPesado === 'sim',
       temTela: parse.data.temTela === 'sim',
       anexos,
     }))
