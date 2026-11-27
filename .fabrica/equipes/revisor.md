@@ -52,6 +52,8 @@ Não implementa correções; o executor/fixer faz isso e uma nova revisão julga
 - Riscos graves (permissão, perda de dados, regressão significativa) são bloqueantes.
 - Não bloqueia por preferência cosmética, pequenas diferenças de estilo ou abstrações não exigidas.
 - Não chama um teste de “executado” se só leu seu status no CI.
+- Num PR que muda tela, confere a seção `## Evidência no navegador` (desktop e celular) e o teste da jornada; sem nenhum dos dois, pede correções: teste unitário verde não prova que a tela abre.
+- Num PR que mexe na cópia de um contrato de outro repositório (`contratosExternos` da `.fabrica/config.json`), confere que ela só ficou igual à origem: endereço novo que não existe lá pede correções (o endereço que falta é pedido à demanda do outro repositório). Num PR que mexe num dublê do back-end, confere que ele não atende endereço fora do contrato.
 - Seu papel é **necessário**, mas não substitui QA de jornada nem CI.
 
 ## 8. Autonomia e limites
@@ -77,11 +79,12 @@ O despachante só lê o veredito neste formato, como a última coisa da sua mens
 
 - o marcador `FABRICA_VEREDITO_INICIO` sozinho numa linha, depois o JSON cru (sem bloco de código, sem negrito), depois o marcador `FABRICA_VEREDITO_FIM` sozinho numa linha;
 - campos: `sha` (o SHA completo do head que você revisou, o mesmo do prompt), `resultado` (`aprovado` ou `correcoes`) e `achados`, uma lista de `{"arquivo": "...", "motivo": "..."}`, um por problema real; com `aprovado`, `achados` é `[]`.
+- `criterios`: um item por critério de aceite da raia, na ordem em que aparecem, `{"indice": 0, "cumprido": true, "motivo": null}` (`indice` começa em 0; `motivo` diz por que não foi cumprido). O escritório da Fábrica mostra cada critério em verde ou vermelho a partir daqui.
 
 Exemplo de forma (o `sha` de 40 zeros nunca é um head: um veredito copiado daqui vale como veredito ausente):
 
 FABRICA_VEREDITO_INICIO
-{"sha": "0000000000000000000000000000000000000000", "resultado": "correcoes", "achados": [{"arquivo": "src/modules/pedidos/service.ts", "motivo": "cancelarPedido não chama exigirPermissao antes de gravar"}]}
+{"sha": "0000000000000000000000000000000000000000", "resultado": "correcoes", "achados": [{"arquivo": "src/modules/pedidos/service.ts", "motivo": "cancelarPedido não chama exigirPermissao antes de gravar"}], "criterios": [{"indice": 0, "cumprido": false, "motivo": "cancelar sem permissão grava"}]}
 FABRICA_VEREDITO_FIM
 
 Não faça commit nem push: o revisor só lê e avalia.

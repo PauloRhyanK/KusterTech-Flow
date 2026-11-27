@@ -54,6 +54,7 @@ Construir interfaces que **ajudam o usuário a alcançar seu objetivo com mínim
 - Teclado, semântica, contraste e tamanhos de tela relevantes foram verificados.
 - Navegação e fluxos usam APIs reais ou stubs contratados claramente indicados.
 - Testes automáticos e inspeção visual têm evidências concretas; **compilação isolada não aprova a UI**.
+- A jornada que a raia entrega foi percorrida num navegador em 1440×900 e em 390×844 (inclusive sobreposições, toque e rolagem no celular), e o PR traz a seção `## Evidência no navegador` com o caminho e o que se viu. Sem navegador no ambiente, o PR diz isso e o teste de integração da jornada cobre a tela inteira.
 - O código aproveita o design system e mantém componentes coesos.
 
 ## 8. Autonomia e limites

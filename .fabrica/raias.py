@@ -1,6 +1,7 @@
 """Validação do plano de raias (`.fabrica/plano.json`) e seleção de raias prontas."""
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -14,6 +15,8 @@ import globs  # noqa: E402
 PAPEIS_DE_RAIA = ("produto", "arquiteto", "ux-ui", "frontend", "backend", "qa", "devops", "seguranca")
 # Nomes antigos ainda aceitos no plano; valem como o papel canônico (pacote, modelo e prompt).
 ALIASES_DE_PAPEL = {"ux-engineer": "ux-ui"}
+# Espelha `executores.AGENTES`: o instalador copia só `raias.py` e `globs.py`, então este módulo não importa `executores`.
+AGENTES_DE_EXECUTOR = ("claude-code", "codex", "antigravity")
 
 _PLANO_SEEDS = re.compile(r"pl-[0-9a-f]{4}")
 
@@ -29,6 +32,15 @@ def _texto_vazio(valor) -> bool:
 def papel_normalizado(papel):
     """O papel canônico de um alias (`ux-engineer` → `ux-ui`); qualquer outro valor volta como veio."""
     return ALIASES_DE_PAPEL.get(papel, papel) if isinstance(papel, str) else papel
+
+
+def _executor_valido(executor) -> bool:
+    return (
+        isinstance(executor, dict)
+        and executor.get("agente") in AGENTES_DE_EXECUTOR
+        and not _texto_vazio(executor.get("modelo"))
+        and (executor.get("conta") is None or not _texto_vazio(executor["conta"]))
+    )
 
 
 def _erros_da_raia(raia: dict) -> list[str]:
@@ -65,6 +77,8 @@ def _erros_da_raia(raia: dict) -> list[str]:
         or not all(isinstance(c, str) and c.strip() for c in criterios)
     ):
         erros.append(f"raia '{id_}': criteriosAceite deve ser uma lista não vazia")
+    if "executor" in raia and not _executor_valido(raia["executor"]):
+        erros.append(f"raia '{id_}': executor inválido")
     return erros
 
 
@@ -201,8 +215,24 @@ def validar_plano(plano: dict) -> list[str]:
     return erros
 
 
-def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[str]:
-    """Raias da fase atual, ainda não iniciadas, com todas as dependências concluídas."""
+def raias_de_fases_anteriores(plano: dict) -> set[str]:
+    """Ids de raia das fases que vêm antes de `faseAtual` (vazio se `faseAtual` não existe)."""
+    anteriores: set[str] = set()
+    for fase in _lista(plano.get("fases")):
+        if not isinstance(fase, dict):
+            continue
+        if fase.get("id") == plano.get("faseAtual"):
+            return anteriores
+        anteriores.update(i for i in _lista(fase.get("raias")) if isinstance(i, str))
+    return set()
+
+
+def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str], reabertas=frozenset()) -> list[str]:
+    """Raias da fase atual, ainda não iniciadas, com todas as dependências concluídas.
+
+    `reabertas`: raias reabertas para uma 2ª rodada; as de fases anteriores à atual também entram (as de
+    fases posteriores esperam a fase delas, como as outras).
+    """
     fase_atual = next(
         (
             f
@@ -212,6 +242,7 @@ def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[s
         {},
     )
     da_fase = {i for i in _lista(fase_atual.get("raias")) if isinstance(i, str)}
+    da_fase |= raias_de_fases_anteriores(plano) & set(reabertas)
     return [
         r["id"]
         for r in _lista(plano.get("raias"))
@@ -222,6 +253,17 @@ def raias_prontas(plano: dict, concluidas: set[str], ativas: set[str]) -> list[s
         and r["id"] not in ativas
         and all(isinstance(d, str) and d in concluidas for d in _lista(r.get("dependeDe")))
     ]
+
+
+def impressao_da_raia(raia: dict) -> str:
+    """sha256 dos critérios de aceite e da partição (`arquivos`) da raia: muda quando uma emenda muda o que se revisa."""
+    raia = raia if isinstance(raia, dict) else {}
+    texto = json.dumps(
+        {"criteriosAceite": _lista(raia.get("criteriosAceite")), "arquivos": _lista(raia.get("arquivos"))},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
 
 def _validar_arquivo(caminho: str) -> int:
