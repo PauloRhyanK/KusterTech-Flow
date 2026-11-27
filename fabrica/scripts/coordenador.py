@@ -67,9 +67,11 @@ import conversas_flow  # noqa: E402
 import demandas  # noqa: E402
 import demandas_flow  # noqa: E402
 import despachante  # noqa: E402
+import esgotados  # noqa: E402
 import estado as est  # noqa: E402
 import fila  # noqa: E402
 import motor as motor_  # noqa: E402
+import motor_roteador  # noqa: E402
 import publicar  # noqa: E402
 import raias  # noqa: E402
 import resumo_de_execucao  # noqa: E402
@@ -82,6 +84,9 @@ ARQ_CAPACIDADE = "capacidade.json"
 ARQ_TRAVA = "coordenador.lock"
 ARQ_LOG = "log.jsonl"
 ARQ_COORDENADOR_ENV = "coordenador.env"
+ARQ_ESGOTADOS = "executores-esgotados.json"
+ARQ_FERRAMENTAS = "ferramentas-presentes.json"
+ARQ_CONTAS = "contas.json"
 DIR_PLANOS = "planos"
 DIR_ENTRADA = "entrada"
 DIR_PLANOS_NO_REPO = ".fabrica/planos"
@@ -885,11 +890,19 @@ class Coordenador:
             consertos=consertos.para_o_retrato(self.dados) if com_consertos else None,
             versao=versao,
             execucoes=self._execucoes(planos) if versao >= 2 else None,
+            esgotados=esgotados.ler(self.raiz / ARQ_ESGOTADOS) if versao >= 2 else None,
+            modelos=self._modelos_do_kit() if versao >= 2 else None,
         )
         cortado = retrato.ajustar(completo)
         if cortado is None:
             raise retrato.FalhaDeEnvio("retrato não cabe nos limites: nada enviado")
         return retrato.serializar(cortado)
+
+    @staticmethod
+    def _executor(registro) -> dict:
+        """`agente`, `conta` e `substituiu` de um registro de executor do estado; nulos quando ele não existe."""
+        registro = registro if isinstance(registro, dict) else {}
+        return {"agente": registro.get("agente"), "conta": registro.get("conta"), "substituiu": registro.get("substituiu")}
 
     def _execucao(self, run_id, papel, **extra) -> dict:
         """Uma execução ativa para o retrato v2. Falha do Warren num run não derruba o retrato: sai sem linhas."""
@@ -913,26 +926,28 @@ class Coordenador:
             papeis = {r.get("id"): r.get("papel") for r in plano.get("raias") or [] if isinstance(r, dict)}
             demanda = plano.get("demanda")
             comum = {"planoId": plano_id, "demanda": demanda if isinstance(demanda, str) else None}
+            raias_do_estado = estado.get("raias") if isinstance(estado.get("raias"), dict) else {}
             for seed in (estado.get("seeds") or {}).values():
                 if not isinstance(seed, dict):
                     continue
                 raia, situacao = seed.get("raia"), seed.get("estado")
                 if situacao == "executando" and seed.get("runId"):
-                    saida.append(self._execucao(seed["runId"], papeis.get(raia), raia=raia, inicio=seed.get("inicio"), **comum))
+                    executor = self._executor((raias_do_estado.get(raia) or {}).get("executor") if isinstance(raias_do_estado.get(raia), dict) else None)
+                    saida.append(self._execucao(seed["runId"], papeis.get(raia), raia=raia, inicio=seed.get("inicio"), **executor, **comum))
                 elif situacao == "em_revisao" and seed.get("revisaoRunId"):
-                    saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **comum))
+                    saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **self._executor(seed.get("revisaoExecutor")), **comum))
                 elif situacao == "corrigindo" and seed.get("fixerRunId"):
-                    saida.append(self._execucao(seed["fixerRunId"], "fixer", raia=raia, **comum))
+                    saida.append(self._execucao(seed["fixerRunId"], "fixer", raia=raia, **self._executor(seed.get("fixerExecutor")), **comum))
                 elif situacao == "corrigindo" and seed.get("revisaoRunId"):
                     # depois do fixer o despachante chama o revisor de novo sem sair de `corrigindo`
-                    saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **comum))
+                    saida.append(self._execucao(seed["revisaoRunId"], "revisor", raia=raia, **self._executor(seed.get("revisaoExecutor")), **comum))
             orquestrador = (estado.get("orquestrador") or {}).get("runId")
             if orquestrador:
-                saida.append(self._execucao(orquestrador, "orquestrador", raia=None, **comum))
+                saida.append(self._execucao(orquestrador, "orquestrador", raia=None, **self._executor(estado["orquestrador"].get("executor")), **comum))
         itens = ((self.dados.get("demandas") or {}).get("itens") or {})
         for demanda_id, item in itens.items():
             if isinstance(item, dict) and item.get("runId") and item.get("fase") in PAPEL_DA_FASE_DA_DEMANDA:
-                saida.append(self._execucao(item["runId"], PAPEL_DA_FASE_DA_DEMANDA[item["fase"]], raia=None, planoId=None, demanda=demanda_id, inicio=item.get("inicio")))
+                saida.append(self._execucao(item["runId"], PAPEL_DA_FASE_DA_DEMANDA[item["fase"]], raia=None, planoId=None, demanda=demanda_id, inicio=item.get("inicio"), **self._executor(None)))
         return saida
 
     def _passo_central(self) -> None:
@@ -1568,7 +1583,11 @@ class Coordenador:
             "FABRICA_CAPACIDADE": str(self.capacidade),
             "FABRICA_PLANO_ID": entrada["id"],
             "FABRICA_PREPARAR_WARREN": "0",
+            "FABRICA_ESGOTADOS_FILE": str(self.raiz / ARQ_ESGOTADOS),
+            "FABRICA_FERRAMENTAS_FILE": str(self.raiz / ARQ_FERRAMENTAS),
         }
+        if (self.raiz / ARQ_CONTAS).exists():
+            variaveis["FABRICA_CONTAS_FILE"] = str(self.raiz / ARQ_CONTAS)
         variaveis.update(self.ambiente)
         for nome, valor in variaveis.items():
             if not valor or any(c in valor for c in "\n\r\0"):
@@ -1925,11 +1944,18 @@ def construir(ambiente, raiz) -> Coordenador:
     caminho_gh = os.path.abspath(os.path.expanduser(ambiente.get("GH_TOKEN_FILE") or despachante.GH_TOKEN_PADRAO))
     token_gh = despachante._ler_token(caminho_gh)
     helper_de_credencial(caminho_gh)  # aspa simples no caminho: saída 2 já na partida
+    ambiente_dos_motores = dict(ambiente)
+    if (pathlib.Path(raiz) / ARQ_CONTAS).exists():
+        ambiente_dos_motores["FABRICA_CONTAS_FILE"] = str(pathlib.Path(raiz) / ARQ_CONTAS)
     try:
-        motor = motor_warren.MotorWarren(ambiente.get("WARREN_API") or despachante.WARREN_API_PADRAO, token_warren)
+        motor_padrao = motor_warren.MotorWarren(ambiente.get("WARREN_API") or despachante.WARREN_API_PADRAO, token_warren)
         forja = forja_github.ForjaGitHub(token_gh)
     except ValueError as exc:
         raise ErroDeEntrada(["token inválido (%s)" % type(exc).__name__]) from None
+    try:
+        motor, tokens_dos_motores = motor_roteador.do_ambiente(ambiente_dos_motores, motor_padrao, despachante._ler_token)
+    except ValueError as exc:  # a mensagem descreve o arquivo de contas, nunca o conteúdo
+        raise ErroDeEntrada([str(exc)]) from None
     return Coordenador(
         raiz=raiz,
         forja=forja,
@@ -1940,7 +1966,7 @@ def construir(ambiente, raiz) -> Coordenador:
         kit=KIT_PADRAO,
         clonar=functools.partial(_clonar, token_file=caminho_gh),
         ambiente=ambiente,
-        segredos=(token_warren, token_gh),
+        segredos=(*tokens_dos_motores, token_gh),
         central=configuracao_central(ambiente, raiz),
     )
 

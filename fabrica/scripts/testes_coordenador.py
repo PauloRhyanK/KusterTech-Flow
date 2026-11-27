@@ -17,6 +17,7 @@ sys.path.insert(0, str(RAIZ_DOS_SCRIPTS))
 import atendente  # noqa: E402
 import capacidade  # noqa: E402
 import coordenador  # noqa: E402
+import motor_roteador  # noqa: E402
 import despachante  # noqa: E402
 import fila  # noqa: E402
 import forja  # noqa: E402
@@ -369,6 +370,8 @@ class TestesAdmissao(Base):
                 "FABRICA_CAPACIDADE": str(self.raiz / "capacidade.json"),
                 "FABRICA_PLANO_ID": a,
                 "FABRICA_PREPARAR_WARREN": "0",
+                "FABRICA_ESGOTADOS_FILE": str(self.raiz / "executores-esgotados.json"),
+                "FABRICA_FERRAMENTAS_FILE": str(self.raiz / "ferramentas-presentes.json"),
                 "WARREN_API": "http://127.0.0.1:8080",
                 "WARREN_TOKEN_FILE": "/seg/warren",
                 "GH_TOKEN_FILE": "/seg/gh",
@@ -378,6 +381,14 @@ class TestesAdmissao(Base):
         argv, ambiente = self.executar.chamadas[0]
         self.assertEqual(argv[1:], ["-I", "/kit/fabrica/scripts/despachante.py", "iniciar"])
         self.assertNotIn(TOKEN, json.dumps(ambiente))
+
+    def test_plano_env_leva_contas_so_quando_o_arquivo_existe(self):
+        (self.raiz / "contas.json").write_text("{}", encoding="utf-8")
+        a = self.publicar("login", ["src/login/**"])
+        self.novo().ciclo()
+        env = (self.pasta(a) / "plano.env").read_text(encoding="utf-8")
+        self.assertIn("FABRICA_CONTAS_FILE=%s\n" % (self.raiz / "contas.json"), env)
+        self.assertEqual(coordenador.VARIAVEIS_REPASSADAS, ("WARREN_API", "WARREN_TOKEN_FILE", "GH_TOKEN_FILE"))
 
     def test_terceiro_que_colide_espera_a_conclusao_do_primeiro(self):
         a = self.publicar("login", ["src/login/**"])
@@ -2051,6 +2062,53 @@ class TestesConsertos(Base):
         self.assertEqual(chamados, ["run0", "run1"])
         self.assertEqual([len(e["linhas"]) for e in execs], [1, 1, 0])
 
+    def test_execucoes_trazem_o_executor_do_registro_do_estado(self):
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
+        c.dados.setdefault("demandas", {})["itens"] = {"d-1": {"runId": "r9", "fase": "triando"}}
+        troca = {"agente": "claude-code", "conta": "claude-principal", "motivo": "cota"}
+        lidos = {"p": {"estado": {
+            "raias": {"a": {"executor": {"agente": "claude-code", "conta": "claude-reserva", "modelo": "m", "substituiu": troca}}},
+            "seeds": {
+                "s1": {"raia": "a", "estado": "executando", "runId": "r1"},
+                "s2": {"raia": "b", "estado": "em_revisao", "revisaoRunId": "r3", "revisaoExecutor": {"agente": "codex", "conta": "c2", "modelo": "m"}},
+                "s3": {"raia": "c", "estado": "corrigindo", "fixerRunId": "r4", "fixerExecutor": {"agente": "antigravity", "conta": "c3", "modelo": "m"}},
+            },
+            "orquestrador": {"runId": "r5", "executor": {"agente": "claude-code", "conta": "claude-principal", "modelo": "m"}},
+        }, "plano": {"raias": [{"id": "a", "papel": "backend"}]}}}
+        por_run = {e["runId"]: e for e in c._execucoes(lidos)}
+        self.assertEqual((por_run["r1"]["agente"], por_run["r1"]["conta"], por_run["r1"]["substituiu"]), ("claude-code", "claude-reserva", troca))
+        self.assertEqual((por_run["r3"]["agente"], por_run["r3"]["conta"]), ("codex", "c2"))
+        self.assertEqual((por_run["r4"]["agente"], por_run["r4"]["conta"]), ("antigravity", "c3"))
+        self.assertEqual((por_run["r5"]["agente"], por_run["r5"]["conta"]), ("claude-code", "claude-principal"))
+        self.assertEqual((por_run["r9"]["agente"], por_run["r9"]["conta"], por_run["r9"]["substituiu"]), (None, None, None))
+
+    def test_retrato_traz_contas_com_o_arquivo_de_esgotados(self):
+        self.publicar("login", ["src/login/**"])
+        (self.raiz / "executores-esgotados.json").write_text(json.dumps({"claude-code|claude-principal": {"ate": "2026-11-03T13:00:00+00:00"}}), encoding="utf-8")
+        self.enviar = EnviarFalso()
+        c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=self.enviar, kit=self._kit_com_modelos())
+        c.ciclo()
+        contas = self.enviar.chamadas[0]["corpo"]["contas"]
+        self.assertEqual(contas[0], {"agente": "claude-code", "conta": "claude-principal", "esgotadaAte": "2026-11-03T13:00:00Z"})
+        self.assertEqual(contas[1], {"agente": "claude-code", "conta": "claude-reserva", "esgotadaAte": None})
+
+    def test_arquivo_de_esgotados_ausente_ou_ilegivel_vale_vazio(self):
+        self.publicar("login", ["src/login/**"])
+        (self.raiz / "executores-esgotados.json").write_text("{lixo", encoding="utf-8")
+        for _ in range(2):
+            self.enviar = EnviarFalso()
+            c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=self.enviar, kit=self._kit_com_modelos())
+            c.ciclo()
+            self.assertTrue(all(x["esgotadaAte"] is None for x in self.enviar.chamadas[0]["corpo"]["contas"]))
+            (self.raiz / "executores-esgotados.json").unlink(missing_ok=True)
+
+    def _kit_com_modelos(self):
+        kit = self.raiz.parent / "kit"
+        (kit / "fabrica" / "modelos").mkdir(parents=True, exist_ok=True)
+        item = lambda conta: {"agente": "claude-code", "modelo": "m", "conta": conta}  # noqa: E731
+        (kit / "fabrica" / "modelos" / "config.json").write_text(json.dumps({"modelos": {"backend": {"executores": [item("claude-principal"), item("claude-reserva")]}}}), encoding="utf-8")
+        return kit
+
     def test_execucoes_juntam_seed_revisor_e_demanda(self):
         c = self.novo(central=dict(CENTRAL, retrato_v2=True), enviar=EnviarFalso())
         c.motor.eventos["r1"] = b'{"kind":"text","payload":{"text":"editando"}}\n'
@@ -3110,6 +3168,51 @@ class TestesMain(Base):
         self.assertIsInstance(c, coordenador.Coordenador)
         self.assertIn(TOKEN, c._segredos)
         self.assertEqual(c.ambiente, {"WARREN_TOKEN_FILE": str(warren), "GH_TOKEN_FILE": str(gh)})
+
+
+class TestesConstruirComRoteador(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.raiz = pathlib.Path(self._tmp.name)
+        for nome, texto in (("tw", "w" * 20), ("tg", "g" * 20), ("tr", "r" * 20)):
+            (self.raiz / nome).write_text(texto, encoding="utf-8")
+        self.ambiente = {"WARREN_TOKEN_FILE": str(self.raiz / "tw"), "GH_TOKEN_FILE": str(self.raiz / "tg")}
+
+    def test_sem_contas_json_so_a_conta_padrao(self):
+        c = coordenador.construir(self.ambiente, self.raiz)
+        self.assertIsInstance(c.motor, motor_roteador.MotorRoteador)
+        self.assertEqual(c.motor.contas(), ["claude-principal"])
+
+    def test_com_contas_json_a_reserva_entra_e_o_token_dela_e_segredo(self):
+        (self.raiz / "contas.json").write_text(json.dumps({"claude-reserva": {"api": "http://127.0.0.1:9191", "tokenFile": str(self.raiz / "tr")}}), encoding="utf-8")
+        c = coordenador.construir(self.ambiente, self.raiz)
+        self.assertEqual(c.motor.contas(), ["claude-principal", "claude-reserva"])
+        self.assertIn("r" * 20, c._segredos)
+        self.assertNotIn("FABRICA_CONTAS_FILE", c.ambiente)
+
+    def test_contas_json_torto_sai_como_erro_de_entrada(self):
+        (self.raiz / "contas.json").write_text("{lixo", encoding="utf-8")
+        with self.assertRaises(coordenador.ErroDeEntrada):
+            coordenador.construir(self.ambiente, self.raiz)
+
+    def test_id_prefixado_da_reserva_vai_a_instancia_certa_e_cancelamento_tambem(self):
+        (self.raiz / "contas.json").write_text(json.dumps({"claude-reserva": {"api": "http://127.0.0.1:9191", "tokenFile": str(self.raiz / "tr")}}), encoding="utf-8")
+        c = coordenador.construir(self.ambiente, self.raiz)
+        chamadas = []
+
+        class Reserva:
+            def run(self, ident):
+                chamadas.append(("run", ident))
+                return {"estado": "running"}
+
+            def cancelar_plano(self, ident):
+                chamadas.append(("cancelar", ident))
+
+        c.motor._motores["claude-reserva"] = Reserva()
+        self.assertEqual(c.motor.run("claude-reserva:run_1"), {"estado": "running"})
+        c.motor.cancelar_plano("claude-reserva:plan_9")
+        self.assertEqual(chamadas, [("run", "run_1"), ("cancelar", "plan_9")])
 
 
 class TestesClone(unittest.TestCase):
