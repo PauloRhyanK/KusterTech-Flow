@@ -1922,8 +1922,9 @@ class Despachante:
                     estado_run, motivo_falha = "succeeded", None
                 cota = prompts.eh_falha_de_cota(motivo_falha, texto)
                 if cota:
+                    atual = _dict(_dict(self.estado.get("seeds")).get(seed_id))
                     self._esgotar(
-                        self._registro_a_esgotar(_dict(seed), "revisaoExecutor" if revisao else "fixerExecutor", papel),
+                        self._registro_a_esgotar(atual, "revisaoExecutor" if revisao else "fixerExecutor", papel),
                         texto,
                         "%s da seed %s" % (papel, seed_id),
                     )

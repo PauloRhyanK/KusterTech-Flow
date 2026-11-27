@@ -7741,6 +7741,26 @@ class TestesExecutores(Base):
         self.assertEqual(seed["revisaoExecutor"]["conta"], RESERVA)
         self.assertEqual(e["trocas"][0]["onde"], "revisor da seed s-1")
 
+    def test_cota_em_duas_revisoes_no_mesmo_ciclo_marca_as_duas_seeds(self):
+        d = self.preparar_duas_raias()
+        for seed_id, rid in (("s-1", "rev-1"), ("s-2", "rev-2")):
+            d.estado["seeds"][seed_id] = {
+                "estado": "aguardando_gates",
+                "revisaoRunId": rid,
+                "revisaoExecutor": {"agente": "claude-code", "conta": PRINCIPAL, "modelo": OPUS},
+                "tentativasRevisao": 1,
+            }
+            self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+            self.motor.definir_texto(rid, "429 rate limit")
+        d._salvar()
+        d._observar_runs_de_seeds()
+        e = self.estado()
+        for seed_id in ("s-1", "s-2"):
+            self.assertIs(e["seeds"][seed_id]["revisaoExecutor"]["esgotado"], True, seed_id)
+        self.assertEqual(
+            [t["onde"] for t in e["trocas"]], ["revisor da seed s-1", "revisor da seed s-2"]
+        )
+
     def test_cota_no_fixer_troca_executor_e_nao_gasta_o_fixer(self):
         self.codigos[H1] = 1
         d = self.preparar_raia()
