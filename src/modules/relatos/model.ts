@@ -172,7 +172,7 @@ export interface AnexoParaCopiar {
 }
 
 /** UUID v5 (sha1) de `relato:posição`: baixar de novo o mesmo anexo cai no mesmo arquivo da demanda. */
-function idDoAnexo(relatoId: string, posicao: number): string {
+export function idDoAnexo(relatoId: string, posicao: number): string {
   const h = createHash('sha1').update(`relato-anexo:${relatoId}:${posicao}`).digest()
   h[6] = (h[6]! & 0x0f) | 0x50
   h[8] = (h[8]! & 0x3f) | 0x80
