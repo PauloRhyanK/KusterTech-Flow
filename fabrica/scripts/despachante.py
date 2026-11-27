@@ -46,6 +46,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import capacidade  # noqa: E402
 import contratos_externos  # noqa: E402
 import estado as est  # noqa: E402
+import gates  # noqa: E402
 import globs  # noqa: E402
 import prompts  # noqa: E402
 import raias  # noqa: E402
@@ -934,6 +935,20 @@ class Despachante:
         except (ConfigInvalida, ValueError) as exc:
             return self._seguro(str(exc))
         return None
+
+    def _protegido_pelos_fatos(self, seed: dict):
+        """O head do PR está aprovado e verificado e toca arquivo protegido: só falta o merge do Paulo.
+
+        Vem do estado dos gates, não de um motivo lembrado: uma decisão genérica anterior pode ter apagado o motivo.
+        """
+        head = seed.get("headSha")
+        veredito, verificado = _dict(seed.get("veredito")), _dict(seed.get("verificacao"))
+        if not _texto(head) or veredito.get("sha") != head or veredito.get("resultado") != "aprovado":
+            return None
+        if verificado.get("sha") != head or verificado.get("codigo") != 0:
+            return None
+        tocados = gates.toca_protegidos([a for a in _lista(seed.get("arquivos")) if _texto(a)], self._protegidos_do_gate())
+        return "%s: %s" % (MOTIVO_PROTEGIDO, ", ".join(tocados)) if tocados else None
 
     def _protegidos(self) -> list[str]:
         """Os protegidos de verdade: a config, os fixos e as cópias dos contratos externos."""
@@ -2302,7 +2317,7 @@ class Despachante:
             ci_em_espera = self.config["ciObrigatorioNasSeeds"] is not False and seed.get("ci") == "pendente"
             if parada < (CI_PENDENTE_MAXIMO if ci_em_espera else SEM_PROGRESSO):
                 continue
-            trava = _trava_conhecida(seed)
+            trava = self._protegido_pelos_fatos(seed) or _trava_conhecida(seed)
             # arquivo protegido só o Paulo mergeia: acordar o orquestrador custa um run e não muda nada
             do_paulo = _texto(trava) and trava.startswith(MOTIVO_PROTEGIDO)
             if not do_paulo and "seed_parada:%s" % seed_id not in _lista(self.estado.get("chavesAcordadas")):
