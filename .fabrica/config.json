@@ -15,8 +15,7 @@
     ".fabrica/orquestrador.md",
     ".fabrica/equipes/**",
     ".fabrica/config.json",
-    ".env*",
-    "fabrica/**"
+    ".env*"
   ],
   "modelos": {
     "orquestrador": {
