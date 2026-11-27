@@ -25,6 +25,10 @@
 # .fabrica/planos/<feature>.json, feature de a-z e 0-9 em partes separadas por um só - (nunca
 # `plano`). Outro valor sai com 2.
 # FABRICA_PREPARAR_WARREN=0 (opcional) desliga o preparo do Warren, que fica com o coordenador da fila.
+# FABRICA_ESGOTADOS_FILE, FABRICA_FERRAMENTAS_FILE e FABRICA_CONTAS_FILE (opcionais; o coordenador da fila os grava no
+# plano.env): os executores esgotados da máquina (executores-esgotados.json; sem ele, um arquivo na própria FABRICA_RAIZ),
+# as ferramentas instaladas (ferramentas-presentes.json; sem ele, nenhum aviso) e as contas do Warren
+# (contas.json com {"<conta>": {"api": url, "tokenFile": caminho}}; sem ele, só a conta padrão).
 # FABRICA_CAPACIDADE e FABRICA_PLANO_ID (opcionais, sempre juntos; um sem o outro sai com 2): o arquivo
 # de vagas globais (~/fabrica/capacidade.json) e o id do plano (<dono>--<repo>--<feature>, só a-z, 0-9 e -).
 # Com eles, uma raia nova só é despachada com vaga e o orquestrador só acorda com a trava do repositório.

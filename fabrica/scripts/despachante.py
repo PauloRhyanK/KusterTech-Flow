@@ -45,7 +45,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import contratos_externos  # noqa: E402
+import esgotados  # noqa: E402
 import estado as est  # noqa: E402
+import executores  # noqa: E402
 import gates  # noqa: E402
 import globs  # noqa: E402
 import prompts  # noqa: E402
@@ -120,6 +122,15 @@ PROTEGIDOS_FIXOS = (".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
 ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
+# Fase A: só o `claude-code` tem motor; `codex` e `antigravity` valem na config mas são pulados na escolha.
+AGENTES_COM_MOTOR = ("claude-code",)
+ARQ_ESGOTADOS = "executores-esgotados.json"
+PRAZO_DA_ESPERA_SEM_EXECUTOR = datetime.timedelta(minutes=esgotados.PRAZO_PADRAO_MIN)
+LIMITE_TROCAS = 20
+CONTINUAR_DO_COMMITADO = (
+    "ATENÇÃO: a execução anterior foi interrompida porque o executor anterior bateu o limite de uso. "
+    "Continue do que já está commitado na branch da raia; não refaça o que já foi entregue."
+)
 # Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
 PAPEL_DO_ARBITRO = "arbitro"
 PAPEL_PESADO = "planejador-pesado"
@@ -706,11 +717,11 @@ def _validar_modelo(entrada, papel: str) -> dict:
     campo = "modelos.%s" % papel
     if not isinstance(entrada, dict):
         raise ConfigInvalida(campo)
+    try:
+        lista = executores.normalizar(entrada, papel)
+    except ValueError as exc:
+        raise ConfigInvalida(str(exc)) from None
     custo = entrada.get("maxCustoUsd")
-    if not _texto(entrada.get("agente")):
-        raise ConfigInvalida(campo + ".agente")
-    if not _texto(entrada.get("modelo")):
-        raise ConfigInvalida(campo + ".modelo")
     if (
         isinstance(custo, bool)
         or not isinstance(custo, (int, float))
@@ -718,7 +729,19 @@ def _validar_modelo(entrada, papel: str) -> dict:
         or custo <= 0
     ):
         raise ConfigInvalida(campo + ".maxCustoUsd")
-    return {"agente": entrada["agente"], "modelo": entrada["modelo"], "maxCustoUsd": custo}
+    ferramentas = entrada.get("ferramentas", [])
+    if not isinstance(ferramentas, list) or not all(_texto(f) for f in ferramentas):
+        raise ConfigInvalida(campo + ".ferramentas")
+    for nome in ferramentas:
+        if nome not in prompts.FERRAMENTAS:
+            raise ConfigInvalida("%s.ferramentas: ferramenta desconhecida %r" % (campo, _cortar(nome, 60)))
+    return {
+        "agente": lista[0]["agente"],
+        "modelo": lista[0]["modelo"],
+        "maxCustoUsd": custo,
+        "executores": lista,
+        "ferramentas": list(ferramentas),
+    }
 
 
 def _validar_config(config) -> dict:
@@ -787,6 +810,8 @@ class Despachante:
         capacidade: str | None = None,
         plano_id: str | None = None,
         mem_disponivel=capacidade.mem_disponivel_mb,
+        arquivo_esgotados=None,
+        arquivo_ferramentas=None,
     ):
         if not _texto(projeto):
             raise ConfigInvalida("projeto")
@@ -808,6 +833,9 @@ class Despachante:
         self.motor = motor
         self.forja = forja
         self.raiz = pathlib.Path(raiz)
+        # pares esgotados (compartilhado pela máquina, quando o coordenador informa) e ferramentas presentes
+        self._arquivo_esgotados = pathlib.Path(arquivo_esgotados) if arquivo_esgotados else self.raiz / ARQ_ESGOTADOS
+        self._arquivo_ferramentas = pathlib.Path(arquivo_ferramentas) if arquivo_ferramentas else None
         self.repo_dir = pathlib.Path(repo_dir)
         self.config = _validar_config(copy.deepcopy(config))
         self.projeto = projeto
@@ -930,6 +958,238 @@ class Despachante:
         if entrada is None:
             entrada = modelos.get(papel)
         return _validar_modelo(entrada, str(papel_normalizado(papel)))
+
+    # ------------------------------------------------------------ executores
+
+    def _agora_dt(self) -> datetime.datetime:
+        momento = self._agora()
+        if momento.tzinfo is None:
+            momento = momento.astimezone()  # relógio local (datetime.now): converte para UTC pelo fuso da máquina
+        return momento.astimezone(datetime.timezone.utc)
+
+    def _contas_do_motor(self) -> list:
+        """As contas com instância do Warren; um motor sem roteador atende só a conta padrão."""
+        contas = getattr(self.motor, "contas", None)
+        return list(contas()) if callable(contas) else [executores.CONTA_PADRAO]
+
+    def _lista_de_executores(self, papel, raia=None) -> list:
+        """A lista do `executor` da raia, quando o plano a traz; senão a do papel."""
+        modelo = self._modelo(papel)
+        bruto = _dict(raia).get("executor")
+        if bruto is None:
+            return modelo["executores"]
+        try:
+            return [executores.normalizar_item(bruto, "executor da raia")]
+        except ValueError as exc:
+            raise ConfigInvalida(str(exc)) from None
+
+    def _executor(self, papel, raia=None):
+        """O primeiro executor disponível `{agente, modelo, conta, maxCustoUsd}`, ou `None`.
+
+        Pulam-se o par esgotado, o agente sem motor e a conta sem instância do Warren.
+        """
+        lista = self._lista_de_executores(papel, raia)
+        contas = set(self._contas_do_motor())
+        indisponiveis = set(esgotados.vigentes(esgotados.ler(self._arquivo_esgotados), self._agora_dt()))
+        indisponiveis |= {
+            (i["agente"], i["conta"]) for i in lista if i["agente"] not in AGENTES_COM_MOTOR or i["conta"] not in contas
+        }
+        escolhido = executores.escolher(lista, indisponiveis)
+        if escolhido is None:
+            return None
+        return dict(escolhido, maxCustoUsd=self._modelo(papel)["maxCustoUsd"])
+
+    @staticmethod
+    def _registro_do_executor(executor: dict, anterior) -> dict:
+        """O que o estado guarda de cada despacho; depois de uma troca por cota, também o par anterior."""
+        registro = {"agente": executor["agente"], "conta": executor["conta"], "modelo": executor["modelo"]}
+        anterior = _dict(anterior)
+        if anterior.get("esgotado") is True:
+            registro["substituiu"] = {"agente": anterior.get("agente"), "conta": anterior.get("conta"), "motivo": "cota"}
+        return registro
+
+    def _esgotar(self, registro, texto, onde: str) -> None:
+        """Marca o par do `registro` como esgotado na máquina e anota a troca; o próximo despacho escolhe outro."""
+        if not isinstance(registro, dict) or registro.get("esgotado") is True:
+            return
+        agente, conta = registro.get("agente"), registro.get("conta")
+        if not _texto(agente) or not _texto(conta):
+            return
+        agora = self._agora_dt()
+        ate = esgotados.retorno_da_cota(texto, agora)
+        try:
+            dados = esgotados.marcar(self._arquivo_esgotados, agente, conta, agora=agora, ate=ate)
+        except OSError as exc:
+            self._erro_de_etapa("marcar_esgotado", "%s|%s" % (agente, conta), exc)
+            return
+        registro["esgotado"] = True
+        ate_texto = _dict(dados.get("%s|%s" % (agente, conta))).get("ate")
+        try:
+            ate_hora = datetime.datetime.fromisoformat(ate_texto).astimezone(datetime.timezone.utc).strftime("%H:%M UTC")
+        except (TypeError, ValueError):
+            ate_hora = "?"
+        trocas = self.estado.get("trocas")
+        trocas = trocas if isinstance(trocas, list) else []
+        trocas.append(
+            {"quando": agora.isoformat(), "de": {"agente": agente, "conta": conta}, "motivo": "cota", "onde": self._seguro(onde, 120)}
+        )
+        self.estado["trocas"] = trocas[-LIMITE_TROCAS:]
+        self._salvar()
+        self._aviso("executor %s/%s esgotado até %s: %s segue com o próximo" % (agente, conta, ate_hora, onde))
+
+    def _registro_a_esgotar(self, dono: dict, campo: str, papel, raia=None):
+        """O registro de executor de `dono[campo]`; num estado anterior à troca, o executor que seria o escolhido."""
+        registro = dono.get(campo)
+        if isinstance(registro, dict):
+            return registro
+        try:
+            executor = self._executor(papel, raia)
+        except ConfigInvalida:
+            return None
+        if executor is None:
+            return None
+        registro = dono[campo] = self._registro_do_executor(executor, None)
+        return registro
+
+    def _papel_e_raia_da_acao(self, acao: dict):
+        tipo = acao.get("tipo")
+        if tipo == "despachar_raia":
+            raia = self._raia_do_plano(acao.get("raia"))
+            return _dict(raia).get("papel"), raia
+        if tipo == "revisar":
+            return "revisor", None
+        if tipo == "corrigir":
+            return "fixer", None
+        if tipo == "acordar":
+            return (PAPEL_DO_ARBITRO if _acordada_do_arbitro(acao) else self._papel_da_acordada(acao)), None
+        return None, None
+
+    def _sem_executor(self, acao: dict) -> bool:
+        """Antes de gastar a intenção de um despacho: o papel tem executor? Sem ele, só as ações desse papel aguardam."""
+        papel, raia = self._papel_e_raia_da_acao(acao)
+        if not _texto(papel):
+            return False
+        try:
+            executor = self._executor(papel, raia)
+        except ConfigInvalida:
+            return False  # o `_efeito` recusa pelo caminho de hoje
+        chave = papel_normalizado(papel)
+        espera = self.estado.get("semExecutor")
+        if not isinstance(espera, dict):
+            espera = self.estado["semExecutor"] = {}
+        if executor is not None:
+            if not self._papel_sem_executor(chave) and espera.pop(chave, None) is not None:
+                self._salvar()
+            return False
+        agora = self._agora_dt()
+        desde = espera.get(chave)
+        if not _texto(desde):
+            desde = espera[chave] = agora.isoformat()
+        retorno = executores.proximo_retorno(
+            self._lista_de_executores(papel, raia), esgotados.ler(self._arquivo_esgotados), agora
+        ) or (agora + PRAZO_DA_ESPERA_SEM_EXECUTOR)
+        if acao.get("tipo") == "despachar_raia":
+            raia_estado = _dict(_dict(self.estado.get("raias")).get(acao.get("raia")))
+            anterior = _dict(raia_estado.get("aguardandoExecutor"))
+            raia_estado["aguardandoExecutor"] = {
+                "desde": anterior["desde"] if _texto(anterior.get("desde")) else agora.isoformat(),
+                "ate": retorno.isoformat(),
+            }
+        self._salvar()
+        alvo = acao.get("raia") or acao.get("seed") or acao.get("alvo") or ""
+        self._aviso("sem executor disponível para %s: %s %s aguarda" % (chave, acao.get("tipo"), alvo))
+        return True
+
+    def _chamar_o_paulo_sem_executor(self, papel: str, desde: str, agora: datetime.datetime) -> None:
+        """Papel esgotado há mais de `ESPERA_MAXIMA_SEM_EXECUTOR_MIN`: uma issue ao Paulo, sem repetir enquanto durar."""
+        try:
+            inicio = datetime.datetime.fromisoformat(desde)
+        except ValueError:
+            return
+        if agora - inicio < datetime.timedelta(minutes=est.ESPERA_MAXIMA_SEM_EXECUTOR_MIN):
+            return
+        corpo = (
+            "Todos os executores do papel %s estão esgotados há mais de %d minutos (desde %s). As raias desse papel "
+            "voltam sozinhas quando o primeiro prazo vencer; a issue é fechada pelo despachante quando houver executor.\n\n%s"
+            % (papel, est.ESPERA_MAXIMA_SEM_EXECUTOR_MIN, desde, "Se a espera não puder continuar, ajuste a lista de executores do papel.")
+        )
+        try:
+            self._abrir_decisao_rastreada(
+                "sem executor para %s" % papel, papel, "[fábrica] sem executor para %s há 3 h" % papel, corpo, tipo="executor"
+            )
+        except Exception as exc:  # noqa: BLE001 - tenta de novo no próximo ciclo
+            self._erro_de_etapa("decisao_sem_executor", papel, exc)
+
+    def _papel_tem_executor(self, papel) -> bool:
+        try:
+            return self._executor(papel) is not None
+        except ConfigInvalida:
+            return True  # sem modelo para o papel não há o que esperar
+
+    def _papel_sem_executor(self, papel) -> bool:
+        """O papel não tem executor, ou uma raia dele espera o executor próprio: a espera do papel dura até a última sair."""
+        if not self._papel_tem_executor(papel):
+            return True
+        chave = papel_normalizado(papel)
+        return any(
+            _dict(raia).get("aguardandoExecutor") and papel_normalizado(self._papel_da_raia(raia_id)) == chave
+            for raia_id, raia in _dict(self.estado.get("raias")).items()
+        )
+
+    def _liberar_esperas_de_executor(self) -> None:
+        """A raia cujo prazo de espera passou volta a concorrer; o papel sai da espera quando nenhuma raia dele espera mais."""
+        agora = self._agora_dt()
+        mudou = False
+        for raia in _dict(self.estado.get("raias")).values():
+            espera = _dict(_dict(raia).get("aguardandoExecutor"))
+            if not espera:
+                continue
+            try:
+                ate = datetime.datetime.fromisoformat(espera["ate"])
+            except (KeyError, TypeError, ValueError):
+                ate = None
+            if ate is None or ate <= agora:
+                raia.pop("aguardandoExecutor", None)
+                mudou = True
+        espera_dos_papeis = self.estado.get("semExecutor")
+        if isinstance(espera_dos_papeis, dict):
+            for papel in [p for p in espera_dos_papeis if not self._papel_sem_executor(p)]:
+                del espera_dos_papeis[papel]
+                mudou = True
+            for papel, desde in list(espera_dos_papeis.items()):
+                self._chamar_o_paulo_sem_executor(papel, desde, agora)
+        if mudou:
+            self._salvar()
+
+    def _retomar_pausa_antiga_por_cota(self) -> None:
+        """Um `estado.json` anterior à troca de executor: a pausa por cota é retomada sozinha."""
+        if self.estado.get("pausado") != "cota":
+            return
+        self.estado["pausado"] = None
+        liberadas = liberar_raias_em_cota(self.estado)
+        self._salvar()
+        self._aviso("pausa por cota de uma versão anterior retomada sozinha (a cota agora troca de executor)")
+        self._log({"evento": "pausa_por_cota_retomada", "raiasLiberadas": liberadas})
+
+    def _ferramentas_presentes(self):
+        """Ferramentas instaladas na máquina; `None` sem `FABRICA_FERRAMENTAS_FILE` ou sem arquivo legível."""
+        if self._arquivo_ferramentas is None:
+            return None
+        try:
+            dados = json.loads(self._arquivo_ferramentas.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        presentes = _dict(dados).get("presentes")
+        return {p for p in presentes if isinstance(p, str)} if isinstance(presentes, list) else None
+
+    def _ferramentas_ausentes(self, ferramentas, raia_id) -> frozenset:
+        presentes = self._ferramentas_presentes()
+        if presentes is None:
+            return frozenset()
+        ausentes = [f for f in ferramentas if f not in presentes]
+        for nome in ausentes:
+            self._aviso("ferramenta %s ausente na máquina: raia %s segue sem ela" % (nome, raia_id))
+        return frozenset(ausentes)
 
     def _papeis_sem_modelo(self, plano) -> list[str]:
         faltando = []
@@ -1204,6 +1464,8 @@ class Despachante:
         self._ja_cancelados = set()
         self._capacidade_sincronizada = False
         self._acordar_recusado = False
+        self._retomar_pausa_antiga_por_cota()
+        self._liberar_esperas_de_executor()
         self._recuperar_acao_interrompida()
         self._recuperar_decisoes_pendentes()
         self._recarregar_plano()
@@ -1701,6 +1963,13 @@ class Despachante:
                 if sem_commit and veredito is not None:
                     estado_run, motivo_falha = "succeeded", None
                 cota = prompts.eh_falha_de_cota(motivo_falha, texto)
+                if cota:
+                    atual = _dict(_dict(self.estado.get("seeds")).get(seed_id))
+                    self._esgotar(
+                        self._registro_a_esgotar(atual, "revisaoExecutor" if revisao else "fixerExecutor", papel),
+                        texto,
+                        "%s da seed %s" % (papel, seed_id),
+                    )
                 self._mudar(
                     est.registrar_fim_de_run(
                         self.estado,
@@ -1836,9 +2105,18 @@ class Despachante:
             if resultado["r"] == "esperar":
                 return
             self._contar_resultado_do_orquestrador(run_id, resultado)
+            texto = self._texto_do_run(run_id, run, obrigatorio=False) or ""
+            cota = prompts.eh_falha_de_cota(run.get("motivoFalha"), texto)
         else:
-            self._reenfileirar_acordada(run_id, run)
-        texto = self._texto_do_run(run_id, run, obrigatorio=False) or ""
+            texto = self._texto_do_run(run_id, run, obrigatorio=False) or ""
+            cota = prompts.eh_falha_de_cota(run.get("motivoFalha"), texto)
+            if cota:
+                self._esgotar(
+                    self._registro_a_esgotar(self._orq(), "executor", PAPEL_DO_ARBITRO if _acordada_do_arbitro(self._orq().get("acordada")) else "orquestrador"),
+                    texto,
+                    "orquestrador",
+                )
+            self._reenfileirar_acordada(run_id, run, cota=cota)
         self._mudar(
             est.registrar_fim_de_run(
                 self.estado,
@@ -1846,7 +2124,7 @@ class Despachante:
                 estado_run=run["estado"],
                 motivo_falha=run.get("motivoFalha"),
                 veredito=None,
-                cota=prompts.eh_falha_de_cota(run.get("motivoFalha"), texto),
+                cota=cota,
             )
         )
         if run.get("motivoFalha") == est.OOM:
@@ -1913,8 +2191,11 @@ class Despachante:
                 )
         self._salvar()
 
-    def _reenfileirar_acordada(self, run_id: str, run: dict) -> None:
-        """Run do orquestrador que não terminou `succeeded`: a mesma acordada volta para a fila."""
+    def _reenfileirar_acordada(self, run_id: str, run: dict, cota: bool = False) -> None:
+        """Run do orquestrador que não terminou `succeeded`: a mesma acordada volta para a fila.
+
+        A cota não é falha do orquestrador: o executor esgotado foi trocado, então a acordada volta sem espera nem contagem.
+        """
         orquestrador = self._orq()
         if orquestrador.get("contadoRunId") == run_id:
             return
@@ -1924,6 +2205,9 @@ class Despachante:
             self._enfileirar_acordar(
                 acordada["motivo"], acordada.get("alvo"), _dict(acordada.get("contexto")), repetir=True, salvar=False
             )
+        if cota:
+            self._salvar()
+            return
         falhas = self.estado.get("falhasAcordar")
         falhas = (falhas if _inteiro(falhas) and falhas >= 0 else 0) + 1
         self.estado["falhasAcordar"] = falhas
@@ -1942,7 +2226,7 @@ class Despachante:
 
     def _concluir_orquestrador(self) -> None:
         antes = self._orq()
-        manter = {k: antes[k] for k in ("semResultadoSeguidos", "bloqueio", "contadoRunId") if k in antes}
+        manter = {k: antes[k] for k in ("semResultadoSeguidos", "bloqueio", "contadoRunId", "executor") if k in antes}
         novo = est.concluir_orquestrador(self.estado)
         _dict(novo.get("orquestrador")).update(manter)
         novo["orquestradorLivreDesde"] = self._agora().isoformat()
@@ -1990,6 +2274,7 @@ class Despachante:
                     self._log({"evento": "seed_reiniciada", "seed": seed_id, "pr": filho.get("prUrl")})
             antes = copy.deepcopy(_dict(self.estado.get("seeds")))
             estado_plano, falha = observado.get("estado"), observado.get("falha")
+            cota = None
             if estado_plano in ("failed", "cancelled") and self._substituicao_pendente(raia_id):
                 # L1: o cancelamento é a substituição em curso, não uma falha da raia
                 self._ja_cancelados.add(raia_id)
@@ -2010,6 +2295,10 @@ class Despachante:
                     filhos=filhos,
                 )
             )
+            if cota == "cota":
+                # o par está esgotado: a raia volta a `planejada` já neste ciclo e ganha um Plan Run novo, sem gastar tentativa
+                liberar_raias_em_cota(self.estado)
+                self._salvar()
             depois = _dict(self.estado.get("seeds"))
             self._guardar_tentativas_reiniciadas(antes, depois)
             for seed_id, anterior in antes.items():
@@ -2048,7 +2337,8 @@ class Despachante:
         """`"cota"`, `"ilegivel"` (o texto de um filho com provider_error não se leu) ou None.
 
         O resume do Warren só aceita merge timeouts (resume.ts responde 409 aos outros): a cota não
-        usa retomar_plano. A raia fica `aguardandoCota` e volta a `planejada` quando o despachante retoma.
+        usa retomar_plano. O par do executor da raia é marcado como esgotado e a raia fica `aguardandoCota`;
+        quem chama a devolve a `planejada` (`liberar_raias_em_cota`) para um Plan Run novo com o próximo executor.
         """
         vistos = self.estado.get("cotaFilhos")
         if not isinstance(vistos, list):
@@ -2079,9 +2369,12 @@ class Despachante:
             self.estado["cotaFilhos"] = vistos[-LIMITE_COTA_FILHOS:]
             raia = _dict(_dict(self.estado.get("raias")).get(raia_id))
             raia["aguardandoCota"] = True
-            self.estado["pausado"] = "cota"
             self._salvar()
-            self._aviso("filho %s da raia %s bateu cota do provedor: despachante pausado; a raia recomeça depois do retomar" % (run_id, raia_id))
+            self._esgotar(
+                self._registro_a_esgotar(raia, "executor", self._papel_da_raia(raia_id), self._raia_do_plano(raia_id)),
+                texto if isinstance(texto, str) else "",
+                "raia %s" % raia_id,
+            )
         return resultado
 
     def _sincronizar(self) -> None:
@@ -2439,6 +2732,14 @@ class Despachante:
                     continue
                 mudou = True
                 self._fechar_depois(decisao["url"], "O Warren voltou a responder; issue fechada pelo despachante.", decisao=True)
+                continue
+            if decisao.get("tipo") == "executor":
+                # volta sozinha: a issue só avisa a espera longa e fecha quando o papel tem executor de novo
+                if self._papel_sem_executor(decisao.get("alvo")):
+                    restantes.append(decisao)
+                    continue
+                mudou = True
+                self._fechar_depois(decisao["url"], "O papel %s tem executor de novo; issue fechada pelo despachante." % decisao.get("alvo"), decisao=True)
                 continue
             if decisao.get("tipo") == "config":
                 # P10: se o despachante está rodando, a config voltou a valer
@@ -3039,6 +3340,8 @@ class Despachante:
             return not (_inteiro(ciclos) and ciclos >= CICLOS_WARREN_FORA)
         if tipo == "bloqueio":
             return not self._bloqueado()
+        if tipo == "executor":
+            return not self._papel_sem_executor(intencao.get("alvo"))
         if tipo == "warren_parcial":
             return not _dict(self.estado.get("warrenParcial")).get("url") and not any(
                 _inteiro(n) and n >= CICLOS_REDE_PARCIAL for n in _dict(self.estado.get("falhasDeRede")).values()
@@ -3814,6 +4117,8 @@ class Despachante:
             # a raia que o revisor vê no prompt: uma emenda dela depois disso reabre a revisão
             raia = self._raia_do_plano(_dict(_dict(self.estado.get("seeds")).get(acao.get("seed"))).get("raia"))
             acao["contra"] = raias.impressao_da_raia(_dict(raia))
+        if tipo in ACOES_PAGAS and self._sem_executor(acao):
+            return
         nonce = raiz = desde = None
         if tipo in ACOES_COM_INTENCAO:
             # P1: o nonce vai para acaoEmCurso antes do envio e na última linha do texto enviado.
@@ -3851,11 +4156,14 @@ class Despachante:
                     self._contar_adiamento(_chave_acao(acao))
             else:
                 resultado = {"ok": False} if tipo == "mergear" else ({} if tipo != "aguardar_humano" else None)
+        executor_usado = resultado.pop("executor", None) if isinstance(resultado, dict) else None
         nonces = self._cadeia(_chave_acao(acao), nonce, desde)[0] if nonce else []
         if resultado is not None and resultado.get("adiado") is not True and tipo in ACOES_PAGAS:
             self._encerrar_cadeia(_chave_acao(acao))
         if resultado is not None:
             self._aplicar(acao, resultado)
+            if isinstance(executor_usado, dict):
+                self._gravar_executor(acao, executor_usado, resultado)
             if nonce and _texto(resultado.get("runId")):
                 self._lembrar_nonces(resultado["runId"], nonces)
         self.estado.pop("acaoEmCurso", None)
@@ -4102,6 +4410,22 @@ class Despachante:
                     ),
                 )
 
+    def _gravar_executor(self, acao: dict, registro: dict, resultado: dict) -> None:
+        """O registro `{agente, conta, modelo}` do despacho no lugar que o coordenador e o retrato leem."""
+        tipo = acao.get("tipo")
+        if tipo == "despachar_raia" and _texto(resultado.get("planRunId")):
+            raia = _dict(self.estado.get("raias")).get(acao.get("raia"))
+            if isinstance(raia, dict):
+                raia["executor"] = registro
+                raia.pop("aguardandoExecutor", None)
+        elif tipo in ("revisar", "corrigir") and _texto(resultado.get("runId")):
+            seed = _dict(self.estado.get("seeds")).get(acao.get("seed"))
+            if isinstance(seed, dict):
+                seed["revisaoExecutor" if tipo == "revisar" else "fixerExecutor"] = registro
+        elif tipo == "acordar" and _texto(resultado.get("runId")):
+            self._orq()["executor"] = registro
+        self._salvar()
+
     def _acordada_registrada(self, run_id) -> bool:
         caminho = self.raiz / ARQ_ACORDADAS
         if not caminho.exists():
@@ -4209,34 +4533,48 @@ class Despachante:
                 raise _NaoExecutada("raia %r fora do plano" % (acao.get("raia"),))
             try:
                 modelo = self._modelo(raia.get("papel"))
-                template = prompts.prompt_template_raia(raia.get("papel"))
+                executor = self._executor(raia.get("papel"), raia)
+                ausentes = self._ferramentas_ausentes(modelo["ferramentas"], acao.get("raia"))
+                template = prompts.prompt_template_raia(raia.get("papel"), modelo["ferramentas"], ausentes)
             except (ConfigInvalida, ValueError) as exc:
                 raise _NaoExecutada(str(exc)) from None
+            if executor is None:
+                raise _NaoExecutada("sem executor disponível para %s" % raia.get("papel"))
+            anterior = _dict(_dict(_dict(self.estado.get("raias")).get(acao.get("raia"))).get("executor"))
+            if anterior.get("esgotado") is True:
+                template += "\n\n" + CONTINUAR_DO_COMMITADO
             try:
                 plan_run_id = self.motor.despachar_plano(
                     projeto=self.projeto,
                     plano_seeds=raia.get("planoSeeds"),
-                    agente=modelo["agente"],
-                    modelo=modelo["modelo"],
+                    agente=executor["agente"],
+                    modelo=executor["modelo"],
                     prompt_template=_com_nonce(template, nonce) if nonce else template,
-                    max_custo_usd=modelo["maxCustoUsd"],
+                    max_custo_usd=executor["maxCustoUsd"],
+                    conta=executor["conta"],
                 )
             except RecusaDoMotor as exc:
                 self._tratar_recusa_do_motor(acao.get("raia"), exc)
                 raise
-            return {"planRunId": plan_run_id}
+            return {"planRunId": plan_run_id, "executor": self._registro_do_executor(executor, anterior)}
 
         if tipo in ("revisar", "corrigir"):
             seed = self._seed_da_acao(acao)
             if not _texto(seed.get("branch")):
                 raise ValueError("seed sem branch de PR")
+            papel = "revisor" if tipo == "revisar" else "fixer"
+            try:
+                executor = self._executor(papel)
+            except ConfigInvalida as exc:
+                raise _NaoExecutada(str(exc)) from None
+            if executor is None:
+                raise _NaoExecutada("sem executor disponível para %s" % papel)
+            anterior = _dict(seed.get("revisaoExecutor" if tipo == "revisar" else "fixerExecutor"))
             if tipo == "revisar":
-                modelo = self._modelo("revisor")
                 prompt = prompts.prompt_revisor(
                     seed_id=acao["seed"], raia=_dict(self._raia_do_plano(seed.get("raia"))), sha=acao.get("sha")
                 )
             else:
-                modelo = self._modelo("fixer")
                 saida = _dict(seed.get("verificacao")).get("saida")
                 try:
                     prompt = prompts.prompt_fixer(
@@ -4249,16 +4587,19 @@ class Despachante:
                     )
                 except ValueError as exc:
                     raise _NaoExecutada(str(exc)) from None
+                if anterior.get("esgotado") is True:
+                    prompt += "\n\n" + CONTINUAR_DO_COMMITADO
             run_id = self.motor.despachar_run(
                 projeto=self.projeto,
-                agente=modelo["agente"],
-                modelo=modelo["modelo"],
+                agente=executor["agente"],
+                modelo=executor["modelo"],
                 prompt=_com_nonce(prompt, nonce) if nonce else prompt,
                 branch_existente=seed["branch"],
-                max_custo_usd=modelo["maxCustoUsd"],
+                max_custo_usd=executor["maxCustoUsd"],
                 chave_idempotencia=raiz,
+                conta=executor["conta"],
             )
-            return {"runId": run_id}
+            return {"runId": run_id, "executor": self._registro_do_executor(executor, anterior)}
 
         if tipo == "verificar":
             seed = self._seed_da_acao(acao)
@@ -4311,23 +4652,30 @@ class Despachante:
 
         if tipo == "acordar":
             arbitragem = _acordada_do_arbitro(acao)
-            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else self._papel_da_acordada(acao))
+            papel = PAPEL_DO_ARBITRO if arbitragem else self._papel_da_acordada(acao)
+            executor = self._executor(papel)
+            if executor is None:
+                raise _NaoExecutada("sem executor disponível para %s" % papel)
+            anterior = _dict(self._orq().get("executor"))
             prompt = (prompts.prompt_arbitro if arbitragem else prompts.prompt_orquestrador)(
                 motivo=acao.get("motivo"),
                 estado_compacto=compactar(self.estado, self.plano),
                 contexto=_dict(acao.get("contexto")),
                 caminho_plano=self.caminho_plano,
             )
+            if anterior.get("esgotado") is True:
+                prompt += "\n\n" + CONTINUAR_DO_COMMITADO
             run_id = self.motor.despachar_run(
                 projeto=self.projeto,
-                agente=modelo["agente"],
-                modelo=modelo["modelo"],
+                agente=executor["agente"],
+                modelo=executor["modelo"],
                 prompt=_com_nonce(prompt, nonce) if nonce else prompt,
                 branch_existente=None,
-                max_custo_usd=modelo["maxCustoUsd"],
+                max_custo_usd=executor["maxCustoUsd"],
                 chave_idempotencia=raiz,
+                conta=executor["conta"],
             )
-            return {"runId": run_id}
+            return {"runId": run_id, "executor": self._registro_do_executor(executor, anterior)}
 
         raise _NaoExecutada("tipo de ação desconhecido %r" % (tipo,))
 
@@ -4452,15 +4800,25 @@ def construir(ambiente) -> Despachante:
         # Q6: config ilegível é ConfigInvalida: no `rodar`, decisão best-effort e saída 2 (sem parada silenciosa)
         raise ConfigInvalida("config.json ilegível (%s)" % type(erro).__name__) from None
     motor = motor_warren.MotorWarren(ambiente.get("WARREN_API") or WARREN_API_PADRAO, token_warren)
+    motor_de_despacho, tokens = motor, [token_warren]
+    if ambiente.get("FABRICA_CONTAS_FILE"):
+        import motor_roteador
+
+        try:
+            motor_de_despacho, tokens = motor_roteador.do_ambiente(ambiente, motor, _ler_token)
+        except ValueError as erro:
+            raise ErroDeEntrada([str(erro)]) from None
     return Despachante(
-        motor=motor,
+        motor=motor_de_despacho,
         forja=forja_github.ForjaGitHub(token_gh),
         raiz=raiz,
         repo_dir=repo_dir,
         config=config,
         projeto=projeto,
         repo=repo,
-        segredos=(token_warren, token_gh),
+        segredos=(*tokens, token_gh),
+        arquivo_esgotados=ambiente.get("FABRICA_ESGOTADOS_FILE"),
+        arquivo_ferramentas=ambiente.get("FABRICA_FERRAMENTAS_FILE"),
         preparar_warren=None
         if sem_preparo
         else functools.partial(preparar_warren.preparar, visao_geral=motor.visao_geral, versao=motor.versao),

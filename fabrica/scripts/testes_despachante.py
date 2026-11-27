@@ -17,7 +17,9 @@ sys.path.insert(0, str(RAIZ_SCRIPTS))
 import despachante  # noqa: E402
 import estado as est  # noqa: E402
 import forja  # noqa: E402
+import esgotados  # noqa: E402
 import motor  # noqa: E402
+import motor_roteador  # noqa: E402
 import prompts  # noqa: E402
 
 SCRIPT = RAIZ_SCRIPTS / "despachante.py"
@@ -30,6 +32,9 @@ H2 = "2" * 40
 H3 = "3" * 40
 TOKEN = "tok-secreto-warren-123456"
 TOKEN_GH = "ghp_segredo_github_987654"
+
+
+MOTIVO_PAUSA = "pausa de teste"
 
 
 def _modelo(modelo, custo, esforco="medium"):
@@ -207,6 +212,11 @@ class Base(_AjudasDoOrquestrador, unittest.TestCase):
         self.forja.definir_pr(PR, head_sha=head, branch="warren/s-1", arquivos=list(arquivos))
         self.forja.definir_ci(REPO, head, ci)
 
+    def pausar(self, d, motivo=MOTIVO_PAUSA):
+        """Pausa o despachante como as pausas que restaram (a cota deixou de pausar); o próximo ciclo abre a issue."""
+        d.estado["pausado"] = motivo
+        d._salvar()
+
     def terminar_revisao(self, sha, resultado="aprovado", achados=(), seed="s-1"):
         rid = self.estado()["seeds"][seed]["revisaoRunId"]
         self.assertTrue(rid, "não há revisão em curso")
@@ -228,7 +238,14 @@ class TestesJornada(Base):
         template = despachos[0].pop("prompt_template")
         self.assertEqual(
             despachos[0],
-            {"projeto": PROJETO, "plano_seeds": "pl-000a", "agente": "claude-code", "modelo": SONNET, "max_custo_usd": 10},
+            {
+                "projeto": PROJETO,
+                "plano_seeds": "pl-000a",
+                "agente": "claude-code",
+                "modelo": SONNET,
+                "max_custo_usd": 10,
+                "conta": "claude-principal",
+            },
         )
         base, marca = template.rsplit("\n", 1)
         self.assertEqual(base, prompts.prompt_template_raia("backend"))
@@ -1204,25 +1221,6 @@ class TestesJornada(Base):
         (linha,) = [linha for linha in self.log() if linha.get("evento") == "retomar"]
         self.assertEqual(linha["antes"], {"pausado": "acordar falhou", "falhasAcordar": 2})
 
-    def test_cota_pausa_e_retomar_libera(self):
-        d = self.preparar_raia()
-        self.abrir_pr(H1)
-        d.ciclo()
-        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
-        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-        self.motor.definir_texto(rid, "API Error: 429 rate limit reached")
-        self.assertEqual(d.ciclo(), [])
-        self.assertEqual(self.estado()["pausado"], "cota")
-        self.assertEqual(d.ciclo(), [])
-        self.assertEqual(len(self.runs(OPUS)), 1)
-        d.retomar()
-        disco = self.estado()
-        self.assertIsNone(disco["pausado"])
-        self.assertEqual(disco["falhasAcordar"], 0)
-        acoes = d.ciclo()
-        self.assertEqual([a["tipo"] for a in acoes], ["revisar"])
-        self.assertEqual(len(self.runs(OPUS)), 2)
-        self.assertIn("retomar", [linha.get("evento") for linha in self.log()])
 
 
 # ---------------------------------------------------------------- preparar_warren (Task 7b)
@@ -3005,14 +3003,6 @@ class TestesB_AcordadaPreservada(Base):
         avisos = [a for a in self.estado()["avisos"] if "'canceled'" in a]
         self.assertEqual(len(avisos), 1)
 
-    def test_cota_no_orquestrador_pausa_e_guarda_a_acordada(self):
-        d, rid = self.acordar_por_falha()
-        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-        self.motor.definir_texto(rid, "429 rate limit")
-        d.ciclo()
-        self.assertEqual(self.estado()["pausado"], "cota")
-        (pendente,) = self.estado()["acordarPendentes"]
-        self.assertEqual((pendente["motivo"], pendente["alvo"]), ("raia_falhou", "a"))
 
 
 class TestesC_CiDoPrDoOrquestrador(Base):
@@ -3135,11 +3125,9 @@ class TestesE_OperacaoZeroManual(Base):
     def pausar_por_cota(self):
         d = self.preparar_raia()
         self.abrir_pr(H1)
+        self.pausar(d)
         d.ciclo()
-        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
-        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-        self.motor.definir_texto(rid, "quota reached")
-        d.ciclo()
+        self.assertEqual(self.estado()["pausado"], MOTIVO_PAUSA)
         return d
 
     def test_e1_pausa_abre_uma_decisao_e_fechar_retoma(self):
@@ -3147,13 +3135,13 @@ class TestesE_OperacaoZeroManual(Base):
         d.ciclo()
         d.ciclo()
         pausas = [t for t, _ in self.forja.decisoes]
-        self.assertEqual(pausas, ["[fábrica] despachante pausado: cota"])
+        self.assertEqual(pausas, ["[fábrica] despachante pausado: " + MOTIVO_PAUSA])
         url = self.estado()["decisaoPausa"]["url"]
         self.forja.definir_decisao(url, fechada=True, ultimo_comentario="")
         acoes = d.ciclo()
         self.assertIsNone(self.estado()["pausado"])
         self.assertIsNone(self.estado().get("decisaoPausa"))
-        self.assertEqual([a["tipo"] for a in acoes], ["revisar"])
+        self.assertEqual([a["tipo"] for a in acoes], ["revisar", "verificar"])
 
     def test_e1_retomar_por_fora_fecha_a_decisao_de_pausa(self):
         d = self.pausar_por_cota()
@@ -3632,10 +3620,7 @@ class TestesRodada2(Base):
         def preparar():
             d = self.preparar_raia()
             self.abrir_pr(H1)
-            d.ciclo()
-            rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
-            self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-            self.motor.definir_texto(rid, "quota reached")
+            self.pausar(d)
             return d
 
         def verificar(_):
@@ -3700,10 +3685,7 @@ class TestesRodada2(Base):
     def test_i2_intencao_de_pausa_obsoleta_fecha_a_issue_achada(self):
         d = self.preparar_raia()
         self.abrir_pr(H1)
-        d.ciclo()
-        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
-        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-        self.motor.definir_texto(rid, "quota reached")
+        self.pausar(d)
         original = d._registrar_intencao
 
         def cair(*a, **k):
@@ -3805,40 +3787,6 @@ class TestesRodada2(Base):
         self.assertEqual(self.estado()["seeds"]["s-1"]["pr"], pr7)
 
     # ------------------------------------------------ J
-    def test_p2_cota_num_filho_pausa_e_o_retomar_despacha_um_plan_run_novo(self):
-        class MotorResume409(motor.MotorFalso):
-            """Como o Warren (resume.ts): só merge timeouts podem ser retomados."""
-
-            def retomar_plano(self, plan_run_id):
-                self._registrar("retomar_plano", plan_run_id=plan_run_id)
-                plano_ = self._planos[plan_run_id]
-                if plano_["estado"] != "failed" or plano_.get("falha") not in ("child_pr_merge_timeout", "parent_pr_merge_timeout"):
-                    raise RuntimeError("POST /plan-runs/%s/resume: HTTP 409" % plan_run_id)
-                plano_["estado"] = "running"
-
-        self.motor = MotorResume409()
-        d = self.preparar_raia()
-        self.motor.definir_plano(
-            "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
-        )
-        self.motor.definir_texto("rf", "API Error: usage limit reached")
-        d.ciclo()
-        e = self.estado()
-        self.assertEqual(e["pausado"], "cota")
-        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["a"]["aguardandoCota"]), ("executando", True))
-        self.assertEqual(self.runs(FABLE), [])
-        d.ciclo()
-        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
-        self.forja.definir_decisao(self.estado()["decisaoPausa"]["url"], fechada=True)
-        d.ciclo()
-        self.assertNotIn("retomar_plano", [n for n, _ in self.motor.chamadas])
-        self.assertEqual([x["plano_seeds"] for x in self.planos_despachados()], ["pl-000a", "pl-000a"])
-        raia_a = self.estado()["raias"]["a"]
-        self.assertEqual((raia_a["estado"], raia_a["planRunId"]), ("executando", "plano-2"))
-        self.assertNotIn("aguardandoCota", raia_a)
-        self.assertEqual(self.estado()["cotaFilhos"], [])
-        self.assertEqual(self.runs(FABLE), [])
-
     def test_j_falha_de_provedor_que_nao_e_cota_segue_o_caminho_normal(self):
         d = self.preparar_raia()
         self.motor.definir_plano(
@@ -3936,10 +3884,7 @@ class TestesRodada2(Base):
     def test_l5_issue_de_pausa_sumida_e_aberta_de_novo(self):
         d = self.preparar_raia()
         self.abrir_pr(H1)
-        d.ciclo()
-        rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
-        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-        self.motor.definir_texto(rid, "quota reached")
+        self.pausar(d)
         d.ciclo()
         velha = self.estado()["decisaoPausa"]["url"]
         del self.forja._decisoes[velha]
@@ -3951,17 +3896,14 @@ class TestesRodada2(Base):
     def test_l6_pedido_que_nao_pode_ser_apagado_nao_e_reaplicado(self):
         d = self.preparar_raia()
         self.abrir_pr(H1)
-        d.ciclo()
         despachante.enfileirar_pedido(self.raiz, {"comando": "retomar"})
         os.chmod(self.raiz / "entrada", 0o500)
         try:
             d.ciclo()
-            rid = self.estado()["seeds"]["s-1"]["revisaoRunId"]
-            self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
-            self.motor.definir_texto(rid, "quota reached")
+            self.pausar(d)
             for _ in range(4):
                 d.ciclo()
-            self.assertEqual(self.estado()["pausado"], "cota")
+            self.assertEqual(self.estado()["pausado"], MOTIVO_PAUSA)
             self.assertEqual(len(self.runs(OPUS)), 1)
             self.assertEqual(len([a for a in self.estado()["avisos"] if "não foi possível apagar o pedido" in a]), 1)
         finally:
@@ -4160,22 +4102,11 @@ class TestesRodada3(Base):
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
         self.assertEqual(self.runs(FABLE), [])
         d.ciclo()
-        self.assertEqual(self.estado()["pausado"], "cota")
-        self.assertTrue(self.estado()["raias"]["a"]["aguardandoCota"])
-
-    def test_p2_cota_de_novo_no_plan_run_novo_pausa_de_novo(self):
-        d = self.preparar_raia()
-        self.motor.definir_plano("plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed")
-        self.motor.definir_texto("rf", "usage limit reached")
-        d.ciclo()
-        self.forja.definir_decisao(self.estado()["decisaoPausa"]["url"], fechada=True)
-        d.ciclo()
-        novo = self.estado()["raias"]["a"]["planRunId"]
-        self.motor.definir_plano(novo, "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf2", "falha": "provider_error"}], falha="child_failed")
-        self.motor.definir_texto("rf2", "quota reached")
-        d.ciclo()
-        self.assertEqual(self.estado()["pausado"], "cota")
-        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+        e = self.estado()
+        self.assertIsNone(e["pausado"])
+        # sem outra conta, o par esgotado deixa a raia esperando o prazo; nada de pausa geral
+        self.assertEqual((e["raias"]["a"]["estado"], sorted(e["raias"]["a"]["aguardandoExecutor"])), ("planejada", ["ate", "desde"]))
+        self.assertEqual(e["trocas"][0]["de"], {"agente": "claude-code", "conta": "claude-principal"})
 
     # ------------------------------------------------ P3, P9
     def test_p3_seed_reaproveitada_ganha_chave_e_decisao_novas(self):
@@ -7744,3 +7675,432 @@ class TestesFormatoDaPergunta(unittest.TestCase):
     def test_opcoes_de_duas_a_tres(self):
         uma = PERGUNTA_DIRETA.replace("2. **Tentar outra abordagem** — mais um ciclo, sem garantia.\n", "")
         self.assertIn("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência", despachante.problemas_da_pergunta(uma))
+
+
+# ---------------------------------------------------------------- executores por papel e troca por limite de uso
+
+PRINCIPAL = "claude-principal"
+RESERVA = "claude-reserva"
+GIT_URL = "https://github.com/dono/cliente.git"
+FRASE_CONTINUAR = "Continue do que já está commitado na branch da raia"
+
+
+def _executores(modelo, *contas, agente="claude-code"):
+    return [{"agente": agente, "modelo": modelo, "conta": conta} for conta in contas]
+
+
+def config_com_reserva(**por_papel):
+    """A CONFIG com principal e reserva em todo papel; `por_papel` troca a lista de um papel."""
+    config = copy.deepcopy(CONFIG)
+    for papel, entrada in config["modelos"].items():
+        entrada["executores"] = por_papel.get(papel) or _executores(entrada["modelo"], PRINCIPAL, RESERVA)
+    return config
+
+
+class RoteadorDeTeste(motor_roteador.MotorRoteador):
+    """O roteador com dois MotorFalso e os auxiliares de teste (`definir_*`) encaminhados pelo prefixo do id."""
+
+    def __init__(self):
+        self.principal, self.reserva = motor.MotorFalso(), motor.MotorFalso()
+        self.principal.definir_projeto(PROJETO, GIT_URL)
+        self.reserva.definir_projeto("prj_reserva", GIT_URL)
+        super().__init__({PRINCIPAL: self.principal, RESERVA: self.reserva})
+
+    def _encaminhar(self, nome, ident, *args, **kwargs):
+        conta, original = self._separar(ident)
+        return getattr(self._motores[conta], nome)(original, *args, **kwargs)
+
+    def definir_plano(self, ident, *args, **kwargs):
+        return self._encaminhar("definir_plano", ident, *args, **kwargs)
+
+    def definir_run(self, ident, *args, **kwargs):
+        return self._encaminhar("definir_run", ident, *args, **kwargs)
+
+    def definir_texto(self, ident, *args, **kwargs):
+        return self._encaminhar("definir_texto", ident, *args, **kwargs)
+
+    @property
+    def chamadas(self):
+        return self.principal.chamadas + self.reserva.chamadas
+
+
+class TestesExecutores(Base):
+    def setUp(self):
+        super().setUp()
+        self.motor = RoteadorDeTeste()
+        self.config_padrao = config_com_reserva()
+        self.arquivo_esgotados = self.raiz / "executores-esgotados.json"
+
+    def agora_utc(self):
+        return self.instante.astimezone().astimezone(datetime.timezone.utc)
+
+    def esgotar(self, conta=PRINCIPAL, minutos=60, agente="claude-code"):
+        agora = self.agora_utc()
+        esgotados.marcar(
+            self.arquivo_esgotados, agente, conta, agora=agora, ate=agora + datetime.timedelta(minutes=minutos)
+        )
+
+    def contas_dos_despachos(self, nome="despachar_plano"):
+        return [a["conta"] for n, a in self.motor.chamadas if n == nome]
+
+    # ------------------------------------------------ configuração
+    def test_validar_modelo_devolve_executores_normalizados_e_ferramentas(self):
+        antigo = despachante._validar_modelo(_modelo(SONNET, 10), "backend")
+        self.assertEqual(antigo["executores"], _executores(SONNET, PRINCIPAL))
+        self.assertEqual((antigo["agente"], antigo["modelo"], antigo["ferramentas"]), ("claude-code", SONNET, []))
+        lista = despachante._validar_modelo(
+            {"executores": _executores(OPUS, RESERVA) + [{"agente": "codex", "modelo": "gpt"}], "maxCustoUsd": 5, "ferramentas": ["rtk"]},
+            "backend",
+        )
+        self.assertEqual([e["conta"] for e in lista["executores"]], [RESERVA, PRINCIPAL])
+        self.assertEqual((lista["agente"], lista["modelo"], lista["ferramentas"]), ("claude-code", OPUS, ["rtk"]))
+
+    def test_validar_modelo_recusa_ferramenta_fora_do_catalogo_e_executor_invalido(self):
+        for entrada in (
+            dict(_modelo(SONNET, 10), ferramentas=["inexistente"]),
+            dict(_modelo(SONNET, 10), ferramentas="rtk"),
+            dict(_modelo(SONNET, 10), executores=[]),
+            dict(_modelo(SONNET, 10), executores=[{"agente": "outro", "modelo": "m"}]),
+        ):
+            with self.subTest(entrada=entrada):
+                with self.assertRaises(despachante.ConfigInvalida):
+                    despachante._validar_modelo(entrada, "backend")
+
+    # ------------------------------------------------ escolha
+    def test_despacho_usa_o_primeiro_executor_e_grava_no_estado(self):
+        d = self.preparar_raia()
+        (despacho,) = self.planos_despachados()
+        self.assertEqual((despacho["conta"], despacho["agente"], despacho["modelo"]), (PRINCIPAL, "claude-code", SONNET))
+        self.assertEqual(self.estado()["raias"]["a"]["executor"], {"agente": "claude-code", "conta": PRINCIPAL, "modelo": SONNET})
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.assertEqual(self.runs(OPUS)[0]["conta"], PRINCIPAL)
+        self.assertEqual(
+            self.estado()["seeds"]["s-1"]["revisaoExecutor"], {"agente": "claude-code", "conta": PRINCIPAL, "modelo": OPUS}
+        )
+
+    def test_fixer_e_orquestrador_gravam_o_executor(self):
+        self.codigos[H1] = 1
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        self.assertEqual([a["tipo"] for a in d.ciclo()], ["corrigir"])
+        self.assertEqual(self.runs(HAIKU)[0]["conta"], PRINCIPAL)
+        self.assertEqual(
+            self.estado()["seeds"]["s-1"]["fixerExecutor"], {"agente": "claude-code", "conta": PRINCIPAL, "modelo": HAIKU}
+        )
+        self.setUp()
+        d, _ = self.acordar_por_falha()
+        self.assertEqual(self.runs(FABLE)[0]["conta"], PRINCIPAL)
+        self.assertEqual(self.orquestrador()["executor"], {"agente": "claude-code", "conta": PRINCIPAL, "modelo": FABLE})
+
+    def test_executor_da_raia_vence_o_do_papel(self):
+        executor = {"agente": "claude-code", "modelo": HAIKU, "conta": RESERVA}
+        self.preparar_raia(plano(dict(raia("a"), executor=executor)))
+        (despacho,) = self.planos_despachados()
+        self.assertEqual((despacho["conta"], despacho["modelo"], despacho["projeto"]), (RESERVA, HAIKU, "prj_reserva"))
+        self.assertEqual(self.estado()["raias"]["a"]["planRunId"], RESERVA + ":plano-1")
+        self.assertEqual(self.estado()["raias"]["a"]["executor"], {"agente": "claude-code", "conta": RESERVA, "modelo": HAIKU})
+
+    def test_par_esgotado_e_pulado(self):
+        self.esgotar(PRINCIPAL)
+        d = self.preparar_raia()
+        self.assertEqual(self.contas_dos_despachos(), [RESERVA])
+        self.abrir_pr(H1, plan_run=RESERVA + ":plano-1")
+        d.ciclo()
+        self.assertEqual(self.runs(OPUS)[0]["conta"], RESERVA)
+
+    def test_agente_sem_motor_e_pulado(self):
+        self.config_padrao = config_com_reserva(
+            backend=_executores("gemini", PRINCIPAL, agente="antigravity") + _executores(SONNET, PRINCIPAL)
+        )
+        self.preparar_raia()
+        (despacho,) = self.planos_despachados()
+        self.assertEqual((despacho["agente"], despacho["conta"]), ("claude-code", PRINCIPAL))
+
+    def test_conta_sem_instancia_e_pulada(self):
+        self.motor = motor.MotorFalso()  # sem roteador: só a conta padrão tem instância
+        self.config_padrao = config_com_reserva(backend=_executores(SONNET, RESERVA, PRINCIPAL))
+        self.preparar_raia()
+        self.assertEqual([a["conta"] for a in self.planos_despachados()], [PRINCIPAL])
+
+    def test_sem_arquivo_de_contas_o_despachante_usa_so_a_conta_padrao(self):
+        (self.repo_dir / ".fabrica").mkdir()
+        (self.repo_dir / ".fabrica" / "config.json").write_text(json.dumps(CONFIG), encoding="utf-8")
+        (self.tmp / "w").write_text(TOKEN + "\n", encoding="utf-8")
+        (self.tmp / "g").write_text(TOKEN_GH + "\n", encoding="utf-8")
+        ambiente = {
+            "FABRICA_RAIZ": str(self.raiz),
+            "FABRICA_REPO_DIR": str(self.repo_dir),
+            "FABRICA_PROJETO": PROJETO,
+            "FABRICA_REPO": REPO,
+            "WARREN_TOKEN_FILE": str(self.tmp / "w"),
+            "GH_TOKEN_FILE": str(self.tmp / "g"),
+        }
+        d = despachante.construir(ambiente)
+        self.assertNotIsInstance(d.motor, motor_roteador.MotorRoteador)
+        self.assertEqual(d._contas_do_motor(), [PRINCIPAL])
+        (self.tmp / "t2").write_text("tok-da-reserva-98765\n", encoding="utf-8")
+        (self.tmp / "contas.json").write_text(
+            json.dumps({RESERVA: {"api": "http://127.0.0.1:9", "tokenFile": str(self.tmp / "t2")}}), encoding="utf-8"
+        )
+        d = despachante.construir(
+            dict(ambiente, FABRICA_CONTAS_FILE=str(self.tmp / "contas.json"), FABRICA_ESGOTADOS_FILE=str(self.tmp / "esg.json"))
+        )
+        self.assertEqual(d._contas_do_motor(), [PRINCIPAL, RESERVA])
+        self.assertEqual(d._arquivo_esgotados, self.tmp / "esg.json")
+        self.assertEqual(d._seguro("x tok-da-reserva-98765 y %s" % TOKEN), "x *** y ***")
+
+    # ------------------------------------------------ troca por limite de uso
+    def test_cota_em_filho_redespacha_com_o_proximo_sem_pausar(self):
+        d = self.preparar_raia()
+        self.motor.definir_plano(
+            "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
+        )
+        self.motor.definir_texto("rf", "API Error: usage limit reached, try again in 42 minutes")
+        d.ciclo()
+        e = self.estado()
+        self.assertIsNone(e["pausado"])
+        raia_a = e["raias"]["a"]
+        self.assertEqual((raia_a["estado"], raia_a["planRunId"], raia_a["falha"]), ("executando", RESERVA + ":plano-1", None))
+        self.assertEqual(
+            raia_a["executor"],
+            {
+                "agente": "claude-code",
+                "conta": RESERVA,
+                "modelo": SONNET,
+                "substituiu": {"agente": "claude-code", "conta": PRINCIPAL, "motivo": "cota"},
+            },
+        )
+        self.assertEqual(self.contas_dos_despachos(), [PRINCIPAL, RESERVA])
+        self.assertNotIn("retomar_plano", [n for n, _ in self.motor.chamadas])
+        self.assertIn(FRASE_CONTINUAR, self.planos_despachados()[1]["prompt_template"])
+        self.assertNotIn(FRASE_CONTINUAR, self.planos_despachados()[0]["prompt_template"])
+        marca = esgotados.ler(self.arquivo_esgotados)["claude-code|" + PRINCIPAL]
+        ate, desde = (datetime.datetime.fromisoformat(marca[k]) for k in ("ate", "desde"))
+        self.assertEqual(ate - desde, datetime.timedelta(minutes=42))
+        (troca,) = e["trocas"]
+        self.assertEqual((troca["de"], troca["motivo"], troca["onde"]), ({"agente": "claude-code", "conta": PRINCIPAL}, "cota", "raia a"))
+        self.assertTrue(any("esgotado" in a and PRINCIPAL in a for a in e["avisos"]))
+
+    def test_troca_entra_em_estado_trocas_e_guarda_as_ultimas_20(self):
+        d = self.preparar_raia()
+        d.estado["trocas"] = [{"quando": "x", "de": {}, "motivo": "cota", "onde": "antiga %d" % i} for i in range(20)]
+        self.motor.definir_plano(
+            "plano-1", "failed", [{"seedId": "s-1", "estado": "failed", "runId": "rf", "falha": "provider_error"}], falha="child_failed"
+        )
+        self.motor.definir_texto("rf", "quota reached")
+        d.ciclo()
+        trocas = self.estado()["trocas"]
+        self.assertEqual((len(trocas), trocas[-1]["onde"], trocas[0]["onde"]), (20, "raia a", "antiga 1"))
+
+    def test_cota_no_revisor_troca_executor_e_nao_gasta_tentativa(self):
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        seed = self.estado()["seeds"]["s-1"]
+        self.assertEqual(seed["tentativasRevisao"], 1)
+        self.motor.definir_run(seed["revisaoRunId"], estado="failed", motivoFalha="provider_error")
+        self.motor.definir_texto(seed["revisaoRunId"], "429 rate limit")
+        d.ciclo()
+        e = self.estado()
+        seed = e["seeds"]["s-1"]
+        self.assertIsNone(e["pausado"])
+        self.assertEqual([r["conta"] for r in self.runs(OPUS)], [PRINCIPAL, RESERVA])
+        self.assertEqual(seed["tentativasRevisao"], 1)
+        self.assertEqual(
+            seed["revisaoExecutor"]["substituiu"], {"agente": "claude-code", "conta": PRINCIPAL, "motivo": "cota"}
+        )
+        self.assertEqual(seed["revisaoExecutor"]["conta"], RESERVA)
+        self.assertEqual(e["trocas"][0]["onde"], "revisor da seed s-1")
+
+    def test_cota_em_duas_revisoes_no_mesmo_ciclo_marca_as_duas_seeds(self):
+        d = self.preparar_duas_raias()
+        for seed_id, rid in (("s-1", "rev-1"), ("s-2", "rev-2")):
+            d.estado["seeds"][seed_id] = {
+                "estado": "aguardando_gates",
+                "revisaoRunId": rid,
+                "revisaoExecutor": {"agente": "claude-code", "conta": PRINCIPAL, "modelo": OPUS},
+                "tentativasRevisao": 1,
+            }
+            self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+            self.motor.definir_texto(rid, "429 rate limit")
+        d._salvar()
+        d._observar_runs_de_seeds()
+        e = self.estado()
+        for seed_id in ("s-1", "s-2"):
+            self.assertIs(e["seeds"][seed_id]["revisaoExecutor"]["esgotado"], True, seed_id)
+        self.assertEqual(
+            [t["onde"] for t in e["trocas"]], ["revisor da seed s-1", "revisor da seed s-2"]
+        )
+
+    def test_cota_no_fixer_troca_executor_e_nao_gasta_o_fixer(self):
+        self.codigos[H1] = 1
+        d = self.preparar_raia()
+        self.abrir_pr(H1)
+        d.ciclo()
+        self.terminar_revisao(H1)
+        d.ciclo()
+        fid = self.estado()["seeds"]["s-1"]["fixerRunId"]
+        self.motor.definir_run(fid, estado="failed", motivoFalha="provider_error")
+        self.motor.definir_texto(fid, "usage limit reached")
+        d.ciclo()
+        e = self.estado()
+        seed = e["seeds"]["s-1"]
+        self.assertIsNone(e["pausado"])
+        self.assertEqual([r["conta"] for r in self.runs(HAIKU)], [PRINCIPAL, RESERVA])
+        self.assertEqual(seed["fixerExecutor"]["substituiu"]["conta"], PRINCIPAL)
+        self.assertEqual(seed["fixersUsados"], 1)
+        self.assertIn(FRASE_CONTINUAR, self.runs(HAIKU)[1]["prompt"])
+        self.assertNotIn(FRASE_CONTINUAR, self.runs(HAIKU)[0]["prompt"])
+
+    def test_cota_no_orquestrador_troca_executor_e_nao_conta_falha(self):
+        d, rid = self.acordar_por_falha()
+        self.motor.definir_run(rid, estado="failed", motivoFalha="provider_error")
+        self.motor.definir_texto(rid, "429 rate limit")
+        d.ciclo()
+        e = self.estado()
+        self.assertIsNone(e["pausado"])
+        self.assertEqual(e["falhasAcordar"], 0)
+        self.assertNotIn("acordarDepoisDe", e)
+        self.assertEqual([r["conta"] for r in self.runs(FABLE)], [PRINCIPAL, RESERVA])
+        self.assertEqual(e["orquestrador"]["executor"]["substituiu"]["conta"], PRINCIPAL)
+        self.assertIn(FRASE_CONTINUAR, self.runs(FABLE)[1]["prompt"])
+
+    # ------------------------------------------------ todos esgotados
+    def preparar_duas_raias(self):
+        self.config_padrao = config_com_reserva(qa=_executores(SONNET, PRINCIPAL))
+        return self.preparar_raia(plano(raia("a"), raia("b", "qa", plano_seeds="pl-000b")))
+
+    def test_todos_esgotados_so_o_papel_aguarda(self):
+        self.esgotar(PRINCIPAL, minutos=30)
+        d = self.preparar_duas_raias()
+        e = self.estado()
+        self.assertEqual(self.contas_dos_despachos(), [RESERVA])
+        self.assertEqual((e["raias"]["a"]["estado"], e["raias"]["b"]["estado"]), ("executando", "planejada"))
+        espera = e["raias"]["b"]["aguardandoExecutor"]
+        self.assertEqual(
+            datetime.datetime.fromisoformat(espera["ate"]) - datetime.datetime.fromisoformat(espera["desde"]),
+            datetime.timedelta(minutes=30),
+        )
+        d.ciclo()
+        self.assertEqual(self.contas_dos_despachos(), [RESERVA])
+
+    def test_raia_volta_sozinha_depois_do_prazo(self):
+        self.esgotar(PRINCIPAL, minutos=30)
+        d = self.preparar_duas_raias()
+        self.instante += datetime.timedelta(minutes=29)
+        d.ciclo()
+        self.assertEqual(self.estado()["raias"]["b"]["estado"], "planejada")
+        self.instante += datetime.timedelta(minutes=2)
+        d.ciclo()
+        raia_b = self.estado()["raias"]["b"]
+        self.assertEqual((raia_b["estado"], raia_b["executor"]["conta"]), ("executando", PRINCIPAL))
+        self.assertNotIn("aguardandoExecutor", raia_b)
+        self.assertCountEqual(self.contas_dos_despachos(), [RESERVA, PRINCIPAL])
+
+    def test_issue_ao_paulo_depois_de_180_min_uma_vez_so(self):
+        self.esgotar(PRINCIPAL, minutos=600)
+        d = self.preparar_duas_raias()
+        titulo = "[fábrica] sem executor para qa há 3 h"
+        self.instante += datetime.timedelta(minutes=179)
+        d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], [])
+        for minutos in (2, 30, 30):
+            self.instante += datetime.timedelta(minutes=minutos)
+            d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], [titulo])
+        # volta o executor: a issue fecha sozinha
+        self.instante += datetime.timedelta(minutes=600)
+        d.ciclo()
+        d.ciclo()
+        self.assertTrue(all(info["fechada"] for info in self.forja._decisoes.values()))
+        self.assertEqual(self.estado()["decisoes"], [])
+
+    def test_espera_do_executor_proprio_da_raia_abre_a_issue_com_o_papel_disponivel(self):
+        self.esgotar(RESERVA, minutos=600)
+        d = self.preparar_raia(plano(dict(raia("a"), executor={"agente": "claude-code", "modelo": HAIKU, "conta": RESERVA})))
+        titulo = "[fábrica] sem executor para backend há 3 h"
+        for minutos in (60, 60, 59):
+            self.instante += datetime.timedelta(minutes=minutos)
+            d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], [])
+        self.instante += datetime.timedelta(minutes=1)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], [titulo])
+        self.assertFalse(any(info["fechada"] for info in self.forja._decisoes.values()))
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
+
+    def test_pesado_esgotado_nao_cai_no_orquestrador_nem_falha_a_cada_ciclo(self):
+        config = config_com_reserva()
+        config["modelos"]["planejador-pesado"] = dict(_modelo(FABLE, 30, "high"), executores=_executores(FABLE, PRINCIPAL))
+        self.config_padrao = config
+        self.esgotar(PRINCIPAL, minutos=600)
+        self.publicar(plano(raia("a")))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo()
+        d.iniciar()
+        d.iniciar(spec="docs/spec.md", pesado=True)
+        for _ in range(2):
+            d.ciclo()
+        self.assertEqual(self.runs(), [])
+        self.assertIn("planejador-pesado", self.estado()["semExecutor"])
+        self.instante += datetime.timedelta(minutes=180)
+        d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], ["[fábrica] sem executor para planejador-pesado há 3 h"])
+
+    def test_estado_antigo_pausado_por_cota_retoma_sozinho(self):
+        d = self.preparar_raia()
+        d.estado["pausado"] = "cota"
+        d.estado["raias"]["a"]["aguardandoCota"] = True
+        d._salvar()
+        d.ciclo()
+        e = self.estado()
+        self.assertIsNone(e["pausado"])
+        self.assertEqual(len(self.planos_despachados()), 2)
+        self.assertEqual(e["raias"]["a"]["planRunId"], "plano-2")
+        self.assertNotIn("aguardandoCota", e["raias"]["a"])
+
+    def test_arquivo_de_esgotados_corrompido_vale_vazio(self):
+        self.arquivo_esgotados.write_text("{{{", encoding="utf-8")
+        self.preparar_raia()
+        self.assertEqual(self.contas_dos_despachos(), [PRINCIPAL])
+
+    # ------------------------------------------------ ferramentas
+    def ferramentas_do_backend(self, presentes):
+        self.config_padrao["modelos"]["backend"]["ferramentas"] = ["superpowers", "rtk"]
+        extra = {}
+        if presentes is not None:
+            arquivo = self.tmp / "ferramentas-presentes.json"
+            arquivo.write_text(json.dumps({"presentes": presentes}), encoding="utf-8")
+            extra["arquivo_ferramentas"] = arquivo
+        self.publicar(plano(raia("a")))
+        d = self.novo(**extra)
+        d.iniciar()
+        d.ciclo()
+        return self.planos_despachados()[0]["prompt_template"]
+
+    def test_ferramenta_ausente_gera_aviso_e_despacha(self):
+        template = self.ferramentas_do_backend(["superpowers"])
+        self.assertIn(prompts.FERRAMENTAS["superpowers"], template)
+        self.assertNotIn(prompts.FERRAMENTAS["rtk"], template)
+        self.assertEqual(
+            [a for a in self.estado()["avisos"] if a.startswith("ferramenta")],
+            ["ferramenta rtk ausente na máquina: raia a segue sem ela"],
+        )
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
+
+    def test_sem_variavel_ou_sem_arquivo_nenhum_aviso(self):
+        template = self.ferramentas_do_backend(None)
+        self.assertIn(prompts.FERRAMENTAS["rtk"], template)
+        self.assertEqual([a for a in self.estado()["avisos"] if a.startswith("ferramenta")], [])
+        self.setUp()
+        self.config_padrao["modelos"]["backend"]["ferramentas"] = ["rtk"]
+        self.publicar(plano(raia("a")))
+        d = self.novo(arquivo_ferramentas=self.tmp / "nao-existe.json")
+        d.iniciar()
+        d.ciclo()
+        self.assertEqual([a for a in self.estado()["avisos"] if a.startswith("ferramenta")], [])
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
