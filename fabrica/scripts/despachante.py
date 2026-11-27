@@ -122,6 +122,9 @@ ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
 # Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
 PAPEL_DO_ARBITRO = "arbitro"
+PAPEL_PESADO = "planejador-pesado"
+MAX_RECUSAS_DO_AVANCO = 3
+MOTIVO_DO_TETO = "teto_da_raia"  # a última acordada de uma raia: só escreve a pergunta direta ao Paulo
 MOTIVO_DA_ARBITRAGEM = "arbitragem"
 TITULO_DA_PERGUNTA = "[fábrica] orquestrador: pergunta para o Paulo"
 LIMITE_TITULO_DA_PERGUNTA = 120
@@ -212,6 +215,24 @@ MOTIVO_PROTEGIDO = "toca arquivos protegidos"
 MOTIVOS_MERGE_DO_PAULO = (MOTIVO_PROTEGIDO, "merge recusado pelo GitHub")
 PAUSA_ENTRE_DRENAGENS = datetime.timedelta(hours=6)
 ACOES_SEGURAS_NA_DRENAGEM = ("despachar_raia", "revisar", "corrigir", "acordar", "mergear")
+
+def problemas_da_pergunta(texto) -> list[str]:
+    """O que falta para a pergunta ser direta, no formato que o Flow mostra (`equipes/arbitro.md`).
+
+    Pede o que aconteceu, a recomendação e de 2 a 3 opções `N. **Nome** — consequência` (viram botões no Decidir).
+    """
+    if not _texto(texto):
+        return ["pergunta vazia"]
+    problemas = []
+    if not re.search(r"O que aconteceu", texto, re.IGNORECASE):
+        problemas.append("falta O que aconteceu")
+    if not re.search(r"Recomendo", texto, re.IGNORECASE):
+        problemas.append("falta a recomendação (Recomendo)")
+    opcoes = re.findall(r"(?m)^\s*\d+\.\s+\*\*[^*]+\*\*\s*[—-]", texto)
+    if not 2 <= len(opcoes) <= 3:
+        problemas.append("as opções precisam ser de 2 a 3 no formato N. **Nome** — consequência")
+    return problemas
+
 
 class OutroDespachante(Exception):
     """A trava da raiz já está com outro processo."""
@@ -1090,7 +1111,7 @@ class Despachante:
         self.estado["acordarPendentes"] = []
         self._salvar()
 
-    def iniciar(self, *, spec: str | None = None) -> str:
+    def iniciar(self, *, spec: str | None = None, pesado: bool = False) -> str:
         with self._sob_trava():
             if spec is None:
                 plano, erros, _ = self._ler_plano(self.branch)
@@ -1111,7 +1132,7 @@ class Despachante:
                     self._adotar_plano(plano)
                 self._novo_estado()
             self._recuperar_acao_interrompida()
-            return self._iniciar_spec(spec, executar=True)
+            return self._iniciar_spec(spec, executar=True, pesado=pesado)
 
     def _validar_spec(self, spec) -> None:
         if not _texto(spec):
@@ -1123,7 +1144,17 @@ class Despachante:
         if conteudo is None:
             raise ErroDeEntrada(["a spec %r não existe no branch %s" % (spec, self.branch)])
 
-    def _iniciar_spec(self, spec: str, *, executar: bool) -> str:
+    def _papel_da_acordada(self, acao: dict) -> str:
+        """`planejador-pesado` só na `nova_spec` pedida como pesada e com o papel na config; o resto é do orquestrador."""
+        pesado = acao.get("motivo") == "nova_spec" and _dict(acao.get("contexto")).get("pesado") is True
+        if not pesado:
+            return "orquestrador"
+        if PAPEL_PESADO in _dict(self.config.get("modelos")):
+            return PAPEL_PESADO
+        self._aviso("a spec %s pediu planejamento pesado, mas a config não tem modelos.%s; uso o orquestrador" % (acao.get("alvo"), PAPEL_PESADO))
+        return "orquestrador"
+
+    def _iniciar_spec(self, spec: str, *, executar: bool, pesado: bool = False) -> str:
         chave = "nova_spec:%s" % spec
         pendentes = _lista(self.estado.get("acordarPendentes"))
         if chave in _lista(self.estado.get("chavesAcordadas")) or any(
@@ -1132,7 +1163,8 @@ class Despachante:
             return "spec já iniciada: %s" % spec
         self._validar_spec(spec)
         self._log({"evento": "iniciar", "spec": spec})
-        self._enfileirar_acordar("nova_spec", spec, {"spec": spec})
+        # "pesado": o Paulo pediu o planejador-pesado (Fable) só para montar este plano
+        self._enfileirar_acordar("nova_spec", spec, dict({"spec": spec}, **({"pesado": True} if pesado else {})))
         if executar and not self._drenando():
             acao = self._proposta_de_pendente()
             if (
@@ -1447,7 +1479,7 @@ class Despachante:
                     self.retomar()
                 elif comando == "iniciar" and _texto(pedido.get("spec")):
                     try:
-                        self._log({"evento": "pedido", "resultado": self._iniciar_spec(pedido["spec"], executar=False)})
+                        self._log({"evento": "pedido", "resultado": self._iniciar_spec(pedido["spec"], executar=False, pesado=pedido.get("pesado") is True)})
                     except ErroDeEntrada as exc:
                         self._aviso("pedido iniciar --spec %s recusado: %s" % (pedido["spec"], exc))
                 else:
@@ -2734,11 +2766,19 @@ class Despachante:
             return self._sem_resultado(self._decidir_humano_orquestrador(pr_url, motivo, motivos), motivos)
         if est.PERGUNTA_DO_ORQUESTRADOR in arquivos:
             pergunta = self.forja.arquivo(self.repo, head, est.PERGUNTA_DO_ORQUESTRADOR)
-            do_arbitro = _acordada_do_arbitro(orquestrador.get("acordada")) or motivo == MOTIVO_DA_ARBITRAGEM
+            # a pergunta do teto é do Paulo por definição: não passa pelo árbitro
+            do_arbitro = _acordada_do_arbitro(orquestrador.get("acordada")) or motivo in (MOTIVO_DA_ARBITRAGEM, MOTIVO_DO_TETO)
             if not do_arbitro and PAPEL_DO_ARBITRO in self.config["modelos"] and _texto(pergunta):
                 self._arbitrar(pr_url, pergunta)
             else:  # sem árbitro na config, pergunta ilegível ou pergunta do próprio árbitro: é do Paulo
                 self._abrir_pergunta(pr_url, pergunta)
+            return {"r": "neutro"}
+        if motivo == MOTIVO_DO_TETO:
+            # o run do teto não muda o plano: sem pergunta, o PR fecha e vale a decisão genérica
+            self._fechar_depois(pr_url, "PR fechado pelo despachante: a acordada do teto só escreve a pergunta ao Paulo.")
+            original = _dict(_dict(_dict(orquestrador.get("acordada")).get("contexto")).get("acordadaOriginal"))
+            # a acordada original (só motivo e alvo): a decisão genérica do teto é aberta em nome dela
+            self._escalar_teto_de_replanejamento({"motivo": original.get("motivo") or "raia_falhou", "alvo": original.get("alvo")})
             return {"r": "neutro"}
 
         motivos = []
@@ -3088,6 +3128,9 @@ class Despachante:
 
     def _abrir_pergunta(self, pr_url: str, conteudo) -> str:
         pergunta = conteudo if _texto(conteudo) else "(%s não foi encontrado no head do PR)" % est.PERGUNTA_DO_ORQUESTRADOR
+        problemas = problemas_da_pergunta(conteudo)
+        if problemas:  # vai assim mesmo: travar o Paulo por formato custaria mais que a pergunta torta
+            self._aviso("pergunta ao Paulo fora do formato direto (%s): %s" % ("; ".join(problemas), pr_url))
         corpo = "%s\n\nPR: %s\n\nFeche esta issue com um comentário: ele volta para o orquestrador." % (
             pergunta,
             pr_url,
@@ -3364,6 +3407,115 @@ class Despachante:
         n = raia.get("replanejamentos")
         return _inteiro(n) and n >= self.config["maxReplanejamentos"]
 
+    def _avancar_fases_sem_orquestrador(self, acoes: list[dict], executadas: list[dict]) -> list[dict]:
+        """Sem homologação, `fase_concluida` com a próxima fase já no plano vira um PR do despachante, sem run."""
+        if self.config["homologacaoDeFase"] is not False:
+            return acoes
+        saida = []
+        for acao in acoes:
+            if acao.get("tipo") == "acordar" and acao.get("motivo") == "fase_concluida":
+                resultado = self._avancar_fase(acao.get("alvo"))
+                if resultado == "feito":
+                    executadas.append({"tipo": "avancar_fase", "fase": acao.get("alvo")})
+                    continue
+                if resultado == "esperar":
+                    continue
+            saida.append(acao)
+        return saida
+
+    def _proxima_fase(self, fase_id):
+        ids = [f.get("id") for f in _lista(self.plano.get("fases")) if isinstance(f, dict)]
+        if fase_id not in ids or ids.index(fase_id) + 1 >= len(ids):
+            return None
+        return ids[ids.index(fase_id) + 1]
+
+    def _avancar_fase(self, fase_id) -> str:
+        """`feito` (mergeado), `esperar` (tenta no próximo ciclo) ou `acordar` (o orquestrador decide, como antes)."""
+        proxima = self._proxima_fase(fase_id)
+        if proxima is None:
+            return "acordar"  # última fase: o relatório final é do orquestrador
+        avanco = _dict(self.estado.get("avancoDeFase"))
+        if avanco.get("fase") != fase_id:
+            avanco = self._propor_avanco(fase_id, proxima)
+            if avanco is None:
+                return "acordar"
+        try:
+            mergeado = self.forja.mergear(avanco["pr"], avanco["headSha"]) is True
+        except Exception as exc:  # noqa: BLE001 - conta como recusa
+            self._erro_de_etapa("avancar_fase", avanco["pr"], exc)
+            mergeado = False
+        if mergeado:
+            chaves = self.estado.setdefault("chavesAcordadas", [])
+            chave = "fase_concluida:%s" % fase_id
+            if isinstance(chaves, list) and chave not in chaves:
+                chaves.append(chave)
+            self.estado.pop("avancoDeFase", None)
+            self._salvar()
+            self._log({"evento": "fase_avancada", "de": fase_id, "para": proxima, "pr": avanco["pr"]})
+            return "feito"
+        avanco["recusas"] = (avanco.get("recusas") if _inteiro(avanco.get("recusas")) else 0) + 1
+        self.estado["avancoDeFase"] = avanco
+        if avanco["recusas"] < MAX_RECUSAS_DO_AVANCO:
+            self._salvar()
+            return "esperar"
+        self.estado.pop("avancoDeFase", None)
+        self._salvar()
+        self._fechar_depois(avanco["pr"], "PR fechado pelo despachante: o avanço de fase foi recusado; o orquestrador decide.")
+        self._aviso("avanço da fase %s recusado %d vezes: o orquestrador decide" % (fase_id, MAX_RECUSAS_DO_AVANCO))
+        return "acordar"
+
+    def _propor_avanco(self, fase_id, proxima):
+        """PR que só troca `faseAtual` no plano de `main`, com o texto original (mesma formatação)."""
+        try:
+            texto = self.forja.arquivo(self.repo, self.branch, self.caminho_plano)
+            if not _texto(texto) or json.loads(texto) != self.plano:
+                return None  # o plano em main mudou desde a leitura: o orquestrador decide
+            padrao = re.compile(r'("faseAtual"\s*:\s*)"%s"' % re.escape(str(fase_id)))
+            novo, n = padrao.subn(lambda m: m.group(1) + json.dumps(proxima, ensure_ascii=False), texto)
+            if n != 1:
+                return None
+            resultado = self.forja.propor_arquivo(
+                self.repo,
+                self.branch,
+                "fabrica/avanca-fase-%s-%s" % (re.sub(r"[^A-Za-z0-9._-]", "-", str(proxima)), uuid.uuid4().hex[:8]),
+                self.caminho_plano,
+                novo,
+                "fabrica(plano): avança para a fase %s" % proxima,
+                "fabrica(plano): fase %s concluída, avança para %s" % (fase_id, proxima),
+                "A fase `%s` terminou com todas as raias mergeadas e a fase `%s` já está no plano. "
+                "Sem homologação de fase na config, o despachante avança sozinho, sem acordar o orquestrador." % (fase_id, proxima),
+            )
+        except Exception as exc:  # noqa: BLE001 - sem o PR, o orquestrador decide como antes
+            self._erro_de_etapa("propor_avanco", fase_id, exc)
+            return None
+        avanco = {"fase": fase_id, "proxima": proxima, "pr": resultado["pr"], "headSha": resultado["headSha"], "recusas": 0}
+        self.estado["avancoDeFase"] = avanco
+        self._salvar()
+        self._log({"evento": "avanco_de_fase_proposto", "de": fase_id, "para": proxima, "pr": resultado["pr"]})
+        return avanco
+
+    def _pedir_pergunta_do_teto(self, acao: dict) -> bool:
+        """No teto, o orquestrador acorda uma última vez (`teto_da_raia`) só para escrever a pergunta direta.
+
+        A chave da acordada original fica gasta; sem pergunta no PR, vale a decisão genérica (`_escalar_teto...`).
+        """
+        chave = "%s:%s" % (acao.get("motivo"), acao.get("alvo"))
+        raia_id = self._raia_da_acordada(acao)
+        n = _dict(_dict(self.estado.get("raias")).get(raia_id)).get("replanejamentos")
+        contexto = {
+            "raia": raia_id,
+            "replanejamentos": n,
+            "acordadaOriginal": {"motivo": acao.get("motivo"), "alvo": acao.get("alvo")},
+            "contexto": self._contexto(acao),
+        }
+        self._enfileirar_acordar("teto_da_raia", raia_id, contexto, salvar=False)
+        chaves = self.estado.setdefault("chavesAcordadas", [])
+        if isinstance(chaves, list) and chave not in chaves:
+            chaves.append(chave)
+        self._salvar()
+        self._log({"evento": "teto_de_replanejamento", "chave": chave, "raia": raia_id, "replanejamentos": n, "pergunta": True})
+        return True
+
     def _escalar_teto_de_replanejamento(self, acao: dict) -> bool:
         """F2c: decisão rastreada para o Paulo no lugar da acordada; a chave fica gasta (como se tivesse acordado)."""
         chave = "%s:%s" % (acao.get("motivo"), acao.get("alvo"))
@@ -3471,9 +3623,10 @@ class Despachante:
         # F2c: a raia já replanejada 2 vezes não acorda o orquestrador de novo: a falha vai para o Paulo
         no_teto = [a for a in acoes if self._no_teto_de_replanejamento(a)]
         for acao in no_teto:
-            if self._escalar_teto_de_replanejamento(acao):
+            if self._pedir_pergunta_do_teto(acao):
                 executadas.append({"tipo": "decidir_replanejamento", "motivo": acao.get("motivo"), "alvo": acao.get("alvo")})
         acoes = [a for a in acoes if a not in no_teto]
+        acoes = self._avancar_fases_sem_orquestrador(acoes, executadas)
         if self._bloqueado():
             acoes = [a for a in acoes if a.get("tipo") != "acordar"]
         if not any(a.get("tipo") == "acordar" for a in acoes):
@@ -4158,7 +4311,7 @@ class Despachante:
 
         if tipo == "acordar":
             arbitragem = _acordada_do_arbitro(acao)
-            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else "orquestrador")
+            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else self._papel_da_acordada(acao))
             prompt = (prompts.prompt_arbitro if arbitragem else prompts.prompt_orquestrador)(
                 motivo=acao.get("motivo"),
                 estado_compacto=compactar(self.estado, self.plano),
@@ -4376,6 +4529,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="comando", required=True)
     iniciar = sub.add_parser("iniciar", help="cria o estado; com --spec acorda o orquestrador")
     iniciar.add_argument("--spec", help="caminho da spec no repositório do cliente")
+    iniciar.add_argument("--pesado", action="store_true", help="com --spec: planeja com o planejador-pesado (Fable)")
     rodar = sub.add_parser("rodar", help="repete o ciclo")
     rodar.add_argument("--intervalo", type=int, default=30, help="segundos entre ciclos (padrão 30)")
     sub.add_parser("status", help="resumo do estado")
@@ -4400,6 +4554,9 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abr
         spec = getattr(args, "spec", None)
         if args.comando == "iniciar" and spec is not None and not _texto(spec):
             raise ErroDeEntrada(["--spec vazio"])
+        pesado = bool(getattr(args, "pesado", False))
+        if pesado and spec is None:
+            raise ErroDeEntrada(["--pesado só vale com --spec"])
         try:
             with travar(raiz):
                 if args.comando == "retomar":
@@ -4409,7 +4566,7 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abr
                 despachante = construir(ambiente)
                 despachante.trava_externa = True  # este processo já tem a trava da raiz
                 if args.comando == "iniciar":
-                    print(despachante.iniciar(spec=spec), file=saida)
+                    print(despachante.iniciar(spec=spec, pesado=pesado), file=saida)
                     return 0
                 try:
                     despachante.rodar(intervalo=args.intervalo)
@@ -4422,6 +4579,8 @@ def main(argv=None, *, ambiente=None, construir=None, saida=None, erro=None, abr
                 pedido = {"comando": args.comando}
                 if spec is not None:
                     pedido["spec"] = spec
+                if pesado:
+                    pedido["pesado"] = True
                 enfileirar_pedido(raiz, pedido)
                 print(MENSAGEM_PEDIDO, file=saida)
                 return 0

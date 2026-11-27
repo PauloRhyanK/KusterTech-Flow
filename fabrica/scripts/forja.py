@@ -1,5 +1,6 @@
 """Cliente da API REST do GitHub (PRs, CI, merge com guarda de sha, arquivos e issues de decisão)."""
 
+import base64
 import copy
 import datetime
 import http.client
@@ -50,6 +51,10 @@ def _componente(valor: str) -> str:
     if valor in (".", ".."):
         raise ValueError("nome inválido")
     return urllib.parse.quote(valor, safe="")
+
+
+def _dict_ou_vazio(valor) -> dict:
+    return valor if isinstance(valor, dict) else {}
 
 
 def _analisar_repo(repo) -> tuple[str, str]:
@@ -448,6 +453,43 @@ class ForjaGitHub:
         self._objeto("POST", base, {"name": nome, "color": cor, "description": descricao}, (201,))
         return True
 
+    def propor_arquivo(
+        self, repo: str, base: str, branch: str, caminho: str, conteudo: str, mensagem: str, titulo: str, corpo: str
+    ) -> dict:
+        """Branch novo a partir de `base`, um commit que grava `caminho` e o PR; devolve `{"pr", "headSha"}`."""
+        dono, nome = _analisar_repo(repo)
+        _texto_nao_vazio(base, "base")
+        _texto_nao_vazio(branch, "branch")
+        _caminho_de_arquivo(caminho)
+        for valor, campo in ((conteudo, "conteúdo"), (mensagem, "mensagem"), (titulo, "título"), (corpo, "corpo")):
+            if not isinstance(valor, str):
+                raise ValueError("%s inválido" % campo)
+        raiz = "/repos/%s/%s" % (dono, nome)
+        ref = raiz + "/git/ref/heads/" + urllib.parse.quote(base, safe="/")
+        base_sha = _dict_ou_vazio(self._objeto("GET", ref).get("object")).get("sha")
+        _validar_sha_completo(base_sha)
+        self._objeto("POST", raiz + "/git/refs", {"ref": "refs/heads/" + branch, "sha": base_sha}, (201,))
+        arquivo = raiz + "/contents/" + urllib.parse.quote(caminho, safe="/")
+        atual = self._objeto("GET", arquivo + "?ref=" + urllib.parse.quote(branch, safe=""))
+        commit = self._objeto(
+            "PUT",
+            arquivo,
+            {
+                "message": mensagem,
+                "content": base64.b64encode(conteudo.encode("utf-8")).decode("ascii"),
+                "sha": self._texto(atual, "", "sha", "GET", arquivo),
+                "branch": branch,
+            },
+            (200, 201),
+        )
+        head = _dict_ou_vazio(commit.get("commit")).get("sha")
+        _validar_sha_completo(head)
+        pulls = raiz + "/pulls"
+        pr = self._objeto("POST", pulls, {"title": titulo, "body": corpo, "head": branch, "base": base}, (201,))
+        url = self._texto(pr, "", "html_url", "POST", pulls)
+        _analisar_url(url, "pull")
+        return {"pr": url, "headSha": head}
+
     def abrir_decisao(self, repo: str, titulo: str, corpo: str) -> str:
         dono, nome = _analisar_repo(repo)
         _texto_nao_vazio(titulo, "título")
@@ -533,6 +575,19 @@ class ForjaFalsa:
             "mergeado": bool(mergeado),
             "base": base,
         }
+
+    def propor_arquivo(
+        self, repo: str, base: str, branch: str, caminho: str, conteudo: str, mensagem: str, titulo: str, corpo: str
+    ) -> dict:
+        self._registrar("propor_arquivo", repo=repo, base=base, branch=branch, caminho=caminho, conteudo=conteudo, titulo=titulo)
+        _analisar_repo(repo)
+        _caminho_de_arquivo(caminho)
+        self._contador += 1
+        url = "https://github.com/%s/pull/%d" % (repo, 500 + self._contador)
+        head = ("%x" % (0xD00 + self._contador)).rjust(40, "d")
+        self.definir_pr(url, head_sha=head, branch=branch, arquivos=[caminho], base=base)
+        self.definir_arquivo(repo, head, caminho, conteudo)
+        return {"pr": url, "headSha": head}
 
     def definir_ci(self, repo: str, sha: str, resultado: str) -> None:
         _analisar_repo(repo)

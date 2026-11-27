@@ -16,11 +16,11 @@ Decisões do Paulo (27/11):
 
 | Papel | Antes | Depois |
 |---|---|---|
-| `orquestrador` (falhas, respostas, plano normal) | Fable, alto | `claude-opus-5-5`, alto |
-| `arbitro` | Fable, alto | `claude-opus-5-5`, alto |
+| `orquestrador` (falhas, respostas, plano normal) | Fable, alto | `claude-opus-5-5`, médio |
+| `arbitro` | Fable, alto | `claude-opus-5-5`, médio |
 | `planejador-pesado` (novo) | — | `claude-fable-5-1`, alto |
 
-Vale no padrão do kit (`fabrica/modelos/config.json`) e no `.fabrica/config.json` dos projetos registrados (Flow, CAISv2, flowia). `planejador-pesado` é opcional na config: sem ele, o pedido pesado usa `orquestrador` e o despachante avisa no `status`.
+Vale no padrão do kit (`fabrica/modelos/config.json`) e no `.fabrica/config.json` dos projetos registrados (Flow, CAISv2, flowia). O esforço é configurado por modelo na máquina (`modelSettings` do Claude), e o revisor já roda Opus com esforço médio: o orquestrador e o árbitro seguem o mesmo esforço. `planejador-pesado` é opcional na config: sem ele, o pedido pesado usa `orquestrador` e o despachante avisa no `status`.
 
 ## 3. Onde o Paulo escolhe o pesado
 
@@ -41,21 +41,9 @@ Todas as outras acordadas (falhas, respostas, fase, plano inválido) usam `model
 
 ## 5. Pergunta direta ao Paulo
 
-Toda `.fabrica/pergunta.md` (do orquestrador ou do árbitro) segue este formato:
+Toda `.fabrica/pergunta.md` (do orquestrador ou do árbitro) segue o formato que o árbitro já usa e que o Flow já mostra (`fabrica/equipes/arbitro.md`, "Quando a decisão é do Paulo"): título com a decisão, **O que aconteceu**, **O que preciso de você**, de 2 a 3 **Opções** `N. **Nome** — consequência` (viram botões de um toque no Decidir), **Recomendo** e os detalhes técnicos recolhidos. A recomendação é obrigatória.
 
-```markdown
-## O que aconteceu
-<uma frase, sem termo técnico>
-
-## Minha recomendação
-<a opção escolhida> — <por quê, em uma frase>
-
-## Opções
-1. <opção> — <o que acontece se escolher>
-2. <opção> — <o que acontece se escolher>
-```
-
-De 2 a 3 opções; a primeira é a recomendada. O despachante confere as três seções e de 2 a 3 opções numeradas antes de abrir a issue. Fora do formato, a pergunta vai mesmo assim (não trava o Paulo), com um aviso no `status`. O Flow já mostra listas numeradas como opções de um toque no Decidir.
+O despachante confere o que aconteceu, a recomendação e de 2 a 3 opções no formato antes de abrir a issue. Fora do formato, a pergunta vai mesmo assim (não trava o Paulo), com um aviso no `status`.
 
 No `teto_da_raia`, o contexto traz a raia, as falhas e os replanejamentos. O run só grava a `pergunta.md`; o despachante a abre como decisão `replanejamento`, sem passar pelo árbitro (é decisão do Paulo por definição). Se o run falhar ou não gravar a pergunta, vale a decisão genérica de hoje.
 
