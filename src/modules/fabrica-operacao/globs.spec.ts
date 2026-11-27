@@ -53,6 +53,9 @@ const CASOS: readonly [
   ['casaGlob', 'x/auth/y.ts', '**/auth/**', true],
   ['globsSobrepoem', 'src/a/**', 'src/**', true],
   ['globsSobrepoem', 'src/a/**', 'src/b/**', false],
+  // revisão independente: o Python percorre por caractere e o `.` dele casa `\r`
+  ['casaGlob', 'a😀', 'a?', true],
+  ['casaGlob', 'a\rb', 'a**', true],
 ]
 
 const FUNCOES = { casaGlob, globsSobrepoem }

@@ -62,9 +62,26 @@ describe('novaGeracao', () => {
 })
 
 describe('classificarEnvio', () => {
-  test('mesma geração é aceita; antiga ou desconhecida é obsoleta', () => {
-    expect(classificarEnvio({ geracao: 2 }, { geracao: 2 })).toBe('aceito')
-    expect(classificarEnvio({ geracao: 2 }, { geracao: 1 })).toBe('obsoleto')
-    expect(classificarEnvio({ geracao: 2 }, { geracao: 3 })).toBe('obsoleto')
+  const atual = { execucaoId: 'ex1', geracao: 2 }
+
+  test('mesma execução e geração é aceita; antiga ou desconhecida é obsoleta', () => {
+    expect(classificarEnvio(atual, { execucaoId: 'ex1', geracao: 2 })).toBe('aceito')
+    expect(classificarEnvio(atual, { execucaoId: 'ex1', geracao: 1 })).toBe('obsoleto')
+    expect(classificarEnvio(atual, { execucaoId: 'ex1', geracao: 3 })).toBe('obsoleto')
+  })
+
+  test('outra execução com a mesma geração é obsoleta', () => {
+    expect(classificarEnvio(atual, { execucaoId: 'ex2', geracao: 2 })).toBe('obsoleto')
+  })
+
+  test('geração ausente ou não inteira nunca é aceita', () => {
+    const sem = { execucaoId: 'ex1' } as unknown as { execucaoId: string; geracao: number }
+    expect(classificarEnvio(sem, sem)).toBe('obsoleto')
+    expect(
+      classificarEnvio({ execucaoId: 'ex1', geracao: 0 }, { execucaoId: 'ex1', geracao: 0 }),
+    ).toBe('obsoleto')
+    expect(
+      classificarEnvio({ execucaoId: 'ex1', geracao: 1.5 }, { execucaoId: 'ex1', geracao: 1.5 }),
+    ).toBe('obsoleto')
   })
 })

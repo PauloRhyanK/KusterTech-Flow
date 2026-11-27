@@ -252,3 +252,62 @@ describe('colidem e admitir', () => {
     expect(admitir([etapa('a')], [], 0)).toEqual([])
   })
 })
+
+describe('entradas malformadas (revisão independente)', () => {
+  test('decisão ou resultado desconhecido devolve a mesma etapa', () => {
+    const emGates = etapa('a', { estado: 'aguardando_gates' })
+    expect(aplicarDecisaoDeGate(emGates, 'xyz' as never, [])).toBe(emGates)
+    const executando = etapa('a', { estado: 'executando' })
+    expect(aplicarResultado(executando, { tipo: 'xyz' } as never)).toBe(executando)
+    expect(aplicarResultado(executando, null as never)).toBe(executando)
+  })
+
+  test('segundo PR diferente na mesma etapa bloqueia', () => {
+    const e = etapa('a', { estado: 'executando', prUrl: 'https://x/pull/1', correcoes: 1 })
+    expect(aplicarResultado(e, { tipo: 'pr_aberto', prUrl: 'https://x/pull/2' })).toMatchObject({
+      estado: 'bloqueada',
+      prUrl: 'https://x/pull/1',
+      motivo: 'segundo PR na mesma etapa: https://x/pull/2',
+    })
+    expect(aplicarResultado(e, { tipo: 'pr_aberto', prUrl: 'https://x/pull/1' }).estado).toBe(
+      'aguardando_gates',
+    )
+  })
+
+  test('PR sem URL conta como saída inválida', () => {
+    expect(
+      aplicarResultado(etapa('a', { estado: 'executando' }), { tipo: 'pr_aberto', prUrl: '' }),
+    ).toMatchObject({ estado: 'pendente', falhasTecnicas: 1, motivo: 'PR sem URL' })
+  })
+
+  test('vagas ou prioridade não numéricas não furam o limite', () => {
+    const c = [etapa('a'), etapa('b')]
+    expect(admitir(c, [], Number.NaN)).toEqual([])
+    expect(
+      admitir([etapa('a', { prioridade: Number.NaN }), etapa('b', { prioridade: 1 })], [], 1),
+    ).toEqual(['b'])
+  })
+
+  test('implementação sem arquivos declarados vale pelo repositório inteiro', () => {
+    expect(
+      admitir(
+        [etapa('a', { arquivos: [] })],
+        [etapa('b', { estado: 'executando', arquivos: ['src/b.ts'] })],
+        5,
+      ),
+    ).toEqual([])
+    expect(
+      admitir([etapa('a', { arquivos: [] }), etapa('b', { arquivos: ['src/b.ts'] })], [], 5),
+    ).toEqual(['a'])
+  })
+
+  test('id duplicado nunca é elegível nem libera dependentes', () => {
+    expect(
+      etapasElegiveis([
+        etapa('x'),
+        etapa('x', { estado: 'mergeada' }),
+        etapa('y', { dependeDe: ['x'] }),
+      ]),
+    ).toEqual([])
+  })
+})

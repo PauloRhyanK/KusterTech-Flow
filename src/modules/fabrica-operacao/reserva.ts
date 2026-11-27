@@ -44,9 +44,15 @@ export function novaGeracao(
   }
 }
 
-export function classificarEnvio(
-  atual: { geracao: number },
-  envio: { geracao: number },
-): 'aceito' | 'obsoleto' {
-  return envio.geracao === atual.geracao ? 'aceito' : 'obsoleto'
+type Envio = { execucaoId: string; geracao: number }
+
+const geracaoValida = (g: unknown) => typeof g === 'number' && Number.isInteger(g) && g >= 1
+
+export function classificarEnvio(atual: Envio, envio: Envio): 'aceito' | 'obsoleto' {
+  const aceito =
+    geracaoValida(atual.geracao) &&
+    envio.geracao === atual.geracao &&
+    typeof atual.execucaoId === 'string' &&
+    envio.execucaoId === atual.execucaoId
+  return aceito ? 'aceito' : 'obsoleto'
 }

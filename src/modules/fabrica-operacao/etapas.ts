@@ -53,10 +53,14 @@ const PRONTAS: readonly EstadoDaEtapa[] = ['mergeada', 'concluida']
 
 /** Pendentes cujas dependências existem e estão todas mergeadas ou concluídas. */
 export function etapasElegiveis(etapas: Etapa[]): string[] {
-  const estados = new Map(etapas.map((e) => [e.id, e.estado]))
+  const contagem = new Map<string, number>()
+  for (const e of etapas) contagem.set(e.id, (contagem.get(e.id) ?? 0) + 1)
+  const unica = (id: string) => contagem.get(id) === 1 // id duplicado não é confiável
+  const estados = new Map(etapas.filter((e) => unica(e.id)).map((e) => [e.id, e.estado]))
   return etapas
     .filter(
       (e) =>
+        unica(e.id) &&
         e.estado === 'pendente' &&
         e.dependeDe.every((d) => PRONTAS.includes(estados.get(d) as EstadoDaEtapa)),
     )
@@ -83,11 +87,17 @@ export function aplicarResultado(
   r: ResultadoDaExecucao,
   limites: Limites = LIMITES_PADRAO,
 ): Etapa {
-  if (etapa.estado !== 'executando') return etapa
+  if (etapa.estado !== 'executando' || typeof r !== 'object' || r === null) return etapa
   switch (r.tipo) {
     case 'pr_aberto':
       if (etapa.tipo === 'leitura') {
         return { ...etapa, estado: 'bloqueada', motivo: 'etapa de leitura abriu PR' }
+      }
+      if (typeof r.prUrl !== 'string' || r.prUrl === '')
+        return falhaTecnica(etapa, 'PR sem URL', limites)
+      if (etapa.prUrl !== null && etapa.prUrl !== r.prUrl) {
+        // uma etapa tem no máximo um PR: a correção continua no mesmo
+        return { ...etapa, estado: 'bloqueada', motivo: `segundo PR na mesma etapa: ${r.prUrl}` }
       }
       return { ...etapa, estado: 'aguardando_gates', prUrl: r.prUrl, motivo: null }
     case 'sem_pr':
@@ -108,6 +118,8 @@ export function aplicarResultado(
       return { ...etapa, estado: 'pendente', motivo: 'cancelada' }
     case 'incerto':
       return { ...etapa, motivo: 'reconciliar antes de repetir' }
+    default:
+      return etapa // tipo desconhecido vindo de fora
   }
 }
 
@@ -131,6 +143,8 @@ export function aplicarDecisaoDeGate(
         return { ...etapa, estado: 'bloqueada', motivo: `escalar: ${texto}` }
       }
       return { ...etapa, estado: 'pendente', correcoes: etapa.correcoes + 1, motivo: texto }
+    default:
+      return etapa // decisão desconhecida vinda de fora
   }
 }
 
@@ -145,13 +159,19 @@ export function colidem(
   b: Pick<Etapa, 'repo' | 'arquivos'>,
 ): boolean {
   if (a.repo.toLowerCase() !== b.repo.toLowerCase()) return false
-  return a.arquivos.some((x) => b.arquivos.some((y) => globsSobrepoem(x, y)))
+  return escopo(a).some((x) => escopo(b).some((y) => globsSobrepoem(x, y)))
 }
+
+/** Sem arquivos declarados, a etapa vale pelo repositório inteiro. */
+const escopo = (e: Pick<Etapa, 'arquivos'>) => (e.arquivos.length > 0 ? e.arquivos : ['**'])
+
+const numero = (n: number) => (Number.isFinite(n) ? n : 0)
 
 /** Ids a iniciar: prioridade maior primeiro, depois a mais antiga; nunca colide com quem já roda. */
 export function admitir(candidatas: Etapa[], ativas: Etapa[], vagas: number): string[] {
+  if (!Number.isFinite(vagas) || vagas <= 0) return []
   const ordem = [...candidatas].sort(
-    (a, b) => b.prioridade - a.prioridade || a.criadaEm.localeCompare(b.criadaEm),
+    (a, b) => numero(b.prioridade) - numero(a.prioridade) || a.criadaEm.localeCompare(b.criadaEm),
   )
   const ocupando = [...ativas]
   const admitidas: string[] = []

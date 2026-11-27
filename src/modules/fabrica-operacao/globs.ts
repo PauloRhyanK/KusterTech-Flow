@@ -2,15 +2,20 @@
 
 const META = /[.*+?^${}()|[\]\\/]/g
 
-/** `**` casa qualquer sequência; `*` e `?` ficam dentro de um segmento. */
-function paraRegex(glob: string): string {
+/**
+ * `**` casa qualquer sequência; `*` e `?` ficam dentro de um segmento. Percorre por ponto de código e usa as
+ * flags `u` e `s`, como o `re` do Python percorre caracteres (o `.` do Python só não casa `\n`; caminhos de
+ * repositório não têm quebra de linha).
+ */
+function paraRegex(texto: string): string {
+  const glob = Array.from(texto)
   let saida = ''
   let i = 0
   while (i < glob.length) {
-    if (glob.startsWith('**/', i)) {
+    if (glob.slice(i, i + 3).join('') === '**/') {
       saida += '(?:.*/)?'
       i += 3
-    } else if (glob.startsWith('**', i)) {
+    } else if (glob.slice(i, i + 2).join('') === '**') {
       saida += '.*'
       i += 2
     } else if (glob[i] === '*') {
@@ -30,7 +35,7 @@ function paraRegex(glob: string): string {
 export function casaGlob(caminho: string, glob: string): boolean {
   const regex = paraRegex(glob)
   // a barra final ancora o casamento num limite de diretório; o resto do caminho é livre
-  return new RegExp(glob.endsWith('/') ? `^${regex}` : `^${regex}$`).test(caminho)
+  return new RegExp(glob.endsWith('/') ? `^${regex}` : `^${regex}$`, 'us').test(caminho)
 }
 
 /** Prefixo literal até o primeiro curinga, cortado na última barra. */

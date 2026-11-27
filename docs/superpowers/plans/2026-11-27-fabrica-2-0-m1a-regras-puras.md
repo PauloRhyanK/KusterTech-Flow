@@ -121,3 +121,19 @@
 - [ ] **Step 3: Implementar.** Datas em ISO string; nenhuma leitura de relógio dentro do módulo.
 - [ ] **Step 4:** rodar o spec e a verificação completa: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test` → tudo verde.
 - [ ] **Step 5: Commit** `feat(fabrica-operacao): reservas com geração para workers`.
+
+## Revisão independente (27/11) — o que foi feito com cada achado
+
+| Achado | Decisão |
+|---|---|
+| `switch` sem `default` devolvia `undefined` para tipo/decisão desconhecidos | corrigido: devolve a mesma etapa |
+| Segundo PR diferente na mesma etapa sobrescrevia `prUrl` | corrigido: `bloqueada` com "segundo PR na mesma etapa"; PR sem URL conta como falha técnica |
+| `vagas`/`prioridade` `NaN` furavam o limite e a ordem | corrigido: vagas não finitas admitem nada; prioridade não finita vale 0 |
+| Etapa sem `arquivos` nunca colidia | corrigido: sem arquivos, vale pelo repositório inteiro (`**`) |
+| `classificarEnvio` aceitava geração ausente e não conferia a execução | corrigido: exige geração inteira ≥ 1 e a mesma `execucaoId` |
+| Id duplicado liberava dependentes | corrigido: id duplicado nunca é elegível nem libera |
+| Globs percorriam por unidade UTF-16 e `.` não casava `\r` | corrigido: ponto de código, flags `u` e `s` |
+| `codigo: 0.0` vira `0` no JSON e passa como inteiro (o Python recusaria) | **aceito**: no JS não há como distinguir depois do `JSON.parse`, e `0.0` significa sucesso do mesmo jeito |
+| Mensagem de achado com `arquivo: null` mostra `?` (Python mostraria `None`) | **aceito**: só texto |
+| `limite_de_uso`/`falha_tecnica` voltam a `pendente` sem espera | **vai para o M1b**: o agendador guarda `proximaTentativaEm` (retorno da cota ou recuo 5/15/45 min, como hoje) e só oferece a etapa depois dele |
+| Caixa ignorada só no nome do repositório, não nos globs | **aceito**: fiel ao kit; caminhos do Git diferenciam caixa |
