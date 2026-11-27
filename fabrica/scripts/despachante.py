@@ -1061,7 +1061,7 @@ class Despachante:
         if tipo == "corrigir":
             return "fixer", None
         if tipo == "acordar":
-            return (PAPEL_DO_ARBITRO if _acordada_do_arbitro(acao) else "orquestrador"), None
+            return (PAPEL_DO_ARBITRO if _acordada_do_arbitro(acao) else self._papel_da_acordada(acao)), None
         return None, None
 
     def _sem_executor(self, acao: dict) -> bool:
@@ -1078,7 +1078,7 @@ class Despachante:
         if not isinstance(espera, dict):
             espera = self.estado["semExecutor"] = {}
         if executor is not None:
-            if espera.pop(chave, None) is not None:
+            if not self._papel_sem_executor(chave) and espera.pop(chave, None) is not None:
                 self._salvar()
             return False
         agora = self._agora_dt()
@@ -1126,17 +1126,20 @@ class Despachante:
         except ConfigInvalida:
             return True  # sem modelo para o papel não há o que esperar
 
+    def _papel_sem_executor(self, papel) -> bool:
+        """O papel não tem executor, ou uma raia dele espera o executor próprio: a espera do papel dura até a última sair."""
+        if not self._papel_tem_executor(papel):
+            return True
+        chave = papel_normalizado(papel)
+        return any(
+            _dict(raia).get("aguardandoExecutor") and papel_normalizado(self._papel_da_raia(raia_id)) == chave
+            for raia_id, raia in _dict(self.estado.get("raias")).items()
+        )
+
     def _liberar_esperas_de_executor(self) -> None:
-        """A raia cujo prazo de espera passou volta a concorrer: o campo sai; o papel com executor sai da espera."""
+        """A raia cujo prazo de espera passou volta a concorrer; o papel sai da espera quando nenhuma raia dele espera mais."""
         agora = self._agora_dt()
         mudou = False
-        espera_dos_papeis = self.estado.get("semExecutor")
-        if isinstance(espera_dos_papeis, dict):
-            for papel in [p for p in espera_dos_papeis if self._papel_tem_executor(p)]:
-                del espera_dos_papeis[papel]
-                mudou = True
-            for papel, desde in list(espera_dos_papeis.items()):
-                self._chamar_o_paulo_sem_executor(papel, desde, agora)
         for raia in _dict(self.estado.get("raias")).values():
             espera = _dict(_dict(raia).get("aguardandoExecutor"))
             if not espera:
@@ -1148,6 +1151,13 @@ class Despachante:
             if ate is None or ate <= agora:
                 raia.pop("aguardandoExecutor", None)
                 mudou = True
+        espera_dos_papeis = self.estado.get("semExecutor")
+        if isinstance(espera_dos_papeis, dict):
+            for papel in [p for p in espera_dos_papeis if not self._papel_sem_executor(p)]:
+                del espera_dos_papeis[papel]
+                mudou = True
+            for papel, desde in list(espera_dos_papeis.items()):
+                self._chamar_o_paulo_sem_executor(papel, desde, agora)
         if mudou:
             self._salvar()
 
@@ -2725,7 +2735,7 @@ class Despachante:
                 continue
             if decisao.get("tipo") == "executor":
                 # volta sozinha: a issue só avisa a espera longa e fecha quando o papel tem executor de novo
-                if not self._papel_tem_executor(decisao.get("alvo")):
+                if self._papel_sem_executor(decisao.get("alvo")):
                     restantes.append(decisao)
                     continue
                 mudou = True
@@ -3331,7 +3341,7 @@ class Despachante:
         if tipo == "bloqueio":
             return not self._bloqueado()
         if tipo == "executor":
-            return self._papel_tem_executor(intencao.get("alvo"))
+            return not self._papel_sem_executor(intencao.get("alvo"))
         if tipo == "warren_parcial":
             return not _dict(self.estado.get("warrenParcial")).get("url") and not any(
                 _inteiro(n) and n >= CICLOS_REDE_PARCIAL for n in _dict(self.estado.get("falhasDeRede")).values()

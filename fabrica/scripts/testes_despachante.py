@@ -8018,6 +8018,39 @@ class TestesExecutores(Base):
         self.assertTrue(all(info["fechada"] for info in self.forja._decisoes.values()))
         self.assertEqual(self.estado()["decisoes"], [])
 
+    def test_espera_do_executor_proprio_da_raia_abre_a_issue_com_o_papel_disponivel(self):
+        self.esgotar(RESERVA, minutos=600)
+        d = self.preparar_raia(plano(dict(raia("a"), executor={"agente": "claude-code", "modelo": HAIKU, "conta": RESERVA})))
+        titulo = "[fábrica] sem executor para backend há 3 h"
+        for minutos in (60, 60, 59):
+            self.instante += datetime.timedelta(minutes=minutos)
+            d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], [])
+        self.instante += datetime.timedelta(minutes=1)
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], [titulo])
+        self.assertFalse(any(info["fechada"] for info in self.forja._decisoes.values()))
+        self.assertEqual(self.estado()["raias"]["a"]["estado"], "planejada")
+
+    def test_pesado_esgotado_nao_cai_no_orquestrador_nem_falha_a_cada_ciclo(self):
+        config = config_com_reserva()
+        config["modelos"]["planejador-pesado"] = dict(_modelo(FABLE, 30, "high"), executores=_executores(FABLE, PRINCIPAL))
+        self.config_padrao = config
+        self.esgotar(PRINCIPAL, minutos=600)
+        self.publicar(plano(raia("a")))
+        self.forja.definir_arquivo(REPO, "main", "docs/spec.md", "# spec")
+        d = self.novo()
+        d.iniciar()
+        d.iniciar(spec="docs/spec.md", pesado=True)
+        for _ in range(2):
+            d.ciclo()
+        self.assertEqual(self.runs(), [])
+        self.assertIn("planejador-pesado", self.estado()["semExecutor"])
+        self.instante += datetime.timedelta(minutes=180)
+        d.ciclo()
+        self.assertEqual([t for t, _ in self.forja.decisoes], ["[fábrica] sem executor para planejador-pesado há 3 h"])
+
     def test_estado_antigo_pausado_por_cota_retoma_sozinho(self):
         d = self.preparar_raia()
         d.estado["pausado"] = "cota"
