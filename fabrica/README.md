@@ -399,23 +399,23 @@ O teto de buscas por dia e o tamanho do lote ficam no Flow: `FLOW_BUSCAS_IA_POR_
 
 A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o Paulo pode mudá-la por projeto):
 
-| Papel          | Modelo              | Esforço | maxCustoUsd |
-| -------------- | ------------------- | ------- | ----------- |
-| `orquestrador` | `claude-opus-5-5`   | medium  | 20          |
-| `arbitro`      | `claude-opus-5-5`   | medium  | 20          |
-| `planejador-pesado` | `claude-fable-5-1` | high | 20     |
-| `arquiteto`    | `claude-sonnet-5-5` | medium  | 15          |
-| `produto`      | `claude-haiku-5-5`  | medium  | 5           |
-| `ux-ui`        | `claude-sonnet-5-5` | medium  | 10          |
-| `frontend`     | `claude-sonnet-5-5` | medium  | 10          |
-| `backend`      | `claude-sonnet-5-5` | medium  | 10          |
-| `qa`           | `claude-sonnet-5-5` | medium  | 10          |
-| `revisor`      | `claude-opus-5-5`   | medium  | 5           |
-| `devops`       | `claude-sonnet-5-5` | medium  | 10          |
-| `seguranca`    | `claude-sonnet-5-5` | medium  | 10          |
-| `fixer`        | `claude-haiku-5-5`  | medium  | 5           |
-| `atendente`    | `claude-sonnet-5-5` | medium  | 2           |
-| `buscador`     | `claude-haiku-5-5`  | medium  | 0.5         |
+| Papel               | Modelo              | Esforço | maxCustoUsd |
+| ------------------- | ------------------- | ------- | ----------- |
+| `orquestrador`      | `claude-opus-5-5`   | medium  | 20          |
+| `arbitro`           | `claude-opus-5-5`   | medium  | 20          |
+| `planejador-pesado` | `claude-fable-5-1`  | high    | 20          |
+| `arquiteto`         | `claude-sonnet-5-5` | medium  | 15          |
+| `produto`           | `claude-haiku-5-5`  | medium  | 5           |
+| `ux-ui`             | `claude-sonnet-5-5` | medium  | 10          |
+| `frontend`          | `claude-sonnet-5-5` | medium  | 10          |
+| `backend`           | `claude-sonnet-5-5` | medium  | 10          |
+| `qa`                | `claude-sonnet-5-5` | medium  | 10          |
+| `revisor`           | `claude-opus-5-5`   | medium  | 5           |
+| `devops`            | `claude-sonnet-5-5` | medium  | 10          |
+| `seguranca`         | `claude-sonnet-5-5` | medium  | 10          |
+| `fixer`             | `claude-haiku-5-5`  | medium  | 5           |
+| `atendente`         | `claude-sonnet-5-5` | medium  | 2           |
+| `buscador`          | `claude-haiku-5-5`  | medium  | 0.5         |
 
 ### Executores e conta reserva
 
