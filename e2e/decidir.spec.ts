@@ -26,6 +26,11 @@ import {
 const PASTA_DAS_CAPTURAS = 'docs/superpowers/specs/desenhos/2026-11-21-decidir/capturas'
 const REPO = 'kustertech-exemplo/portal'
 const ISSUE_41 = 'https://github.com/kustertech-exemplo/portal/issues/41'
+const PASTA_DA_LEITURA = 'docs/homologacao/2026-11-26-decidir-leitura'
+const PERGUNTA_43 = {
+  titulo: '[fábrica] pergunta: Em que ordem a ficha do lead mostra os campos extras do formulário?',
+  url: 'https://github.com/kustertech-exemplo/portal/issues/43',
+}
 const FIM_DE_FASE = { titulo: '[fábrica] orquestrador: aprovar fase', url: ISSUE_41 }
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -88,8 +93,13 @@ async function entrar(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/$/)
 }
 
-async function capturar(page: Page, projeto: string, nome: string): Promise<void> {
-  const caminho = join(PASTA_DAS_CAPTURAS, projeto, `${nome}.png`)
+async function capturar(
+  page: Page,
+  projeto: string,
+  nome: string,
+  pasta: string = PASTA_DAS_CAPTURAS,
+): Promise<void> {
+  const caminho = join(pasta, projeto, `${nome}.png`)
   mkdirSync(dirname(caminho), { recursive: true })
   await page.screenshot({ path: caminho, fullPage: true })
 }
@@ -208,7 +218,7 @@ test.describe('Decidir', () => {
       .setInputFiles({ name: 'print-config-cobranca.png', mimeType: 'image/png', buffer: PNG })
     await caixa.press('Enter')
     await expect(page.getByText(/Enviada, aguardando o agente/)).toBeVisible()
-    await expect(page.getByRole('link', { name: 'print-config-cobranca.png' })).toBeVisible()
+    await expect(page.getByRole('img', { name: 'print-config-cobranca.png' })).toBeVisible()
 
     const primeira = await conversaNaBusca(request, c, LEMBRETE.titulo)
     const mensagens = primeira.mensagens as { autor: string; anexos: { nome: string }[] }[]
@@ -274,6 +284,65 @@ test.describe('Decidir', () => {
 
     await cartao(page).getByRole('button', { name: 'Confirmar e mergear' }).click()
     await expect(page.getByText('Nada esperando por você.')).toBeVisible()
+  })
+
+  test('pergunta da Fábrica legível: título sem prefixo, destaque do corpo, markdown, opções, diagrama, detalhes recolhidos; o toque numa opção leva ao cartão Responder; capturas da leitura', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const r = await enviarRetratoDaFabrica(
+      request,
+      c.token,
+      retratoComDecisoes('lead-de-formulario-na-ficha', [PERGUNTA_43]),
+    )
+    expect(r, JSON.stringify(r.json)).toMatchObject({ status: 200 })
+    await entrar(page)
+    await page.goto('/decidir')
+
+    await expect(tituloDoItem(page)).toHaveText(
+      'Em que ordem a ficha do lead mostra os campos extras do formulário?',
+    )
+    await expect(page.getByRole('region', { name: 'O que preciso de você' })).toContainText(
+      'Escolher a ordem dos campos extras na ficha',
+    )
+    const conversa = page.getByRole('list').filter({ hasText: 'O que aconteceu' }).first()
+    await expect(conversa.getByRole('heading', { name: 'O que aconteceu' })).toBeVisible()
+    await expect(conversa.locator('strong', { hasText: 'na ordem em que o cliente' })).toBeVisible()
+    await expect(page.getByText('**')).toHaveCount(0)
+    await expect(page.getByText('Feche esta issue')).toHaveCount(0)
+
+    const opcoes = page.getByRole('list', { name: 'Opções' }).getByRole('listitem')
+    await expect(opcoes).toHaveCount(2)
+    await expect(opcoes.first()).toContainText('Recomendada')
+
+    // O diagrama é desenhado de verdade pelo Mermaid.
+    const figura = page.locator('figure', { hasText: 'Diagrama enviado pelo agente' })
+    await expect(figura.locator('svg')).toBeVisible()
+    await expect(figura.locator('svg')).toContainText('Recebimento')
+
+    const detalhes = page.locator('details', { hasText: 'Detalhes técnicos' })
+    await expect(detalhes.getByRole('table')).toBeHidden()
+    await semRolagemHorizontal(page)
+    await capturar(page, testInfo.project.name, 'leitura', PASTA_DA_LEITURA)
+
+    await detalhes.locator('summary').click()
+    await expect(detalhes.getByRole('table')).toBeVisible()
+    await semRolagemHorizontal(page)
+    await capturar(page, testInfo.project.name, 'leitura-detalhes-abertos', PASTA_DA_LEITURA)
+
+    await figura.getByRole('button', { name: 'Ampliar' }).click()
+    await expect(page.getByRole('dialog', { name: 'Diagrama' })).toBeVisible()
+    await capturar(page, testInfo.project.name, 'leitura-diagrama-ampliado', PASTA_DA_LEITURA)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'Diagrama' })).toBeHidden()
+
+    await page
+      .getByRole('group', { name: 'Responder com uma opção' })
+      .getByRole('button', { name: '1. Ordem alfabética' })
+      .click()
+    await expect(cartao(page)).toContainText('1. Ordem alfabética')
+    await semRolagemHorizontal(page)
+    await capturar(page, testInfo.project.name, 'leitura-cartao', PASTA_DA_LEITURA)
   })
 
   test('atendente parado: mensagem fica "Enviada, aguardando o agente"; com o relógio adiantado 61 s aparece "O agente está demorando…" e "Não vamos fazer" leva ao cartão e à confirmação sem o agente; captura sem-agente', async ({

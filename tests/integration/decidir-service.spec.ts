@@ -344,6 +344,57 @@ describe('decidir / service (integração)', () => {
     expect(await cartoes(conversaId)).toEqual([])
   })
 
+  function fonteComCorpo(corpo: string): FonteGitHub {
+    const f = criarFonteFixtures()
+    return {
+      ...f,
+      lerIssue: async (repo, numero) => {
+        const issue = await f.lerIssue(repo, numero)
+        return issue && { ...issue, corpo }
+      },
+    }
+  }
+
+  test('abrirItem da decisão da Fábrica: o corpo vem inteiro até 4000 e, acima disso, termina em "Continua na issue"', async () => {
+    const inteiro = 'a'.repeat(3000)
+    const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_42), AGORA, {
+      fonte: () => fonteComCorpo(inteiro),
+    })
+    expect((await mensagens(conversaId))[0]!.texto).toBe(inteiro)
+
+    await db.conversa.deleteMany({ where: { id: conversaId } })
+    const longo = await abrirItem(admin, chaveDaIssue(ISSUE_42), AGORA, {
+      fonte: () => fonteComCorpo('b'.repeat(5000)),
+    })
+    const texto = (await mensagens(longo.conversaId))[0]!.texto
+    expect(texto).toHaveLength(4000)
+    expect(texto.endsWith('\n\n_Continua na issue._')).toBe(true)
+  })
+
+  test('abrirItem da decisão da Fábrica: a abertura antiga, cortada em 600 e sozinha, é regravada inteira; depois que o Paulo escreve, não muda', async () => {
+    const corpo = 'c'.repeat(900)
+    const chave = chaveDaIssue(ISSUE_42)
+    const { conversaId } = await abrirItem(admin, chave, AGORA, {
+      fonte: () => fonteComCorpo(corpo),
+    })
+    const [abertura] = await mensagens(conversaId)
+    await db.mensagem.update({ where: { id: abertura!.id }, data: { texto: corpo.slice(0, 600) } })
+
+    expect(await abrirItem(admin, chave, AGORA, { fonte: () => fonteComCorpo(corpo) })).toEqual({
+      conversaId,
+    })
+    expect((await mensagens(conversaId)).map((m) => m.texto)).toEqual([corpo])
+
+    await db.mensagem.update({ where: { id: abertura!.id }, data: { texto: corpo.slice(0, 600) } })
+    await enviarMensagem(
+      admin,
+      { conversaId, id: randomUUID(), texto: 'Minha resposta.', imagens: [] },
+      AGORA,
+    )
+    await abrirItem(admin, chave, AGORA, { fonte: () => fonteComCorpo(corpo) })
+    expect((await mensagens(conversaId))[0]!.texto).toBe(corpo.slice(0, 600))
+  })
+
   test('abrirItem com o GitHub fora: conversa aberta, contexto.pr null, mensagem "Não consegui ler o PR no GitHub…" e nenhum cartão', async () => {
     const { conversaId } = await abrirItem(admin, chaveDaIssue(ISSUE_41), AGORA, {
       fonte: fonteFora,
