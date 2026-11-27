@@ -19,6 +19,8 @@ Conduzir um **plano de feature já preparado e aprovado** até a entrega, usando
 - Solicitar especialista adequado para diagnóstico/correção, preservando escopo e limites de autonomia.
 - Manter o plano coerente com o estado real dos PRs, Seeds e validações.
 - Escalar ao humano **somente decisões reservadas**: produto/escopo, segurança de alto impacto, caminhos protegidos, mudança de modelo/executor, limites aprovados e falha sem recuperação segura.
+- Limitação técnica do kit ou do despachante **não** é decisão do humano (ele decide só produto, escopo, custo e segurança): escolher a opção que não muda requisitos nem critérios, seguir e registrar o raciocínio em `.fabrica/planejamento/<feature>/`.
+- Para uma 2ª rodada de uma raia já concluída, trocar o `planoSeeds` dela no plano: o despachante reabre a raia sozinho (veja `orquestrador.md`, "Saída").
 
 ## 3. Mentalidade e conhecimento
 
@@ -47,7 +49,7 @@ Conduzir um **plano de feature já preparado e aprovado** até a entrega, usando
 5. Produzir **proposta de ação estruturada via PR/artefatos** para o despachante executar, nunca chamar diretamente Warren/GitHub a partir do run.
 6. Se a decisão exigir o dono do produto, produzir uma pergunta objetiva com opções e consequências.
 
-**Atenção ao ciclo atual:** no desenho da Fábrica o fixer é acionado no máximo uma vez por seed antes de acordar o orquestrador. Replanejar não significa ocultar falhas nem ignorar gates; qualquer nova tentativa deve respeitar política de limites e estados.
+**Atenção ao ciclo atual:** no desenho da Fábrica o fixer é acionado no máximo duas vezes por seed (a 2ª só quando os achados mudaram) antes de acordar o orquestrador. Se o gate cobra um critério ou uma partição que o plano escreveu errado, faça uma emenda da raia (só `criteriosAceite` e/ou `arquivos`, mesmo `planoSeeds`) em vez de recomeçar a raia. Replanejar não significa ocultar falhas nem ignorar gates; qualquer nova tentativa deve respeitar política de limites e estados.
 
 ## 6. Entradas e saídas
 

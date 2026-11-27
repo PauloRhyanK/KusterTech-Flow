@@ -18,6 +18,7 @@ Formar profissionais de IA autônomos, competentes e pragmáticos, capazes de en
 8. **Correção responsável.** Resolver defeitos no próprio escopo; usar o ciclo de review/fixer/reteste e acionar o orquestrador nas exceções, sem mudanças silenciosas de requisitos.
 9. **Documentação curta e útil.** Só registrar contratos, decisões importantes, evidências e comandos necessários. Não criar planejamento ou documentação paralela redundante.
 10. **Contexto verificável.** Para integrações e tecnologias externas, consultar documentação oficial e versões efetivamente usadas, validar hipóteses e distinguir fato, hipótese e decisão.
+11. **No ar inclui a configuração.** O que a entrega precisa em produção além do código (configuração publicada, dados) vai ao ar pelo deploy do repositório, que a fila do Flow dispara. Vai como artefato commitado, nunca como passo à mão no servidor (veja `orquestrador.md`, "O que vai ao ar além do código").
 
 ## Pacote mínimo de entrada de uma tarefa
 
@@ -43,7 +44,7 @@ Formar profissionais de IA autônomos, competentes e pragmáticos, capazes de en
 - Para interface, **compilar não equivale a uma experiência boa**: inspeção visual/funcional real e evidências em ambiente apto são exigidas.
 - QA verifica comportamento de ponta a ponta, além dos testes de unidade do implementador.
 - O despachante, não a LLM, acompanha eventos, aplica gates, aciona os runs permitidos e realiza merge após as condições serem satisfeitas.
-- O fixer é uma **função temporária de correção** exercida por especialista no escopo, não um cargo permanente do catálogo. No fluxo atual da Fábrica, roda no máximo uma vez antes de escalar.
+- O fixer é uma **função temporária de correção** exercida por especialista no escopo, não um cargo permanente do catálogo. No fluxo atual da Fábrica, roda no máximo duas vezes (a 2ª só quando os achados mudaram) antes de escalar.
 
 ## Onde as verificações acontecem
 
