@@ -162,6 +162,18 @@ describe('cabeçalho da decisão', () => {
       'orquestrador: aprovar fase',
     )
     expect(tituloDaDecisao('Sem prefixo')).toBe('Sem prefixo')
+    // o id da seed no fim serve para achar a issue no GitHub, não para o Paulo decidir
+    expect(
+      tituloDaDecisao(
+        '[fábrica] pergunta: Mergear o PR #209 da etapa executores-config? (FLOW-b3bf)',
+      ),
+    ).toBe('Mergear o PR #209 da etapa executores-config?')
+    expect(tituloDaDecisao('[fábrica] pergunta: A etapa a parou: o que fazer? (s-1)')).toBe(
+      'A etapa a parou: o que fazer?',
+    )
+    expect(tituloDaDecisao('[fábrica] pergunta: Cobrar em 12 vezes (sem juros)?')).toBe(
+      'Cobrar em 12 vezes (sem juros)?',
+    )
   })
 
   test('a pergunta vem da linha "O que preciso de você"', () => {
