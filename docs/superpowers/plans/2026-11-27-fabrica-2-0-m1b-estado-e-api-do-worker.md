@@ -79,3 +79,11 @@ Modelos (nomes exatos):
 ### Fora deste plano (próximos)
 
 Tela "Fábrica → Operação" (desenho para aprovação antes), decisão de gate e merge pelo Flow (M2), evidências, cotas por executor (M5).
+
+## Decisões tomadas na execução
+
+- **Admissão serializada por trava de transação** (`pg_advisory_xact_lock('fabrica-operacao-admissao')`) em vez de `SKIP LOCKED` por etapa: a escolha depende de todas as etapas em curso (colisão de arquivos), então travar uma linha não basta. A admissão é curta; a fila de workers é pequena.
+- **`papel` na etapa**: a etapa guarda quem a executa (engenheiro, revisor, QA); a execução copia o valor.
+- **Só a última revisão aprovada de cada plano é vigente**; revisões antigas não oferecem trabalho.
+- **Etapas `aguardando_gates` também ocupam arquivos**: o PR aberto ainda vai mudar o código.
+

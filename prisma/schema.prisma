@@ -1532,6 +1532,8 @@ model EtapaOperacional {
   chave              String
   /// `implementacao` (no máximo um PR) ou `leitura` (nunca PR).
   tipo               String
+  /// Papel de quem executa (engenheiro, revisor, qa…).
+  papel              String
   repositorioId      String
   arquivos           String[]
   /// Chaves de outras etapas da mesma revisão.

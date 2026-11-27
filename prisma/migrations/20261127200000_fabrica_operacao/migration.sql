@@ -32,6 +32,7 @@ CREATE TABLE "EtapaOperacional" (
     "revisaoId" TEXT NOT NULL,
     "chave" TEXT NOT NULL,
     "tipo" TEXT NOT NULL,
+    "papel" TEXT NOT NULL,
     "repositorioId" TEXT NOT NULL,
     "arquivos" TEXT[],
     "dependeDe" TEXT[],
