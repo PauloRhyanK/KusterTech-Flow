@@ -210,6 +210,7 @@ class MotorWarren:
         modelo: str,
         prompt_template: str,
         max_custo_usd: float,
+        conta: str | None = None,
     ) -> str:
         caminho = "/plan-runs"
         dados = self._json(
@@ -237,6 +238,7 @@ class MotorWarren:
         branch_existente: str | None,
         max_custo_usd: float,
         chave_idempotencia: str | None = None,
+        conta: str | None = None,
     ) -> str:
         caminho = "/runs"
         corpo = {
