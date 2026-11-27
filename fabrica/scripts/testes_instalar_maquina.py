@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 RAIZ = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(RAIZ))
@@ -141,6 +142,64 @@ class Base(unittest.TestCase):
         return codigo
 
 
+class TestesFerramentas(Base):
+    def arquivo(self):
+        return self.fabrica / "ferramentas-presentes.json"
+
+    def presentes(self):
+        return json.loads(self.arquivo().read_text(encoding="utf-8"))["presentes"]
+
+    def test_instalador_grava_ferramentas_presentes(self):
+        (self.home / ".claude" / "skills" / "ponytail").mkdir(parents=True)
+        (self.home / ".claude" / "plugins" / "cache" / "x" / "superpowers").mkdir(parents=True)
+        with mock.patch.object(instalar_maquina, "DIRETORIO_PLAYWRIGHT", self.home / "inexistente"):
+            self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertEqual(json.loads(self.arquivo().read_text(encoding="utf-8")), {"presentes": ["superpowers", "rtk", "ponytail"]})
+
+    def test_rtk_presente_nao_reinstala(self):
+        self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertIn("rtk", self.presentes())
+        self.assertFalse([c for c in self.executor.comandos() if "install" in c and "rtk" in c])
+
+    def test_instala_o_rtk_quando_falta(self):
+        executor = Executor(self.home, falhas={("rtk", "--version"): (127, "rtk: ausente")})
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertEqual(len([c for c in executor.comandos() if "rtk" in c and c.startswith("sh -c")]), 1)
+        self.assertNotIn("rtk", self.presentes())
+
+    def test_rtk_instalado_no_local_bin_conta_como_presente(self):
+        class Instala(Executor):
+            def __call__(inner, argv):
+                if list(argv)[:2] == ["sh", "-c"]:
+                    destino = self.home / ".local" / "bin" / "rtk"
+                    destino.parent.mkdir(parents=True)
+                    destino.write_text("#!/bin/sh\n")
+                    return 0, ""
+                return super().__call__(argv)
+
+        executor = Instala(self.home, falhas={("rtk", "--version"): (127, "ausente")})
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertIn("rtk", self.presentes())
+
+    def test_falha_ao_instalar_o_rtk_nao_derruba_a_instalacao(self):
+        executor = Executor(
+            self.home, falhas={("rtk", "--version"): (127, "ausente"), ("sh", "-c"): (1, "sem rede")}
+        )
+        self.assertEqual(self.rodar(executor=executor), 0, self.erro)
+        self.assertNotIn("rtk", self.presentes())
+        self.assertIn("rtk", self.saida)
+
+    def test_arquivo_sai_mesmo_com_requisito_faltando(self):
+        self.assertEqual(self.rodar(executor=Executor(self.home, grupos="devops")), 2)
+        self.assertTrue(self.arquivo().is_file())
+
+    def test_reexecucao_atualiza_o_arquivo(self):
+        self.assertEqual(self.rodar(), 0, self.erro)
+        (self.home / ".claude" / "skills" / "archify").mkdir(parents=True)
+        self.assertEqual(self.rodar(), 0, self.erro)
+        self.assertIn("archify", self.presentes())
+
+
 class TestesInstalacao(Base):
     def test_primeira_instalacao_clona_e_liga_a_fila(self):
         self.assertEqual(self.rodar(), 0, self.erro)
@@ -161,6 +220,7 @@ class TestesInstalacao(Base):
         # final M9: o linger vem antes do daemon-reload; no fim, confere que a fila ficou active
         esperado = [
             "git clone --branch main %s %s" % (URL_PADRAO, self.kit),
+            "rtk --version",
             "id -un",
             "sudo -n loginctl enable-linger devops",
             "systemctl --user daemon-reload",

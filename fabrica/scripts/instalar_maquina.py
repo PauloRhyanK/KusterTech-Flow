@@ -29,6 +29,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import capacidade  # noqa: E402
 import coordenador  # noqa: E402
+import prompts  # noqa: E402
 
 KIT_URL_PADRAO = "https://github.com/PauloRhyanK/KusterTech-Flow.git"
 BRANCH_PADRAO = "main"
@@ -36,6 +37,10 @@ VERSAO_WARREN = "0.19.3"
 WARREN_API = "http://127.0.0.1:8080"
 VAGAS_PADRAO = 3
 RAM_MINIMA_MB = 2048
+ARQUIVO_FERRAMENTAS = "ferramentas-presentes.json"
+DIRETORIO_PLAYWRIGHT = pathlib.Path("/opt/agent-tools")
+INSTALADOR_RTK = "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"
+SKILLS_DA_TOOLSTACK = ("superpowers", "ponytail", "security-audit", "archify", "floorplan")
 UNITS = ("fabrica-fila.service", "fabrica-plano@.service")
 SERVICO_DA_FILA = "fabrica-fila"
 SERVICO_LEGADO = "fabrica-despachante.service"
@@ -123,6 +128,52 @@ def _criar_estado(fabrica: pathlib.Path) -> None:
     arquivo = fabrica / "capacidade.json"
     if not (arquivo.exists() or arquivo.is_symlink()):
         capacidade.configurar(arquivo, vagas=VAGAS_PADRAO, ram_minima_mb=RAM_MINIMA_MB)
+
+
+def _rtk_presente(executar, home: pathlib.Path) -> bool:
+    codigo, _ = executar(["rtk", "--version"])
+    return codigo == 0 or (home / ".local" / "bin" / "rtk").is_file()
+
+
+def _skill_presente(home: pathlib.Path, nome: str) -> bool:
+    claude = home / ".claude"
+    if (claude / "skills" / nome).exists():
+        return True
+    plugins = claude / "plugins"
+    return plugins.is_dir() and any(plugins.glob("**/" + nome))
+
+
+def _gravar_ferramentas(executar, fabrica: pathlib.Path, home: pathlib.Path, saida) -> None:
+    """Instala o rtk se faltar e grava `ferramentas-presentes.json` com o que existe no ambiente das raias."""
+    rtk = _rtk_presente(executar, home)
+    if not rtk:
+        executar(["sh", "-c", INSTALADOR_RTK])
+        rtk = _rtk_presente(executar, home)
+    presentes = []
+    for nome in prompts.FERRAMENTAS:
+        if nome == "rtk":
+            achada = rtk
+        elif nome == "playwright":
+            achada = DIRETORIO_PLAYWRIGHT.is_dir()
+        else:
+            achada = _skill_presente(home, nome)
+        if achada:
+            presentes.append(nome)
+        else:
+            print("aviso: ferramenta %s ausente na máquina" % nome, file=saida)
+    arquivo = fabrica / ARQUIVO_FERRAMENTAS
+    descritor, temporario = tempfile.mkstemp(dir=fabrica, prefix=arquivo.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(descritor, "w", encoding="utf-8") as destino:
+            destino.write(json.dumps({"presentes": presentes}, indent=2) + "\n")
+        os.chmod(temporario, 0o644)
+        os.replace(temporario, arquivo)
+    except BaseException:
+        try:
+            os.unlink(temporario)
+        except OSError:
+            pass
+        raise
 
 
 def _primeira_linha(saida: str) -> str:
@@ -272,6 +323,7 @@ def instalar(*, executar, http, home: pathlib.Path, branch: str, kit_url: str, s
     _atualizar_kit(executar, kit, branch, kit_url)
     print("kit em %s (branch %s)" % (kit, branch), file=saida)
     _criar_estado(fabrica)
+    _gravar_ferramentas(executar, fabrica, home, saida)
     try:
         config = _configuracao(home, ambiente)
     except coordenador.ErroDeEntrada as exc:
