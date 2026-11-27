@@ -515,7 +515,7 @@ class BaseJornada(unittest.TestCase):
         """`(demanda, fase, tentativa)` do nonce de um run de demanda."""
         for id_ in self.flow.demandas:
             for tentativa in range(10):
-                for fase in ("triagem", "plano", "desenho", "teste", "correcao"):
+                for fase in ("triagem", "plano", "desenho", "teste", "correcao", "critica0", "critica1"):
                     if nonce == demandas.nonce_do_motor(id_, fase, tentativa):
                         return id_, fase, tentativa
         raise AssertionError("run de nonce desconhecido: %s" % nonce)
@@ -542,6 +542,15 @@ class BaseJornada(unittest.TestCase):
         self.forja.definir_arquivo(REPO, head, caminho, json.dumps(plano))
         self.forja.definir_ci(REPO, head, "verde")
         self.motor.definir_run(run_id, estado="succeeded", prUrl=url)
+
+    def entregar_critica0(self, id_, tentativa, run_id):
+        """O crítico do plano aprova o plano no head do PR (o veredito das seeds)."""
+        head = self.forja.pr(self.pr(id_, "plano"))["headSha"]
+        corpo = json.dumps({"sha": head, "resultado": "aprovado", "achados": []})
+        self.motor.definir_texto(run_id, "%s\n%s\n%s\n" % (prompts.INICIO_VEREDITO, corpo, prompts.FIM_VEREDITO))
+        self.motor.definir_run(run_id, estado="succeeded")
+
+    entregar_critica1 = entregar_critica0
 
     def entregar_desenho(self, id_, tentativa, run_id):
         caminho = "%s/desenho.html" % prompts.pasta_da_demanda(id_)
@@ -653,10 +662,10 @@ class BaseJornada(unittest.TestCase):
         self.assertEqual(
             self.tipos_aplicados(COM_TELA), ["triagem", "plano_criado", "desenho_pronto", "desenho_pronto", "etapa_concluida", "teste", "entregue"]
         )
-        self.assertEqual(self.fases_despachadas(COM_TELA), ["triagem", "plano", "desenho", "desenho", "teste"])
+        self.assertEqual(self.fases_despachadas(COM_TELA), ["triagem", "plano", "critica0", "desenho", "desenho", "teste"])
         self.conferir_sem_duplicata()
         # o plano e só a versão aprovada do desenho foram mergeados; o PR do teste foi fechado sem merge
-        (_, _, segundo_desenho) = [self.do_nonce(n) for n in self.nonces()][3]
+        (_, _, segundo_desenho) = [self.do_nonce(n) for n in self.nonces()][4]  # depois do run do crítico
         self.assertEqual(self.forja.merges, [(self.pr(COM_TELA, "plano"), sha("plano", COM_TELA, 0)), (self.pr(COM_TELA, "desenho"), sha("desenho", COM_TELA, segundo_desenho))])
         self.assertEqual([u for u, _ in self.forja.fechados], [self.pr(COM_TELA, "teste")])
         # o plano só foi admitido com a demanda no desenvolvimento, e chegou ao fim
@@ -690,7 +699,7 @@ class TestesJornadaDasDemandas(BaseJornada):
         self.ate(lambda: self.flow.demandas[SEM_TELA]["estado"]["encerrada"] == "entregue", "a entrega")
         self.ate(lambda: SEM_TELA not in self.itens(), "o fim da demanda no kit")
         self.assertEqual(self.tipos_aplicados(SEM_TELA), ["triagem", "plano_criado", "etapa_concluida", "entregue"])
-        self.assertEqual(self.fases_despachadas(SEM_TELA), ["triagem", "plano"])
+        self.assertEqual(self.fases_despachadas(SEM_TELA), ["triagem", "plano", "critica0"])
         self.conferir_sem_duplicata()
         self.assertEqual(self.flow.arquivos, {})
         self.assertEqual(self.systemd.ligados, [("fabrica-plano@%s" % self.plano_da_fila(SEM_TELA), {SEM_TELA: "desenvolvida"})])
