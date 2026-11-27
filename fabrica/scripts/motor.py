@@ -153,8 +153,9 @@ class Motor(typing.Protocol):
         modelo: str,
         prompt_template: str,
         max_custo_usd: float,
+        conta: str | None = None,
     ) -> str:
-        """Devolve o `planRunId`."""
+        """Devolve o `planRunId`. `conta` escolhe a conta do roteador; os demais motores a ignoram."""
         ...
 
     def despachar_run(
@@ -167,6 +168,7 @@ class Motor(typing.Protocol):
         branch_existente: str | None,
         max_custo_usd: float,
         chave_idempotencia: str | None = None,
+        conta: str | None = None,
     ) -> str:
         """Devolve o `runId`. Com `chave_idempotencia` (nonce), um POST repetido devolve o run já criado."""
         ...
@@ -231,7 +233,7 @@ class Motor(typing.Protocol):
 
 
 class MotorFalso:
-    """Motor em memória para testar o despachante sem rede."""
+    """Motor em memória para testar o despachante sem rede. Registra `conta` só quando o despacho a informa."""
 
     def __init__(self):
         self.chamadas: list[tuple[str, dict]] = []
@@ -436,6 +438,7 @@ class MotorFalso:
         modelo: str,
         prompt_template: str,
         max_custo_usd: float,
+        conta: str | None = None,
     ) -> str:
         self._registrar(
             "despachar_plano",
@@ -445,6 +448,7 @@ class MotorFalso:
             modelo=modelo,
             prompt_template=prompt_template,
             max_custo_usd=max_custo_usd,
+            **({"conta": conta} if conta is not None else {}),
         )
         self._checar_lotacao()
         self._falhar_antes()
@@ -466,6 +470,7 @@ class MotorFalso:
         branch_existente: str | None,
         max_custo_usd: float,
         chave_idempotencia: str | None = None,
+        conta: str | None = None,
     ) -> str:
         self._registrar(
             "despachar_run",
@@ -476,6 +481,7 @@ class MotorFalso:
             branch_existente=branch_existente,
             max_custo_usd=max_custo_usd,
             chave_idempotencia=chave_idempotencia,
+            **({"conta": conta} if conta is not None else {}),
         )
         if chave_idempotencia is not None:
             validar_nonce(chave_idempotencia)
