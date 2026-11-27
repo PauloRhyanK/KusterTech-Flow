@@ -110,7 +110,7 @@
     {
       "id": "despachante-substituicao",
       "papel": "backend",
-      "planoSeeds": "pl-e1b2",
+      "planoSeeds": "pl-7edc",
       "dependeDe": [
         "executores-config",
         "esgotados",
@@ -121,7 +121,8 @@
         "fabrica/scripts/despachante.py",
         "fabrica/scripts/testes_despachante.py",
         "fabrica/scripts/estado.py",
-        "fabrica/scripts/testes_estado.py"
+        "fabrica/scripts/testes_estado.py",
+        "fabrica/servico/fabrica-despachante.service"
       ],
       "verificacao": "corepack pnpm install --frozen-lockfile && corepack pnpm exec prettier --check . '!.pnpm-store/**' && python3 -I -B -m unittest discover -s fabrica/scripts -t fabrica/scripts -p 'testes_*.py'",
       "criteriosAceite": [
