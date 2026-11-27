@@ -347,3 +347,135 @@ export function etapasComNoAr(etapas: readonly EtapaDefinida[]): EtapaDefinida[]
   const noAr = MODELO_PADRAO.find((e) => e.marco === 'no_ar')!
   return [...etapas, { ...noAr }]
 }
+
+// ——— Tabela de demandas: filtros e ordem na URL ———
+
+export const PERIODOS_DA_TABELA = ['30d', '90d', 'tudo'] as const
+export type PeriodoDaTabela = (typeof PERIODOS_DA_TABELA)[number]
+export const ESTADOS_DA_TABELA = [
+  'espera_voce',
+  'nao_chegou',
+  'a_caminho',
+  'no_ar',
+  'encerrada',
+] as const
+export type EstadoDaTabela = (typeof ESTADOS_DA_TABELA)[number]
+export const ORDENS_DA_TABELA = ['demanda', 'estado', 'criada', 'atualizada'] as const
+export type OrdemDaTabela = (typeof ORDENS_DA_TABELA)[number]
+const TIPOS_DA_TABELA: readonly TipoDeDemanda[] = ['defeito', 'ideia', 'ajuste', 'funcao_nova']
+const DESTINOS_DA_TABELA: readonly Destino[] = [
+  'urgente',
+  'lote_da_noite',
+  'fila_de_agentes',
+  'decisao_do_paulo',
+  'orientada',
+]
+
+export interface FiltrosDaTabela {
+  cliente: string | null
+  projeto: string | null
+  repositorio: string | null
+  tipo: TipoDeDemanda | null
+  estado: EstadoDaTabela | null
+  destino: Destino | null
+  periodo: PeriodoDaTabela
+  texto: string | null
+  ordem: OrdemDaTabela
+  sentido: 'asc' | 'desc'
+}
+
+/** As chaves da URL que ligam a tabela; `destino` sozinho continua nos grupos. */
+export const CHAVES_DA_TABELA = [
+  'cliente',
+  'projeto',
+  'repositorio',
+  'tipo',
+  'estado',
+  'periodo',
+  'q',
+  'ordem',
+  'sentido',
+] as const
+
+type ParametrosDaUrl = Record<string, string | string[] | undefined>
+const UUID_DA_URL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const LIMITE_DA_BUSCA = 120
+
+const unico = (v: string | string[] | undefined): string | null =>
+  typeof v === 'string' && v.trim() !== '' ? v.trim() : null
+
+function umDe<T extends string>(v: string | string[] | undefined, valores: readonly T[]): T | null {
+  const s = unico(v)
+  return s !== null && (valores as readonly string[]).includes(s) ? (s as T) : null
+}
+
+function uuid(v: string | string[] | undefined): string | null {
+  const s = unico(v)
+  return s !== null && UUID_DA_URL.test(s) ? s : null
+}
+
+/** Lê filtros e ordem da URL; o que não vale vira o padrão, em silêncio. */
+export function lerFiltrosDaTabela(params: ParametrosDaUrl): FiltrosDaTabela {
+  return {
+    cliente: uuid(params.cliente),
+    projeto: uuid(params.projeto),
+    repositorio: uuid(params.repositorio),
+    tipo: umDe(params.tipo, TIPOS_DA_TABELA),
+    estado: umDe(params.estado, ESTADOS_DA_TABELA),
+    destino: umDe(params.destino, DESTINOS_DA_TABELA),
+    periodo: umDe(params.periodo, PERIODOS_DA_TABELA) ?? '30d',
+    texto: unico(params.q)?.slice(0, LIMITE_DA_BUSCA) ?? null,
+    ordem: umDe(params.ordem, ORDENS_DA_TABELA) ?? 'atualizada',
+    sentido: umDe(params.sentido, ['asc', 'desc'] as const) ?? 'desc',
+  }
+}
+
+/** A tela vira tabela quando a URL traz alguma chave da tabela com valor. */
+export function ehModoTabela(params: ParametrosDaUrl): boolean {
+  return CHAVES_DA_TABELA.some((c) => unico(params[c]) !== null)
+}
+
+/**
+ * O orquestrador concluiu que não há plano a fazer: a demanda é duplicada de outra (`de`, o uuid
+ * dela, quando ele soube) ou o que ela pede já está resolvido. Vem no `travada` da Fábrica
+ * (`desfecho_da_cobertura` em fabrica/scripts/demandas.py); o Flow oferece encerrar, nunca retomar.
+ */
+export const RESULTADOS_SEM_PLANO = ['duplicada', 'ja_resolvida'] as const
+export interface Desfecho {
+  resultado: (typeof RESULTADOS_SEM_PLANO)[number]
+  de: string | null
+}
+
+export const UUID_DA_DEMANDA = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** O desfecho dos `dados` de um evento `travada`, como veio; sem ele (ou torto), `null`. */
+export function desfechoDaTrava(dados: unknown): Desfecho | null {
+  const d = (dados as { desfecho?: unknown } | null)?.desfecho as
+    { resultado?: unknown; de?: unknown } | null | undefined
+  if (typeof d !== 'object' || d === null) return null
+  const resultado = RESULTADOS_SEM_PLANO.find((r) => r === d.resultado)
+  if (!resultado) return null
+  const de =
+    resultado === 'duplicada' && typeof d.de === 'string' && UUID_DA_DEMANDA.test(d.de)
+      ? d.de
+      : null
+  return { resultado, de }
+}
+
+/** "duplicada da 7b7ba4b8", "duplicada de outra demanda" ou "já resolvida". */
+export function rotuloDoDesfecho(d: Desfecho): string {
+  if (d.resultado === 'ja_resolvida') return 'já resolvida'
+  return d.de ? `duplicada da ${d.de.slice(0, 8)}` : 'duplicada de outra demanda'
+}
+
+/**
+ * A retomada de uma trava com desfecho refaria a mesma conclusão (e pagaria outra rodada): o
+ * service recusa com o porquê, mesmo vindo de uma tela aberta antes do desfecho chegar.
+ */
+export function retomadaComDesfecho(
+  espera: Espera | null,
+  dadosDaUltimaTrava: unknown,
+): string | null {
+  if (espera !== 'travada' || desfechoDaTrava(dadosDaUltimaTrava) === null) return null
+  return 'O orquestrador concluiu que não há plano a fazer: encerre a demanda em vez de retomar.'
+}

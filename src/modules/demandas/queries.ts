@@ -22,7 +22,12 @@ import {
   trilhoDaDemanda,
   avisoDeFabricaSemBuscar,
   demandasQueVemAi,
+  linhaDaTabela,
+  ordenarPorEstado,
   type DemandaNaLista,
+  type DemandaNaTabela,
+  type OpcaoDeFiltro,
+  type TabelaDeDemandas,
   type DemandaQueVemAi,
   type PaginaDaDemanda,
   type TelaDeDemandas,
@@ -33,8 +38,11 @@ import { fraseDaDemanda, grupoAteOAr } from './partes'
 import { comoParte } from './partes-service'
 import { cabecalhosDoArquivo, lerArquivo } from './arquivos'
 import {
+  desfechoDaTrava,
   type Destino,
+  type EstadoDaTabela,
   type EtapaDefinida,
+  type FiltrosDaTabela,
   type Espera,
   type Nivel,
   type TipoDeDemanda,
@@ -138,6 +146,8 @@ export async function obterListaDeDemandas(
   sujeito: Sujeito,
   filtro: Destino | null,
   agora: Date,
+  /** Com filtros de tabela: além dos grupos, a tabela filtrada e ordenada. */
+  tabela: FiltrosDaTabela | null = null,
 ): Promise<TelaDeDemandas> {
   exigirPermissao(sujeito, 'desenvolvimento.ler')
   const ativo = { projeto: { arquivadoEm: null } }
@@ -163,7 +173,7 @@ export async function obterListaDeDemandas(
   } as const
   const umDiaEMeio = new Date(agora.getTime() - 1.5 * DIA_MS)
   const trintaDias = new Date(agora.getTime() - 30 * DIA_MS)
-  const [abertas, noAr, orientadas, recebidas, fonte] = await Promise.all([
+  const [abertas, noAr, orientadas, recebidas, fonte, opcoes, daTabela] = await Promise.all([
     db.demanda.findMany({ where: { ...ativo, encerrada: null }, select: selecao }),
     db.demanda.findMany({
       where: { ...ativo, encerrada: 'no_ar', noArEm: { gte: trintaDias } },
@@ -185,6 +195,24 @@ export async function obterListaDeDemandas(
       where: { revogadaEm: null },
       _max: { demandasBuscadasEm: true },
     }),
+    opcoesDosFiltros(),
+    tabela
+      ? db.demanda.findMany({
+          where: { ...ativo, ...ondeDaTabela(tabela, agora) },
+          orderBy: ordemDaTabela(tabela),
+          take: LIMITE_DA_TABELA + 1,
+          select: {
+            ...selecao,
+            repositorio: { select: { nomeCompleto: true } },
+            projeto: {
+              select: {
+                nome: true,
+                clientes: { select: { cliente: { select: { nome: true } } } },
+              },
+            },
+          },
+        })
+      : null,
   ])
 
   const naLista = (d: (typeof abertas)[number]): DemandaNaLista => ({
@@ -231,6 +259,108 @@ export async function obterListaDeDemandas(
       agora,
     ),
     podeCriar: autorizar(sujeito, 'projetos.gerenciar'),
+    opcoes,
+    tabela: daTabela && tabela ? montarTabela(daTabela, tabela, agora) : null,
+  }
+
+  function montarTabela(
+    linhas: NonNullable<typeof daTabela>,
+    f: FiltrosDaTabela,
+    quando: Date,
+  ): TabelaDeDemandas {
+    const visiveis = linhas.slice(0, LIMITE_DA_TABELA).map((d): DemandaNaTabela => ({
+      ...naLista(d),
+      clientes: d.projeto.clientes.map((c) => c.cliente.nome).sort((a, b) => a.localeCompare(b)),
+      repositorios: [
+        ...new Set([
+          d.repositorio.nomeCompleto,
+          ...d.partes.map((p) => p.repositorio.nomeCompleto),
+        ]),
+      ],
+    }))
+    const prontas = visiveis.map((d) => linhaDaTabela(d, quando))
+    return {
+      linhas: f.ordem === 'estado' ? ordenarPorEstado(prontas, f.sentido) : prontas,
+      truncada: linhas.length > LIMITE_DA_TABELA,
+    }
+  }
+}
+
+const LIMITE_DA_TABELA = 200
+const DIAS_DO_PERIODO = { '30d': 30, '90d': 90, tudo: null } as const
+
+const ONDE_DO_ESTADO: Record<EstadoDaTabela, object> = {
+  espera_voce: { encerrada: null, espera: { not: null } },
+  nao_chegou: { encerrada: null, espera: null, naoChegouDesde: { not: null } },
+  a_caminho: { encerrada: null, espera: null, naoChegouDesde: null },
+  no_ar: { encerrada: 'no_ar' },
+  encerrada: { encerrada: { in: ['orientada', 'descartada', 'entregue'] } },
+}
+
+/** O `where` da tabela: cada filtro escolhido vira uma condição; o período corta as encerradas pela última atualização. */
+export function ondeDaTabela(f: FiltrosDaTabela, agora: Date) {
+  const dias = DIAS_DO_PERIODO[f.periodo]
+  return {
+    AND: [
+      // O período corta só as encerradas: aberta parada há meses é justamente o que se procura.
+      dias === null
+        ? {}
+        : {
+            OR: [
+              { encerrada: null },
+              { atualizadaEm: { gte: new Date(agora.getTime() - dias * DIA_MS) } },
+            ],
+          },
+      f.cliente ? { projeto: { clientes: { some: { clienteId: f.cliente } } } } : {},
+      f.projeto ? { projetoId: f.projeto } : {},
+      f.repositorio
+        ? {
+            OR: [
+              { repositorioId: f.repositorio },
+              { partes: { some: { repositorioId: f.repositorio } } },
+            ],
+          }
+        : {},
+      f.tipo ? { tipo: f.tipo.toUpperCase() as never } : {},
+      f.destino ? { destino: f.destino.toUpperCase() as never } : {},
+      f.texto ? { titulo: { contains: f.texto, mode: 'insensitive' as const } } : {},
+      f.estado ? ONDE_DO_ESTADO[f.estado] : {},
+    ],
+  }
+}
+
+/** A ordem no banco; "estado" busca pelas mais recentes e reordena depois, em memória. */
+function ordemDaTabela(f: FiltrosDaTabela) {
+  const campo =
+    f.ordem === 'demanda' ? 'titulo' : f.ordem === 'criada' ? 'criadaEm' : 'atualizadaEm'
+  const sentido = f.ordem === 'estado' ? 'desc' : f.sentido
+  return [{ [campo]: sentido }, { id: 'asc' as const }]
+}
+
+/** As opções dos seletores: clientes, projetos e repositórios ativos, por nome. */
+export async function opcoesDosFiltros(): Promise<TelaDeDemandas['opcoes']> {
+  const [clientes, projetos, repositorios] = await Promise.all([
+    db.cliente.findMany({
+      where: { arquivadoEm: null },
+      orderBy: { nome: 'asc' },
+      select: { id: true, nome: true },
+    }),
+    db.projeto.findMany({
+      where: { arquivadoEm: null },
+      orderBy: { nome: 'asc' },
+      select: { id: true, nome: true },
+    }),
+    db.repositorioGitHub.findMany({
+      where: { projetoId: { not: null }, removidoDaInstalacaoEm: null },
+      orderBy: { nomeCompleto: 'asc' },
+      select: { id: true, nomeCompleto: true },
+    }),
+  ])
+  const opcao = (valor: string, rotulo: string): OpcaoDeFiltro => ({ valor, rotulo })
+  return {
+    clientes: clientes.map((c) => opcao(c.id, c.nome)),
+    projetos: projetos.map((p) => opcao(p.id, p.nome)),
+    repositorios: repositorios.map((r) => opcao(r.id, r.nomeCompleto)),
   }
 }
 
@@ -429,6 +559,7 @@ export async function obterPaginaDaDemanda(
               ? { texto: textoDoAjuste, em: ajuste.em }
               : null,
           urlDaTrava: typeof urlDaTrava === 'string' ? urlDaTrava : null,
+          desfecho: desfechoDaTrava(trava?.dados),
           etapaAtual: d.etapaAtual,
           etapas,
         },

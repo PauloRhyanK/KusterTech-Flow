@@ -115,7 +115,7 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
 
       <HistoricoDaDemanda eventos={p.historico} />
 
-      {p.podeEncerrar && <EncerrarDemanda demandaId={p.id} />}
+      {p.podeEncerrar && !p.faixa?.encerrar && <EncerrarDemanda demandaId={p.id} />}
     </div>
   )
 }

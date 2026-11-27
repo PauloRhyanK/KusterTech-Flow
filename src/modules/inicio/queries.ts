@@ -14,6 +14,7 @@ import { estadoDoRepositorio, resumirErroParaLog } from '@/modules/github/model'
 import { intervaloDaIntegracao } from '@/modules/github/service'
 import { avisosDaMaquina, type LeituraDaMaquina } from '@/modules/oficina/model'
 import { maquinaLocalConfigurada, obterLeituraDaMaquinaLocal } from '@/modules/oficina/queries'
+import { obterMaquinasNoBeszel, type ResumoDoBeszel } from '@/modules/beszel/queries'
 import {
   ACAO_DE_LEITURA,
   agruparHomologacoes,
@@ -53,7 +54,11 @@ export interface Inicio {
     recebidoEm: Date
     desatualizado: boolean
   } | null
-  oficina: { hrefDaMaquina: string | null; leitura: LeituraDaMaquina } | null
+  // Quadro Máquinas: o resumo do Beszel e, como reserva, a leitura da oficina pelos arquivos.
+  maquinas: {
+    beszel: ResumoDoBeszel | 'falha'
+    oficina: { hrefDaMaquina: string | null; leitura: LeituraDaMaquina } | null
+  } | null
   cadastro: { clientes: number; projetos: number; repositorios: number; maquinas: number } | null
   seusProjetos: ResumoDeProjetos | null
   /** null = não visível para o sujeito (nada é consultado). */
@@ -382,32 +387,48 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
 
   const verDecidir = total && moduloAtivo('decidir') && pode('decidir')
 
-  const [retrato, leitura, simples, cadastro, hrefDaMaquina, seusProjetos, atividade, pilha] =
-    await Promise.all([
-      verFabrica
-        ? lerFabrica(sujeito).catch((erro: unknown) => {
-            registrarFalha(erro, 'fabrica')
-            return 'falha' as const
-          })
-        : null,
-      verOficina
-        ? obterLeituraDaMaquinaLocal(sujeito, agora).catch((erro: unknown) => {
-            registrarFalha(erro, 'aviso-da-oficina')
-            return 'falha' as const
-          })
-        : null,
-      Promise.allSettled(consultas.map(([, consulta]) => consulta())),
-      total ? semFalhar(obterCadastro(), 'cadastro') : undefined,
-      verOficina ? semFalhar(hrefDaMaquinaLocal(), 'maquina-local') : undefined,
-      total ? undefined : semFalhar(obterSeusProjetos(sujeito), 'seus-projetos'),
-      verAtividade
-        ? obterAtividade(sujeito, agora).catch((erro: unknown) => {
-            registrarFalha(erro, 'atividade')
-            return 'falha' as const
-          })
-        : null,
-      verDecidir ? semFalhar(obterPilha(sujeito, agora), 'decidir') : undefined,
-    ])
+  const [
+    retrato,
+    leitura,
+    simples,
+    cadastro,
+    hrefDaMaquina,
+    seusProjetos,
+    atividade,
+    pilha,
+    beszel,
+  ] = await Promise.all([
+    verFabrica
+      ? lerFabrica(sujeito).catch((erro: unknown) => {
+          registrarFalha(erro, 'fabrica')
+          return 'falha' as const
+        })
+      : null,
+    verOficina
+      ? obterLeituraDaMaquinaLocal(sujeito, agora).catch((erro: unknown) => {
+          registrarFalha(erro, 'aviso-da-oficina')
+          return 'falha' as const
+        })
+      : null,
+    Promise.allSettled(consultas.map(([, consulta]) => consulta())),
+    total ? semFalhar(obterCadastro(), 'cadastro') : undefined,
+    verOficina ? semFalhar(hrefDaMaquinaLocal(), 'maquina-local') : undefined,
+    total ? undefined : semFalhar(obterSeusProjetos(sujeito), 'seus-projetos'),
+    verAtividade
+      ? obterAtividade(sujeito, agora).catch((erro: unknown) => {
+          registrarFalha(erro, 'atividade')
+          return 'falha' as const
+        })
+      : null,
+    verDecidir ? semFalhar(obterPilha(sujeito, agora), 'decidir') : undefined,
+    // O Beszel não é fonte de "Espera você": a falha fica só no quadro Máquinas.
+    verOficina
+      ? obterMaquinasNoBeszel(sujeito, agora).catch((erro: unknown) => {
+          registrarFalha(erro, 'maquinas')
+          return 'falha' as const
+        })
+      : null,
+  ])
 
   const fontes: FonteDeEspera[] = simples.map((r, i) => {
     const tipo = consultas[i]![0]
@@ -453,8 +474,16 @@ export async function obterInicio(sujeito: Sujeito, agora: Date): Promise<Inicio
             desatualizado: retratoDesatualizado(recebido.recebidoEm, agora),
           }
         : null,
-    oficina:
-      leitura && leitura !== 'falha' ? { hrefDaMaquina: hrefDaMaquina ?? null, leitura } : null,
+    maquinas:
+      beszel === null
+        ? null
+        : {
+            beszel,
+            oficina:
+              leitura && leitura !== 'falha'
+                ? { hrefDaMaquina: hrefDaMaquina ?? null, leitura }
+                : null,
+          },
     cadastro: cadastro ?? null,
     seusProjetos: seusProjetos ?? null,
     atividade,

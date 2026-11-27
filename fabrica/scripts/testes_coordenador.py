@@ -157,6 +157,16 @@ class FlowVazio:
         return "aplicado"
 
 
+class BuscasVazias:
+    """O cliente das buscas com IA de um Flow sem a rota: o buscador fica desligado por uma hora."""
+
+    def __init__(self, url_central=None, token_file=None):
+        self.url_central, self.token_file = url_central, token_file
+
+    def buscar(self):
+        return None
+
+
 class ConversasVazias:
     """O cliente das conversas do Decidir sem nenhuma conversa esperando o agente."""
 
@@ -208,6 +218,7 @@ class Base(unittest.TestCase):
             segredos=(TOKEN,),
             cliente_do_flow=FlowVazio,
             cliente_das_conversas=ConversasVazias,
+            cliente_das_buscas=BuscasVazias,
         )
         argumentos.update(extra)
         return coordenador.Coordenador(**argumentos)
@@ -2510,6 +2521,88 @@ class TestesPassoDemandas(Base):
         entrada = [e for e in self.fila_estado()["fila"] if e["id"] == id_][-1]
         self.assertEqual((entrada["segurado"], entrada["seguradoPor"]), (True, "demanda"))
         self.assertIn(mensagem, self.avisos())
+
+
+class TestesBuscador(Base):
+    MODELOS = {"buscador": {"agente": "claude-code", "modelo": "claude-haiku-5-5", "maxCustoUsd": 0.5}}
+
+    def coordenador_com(self, *, cliente=None, central=CENTRAL):
+        self.cliente = cliente or BuscasVazias()
+        self.criados = []
+
+        def fabrica(url, token_file):
+            self.criados.append((url, token_file))
+            return self.cliente
+
+        c = self.novo(central=central, enviar=EnviarFalso(), cliente_das_buscas=fabrica)
+        c._modelos_do_kit = lambda: self.MODELOS
+        return c
+
+    def test_ciclo_roda_o_buscador_depois_do_atendente_com_cliente_modelos_e_agora(self):
+        ordem = []
+        c = self.coordenador_com()
+        with unittest.mock.patch.object(coordenador.atendente, "passo", side_effect=lambda *a, **k: ordem.append("atendente") or []), unittest.mock.patch.object(
+            coordenador.buscador, "passo", side_effect=lambda *a, **k: ordem.append("buscador") or []
+        ) as passo:
+            c.ciclo()
+        self.assertEqual(ordem, ["atendente", "buscador"])
+        self.assertEqual(self.criados, [(CENTRAL["url"], CENTRAL["token_file"])])
+        (estado,), argumentos = passo.call_args
+        self.assertIs(estado, c.dados)
+        self.assertIs(argumentos["cliente"], self.cliente)
+        self.assertEqual(argumentos["modelos"], self.MODELOS)
+        self.assertEqual(argumentos["agora"], INICIO)
+        self.assertIs(argumentos["salvar"].__self__, c)
+
+    def test_sem_central_o_buscador_nao_roda(self):
+        c = self.coordenador_com(central=None)
+        with unittest.mock.patch.object(coordenador.buscador, "passo") as passo:
+            c.ciclo()
+            c._esperar(30, [].append)
+        passo.assert_not_called()
+
+    def test_ligado_entre_os_ciclos_roda_a_cada_10_s(self):
+        c = self.coordenador_com()
+        c.ciclo()  # BuscasVazias: Flow sem a rota, desligado
+        dormidas = []
+        c._esperar(30, dormidas.append)
+        self.assertEqual(dormidas, [30])
+
+        c.dados["buscador"] = {"atual": None, "semRotaEm": None}
+        with unittest.mock.patch.object(c, "_passo_buscador") as passo:
+            dormidas = []
+            c._esperar(30, dormidas.append)
+        self.assertEqual(dormidas, [10, 10, 10])
+        self.assertEqual(passo.call_count, 3)
+
+    def test_sem_modelo_o_buscador_fica_desligado_entre_ciclos_e_avisa(self):
+        c = self.coordenador_com()
+        self.MODELOS = {}
+        c.dados["buscador"] = {"atual": None, "semRotaEm": None}
+        c.ciclo()
+        self.assertIn(coordenador.buscador.AVISO_SEM_MODELO, self.avisos())
+        dormidas = []
+        c._esperar(30, dormidas.append)
+        self.assertEqual(dormidas, [30])
+
+    def test_com_conversa_ativa_atendente_e_buscador_rodam_no_mesmo_tique(self):
+        c = self.coordenador_com()
+        c.ciclo()
+        c.dados["atendente"] = {"atual": None, "ativaAte": "2026-11-03T12:10:00Z"}
+        c.dados["buscador"] = {"atual": None, "semRotaEm": None}
+        with unittest.mock.patch.object(c, "_passo_atendente") as atendente_, unittest.mock.patch.object(c, "_passo_buscador") as buscador_:
+            c._esperar(9, [].append)
+        self.assertEqual((atendente_.call_count, buscador_.call_count), (3, 3))
+
+    def test_falha_do_buscador_nao_derruba_o_ciclo(self):
+        def quebrado(url, token_file):
+            raise OSError("sem rede")
+
+        c = self.novo(central=CENTRAL, enviar=EnviarFalso(), cliente_das_buscas=quebrado)
+        c._modelos_do_kit = lambda: self.MODELOS
+        c.ciclo()
+        c._passo_buscador()
+        self.assertIn("OSError: sem rede", (self.raiz / "log.jsonl").read_text(encoding="utf-8"))
 
 
 class TestesAtendente(Base):

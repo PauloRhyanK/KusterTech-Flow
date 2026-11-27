@@ -42,6 +42,8 @@ FASES = ("despachando", "respondendo", "enviando")
 MOTIVO_TETO = "o agente passou de 10 min"
 MOTIVO_AGENTE = "o agente falhou: %s"
 MOTIVO_FORMATO = "a resposta não veio no formato"
+# novas tentativas depois de uma resposta fora do formato, cada uma com o campo que falhou no prompt
+TENTATIVAS_DE_FORMATO = 2
 MOTIVO_PR = "o agente abriu um PR; resposta descartada"
 MOTIVO_SEM_PROJETO = "o repositório %s não está na fila da Fábrica"
 MOTIVO_RUN_SUMIU = "run não encontrado no Warren"
@@ -348,8 +350,12 @@ class _Passo:
             lida = prompts.extrair_resposta_do_atendente(texto, acoes)
             if lida is not None:
                 self.pronta(dict(id=str(uuid.uuid4()), emRespostaA=a["responderA"], **lida))
-            elif a["tentativa"] == 0:
-                self.preparar(1, MOTIVO_FORMATO)
+                return
+            # o campo que falhou vai para o log e para a nova tentativa (o agente corrige o que errou)
+            campo = prompts.diagnosticar_resposta_do_atendente(texto, acoes) or "formato"
+            self.eventos.append({"evento": "atendente_formato", "conversaId": a["conversaId"], "runId": a["runId"], "tentativa": a["tentativa"], "campo": campo[:LIMITE_DA_FALHA]})
+            if a["tentativa"] < TENTATIVAS_DE_FORMATO:
+                self.preparar(a["tentativa"] + 1, "%s: %s" % (MOTIVO_FORMATO, campo))
             else:
                 self.falhou(MOTIVO_FORMATO)
         elif situacao in despachante.TERMINAIS_DE_RUN:

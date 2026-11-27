@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { Conversa, type MensagemNaTela } from './conversa'
 
@@ -85,8 +85,14 @@ describe('Conversa', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Todos, ligado por padrão' }))
     expect(props.onTextoRapido).toHaveBeenCalledWith('Todos, ligado por padrão')
 
-    const imagem = screen.getByRole('link', { name: /print-config\.png/ })
-    expect(imagem).toHaveAttribute('href', '/decidir/anexos/a1')
+    // A imagem anexada aparece em miniatura e abre maior em "Ampliar".
+    const imagem = screen.getByRole('img', { name: 'print-config.png' })
+    expect(imagem).toHaveAttribute('src', '/decidir/anexos/a1')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ampliar' }))
+    expect(screen.getByRole('dialog', { name: 'print-config.png' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.queryByText(/aguardando o agente/)).toBeNull()
   })
 
@@ -109,6 +115,100 @@ describe('Conversa', () => {
     expect(recusar).toBeDefined()
     fireEvent.click(recusar!)
     expect(props.onRespostaRapida).toHaveBeenCalledWith('recusar')
+  })
+
+  test('Conversa: a mensagem do agente e a do Flow são formatadas; a do Paulo fica como texto', () => {
+    renderizar({
+      mensagens: [
+        mensagem({ id: 'a1', autor: 'agente', texto: 'Isto é **importante**.' }),
+        mensagem({ id: 'p1', autor: 'paulo', texto: 'Quero **assim** mesmo.' }),
+        mensagem({ id: 'f1', autor: 'flow', texto: '- um\n- dois' }),
+      ],
+    })
+    expect(screen.getByText('importante').tagName).toBe('STRONG')
+    expect(screen.getByText('Quero **assim** mesmo.')).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual(
+      expect.arrayContaining(['um', 'dois']),
+    )
+  })
+
+  const PERGUNTA =
+    '# Em que ordem?\n\n**O que preciso de você:** escolher a ordem.\n\n**Opções:**\n\n1. **Ordem alfabética** — pronto hoje.\n2. **Ordem do formulário** — mais meio dia.\n\n**Recomendo:** a opção 2.'
+
+  test('Conversa: numa decisão da Fábrica as opções viram botões, a recomendada primeiro, e o toque chama onOpcao', () => {
+    const onOpcao = vi.fn()
+    renderizar({
+      mensagens: [mensagem({ id: 'f1', autor: 'flow', texto: PERGUNTA })],
+      respostasDoFlow: [
+        { chave: 'responder_com_mensagem', rotulo: 'Responder com a minha mensagem' },
+      ],
+      decisaoDaFabrica: true,
+      onOpcao,
+    })
+    const grupo = screen.getByRole('group', { name: 'Responder com uma opção' })
+    const botoes = within(grupo).getAllByRole('button')
+    expect(botoes.map((b) => b.textContent)).toEqual([
+      '2. Ordem do formulário',
+      '1. Ordem alfabética',
+    ])
+    fireEvent.click(botoes[1]!)
+    expect(onOpcao).toHaveBeenCalledWith('1. Ordem alfabética')
+    // O título e a linha do destaque já estão no cabeçalho: não se repetem na mensagem.
+    expect(screen.queryByText('Em que ordem?')).toBeNull()
+    expect(screen.queryByText(/escolher a ordem\./)).toBeNull()
+  })
+
+  test('Conversa: opções não viram botão fora da decisão da Fábrica, em mensagem que não é a última, com respostas do agente, nem desabilitada dispara', () => {
+    const onOpcao = vi.fn()
+    const flow = mensagem({ id: 'f1', autor: 'flow', texto: PERGUNTA })
+    const { unmount } = render(
+      <Conversa
+        mensagens={[flow]}
+        aguardaAgenteDesde={null}
+        atendenteBuscouEm={null}
+        agora={AGORA}
+        respostasDoFlow={[]}
+        onRespostaRapida={vi.fn()}
+        onTextoRapido={vi.fn()}
+        onOpcao={onOpcao}
+      />,
+    )
+    expect(screen.queryByRole('group', { name: 'Responder com uma opção' })).toBeNull()
+    unmount()
+
+    const comum = {
+      aguardaAgenteDesde: null,
+      atendenteBuscouEm: null,
+      agora: AGORA,
+      respostasDoFlow: [],
+      onRespostaRapida: vi.fn(),
+      onTextoRapido: vi.fn(),
+      decisaoDaFabrica: true,
+      onOpcao,
+    }
+    const depois = render(
+      <Conversa
+        {...comum}
+        mensagens={[flow, mensagem({ id: 'p1', autor: 'paulo', texto: '1. Ordem alfabética' })]}
+      />,
+    )
+    expect(screen.queryByRole('group', { name: 'Responder com uma opção' })).toBeNull()
+    depois.unmount()
+
+    const doAgente = render(
+      <Conversa
+        {...comum}
+        mensagens={[
+          mensagem({ id: 'a1', autor: 'agente', texto: PERGUNTA, respostasRapidas: ['Outra'] }),
+        ]}
+      />,
+    )
+    expect(screen.queryByRole('group', { name: 'Responder com uma opção' })).toBeNull()
+    doAgente.unmount()
+
+    render(<Conversa {...comum} mensagens={[flow]} desabilitado />)
+    fireEvent.click(screen.getByRole('button', { name: '2. Ordem do formulário' }))
+    expect(onOpcao).not.toHaveBeenCalled()
   })
 
   test('Conversa: atendente parado há 5 min troca o aviso', () => {

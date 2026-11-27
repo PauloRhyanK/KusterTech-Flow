@@ -18,6 +18,7 @@ Formar profissionais de IA autônomos, competentes e pragmáticos, capazes de en
 8. **Correção responsável.** Resolver defeitos no próprio escopo; usar o ciclo de review/fixer/reteste e acionar o orquestrador nas exceções, sem mudanças silenciosas de requisitos.
 9. **Documentação curta e útil.** Só registrar contratos, decisões importantes, evidências e comandos necessários. Não criar planejamento ou documentação paralela redundante.
 10. **Contexto verificável.** Para integrações e tecnologias externas, consultar documentação oficial e versões efetivamente usadas, validar hipóteses e distinguir fato, hipótese e decisão.
+11. **No ar inclui a configuração.** O que a entrega precisa em produção além do código (configuração publicada, dados) vai ao ar pelo deploy do repositório, que a fila do Flow dispara. Vai como artefato commitado, nunca como passo à mão no servidor (veja `orquestrador.md`, "O que vai ao ar além do código").
 
 ## Pacote mínimo de entrada de uma tarefa
 

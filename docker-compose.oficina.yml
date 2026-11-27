@@ -40,6 +40,13 @@ services:
       NODE_OPTIONS: --max-old-space-size=512
       FLOW_MAQUINA_LOCAL: ${FLOW_MAQUINA_LOCAL:-}
       OFICINA_DIR: /oficina
+      # Métricas do Beszel (D82): o hub roda na própria oficina; usuário só de leitura no .env.
+      BESZEL_URL: ${BESZEL_URL:-}
+      BESZEL_USUARIO: ${BESZEL_USUARIO:-}
+      BESZEL_SENHA: ${BESZEL_SENHA:-}
+      BESZEL_LINK: ${BESZEL_LINK:-}
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
 
   worker:
     image: ${FLOW_IMAGEM:-ghcr.io/paulorhyank/kustertech-flow:main}

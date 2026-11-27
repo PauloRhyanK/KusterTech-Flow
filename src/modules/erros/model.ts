@@ -10,7 +10,19 @@ const CORRIGIDO_NO_QUADRO_MS = DIA_MS
 const PONTOS_NA_SERIE = 6
 const HORAS_NAS_BARRINHAS = 5
 
-export const TETO_POR_HORA = 5
+export interface Limiares {
+  /** Eventos a partir dos quais o erro vira demanda. */
+  eventos: number
+  /** Horas entre o primeiro e o último evento a partir das quais o erro vira demanda. */
+  horas: number
+  /** Demandas automáticas nas últimas 24 h, somando os projetos. */
+  porDia: number
+  /** Horas no ar sem o erro voltar até a demanda contar como corrigida. */
+  horasSemErro: number
+}
+
+export const LIMIARES_PADRAO: Limiares = { eventos: 10, horas: 2, porDia: 3, horasSemErro: 24 }
+export const AMBIENTES_PADRAO = ['production', 'producao', 'produção', 'prod', 'live']
 
 export interface IssueLida {
   id: string
@@ -36,6 +48,9 @@ export interface Configuracao {
   org: string
   token: string
   projetos: ProjetoConfigurado[]
+  /** Nomes de ambiente de produção, em minúsculas. */
+  ambientes: string[]
+  limiares: Limiares
 }
 
 export const NAO_CONFIGURADO = 'GlitchTip não configurado'
@@ -76,10 +91,80 @@ export function lerConfiguracao(
     projetos.push({ slug, repositorio })
   }
   if (projetos.length === 0) return { ok: false, motivo: NAO_CONFIGURADO }
+
+  const limiares = { ...LIMIARES_PADRAO }
+  const chaves: [keyof Limiares, string][] = [
+    ['eventos', 'GLITCHTIP_LIMIAR_EVENTOS'],
+    ['horas', 'GLITCHTIP_LIMIAR_HORAS'],
+    ['porDia', 'GLITCHTIP_DEMANDAS_POR_DIA'],
+    ['horasSemErro', 'GLITCHTIP_HORAS_SEM_ERRO'],
+  ]
+  for (const [campo, chave] of chaves) {
+    if (vazio(env[chave])) continue
+    const n = Number(env[chave]!.trim())
+    if (!Number.isInteger(n) || n < 1) return { ok: false, motivo: `${chave} inválido` }
+    limiares[campo] = n
+  }
+  const ambientes = vazio(env.GLITCHTIP_AMBIENTES)
+    ? AMBIENTES_PADRAO
+    : env
+        .GLITCHTIP_AMBIENTES!.split(',')
+        .map((a) => a.trim().toLowerCase())
+        .filter((a) => a !== '')
   return {
     ok: true,
-    config: { url, org: env.GLITCHTIP_ORG!.trim(), token: env.GLITCHTIP_TOKEN!.trim(), projetos },
+    config: {
+      url,
+      org: env.GLITCHTIP_ORG!.trim(),
+      token: env.GLITCHTIP_TOKEN!.trim(),
+      projetos,
+      ambientes,
+      limiares,
+    },
   }
+}
+
+/** Ambientes a pedir na leitura: os de produção; sem ambiente cadastrado, tudo (spec de triagem, 4). */
+export function ambientesParaLer(
+  cadastrados: string[],
+  aceitos: string[],
+): { ler: false } | { ler: true; filtro: string[] } {
+  if (cadastrados.length === 0) return { ler: true, filtro: [] }
+  const filtro = cadastrados.filter((c) => aceitos.includes(c.trim().toLowerCase()))
+  return filtro.length > 0 ? { ler: true, filtro } : { ler: false }
+}
+
+const TESTE = /(?:^|[^\p{L}])testes?(?:$|[^\p{L}])|(?:^|[^\p{L}.])test(?:$|[^\p{L}])|smoke\s*test/iu
+
+/** Issue de teste ou de antes de a fonte ser ligada não é acompanhada. */
+export function ignorada(issue: IssueLida, ligadaEm: Date): boolean {
+  return TESTE.test(issue.titulo) || issue.primeiroEm.getTime() < ligadaEm.getTime()
+}
+
+function normalizar(texto: string): string {
+  return texto
+    .replaceAll('\u0000', '')
+    .toLowerCase()
+    .replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '*')
+    .replace(/\b(table|relation|column|tabela|coluna)\s+\S+/g, '$1 *')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '#')
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/g, '#')
+    .replace(/\d+/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Chave dos erros parecidos de um projeto: título e lugar sem nomes, ids e números. */
+export function grupoDoErro(issue: IssueLida): string {
+  return `${normalizar(mascarar(issue.titulo))}|${normalizar(mascarar(issue.onde ?? ''))}`
+}
+
+/** O erro persiste: chegou ao limiar de eventos ou seguiu ativo por `horas` desde o primeiro. */
+export function persiste(issue: IssueLida, l: Limiares): boolean {
+  return (
+    issue.eventos >= l.eventos ||
+    issue.ultimoEm.getTime() - issue.primeiroEm.getTime() >= l.horas * HORA_MS
+  )
 }
 
 /** Nível error ou fatal, não resolvida e com evento nos últimos 7 dias. */
@@ -94,26 +179,77 @@ export function entra(issue: IssueLida, agora: Date): boolean {
 export interface SituacaoDaDemanda {
   encerrada: string | null
   noArEm: Date | null
+  /** Quando o Paulo descartou a demanda (evento `encerrada_pelo_paulo`). */
+  descartadaEm?: Date | null
 }
 
-export type Acao = { tipo: 'abrir'; voltou: boolean } | { tipo: 'esperar' } | { tipo: 'atualizar' }
+/** Demanda descartada e o erro teve evento depois do descarte: volta à triagem (spec 2026-11-26-erros-ate-corrigido, 4). */
+export function reativada(demanda: SituacaoDaDemanda | null, issue: IssueLida): boolean {
+  return (
+    demanda !== null &&
+    demanda.encerrada === 'descartada' &&
+    demanda.descartadaEm != null &&
+    issue.ultimoEm.getTime() > demanda.descartadaEm.getTime()
+  )
+}
 
-/** Tabela 6.2: abrir (nova ou voltou, dentro do teto), esperar o teto, ou só atualizar. */
+/** O momento em que o erro conta como corrigido: `horasSemErro` depois do ar, se não voltou. */
+export function corrigidoEm(
+  e: { noArEm: Date | null; ultimoEm: Date },
+  horasSemErro: number,
+): Date | null {
+  if (e.noArEm === null || e.ultimoEm.getTime() > e.noArEm.getTime()) return null
+  return new Date(e.noArEm.getTime() + horasSemErro * HORA_MS)
+}
+
+/** Voltou na espera (a correção não resolveu) ou depois de corrigido (regressão). */
+export function comoVoltou(
+  noArEm: Date,
+  ultimoEm: Date,
+  horasSemErro: number,
+): { horas: number; antesDeCorrigir: boolean } {
+  const ms = ultimoEm.getTime() - noArEm.getTime()
+  return { horas: Math.floor(ms / HORA_MS), antesDeCorrigir: ms < horasSemErro * HORA_MS }
+}
+
+/** Frase do aviso `erro-voltou` e da descrição da demanda nova. */
+export function fraseDoVoltou(v: { horas: number; antesDeCorrigir: boolean }): string {
+  return v.antesDeCorrigir
+    ? `voltou ${v.horas} h depois de ir ao ar, antes de contar como corrigido: a correção não resolveu`
+    : `voltou ${v.horas} h depois de ir ao ar, depois de corrigido: regressão`
+}
+
+export type Acao =
+  | { tipo: 'abrir'; voltou: boolean }
+  | { tipo: 'ligar'; demandaId: string }
+  | { tipo: 'observar' }
+  | { tipo: 'esperar' }
+  | { tipo: 'atualizar' }
+
+/** Spec de triagem: atualizar, abrir o que voltou, ligar ao grupo, observar, esperar ou abrir. */
 export function decidir(e: {
   issue: IssueLida
   demanda: SituacaoDaDemanda | null
-  abertasNaUltimaHora: number
+  /** Demanda aberta (não encerrada) de um erro parecido do mesmo projeto. */
+  demandaDoGrupo: string | null
+  abertasNoDia: number
+  limiares: Limiares
 }): Acao {
+  const demanda = reativada(e.demanda, e.issue) ? null : e.demanda
   const voltou =
-    e.demanda !== null &&
-    e.demanda.noArEm !== null &&
-    e.issue.ultimoEm.getTime() > e.demanda.noArEm.getTime()
-  if (e.demanda !== null && !voltou) return { tipo: 'atualizar' }
-  if (e.abertasNaUltimaHora >= TETO_POR_HORA) return { tipo: 'esperar' }
-  return { tipo: 'abrir', voltou }
+    demanda !== null &&
+    demanda.noArEm !== null &&
+    e.issue.ultimoEm.getTime() > demanda.noArEm.getTime()
+  if (demanda !== null && !voltou) return { tipo: 'atualizar' }
+  const cheio = e.abertasNoDia >= e.limiares.porDia
+  if (e.demandaDoGrupo !== null) return { tipo: 'ligar', demandaId: e.demandaDoGrupo }
+  if (voltou) return cheio ? { tipo: 'esperar' } : { tipo: 'abrir', voltou: true }
+  if (!persiste(e.issue, e.limiares)) return { tipo: 'observar' }
+  return cheio ? { tipo: 'esperar' } : { tipo: 'abrir', voltou: false }
 }
 
-export type EstadoNoQuadro = 'voltou' | 'novo' | 'em_correcao' | 'na_espera' | 'corrigido'
+export type EstadoNoQuadro =
+  'voltou' | 'novo' | 'em_correcao' | 'na_espera' | 'observando' | 'no_ar' | 'corrigido'
 
 /** Tabela 6.3; `null` é fora do quadro. */
 export function estadoNoQuadro(
@@ -125,14 +261,22 @@ export function estadoNoQuadro(
     demanda: (SituacaoDaDemanda & { naPrimeiraEtapa: boolean }) | null
   },
   agora: Date,
+  horasSemErro: number = LIMIARES_PADRAO.horasSemErro,
 ): EstadoNoQuadro | null {
   if (e.resolvidoEm !== null) return null
   const d = e.demanda
-  if (d === null) return e.esperaDesde !== null ? 'na_espera' : null
+  if (d === null) {
+    // Sem evento na janela de entrada o worker não mexe mais nela: sai do quadro.
+    if (agora.getTime() - e.ultimoEm.getTime() > JANELA_DE_ENTRADA_MS) return null
+    return e.esperaDesde !== null ? 'na_espera' : 'observando'
+  }
   if (d.noArEm !== null) {
     if (e.esperaDesde !== null) return 'na_espera'
-    if (e.ultimoEm.getTime() > d.noArEm.getTime()) return null
-    return agora.getTime() - d.noArEm.getTime() <= CORRIGIDO_NO_QUADRO_MS ? 'corrigido' : null
+    const corrigido = corrigidoEm({ noArEm: d.noArEm, ultimoEm: e.ultimoEm }, horasSemErro)
+    if (corrigido === null) return null
+    const desde = agora.getTime() - corrigido.getTime()
+    if (desde < 0) return 'no_ar'
+    return desde <= CORRIGIDO_NO_QUADRO_MS ? 'corrigido' : null
   }
   if (d.encerrada !== null) return null
   if (e.voltou) return 'voltou'
@@ -194,10 +338,13 @@ export function tituloDaDemanda(issue: IssueLida): string {
 
 export function descricaoDaDemanda(
   issue: IssueLida,
-  anterior: { id: string; noArEm: Date } | null,
+  /** `voltouEm`: quando a volta foi vista (o último evento pode ser bem depois, se esperou vaga). */
+  anterior: { id: string; noArEm: Date; voltouEm?: Date } | null,
+  ligadas: { titulo: string; link: string }[] = [],
+  horasSemErro: number = LIMIARES_PADRAO.horasSemErro,
 ): string {
   const abertura = anterior
-    ? `Este erro voltou depois da correção da demanda /demandas/${anterior.id}, no ar desde ${formatarDataHora(anterior.noArEm)}.`
+    ? `Este erro voltou depois da correção da demanda /demandas/${anterior.id}, no ar desde ${formatarDataHora(anterior.noArEm)}; ${fraseDoVoltou(comoVoltou(anterior.noArEm, anterior.voltouEm ?? issue.ultimoEm, horasSemErro))}.`
     : 'Erro novo no GlitchTip.'
   return [
     abertura,
@@ -207,5 +354,12 @@ export function descricaoDaDemanda(
     `- Volume: ${issue.eventos} eventos, ${issue.usuarios} usuários`,
     `- Primeiro evento: ${formatarDataHora(issue.primeiroEm)}; último: ${formatarDataHora(issue.ultimoEm)}`,
     `- Detalhes: ${issue.link}`,
+    ...(ligadas.length > 0
+      ? [
+          '',
+          'Erros parecidos nesta demanda:',
+          ...ligadas.map((l) => `- ${mascarar(l.titulo)} — ${l.link}`),
+        ]
+      : []),
   ].join('\n')
 }

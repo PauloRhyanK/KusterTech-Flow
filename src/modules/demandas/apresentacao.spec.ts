@@ -249,6 +249,55 @@ describe('faixaDaEspera', () => {
     etapas: [...MODELO_PADRAO],
   }
 
+  test('travada com desfecho: sem Retomar, link para a outra demanda e Encerrar com o rótulo', () => {
+    const outra = '7b7ba4b8-1111-4222-8333-444444444444'
+    const pr = 'https://github.com/kustertech-exemplo/alfa/pull/325'
+    expect(
+      faixaDaEspera(
+        {
+          ...base,
+          espera: 'travada',
+          esperaMotivo:
+            'o orquestrador concluiu que a demanda é duplicada da 7b7ba4b8: não há plano a fazer',
+          urlDaTrava: pr,
+          desfecho: { resultado: 'duplicada', de: outra },
+        },
+        AGORA,
+      ),
+    ).toEqual({
+      titulo: 'Duplicada da demanda 7b7ba4b8',
+      contexto: 'O orquestrador conferiu: o que ela pede já está feito lá. Não há plano a fazer.',
+      acoes: [],
+      prUrl: pr,
+      outraDemanda: { href: `/demandas/${outra}`, rotulo: 'Abrir a 7b7ba4b8' },
+      encerrar: 'Encerrar como duplicada',
+    })
+    expect(
+      faixaDaEspera(
+        { ...base, espera: 'travada', desfecho: { resultado: 'duplicada', de: null } },
+        AGORA,
+      ),
+    ).toEqual({
+      titulo: 'Duplicada de outra demanda',
+      contexto:
+        'O orquestrador conferiu: o que ela pede já está feito em outra demanda. Não há plano a fazer.',
+      acoes: [],
+      encerrar: 'Encerrar como duplicada',
+    })
+    expect(
+      faixaDaEspera(
+        { ...base, espera: 'travada', desfecho: { resultado: 'ja_resolvida', de: null } },
+        AGORA,
+      ),
+    ).toEqual({
+      titulo: 'Já está resolvida no repositório',
+      contexto:
+        'O orquestrador conferiu: o que ela pede já está resolvido no repositório. Não há plano a fazer.',
+      acoes: [],
+      encerrar: 'Encerrar como já resolvida',
+    })
+  })
+
   test('travada por pergunta do orquestrador → campo de resposta e contexto', () => {
     const motivo = 'o orquestrador perguntou (responda ao tentar de novo): Pergunta ao Paulo'
     expect(faixaDaEspera({ ...base, espera: 'travada', esperaMotivo: motivo }, AGORA)).toEqual({
@@ -452,6 +501,28 @@ describe('artefato do Claude e demanda encerrada (C1 e I3)', () => {
   test('histórico: urgência alterada', () => {
     expect(textoDoEvento('urgencia_alterada', { urgente: true })).toBe('Marcada como urgente')
     expect(textoDoEvento('urgencia_alterada', { urgente: false })).toBe('Voltou à fila normal')
+  })
+
+  test('histórico: erros do GlitchTip ligados e que voltaram', () => {
+    expect(textoDoEvento('erro-ligado', { titulo: 'PostgresError: x', link: 'https://e/1' })).toBe(
+      'Erro parecido ligado: PostgresError: x',
+    )
+    expect(textoDoEvento('erro-voltou', { demandaNova: 'd2' })).toBe(
+      'O erro voltou depois de ir ao ar; abriu uma demanda nova',
+    )
+    expect(
+      textoDoEvento('erro-voltou', { demandaNova: 'd2', horas: 3, antesDeCorrigir: true }),
+    ).toBe(
+      'O erro voltou 3 h depois de ir ao ar, antes de contar como corrigido: a correção não resolveu; abriu uma demanda nova',
+    )
+    expect(
+      textoDoEvento('erro-voltou', { demandaNova: 'd2', horas: 72, antesDeCorrigir: false }),
+    ).toBe(
+      'O erro voltou 72 h depois de ir ao ar, depois de corrigido: regressão; abriu uma demanda nova',
+    )
+    expect(textoDoEvento('erro-corrigido', { horas: 24 })).toBe(
+      'O erro não voltou em 24 h no ar; corrigido',
+    )
   })
 
   test('histórico: retomada com resposta mostra o texto, truncado em 120', () => {

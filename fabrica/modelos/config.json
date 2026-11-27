@@ -21,6 +21,12 @@
       "esforco": "high",
       "maxCustoUsd": 20
     },
+    "arbitro": {
+      "agente": "claude-code",
+      "modelo": "claude-fable-5-1",
+      "esforco": "high",
+      "maxCustoUsd": 20
+    },
     "arquiteto": {
       "agente": "claude-code",
       "modelo": "claude-sonnet-5-5",
@@ -86,6 +92,12 @@
       "modelo": "claude-sonnet-5-5",
       "esforco": "medium",
       "maxCustoUsd": 2
+    },
+    "buscador": {
+      "agente": "claude-code",
+      "modelo": "claude-haiku-5-5",
+      "esforco": "medium",
+      "maxCustoUsd": 0.5
     }
   },
   "verificacao": {

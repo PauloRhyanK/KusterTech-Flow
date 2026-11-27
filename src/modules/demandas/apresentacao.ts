@@ -2,8 +2,10 @@ import type { EstadoDoPedido } from '@/modules/fila-de-publicacao/model'
 import { formatarIdade } from '@/modules/inicio/model'
 import {
   FABRICA_SEM_BUSCAR_MS,
+  type Desfecho,
   type Destino,
   type EtapaDefinida,
+  type EstadoDaTabela,
   type Encerramento,
   type Espera,
   type Marco,
@@ -88,6 +90,10 @@ export interface TelaDeDemandas {
   orientadasHoje: number
   fabricaSemBuscar: string | null
   podeCriar: boolean
+  /** As opções dos seletores de filtro. */
+  opcoes: { clientes: OpcaoDeFiltro[]; projetos: OpcaoDeFiltro[]; repositorios: OpcaoDeFiltro[] }
+  /** A tabela filtrada; `null` quando a tela está nos grupos. */
+  tabela: TabelaDeDemandas | null
 }
 
 const FUSO = 'America/Sao_Paulo'
@@ -363,6 +369,75 @@ export function montarGrupos(
       linhas: orientadas.map((d) => linhaDe(d, 'orientadas_hoje', agora)),
     },
   ]
+}
+
+// ——— Tabela de demandas (filtros e ordem) ———
+
+/** A demanda na tabela: a da lista mais os clientes do projeto e os repositórios das partes. */
+export interface DemandaNaTabela extends DemandaNaLista {
+  /** Nomes, em ordem alfabética. */
+  clientes: readonly string[]
+  /** `nomeCompleto`, o principal primeiro, sem repetir. */
+  repositorios: readonly string[]
+}
+
+export interface LinhaDaTabela extends LinhaDeDemanda {
+  cliente: string
+  repositorio: string
+  estadoDaTabela: EstadoDaTabela
+}
+
+export interface TabelaDeDemandas {
+  linhas: LinhaDaTabela[]
+  /** Passou do teto: a tabela mostra só as mais recentes. */
+  truncada: boolean
+}
+
+export interface OpcaoDeFiltro {
+  valor: string
+  rotulo: string
+}
+
+/** O estado na tabela: o grupo até o ar, mas a no ar antiga continua no ar e o resto é encerrada. */
+export function estadoNaTabela(d: DemandaNaLista, agora: Date): EstadoDaTabela {
+  return grupoAteOAr(d, agora) ?? (d.encerrada === 'no_ar' ? 'no_ar' : 'encerrada')
+}
+
+const primeiroEMais = (nomes: readonly string[]): string =>
+  nomes.length === 0 ? '—' : nomes.length === 1 ? nomes[0]! : `${nomes[0]} +${nomes.length - 1}`
+
+export function linhaDaTabela(d: DemandaNaTabela, agora: Date): LinhaDaTabela {
+  const estado = estadoNaTabela(d, agora)
+  // "Orientadas hoje" é o grupo que cai no rótulo do estado — o certo para as encerradas.
+  const linha = linhaDe(d, estado === 'encerrada' ? 'orientadas_hoje' : estado, agora)
+  return {
+    ...linha,
+    // Entregue antes das partes existirem: o marco diria "Entregando", que já passou.
+    estado: d.encerrada === 'entregue' ? { texto: 'Entregue', tom: 'neutro' } : linha.estado,
+    idade: semHa(formatarIdade(d.atualizadaEm, agora)),
+    cliente: primeiroEMais(d.clientes),
+    repositorio: primeiroEMais(d.repositorios.map((r) => r.slice(r.lastIndexOf('/') + 1))),
+    estadoDaTabela: estado,
+  }
+}
+
+const ORDEM_NA_TABELA: Record<EstadoDaTabela, number> = {
+  espera_voce: 0,
+  nao_chegou: 1,
+  a_caminho: 2,
+  no_ar: 3,
+  encerrada: 4,
+}
+
+/** Ordena pelo estado (o que pede o Paulo primeiro no `asc`), mantendo a ordem dentro de cada um. */
+export function ordenarPorEstado(
+  linhas: readonly LinhaDaTabela[],
+  sentido: 'asc' | 'desc',
+): LinhaDaTabela[] {
+  const sinal = sentido === 'asc' ? 1 : -1
+  return [...linhas].sort(
+    (a, b) => sinal * (ORDEM_NA_TABELA[a.estadoDaTabela] - ORDEM_NA_TABELA[b.estadoDaTabela]),
+  )
 }
 
 const QUADROS: readonly { chave: GrupoAteOAr; rotulo: string; meta: string }[] = [
@@ -685,6 +760,10 @@ export interface FaixaDaEspera {
   prUrl?: string
   /** Só na trava por pergunta do orquestrador: a retomada leva a resposta do Paulo ao plano. */
   responder?: true
+  /** Só na trava com desfecho duplicada: o link para a outra demanda. */
+  outraDemanda?: { href: string; rotulo: string }
+  /** Só na trava com desfecho: o rótulo do Encerrar, que entra no lugar do Retomar. */
+  encerrar?: string
 }
 
 /** O começo do motivo da trava quando o orquestrador fez uma pergunta (`MOTIVO_PERGUNTA` do kit). */
@@ -698,6 +777,8 @@ export interface DemandaEmEspera {
   ultimoAjuste: { texto: string; em: Date } | null
   /** O `dados.url` do último evento `travada`, como veio. */
   urlDaTrava: string | null
+  /** O `dados.desfecho` do último evento `travada` (duplicada, já resolvida). */
+  desfecho?: Desfecho | null
   etapaAtual: string
   etapas: readonly EtapaDefinida[]
 }
@@ -718,6 +799,32 @@ export function quandoFoi(data: Date, agora: Date): string {
   if (ehDeHoje(data, agora)) return formatarIdade(data, agora)
   if (ehDeHoje(data, new Date(agora.getTime() - 24 * 60 * 60_000))) return 'ontem'
   return `em ${diaEMes(data)}`
+}
+
+/** A trava em que o orquestrador concluiu que não há plano: encerrar no lugar de retomar. */
+function faixaDoDesfecho(d: Desfecho, prUrl: string | null): FaixaDaEspera {
+  const fim = 'Não há plano a fazer.'
+  const comPr = prUrl ? { prUrl } : {}
+  if (d.resultado === 'ja_resolvida') {
+    return {
+      titulo: 'Já está resolvida no repositório',
+      contexto: `O orquestrador conferiu: o que ela pede já está resolvido no repositório. ${fim}`,
+      acoes: [],
+      ...comPr,
+      encerrar: 'Encerrar como já resolvida',
+    }
+  }
+  const curto = d.de?.slice(0, 8)
+  return {
+    titulo: curto ? `Duplicada da demanda ${curto}` : 'Duplicada de outra demanda',
+    contexto: curto
+      ? `O orquestrador conferiu: o que ela pede já está feito lá. ${fim}`
+      : `O orquestrador conferiu: o que ela pede já está feito em outra demanda. ${fim}`,
+    acoes: [],
+    ...comPr,
+    ...(d.de ? { outraDemanda: { href: `/demandas/${d.de}`, rotulo: `Abrir a ${curto}` } } : {}),
+    encerrar: 'Encerrar como duplicada',
+  }
 }
 
 export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | null {
@@ -755,6 +862,7 @@ export function faixaDaEspera(d: DemandaEmEspera, agora: Date): FaixaDaEspera | 
       }
     case 'travada': {
       const prUrl = linkDoGithub(d.urlDaTrava)
+      if (d.desfecho) return faixaDoDesfecho(d.desfecho, prUrl)
       const pergunta = d.esperaMotivo?.startsWith(PREFIXO_DA_PERGUNTA) === true
       return {
         titulo: d.esperaMotivo ?? 'A demanda travou',
@@ -886,6 +994,7 @@ const TEXTO_DO_EVENTO: Record<string, string> = {
   no_ar: 'No ar',
   migrada: 'Demanda migrada',
   partes_planejadas: 'Partes planejadas',
+  'erro-voltou': 'O erro voltou depois de ir ao ar; abriu uma demanda nova',
 }
 
 const TEXTO_DO_EVENTO_DA_PARTE: Record<string, (chave: string) => string> = {
@@ -920,6 +1029,18 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
   if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
   if (tipo === 'urgencia_alterada') {
     return d.urgente === true ? 'Marcada como urgente' : 'Voltou à fila normal'
+  }
+  if (tipo === 'erro-voltou' && typeof d.horas === 'number') {
+    const como = d.antesDeCorrigir
+      ? 'antes de contar como corrigido: a correção não resolveu'
+      : 'depois de corrigido: regressão'
+    return `O erro voltou ${d.horas} h depois de ir ao ar, ${como}; abriu uma demanda nova`
+  }
+  if (tipo === 'erro-corrigido' && typeof d.horas === 'number') {
+    return `O erro não voltou em ${d.horas} h no ar; corrigido`
+  }
+  if (tipo === 'erro-ligado' && typeof d.titulo === 'string') {
+    return `Erro parecido ligado: ${d.titulo}`
   }
   if (tipo === 'teste')
     return d.resultado === 'passou' ? 'Teste no navegador passou' : 'Teste no navegador falhou'

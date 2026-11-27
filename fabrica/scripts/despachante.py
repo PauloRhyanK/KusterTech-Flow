@@ -119,6 +119,11 @@ PROTEGIDOS_FIXOS = (".warren/**", ".fabrica/**", ".claude/**")
 # Ponto único da normalização de papel: `raias.ALIASES_DE_PAPEL` (`ux-engineer` → `ux-ui`).
 ALIASES_DE_PAPEL = dict(raias.ALIASES_DE_PAPEL)
 PAPEIS_OBRIGATORIOS = ("orquestrador", "revisor", "fixer")
+# Opcional: com `modelos.arbitro` na config, a pergunta do orquestrador passa por um segundo agente antes de ir ao Paulo.
+PAPEL_DO_ARBITRO = "arbitro"
+MOTIVO_DA_ARBITRAGEM = "arbitragem"
+TITULO_DA_PERGUNTA = "[fábrica] orquestrador: pergunta para o Paulo"
+LIMITE_TITULO_DA_PERGUNTA = 120
 # O Warren reapa como falha o run que não commitou num branch existente; o revisor não commita por desenho,
 # então nesses dois motivos vale o veredito dele. Sem veredito válido, continua sendo falha.
 MOTIVOS_SEM_COMMIT = ("dropped_commit", "no_changes")
@@ -202,7 +207,8 @@ PISO_PARA_DESISTIR = datetime.timedelta(minutes=5)
 CODIGOS_DOCKER_NAO_EXECUTOU = (125, 126)
 CODIGO_COMANDO_AUSENTE = 127
 # F5: motivos de seed em que o merge é do Paulo
-MOTIVOS_MERGE_DO_PAULO = ("toca arquivos protegidos", "merge recusado pelo GitHub")
+MOTIVO_PROTEGIDO = "toca arquivos protegidos"
+MOTIVOS_MERGE_DO_PAULO = (MOTIVO_PROTEGIDO, "merge recusado pelo GitHub")
 PAUSA_ENTRE_DRENAGENS = datetime.timedelta(hours=6)
 ACOES_SEGURAS_NA_DRENAGEM = ("despachar_raia", "revisar", "corrigir", "acordar", "mergear")
 
@@ -495,6 +501,92 @@ def _permitido_ao_orquestrador(caminho, caminho_plano=CAMINHO_PLANO) -> bool:
     return any(globs.casa_glob(caminho, g) for g in permitidos_ao_orquestrador(caminho_plano))
 
 
+def _titulo_da_pergunta(conteudo) -> str:
+    """O título da issue: a primeira linha com texto da pergunta, sem as marcas de markdown; sem ela, o genérico."""
+    for linha in conteudo.splitlines() if _texto(conteudo) else ():
+        assunto = linha.strip().lstrip("#").strip().strip("*").strip()
+        if assunto:
+            return "[fábrica] pergunta: " + _cortar(assunto, LIMITE_TITULO_DA_PERGUNTA)
+    return TITULO_DA_PERGUNTA
+
+
+def _acordada_do_arbitro(acordada) -> bool:
+    """A acordada é do árbitro: a arbitragem, ou o `plano_invalido` que conclui uma arbitragem sem PR válido."""
+    for _ in range(8):  # o `plano_invalido` guarda a acordada anterior dentro do contexto
+        acordada = _dict(acordada)
+        if acordada.get("motivo") == MOTIVO_DA_ARBITRAGEM:
+            return True
+        if acordada.get("motivo") != "plano_invalido":
+            return False
+        acordada = _dict(acordada.get("contexto")).get("acordadaAnterior")
+    return False
+
+
+def _trava_conhecida(seed: dict):
+    """Por que a seed parou, do que o estado guarda: a trava pendente ou a da última decisão levada ao Paulo."""
+    for campo in ("pendenteHumano", "motivoHumano"):
+        if _texto(seed.get(campo)):
+            return seed[campo]
+    return None
+
+
+def _numero_do_pr(url):
+    achado = re.search(r"/pull/(\d+)$", url) if _texto(url) else None
+    return achado.group(1) if achado else None
+
+
+def pergunta_da_seed(seed_id: str, seed: dict, motivos: list, rodape: str) -> tuple:
+    """Título e corpo da decisão de uma seed, escritos para quem não tem o contexto técnico.
+
+    O começo é para o Paulo ler no Flow (o Flow recolhe o bloco `<details>`); as linhas `Seed:`, `PR:` e `Motivos:`
+    continuam no corpo, dentro dos detalhes, para o orquestrador e para quem abre a issue no GitHub.
+    """
+    raia = seed.get("raia") or "?"
+    pr, numero = seed.get("pr"), _numero_do_pr(seed.get("pr"))
+    o_pr = "o PR #%s" % numero if numero else "o PR"
+    link = "[%s](%s)" % (o_pr, pr) if _texto(pr) else o_pr
+    aprovado = _dict(seed.get("veredito")).get("resultado") == "aprovado"
+    passou = _dict(seed.get("verificacao")).get("codigo") == 0
+    provas = [p for p, vale in (("o revisor aprovou", aprovado), ("os testes passaram", passou)) if vale]
+    pronto = (" e ".join(provas).capitalize() + ". ") if provas else ""
+    protegidos = next((m for m in motivos if m.startswith(MOTIVO_PROTEGIDO)), None)
+    recusado = next((m for m in motivos if m.startswith(MOTIVOS_MERGE_DO_PAULO[1])), None)
+    if protegidos and _texto(pr):
+        pergunta = "Mergear %s da etapa %s?" % (o_pr, raia)
+        aconteceu = (
+            "A etapa `%s` terminou. %sO PR mexe em arquivos protegidos, e esses só você mergeia; a Fábrica não mergeia sozinha."
+            % (raia, pronto)
+        )
+        preciso = "Mergear %s no GitHub, ou dizer o que mudar." % o_pr
+        como = (
+            "Para aprovar, abra %s e mergeie: esta decisão fecha sozinha e as próximas etapas começam. "
+            "Para pedir mudança, feche o PR e escreva aqui o que fazer." % link
+        )
+    elif recusado and _texto(pr):
+        pergunta = "Mergear à mão %s da etapa %s?" % (o_pr, raia)
+        aconteceu = "A etapa `%s` terminou. %sO GitHub recusou o merge que a Fábrica tentou." % (raia, pronto)
+        preciso = "Olhar %s no GitHub e mergear, ou dizer o que fazer." % o_pr
+        como = "Abra %s. Se você mergear, esta decisão fecha sozinha. Se não der, escreva aqui o que fazer." % link
+    else:
+        pergunta = "A etapa %s parou: o que fazer?" % raia
+        aconteceu = "A etapa `%s` parou e a Fábrica não conseguiu destravar sozinha. %sO motivo está nos detalhes." % (raia, pronto)
+        preciso = "Dizer como seguir com esta etapa."
+        como = "Escreva aqui o que fazer%s." % (" (%s está no GitHub)" % link if _texto(pr) else "")
+    detalhes = "Seed: %s\nRaia: %s\nPR: %s\nHead: %s\n\nMotivos:\n%s" % (
+        seed_id,
+        raia,
+        pr or "(sem PR)",
+        seed.get("headSha") or "-",
+        "\n".join("- " + m for m in motivos),
+    )
+    corpo = (
+        "# %s\n\n**O que aconteceu:** %s\n\n**O que preciso de você:** %s\n\n**Como responder:** %s\n\n"
+        "<details><summary>Detalhes técnicos</summary>\n\n%s\n\n</details>\n\n%s"
+        % (pergunta, aconteceu, preciso, como, detalhes, rodape)
+    )
+    return "[fábrica] pergunta: %s (%s)" % (pergunta, seed_id), corpo
+
+
 def _plano_id_valido(plano_id) -> bool:
     return isinstance(plano_id, str) and PADRAO_PLANO_ID.fullmatch(plano_id) is not None
 
@@ -595,6 +687,8 @@ def _validar_config(config) -> dict:
         raise ConfigInvalida("modelos")
     for papel in PAPEIS_OBRIGATORIOS:
         _validar_modelo(modelos.get(papel), papel)
+    if PAPEL_DO_ARBITRO in modelos:
+        _validar_modelo(modelos[PAPEL_DO_ARBITRO], PAPEL_DO_ARBITRO)
     config.setdefault("branchPadrao", "main")
     if not _texto(config["branchPadrao"]):
         raise ConfigInvalida("branchPadrao")
@@ -2185,13 +2279,23 @@ class Despachante:
             ci_em_espera = self.config["ciObrigatorioNasSeeds"] is not False and seed.get("ci") == "pendente"
             if parada < (CI_PENDENTE_MAXIMO if ci_em_espera else SEM_PROGRESSO):
                 continue
-            if "seed_parada:%s" % seed_id not in _lista(self.estado.get("chavesAcordadas")):
+            trava = _trava_conhecida(seed)
+            # arquivo protegido só o Paulo mergeia: acordar o orquestrador custa um run e não muda nada
+            do_paulo = _texto(trava) and trava.startswith(MOTIVO_PROTEGIDO)
+            if not do_paulo and "seed_parada:%s" % seed_id not in _lista(self.estado.get("chavesAcordadas")):
                 if not acordou:
                     acoes.append({"tipo": "acordar", "motivo": "seed_parada", "alvo": seed_id})
                     acordou = True
             elif parada >= SEM_PROGRESSO * 3:
-                motivo = seed.get("pendenteHumano")
-                motivos = [motivo if _texto(motivo) else "PR parado há %d min, mesmo depois de acordar o orquestrador" % (parada.total_seconds() // 60)]
+                minutos = parada.total_seconds() // 60
+                if do_paulo:
+                    motivos = [trava]
+                elif _texto(seed.get("pendenteHumano")):
+                    motivos = [seed["pendenteHumano"]]
+                else:
+                    motivos = ["PR parado há %d min, mesmo depois de acordar o orquestrador" % minutos]
+                    if _texto(trava):
+                        motivos.append("última trava registrada: %s" % trava)
                 acoes.append({"tipo": "aguardar_humano", "seed": seed_id, "motivos": motivos})
         return acoes
 
@@ -2566,7 +2670,12 @@ class Despachante:
             motivos = ["PR do orquestrador ilegível"]
             return self._sem_resultado(self._decidir_humano_orquestrador(pr_url, motivo, motivos), motivos)
         if est.PERGUNTA_DO_ORQUESTRADOR in arquivos:
-            self._abrir_pergunta(pr_url, self.forja.arquivo(self.repo, head, est.PERGUNTA_DO_ORQUESTRADOR))
+            pergunta = self.forja.arquivo(self.repo, head, est.PERGUNTA_DO_ORQUESTRADOR)
+            do_arbitro = _acordada_do_arbitro(orquestrador.get("acordada")) or motivo == MOTIVO_DA_ARBITRAGEM
+            if not do_arbitro and PAPEL_DO_ARBITRO in self.config["modelos"] and _texto(pergunta):
+                self._arbitrar(pr_url, pergunta)
+            else:  # sem árbitro na config, pergunta ilegível ou pergunta do próprio árbitro: é do Paulo
+                self._abrir_pergunta(pr_url, pergunta)
             return {"r": "neutro"}
 
         motivos = []
@@ -2597,7 +2706,13 @@ class Despachante:
             {"evento": "pr_do_orquestrador", "pr": pr_url, "decisao": decisao, "motivos": motivos + fase},
         )
         if decisao == "mergear":
-            return self._mergear_pr_orquestrador(pr_url, head, motivo)
+            resultado = self._mergear_pr_orquestrador(pr_url, head, motivo)
+            if resultado["r"] == "merge" and (
+                motivo == MOTIVO_DA_ARBITRAGEM or _acordada_do_arbitro(orquestrador.get("acordada"))
+            ):
+                # o Paulo não foi chamado: fica o registro do que a Fábrica decidiu sozinha
+                self._aviso("o árbitro técnico resolveu uma pergunta do orquestrador sem chamar o Paulo: %s" % pr_url)
+            return resultado
         if decisao == "replanejar":
             self._fechar_depois(
                 pr_url,
@@ -2877,6 +2992,16 @@ class Despachante:
         self._acompanhar_pr(pr_url)
         return self._abrir_decisao_rastreada("; ".join(motivos), pr_url, titulo, corpo, tipo="orquestrador")
 
+    def _arbitrar(self, pr_url: str, pergunta: str) -> None:
+        """A pergunta do orquestrador vai primeiro ao árbitro técnico; o PR dela fica acompanhado até ser substituído."""
+        self._acompanhar_pr(pr_url)
+        contexto = {"pergunta": pergunta, "pr": pr_url}
+        anterior = _dict(self._orq().get("acordada"))
+        if _texto(anterior.get("motivo")):
+            contexto["acordadaAnterior"] = copy.deepcopy(anterior)
+        self._enfileirar_acordar("arbitragem", pr_url, contexto)
+        self._log_repetivel("arbitragem:%s" % pr_url, {"evento": "arbitragem", "pr": pr_url})
+
     def _abrir_pergunta(self, pr_url: str, conteudo) -> str:
         pergunta = conteudo if _texto(conteudo) else "(%s não foi encontrado no head do PR)" % est.PERGUNTA_DO_ORQUESTRADOR
         corpo = "%s\n\nPR: %s\n\nFeche esta issue com um comentário: ele volta para o orquestrador." % (
@@ -2885,7 +3010,7 @@ class Despachante:
         )
         self._acompanhar_pr(pr_url)
         return self._abrir_decisao_rastreada(
-            _cortar(pergunta, LIMITE_CONTEXTO), pr_url, "[fábrica] orquestrador: pergunta para o Paulo", corpo, tipo="pergunta"
+            _cortar(pergunta, LIMITE_CONTEXTO), pr_url, _titulo_da_pergunta(conteudo), corpo, tipo="pergunta"
         )
 
     # ------------------------------------------------------------ acordar
@@ -3943,22 +4068,14 @@ class Despachante:
                     "sem acordar o orquestrador. Se fechar o PR sem merge, feche também esta issue com um comentário dizendo "
                     "o que fazer: ele volta para o orquestrador." % seed["pr"]
                 )
-            corpo = "Seed: %s\nRaia: %s\nPR: %s\nHead: %s\n\nMotivos:\n%s\n\n%s" % (
-                acao["seed"],
-                seed.get("raia"),
-                seed.get("pr") or "(sem PR)",
-                seed.get("headSha") or "-",
-                "\n".join("- " + m for m in motivos),
-                rodape,
-            )
-            url = self._abrir_decisao_rastreada(
-                "; ".join(motivos), acao["seed"], "[fábrica] %s: decisão necessária" % acao["seed"], corpo, tipo="seed", pr=seed.get("pr")
-            )
+            titulo, corpo = pergunta_da_seed(acao["seed"], seed, motivos, rodape)
+            url = self._abrir_decisao_rastreada("; ".join(motivos), acao["seed"], titulo, corpo, tipo="seed", pr=seed.get("pr"))
             return {"url": url}
 
         if tipo == "acordar":
-            modelo = self._modelo("orquestrador")
-            prompt = prompts.prompt_orquestrador(
+            arbitragem = _acordada_do_arbitro(acao)
+            modelo = self._modelo(PAPEL_DO_ARBITRO if arbitragem else "orquestrador")
+            prompt = (prompts.prompt_arbitro if arbitragem else prompts.prompt_orquestrador)(
                 motivo=acao.get("motivo"),
                 estado_compacto=compactar(self.estado, self.plano),
                 contexto=_dict(acao.get("contexto")),

@@ -13,7 +13,7 @@ export const LIMITE_DA_FALHA = 200
 
 // Aparar, não vazio, e sem caractere de controle fora de \n e \t.
 const CONTROLE = /[\u0000-\u0008\u000B-\u001F\u007F]/
-const texto = (min: number, max: number) =>
+export const texto = (min: number, max: number) =>
   z
     .string()
     .trim()

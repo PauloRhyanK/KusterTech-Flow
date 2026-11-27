@@ -2,27 +2,38 @@
 // Cada projeto do GlitchTip é lido à parte; a falha de um não para os outros.
 import { randomUUID } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
+import { exigirPermissao, type Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
+import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { abrirDemanda, TRAVA_DOS_EVENTOS_SQL } from '@/modules/demandas/service'
 import { resumirErroParaLog } from '@/modules/github/model'
-import { type Buscar, lerIssue, listarIssues } from './cliente'
+import { type Buscar, lerIssue, listarAmbientes, listarIssues } from './cliente'
 import {
   acrescentarPonto,
+  ambientesParaLer,
+  comoVoltou,
+  corrigidoEm,
   type Configuracao,
   decidir,
   descricaoDaDemanda,
   entra,
+  grupoDoErro,
+  ignorada,
   type IssueLida,
   lerConfiguracao,
+  LIMIARES_PADRAO,
+  type Limiares,
   mascarar,
   NAO_CONFIGURADO,
   type Ponto,
   type ProjetoConfigurado,
+  reativada,
   tituloDaDemanda,
 } from './model'
 
 const HORA_MS = 60 * 60_000
+const DIA_MS = 24 * HORA_MS
 const CONFERIDOS_POR_CICLO = 50
 // A espera pela trava do projeto conta no tempo da transação (padrão do Prisma: 5 s).
 const TRANSACAO = { maxWait: 15_000, timeout: 15_000 }
@@ -31,13 +42,17 @@ export interface ResumoDaBusca {
   projetos: number
   abertas: number
   voltaram: number
+  ligadas: number
+  observando: number
   naEspera: number
   atualizados: number
   resolvidos: number
+  corrigidos: number
   falhas: number
 }
 
-type Resultado = 'aberta' | 'voltou' | 'espera' | 'atualizado'
+type Resultado =
+  'aberta' | 'voltou' | 'ligada' | 'observando' | 'espera' | 'atualizado' | 'ignorada'
 
 const buscarPadrao: Buscar = (url, init) => fetch(url, init)
 
@@ -49,9 +64,12 @@ export async function buscarErrosDoGlitchTip(
     projetos: 0,
     abertas: 0,
     voltaram: 0,
+    ligadas: 0,
+    observando: 0,
     naEspera: 0,
     atualizados: 0,
     resolvidos: 0,
+    corrigidos: 0,
     falhas: 0,
   }
   const lida = lerConfiguracao(d.env ?? process.env)
@@ -82,7 +100,73 @@ export async function buscarErrosDoGlitchTip(
       await registrarLeitura(projeto.slug, { ultimaFalhaEm: agora, motivo: 'falha interna' })
     }
   }
+  try {
+    resumo.corrigidos = await registrarCorrigidos(agora, lida.config.limiares.horasSemErro)
+  } catch (err) {
+    log.error(
+      { tarefa: 'buscar-erros-do-glitchtip', erro: resumirErroParaLog(err) },
+      'registro dos erros corrigidos falhou',
+    )
+  }
   return resumo
+}
+
+/**
+ * Spec 2026-11-26-erros-ate-corrigido, 2: a demanda do GlitchTip no ar há `horasSemErro` sem
+ * nenhum dos seus erros voltar ganha uma vez o evento `erro-corrigido`. Só conta o que foi lido
+ * com sucesso neste ciclo (números velhos não provam que o erro sumiu); a demanda que já recebeu
+ * `erro-voltou` nunca conta.
+ */
+async function registrarCorrigidos(agora: Date, horasSemErro: number): Promise<number> {
+  const limite = new Date(agora.getTime() - horasSemErro * HORA_MS)
+  const lidos = await db.leituraDoGlitchTip.findMany({
+    where: { ultimoSucessoEm: { gte: agora } },
+    select: { projetoGlitchTip: true },
+  })
+  const lidosAgora = new Set(lidos.map((l) => l.projetoGlitchTip))
+  if (lidosAgora.size === 0) return 0
+  const candidatas = await db.demanda.findMany({
+    where: {
+      origem: 'GLITCHTIP',
+      encerrada: 'no_ar',
+      noArEm: { lte: limite, gte: new Date(limite.getTime() - 7 * DIA_MS) },
+      eventos: { none: { tipo: { in: ['erro-corrigido', 'erro-voltou'] } } },
+    },
+    select: { id: true, noArEm: true },
+  })
+  let registrados = 0
+  for (const d of candidatas) {
+    const erros = await db.erroDoGlitchTip.findMany({
+      where: { OR: [{ demandaId: d.id }, { demandaAnteriorId: d.id }] },
+      select: { ultimoEm: true, projetoGlitchTip: true },
+    })
+    const corrigida =
+      erros.length > 0 &&
+      erros.every(
+        (e) =>
+          lidosAgora.has(e.projetoGlitchTip) &&
+          corrigidoEm({ noArEm: d.noArEm, ultimoEm: e.ultimoEm }, horasSemErro),
+      )
+    if (!corrigida) continue
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+      await tx.eventoDaDemanda.createMany({
+        data: [
+          {
+            idExterno: `glitchtip:erro-corrigido:${d.id}`,
+            demandaId: d.id,
+            tipo: 'erro-corrigido',
+            origem: 'glitchtip',
+            dados: { horas: horasSemErro },
+            em: agora,
+          },
+        ],
+        skipDuplicates: true,
+      })
+    })
+    registrados += 1
+  }
+  return registrados
 }
 
 async function lerProjeto(
@@ -108,7 +192,21 @@ async function lerProjeto(
     return
   }
 
-  const lista = await listarIssues(config, projeto.slug, buscar)
+  const ambientes = await listarAmbientes(config, projeto.slug, buscar)
+  if (!ambientes.ok) {
+    resumo.falhas += 1
+    await registrarLeitura(projeto.slug, { ultimaFalhaEm: agora, motivo: ambientes.motivo })
+    return
+  }
+  const plano = ambientesParaLer(ambientes.nomes, config.ambientes)
+  if (!plano.ler) {
+    // Sem ambiente de produção não há o que ler (spec de triagem, 4).
+    await registrarLeitura(projeto.slug, { ultimoSucessoEm: agora, motivo: null })
+    return
+  }
+  const ligadaEm = await ligarFonte(projeto.slug, agora)
+
+  const lista = await listarIssues(config, projeto.slug, buscar, plano.filtro)
   if (!lista.ok) {
     resumo.falhas += 1
     await registrarLeitura(projeto.slug, { ultimaFalhaEm: agora, motivo: lista.motivo })
@@ -132,6 +230,7 @@ async function lerProjeto(
         projeto.slug,
         { id: repositorio.id, projetoId: repositorio.projetoId! },
         agora,
+        { ligadaEm, limiares: config.limiares },
       )
     } catch (err) {
       // Spec seção 9: a issue fica como está e a próxima leitura tenta de novo; as outras seguem.
@@ -151,8 +250,10 @@ async function lerProjeto(
     else if (r === 'voltou') {
       resumo.abertas += 1
       resumo.voltaram += 1
-    } else if (r === 'espera') resumo.naEspera += 1
-    else resumo.atualizados += 1
+    } else if (r === 'ligada') resumo.ligadas += 1
+    else if (r === 'observando') resumo.observando += 1
+    else if (r === 'espera') resumo.naEspera += 1
+    else if (r === 'atualizado') resumo.atualizados += 1
   }
 
   // Acompanhados que saíram da lista de não resolvidas: resolvidos, ignorados ou apagados?
@@ -177,15 +278,16 @@ async function lerProjeto(
   await registrarLeitura(projeto.slug, { ultimoSucessoEm: agora, motivo: null })
 }
 
-/** Decide e grava uma issue sob a trava do projeto do GlitchTip (teto e repetição sem corrida). */
+/** Decide e grava uma issue sob a trava dos erros (limite do dia e grupos sem corrida). */
 function processarIssue(
   issue: IssueLida,
   slug: string,
   repositorio: { id: string; projetoId: string },
   agora: Date,
+  regras: { ligadaEm: Date; limiares: Limiares },
 ): Promise<Resultado> {
   return db.$transaction(async (tx: Prisma.TransactionClient) => {
-    await travarProjeto(tx, slug)
+    await travarErros(tx)
     const atual = await tx.erroDoGlitchTip.findUnique({
       where: { issueId: issue.id },
       select: {
@@ -196,15 +298,26 @@ function processarIssue(
         demanda: { select: { id: true, encerrada: true, noArEm: true } },
       },
     })
-    const abertasNaUltimaHora = await tx.eventoDaDemanda.count({
-      where: {
-        tipo: 'criada',
-        em: { gt: new Date(agora.getTime() - HORA_MS) },
-        demanda: { origem: 'GLITCHTIP', erros: { some: { projetoGlitchTip: slug } } },
-      },
+    if (atual === null && ignorada(issue, regras.ligadaEm)) return 'ignorada'
+
+    const grupo = grupoDoErro(issue)
+    const demanda = atual?.demanda
+      ? { ...atual.demanda, descartadaEm: await descartadaEm(tx, atual.demanda) }
+      : null
+    // Descartada e o erro voltou a ter evento: a issue se solta dela e volta à triagem.
+    const solta = reativada(demanda, issue)
+    // Sem demanda, com a demanda já no ar (pode ter voltado) ou solta: um parecido aberto recebe o erro.
+    const doGrupo =
+      demanda === null || demanda.noArEm !== null || solta
+        ? await demandaAbertaDoGrupo(tx, slug, grupo, issue.id)
+        : null
+    const acao = decidir({
+      issue,
+      demanda,
+      demandaDoGrupo: doGrupo,
+      abertasNoDia: await abertasNoDia(tx, agora),
+      limiares: regras.limiares,
     })
-    const demanda = atual?.demanda ?? null
-    const acao = decidir({ issue, demanda, abertasNaUltimaHora })
 
     const comum = {
       projetoGlitchTip: slug,
@@ -218,6 +331,7 @@ function processarIssue(
       primeiroEm: issue.primeiroEm,
       ultimoEm: issue.ultimoEm,
       resolvidoEm: null,
+      grupo,
       serie: acrescentarPonto(
         (atual?.serie as unknown as Ponto[] | undefined) ?? [],
         issue.eventos,
@@ -228,56 +342,281 @@ function processarIssue(
       tx.erroDoGlitchTip.upsert({
         where: { issueId: issue.id },
         create: { issueId: issue.id, ...comum, ...extra },
-        update: { ...comum, ...extra },
-      })
-
-    if (acao.tipo === 'atualizar') {
-      await gravar({})
-      return 'atualizado'
-    }
-    if (acao.tipo === 'esperar') {
-      await gravar({ esperaDesde: atual?.esperaDesde ?? agora })
-      return 'espera'
-    }
-
-    const anterior =
-      acao.voltou && demanda?.noArEm ? { id: demanda.id, noArEm: demanda.noArEm } : null
-    const aberta = await abrirDemanda(
-      tx,
-      {
-        projetoId: repositorio.projetoId,
-        repositorioId: repositorio.id,
-        titulo: tituloDaDemanda(issue),
-        descricao: descricaoDaDemanda(issue, anterior),
-        tipo: 'defeito',
-        nivel: null,
-        temTela: false,
-        origem: 'glitchtip',
-      },
-      agora,
-    )
-    await gravar({
-      demandaId: aberta.id,
-      demandaAnteriorId: anterior ? anterior.id : (atual?.demandaAnteriorId ?? null),
-      esperaDesde: null,
-    })
-    if (anterior) {
-      // Origem `glitchtip`: o aviso fica no Flow; eventos de origem `flow` seguem para a Fábrica.
-      await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
-      await tx.eventoDaDemanda.create({
-        data: {
-          idExterno: randomUUID(),
-          demandaId: anterior.id,
-          tipo: 'erro-voltou',
-          origem: 'glitchtip',
-          dados: { demandaNova: aberta.id },
-          em: agora,
+        update: {
+          ...comum,
+          ...(solta ? { demandaId: null, demandaAnteriorId: null } : {}),
+          ...extra,
         },
       })
-      return 'voltou'
+
+    switch (acao.tipo) {
+      case 'atualizar':
+        await gravar({})
+        return 'atualizado'
+      case 'observar':
+        await gravar({ esperaDesde: null })
+        return 'observando'
+      case 'esperar':
+        await gravar({ esperaDesde: atual?.esperaDesde ?? agora })
+        return 'espera'
+      case 'ligar':
+        await gravar({
+          demandaId: acao.demandaId,
+          esperaDesde: null,
+          // Só a demanda que foi ao ar vira "anterior"; a descartada não.
+          ...(demanda?.noArEm ? { demandaAnteriorId: demanda.id } : {}),
+        })
+        await registrarLigacao(tx, acao.demandaId, issue, agora)
+        return 'ligada'
+      case 'abrir': {
+        // A volta foi vista no primeiro ciclo que esperou vaga, ou agora pelo último evento.
+        const voltouEm =
+          atual?.esperaDesde && atual.esperaDesde < issue.ultimoEm
+            ? atual.esperaDesde
+            : issue.ultimoEm
+        const anterior =
+          acao.voltou && demanda?.noArEm
+            ? { id: demanda.id, noArEm: demanda.noArEm, voltouEm }
+            : null
+        await gravar({})
+        await abrirParaOErro(tx, {
+          issue,
+          slug,
+          grupo,
+          repositorio,
+          anterior,
+          demandaAnteriorId: solta ? null : (atual?.demandaAnteriorId ?? null),
+          agora,
+          horasSemErro: regras.limiares.horasSemErro,
+        })
+        return anterior ? 'voltou' : 'aberta'
+      }
     }
-    return 'aberta'
   }, TRANSACAO)
+}
+
+/** Quando o Paulo descartou a demanda; `null` se ela não foi descartada. */
+async function descartadaEm(
+  tx: Prisma.TransactionClient,
+  demanda: { id: string; encerrada: string | null },
+): Promise<Date | null> {
+  if (demanda.encerrada !== 'descartada') return null
+  const evento = await tx.eventoDaDemanda.findFirst({
+    where: { demandaId: demanda.id, tipo: 'encerrada_pelo_paulo' },
+    orderBy: { em: 'desc' },
+    select: { em: true },
+  })
+  return evento?.em ?? null
+}
+
+/** Demanda aberta (não encerrada) de outro erro do mesmo grupo e projeto. */
+async function demandaAbertaDoGrupo(
+  tx: Prisma.TransactionClient,
+  slug: string,
+  grupo: string,
+  issueId: string,
+): Promise<string | null> {
+  // Linhas de antes da triagem têm grupo vazio: não são parecidas com nada.
+  if (grupo === '') return null
+  const outro = await tx.erroDoGlitchTip.findFirst({
+    where: {
+      projetoGlitchTip: slug,
+      grupo,
+      issueId: { not: issueId },
+      demanda: { encerrada: null },
+    },
+    select: { demandaId: true },
+    orderBy: { criadoEm: 'asc' },
+  })
+  return outro?.demandaId ?? null
+}
+
+/** Demandas de origem GlitchTip criadas nas últimas 24 h, somando os projetos. */
+function abertasNoDia(tx: Prisma.TransactionClient, agora: Date): Promise<number> {
+  return tx.eventoDaDemanda.count({
+    where: {
+      tipo: 'criada',
+      em: { gt: new Date(agora.getTime() - DIA_MS) },
+      demanda: { origem: 'GLITCHTIP' },
+    },
+  })
+}
+
+/**
+ * Abre a demanda do erro (já gravado) e liga a ela os parecidos do grupo que estavam sem demanda;
+ * a descrição lista todos. Quando o erro voltou, avisa a demanda anterior.
+ */
+async function abrirParaOErro(
+  tx: Prisma.TransactionClient,
+  e: {
+    issue: IssueLida
+    slug: string
+    grupo: string
+    repositorio: { id: string; projetoId: string }
+    anterior: { id: string; noArEm: Date; voltouEm?: Date } | null
+    demandaAnteriorId: string | null
+    agora: Date
+    horasSemErro?: number
+    usuarioId?: string
+  },
+): Promise<string> {
+  const parecidos =
+    e.anterior || e.grupo === ''
+      ? []
+      : await tx.erroDoGlitchTip.findMany({
+          where: {
+            projetoGlitchTip: e.slug,
+            grupo: e.grupo,
+            issueId: { not: e.issue.id },
+            demandaId: null,
+            resolvidoEm: null,
+          },
+          select: { issueId: true, titulo: true, link: true },
+          orderBy: { ultimoEm: 'desc' },
+        })
+  const aberta = await abrirDemanda(
+    tx,
+    {
+      projetoId: e.repositorio.projetoId,
+      repositorioId: e.repositorio.id,
+      titulo: tituloDaDemanda(e.issue),
+      descricao: descricaoDaDemanda(e.issue, e.anterior, parecidos, e.horasSemErro),
+      tipo: 'defeito',
+      nivel: null,
+      temTela: false,
+      origem: 'glitchtip',
+      ...(e.usuarioId ? { usuarioId: e.usuarioId } : {}),
+    },
+    e.agora,
+  )
+  await tx.erroDoGlitchTip.update({
+    where: { issueId: e.issue.id },
+    data: {
+      demandaId: aberta.id,
+      demandaAnteriorId: e.anterior ? e.anterior.id : e.demandaAnteriorId,
+      esperaDesde: null,
+    },
+  })
+  if (parecidos.length > 0) {
+    await tx.erroDoGlitchTip.updateMany({
+      where: { issueId: { in: parecidos.map((p) => p.issueId) } },
+      data: { demandaId: aberta.id, esperaDesde: null },
+    })
+  }
+  if (e.anterior) {
+    // Origem `glitchtip`: o aviso fica no Flow; eventos de origem `flow` seguem para a Fábrica.
+    await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+    await tx.eventoDaDemanda.create({
+      data: {
+        idExterno: randomUUID(),
+        demandaId: e.anterior.id,
+        tipo: 'erro-voltou',
+        origem: 'glitchtip',
+        dados: {
+          demandaNova: aberta.id,
+          ...comoVoltou(
+            e.anterior.noArEm,
+            e.anterior.voltouEm ?? e.issue.ultimoEm,
+            e.horasSemErro ?? LIMIARES_PADRAO.horasSemErro,
+          ),
+        },
+        em: e.agora,
+      },
+    })
+  }
+  return aberta.id
+}
+
+async function registrarLigacao(
+  tx: Prisma.TransactionClient,
+  demandaId: string,
+  issue: { id: string; titulo: string; link: string },
+  agora: Date,
+): Promise<void> {
+  await tx.$executeRaw(TRAVA_DOS_EVENTOS_SQL)
+  await tx.eventoDaDemanda.create({
+    data: {
+      idExterno: randomUUID(),
+      demandaId,
+      tipo: 'erro-ligado',
+      origem: 'glitchtip',
+      dados: { issueId: issue.id, titulo: mascarar(issue.titulo), link: issue.link },
+      em: agora,
+    },
+  })
+}
+
+/**
+ * Botão "Virar demanda" da aba Erros: abre na hora, fora do limite do dia. Se o erro já tem
+ * demanda aberta, devolve a mesma; se um parecido tem, liga a ela.
+ */
+export async function virarDemanda(
+  sujeito: Sujeito,
+  issueId: string,
+  agora: Date,
+): Promise<{ id: string }> {
+  exigirPermissao(sujeito, 'projetos.gerenciar')
+  return db.$transaction(async (tx: Prisma.TransactionClient) => {
+    await travarErros(tx)
+    const erro = await tx.erroDoGlitchTip.findUnique({
+      where: { issueId },
+      include: {
+        demanda: { select: { id: true, encerrada: true } },
+        repositorio: { select: { id: true, projetoId: true } },
+      },
+    })
+    if (!erro) throw new ErroDeDominio('Erro não encontrado.')
+    if (erro.demanda && erro.demanda.encerrada === null) return { id: erro.demanda.id }
+    if (!erro.repositorio.projetoId) throw new ErroDeDominio('O repositório não tem projeto.')
+
+    const doGrupo = await demandaAbertaDoGrupo(tx, erro.projetoGlitchTip, erro.grupo, issueId)
+    if (doGrupo) {
+      await tx.erroDoGlitchTip.update({
+        where: { issueId },
+        data: { demandaId: doGrupo, esperaDesde: null },
+      })
+      await registrarLigacao(tx, doGrupo, erro, agora)
+      return { id: doGrupo }
+    }
+    const issue: IssueLida = {
+      id: erro.issueId,
+      titulo: erro.titulo,
+      onde: erro.onde,
+      nivel: erro.nivel,
+      status: 'unresolved',
+      eventos: erro.eventos,
+      usuarios: erro.usuarios,
+      primeiroEm: erro.primeiroEm,
+      ultimoEm: erro.ultimoEm,
+      link: erro.link,
+    }
+    const id = await abrirParaOErro(tx, {
+      issue,
+      slug: erro.projetoGlitchTip,
+      grupo: erro.grupo,
+      repositorio: { id: erro.repositorio.id, projetoId: erro.repositorio.projetoId },
+      anterior: null,
+      demandaAnteriorId: erro.demandaAnteriorId,
+      agora,
+      usuarioId: sujeito.usuarioId,
+    })
+    return { id }
+  }, TRANSACAO)
+}
+
+/** Primeira leitura de um projeto: guarda quando a fonte foi ligada (o backlog fica de fora). */
+async function ligarFonte(slug: string, agora: Date): Promise<Date> {
+  const l = await db.leituraDoGlitchTip.upsert({
+    where: { projetoGlitchTip: slug },
+    create: { projetoGlitchTip: slug, ligadaEm: agora },
+    update: {},
+    select: { ligadaEm: true },
+  })
+  return l.ligadaEm
+}
+
+async function travarErros(tx: Prisma.TransactionClient): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('erros-glitchtip'))`
 }
 
 async function travarProjeto(tx: Prisma.TransactionClient, slug: string): Promise<void> {

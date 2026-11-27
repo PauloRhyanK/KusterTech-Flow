@@ -39,6 +39,22 @@ describe('eventoDaFabricaSchema', () => {
     expect(eventoDaFabricaSchema.safeParse({ id: ID, em: EM, tipo, dados }).success).toBe(true)
   })
 
+  test('travada aceita o desfecho do orquestrador sem plano; recusa desfecho torto', () => {
+    const travada = (desfecho: unknown) =>
+      eventoDaFabricaSchema.safeParse({
+        id: ID,
+        em: EM,
+        tipo: 'travada',
+        dados: { motivo: 'x', url: PR, desfecho },
+      }).success
+    expect(travada({ resultado: 'duplicada', de: ID })).toBe(true)
+    expect(travada({ resultado: 'ja_resolvida', de: null })).toBe(true)
+    expect(travada({ resultado: 'outro', de: null })).toBe(false)
+    expect(travada({ resultado: 'duplicada', de: '7b7ba4b8' })).toBe(false)
+    expect(travada({ resultado: 'duplicada', de: null, extra: 1 })).toBe(false)
+    expect(travada({ resultado: 'duplicada' })).toBe(false)
+  })
+
   test('recusa campo extra, id que não é uuid e instante fora do formato', () => {
     const ok = { id: ID, em: EM, tipo: 'destravada', dados: {} }
     expect(eventoDaFabricaSchema.safeParse({ ...ok, extra: 1 }).success).toBe(false)
@@ -59,6 +75,36 @@ describe('triagemSchema', () => {
     ).toBe(false)
     expect(triagemSchema.safeParse({ ...triagem, mexeEm: 'x'.repeat(81) }).success).toBe(false)
     expect(triagemSchema.safeParse(triagem).success).toBe(true)
+  })
+
+  test('plano para avaliar é opcional; quando vem, tem pedido, mudanças, opções com tamanho, conflitos e recomendação', () => {
+    const plano = {
+      pedido: 'A pessoa quer que a aba de sugestões ensine o que escrever ao lead.',
+      muda: ['Meu dia: a aba de sugestões ganha um texto pronto'],
+      opcoes: [
+        {
+          nome: 'Texto fixo por etapa',
+          tamanho: 'pequeno',
+          descricao: 'Um texto escrito pela equipe.',
+        },
+        { nome: 'Texto gerado', tamanho: 'medio', descricao: 'A IA escreve na hora.' },
+      ],
+      conflitos: [
+        { decisao: 'IA no Meu dia só por botão (15/11)', explicacao: 'Gerar sozinho contraria.' },
+      ],
+      recomendacao: 'Texto fixo por etapa agora.',
+    }
+    expect(triagemSchema.safeParse({ ...triagem, plano }).success).toBe(true)
+    expect(triagemSchema.safeParse({ ...triagem, plano: null }).success).toBe(true)
+    expect(
+      triagemSchema.safeParse({
+        ...triagem,
+        plano: { ...plano, opcoes: [{ nome: 'x', tamanho: 'enorme', descricao: 'y' }] },
+      }).success,
+    ).toBe(false)
+    expect(triagemSchema.safeParse({ ...triagem, plano: { ...plano, extra: 1 } }).success).toBe(
+      false,
+    )
   })
 })
 

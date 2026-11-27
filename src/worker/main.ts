@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { resumirErroParaLog } from '@/modules/github/model'
+import { permitirLocal } from '@/modules/relatos/endereco'
 import { executarTarefas, TAREFAS_DO_CICLO } from './tarefas'
 
 const INTERVALO_HEARTBEAT_MS = 60_000
@@ -32,6 +33,11 @@ function iniciarWorker(): void {
   let cicloAtual: Promise<void> | null = null
 
   log.info('worker iniciado')
+  if (permitirLocal()) {
+    log.warn(
+      'FLOW_SISTEMAS_PERMITIR_LOCAL=1: sistemas conectados aceitam http e endereço local (só testes)',
+    )
+  }
 
   const intervaloHeartbeat = setInterval(() => {
     log.info('worker heartbeat')

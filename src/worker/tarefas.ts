@@ -11,6 +11,7 @@ import { executarCiclo } from '@/modules/github/reconciliacao'
 import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/modules/decidir/worker'
 import { limparArquivosDeDemandas, marcarPartesSemPublicacao } from '@/modules/demandas/worker'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
+import { enviarAndamentoDosRelatos, buscarRelatosDosSistemas } from '@/modules/relatos/worker'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
@@ -238,6 +239,17 @@ export function criarTarefasDoCiclo(d: {
           )
         }
       },
+    },
+    {
+      nome: 'buscar-relatos',
+      modulo: 'relatos',
+      // A cada tique; a trava de 60 s por sistema é do banco.
+      executar: buscarRelatosDosSistemas,
+    },
+    {
+      nome: 'enviar-andamento',
+      modulo: 'relatos',
+      executar: enviarAndamentoDosRelatos,
     },
   ]
   return tarefas.filter((t) => ativos.has(t.modulo))

@@ -6,6 +6,7 @@ export const LIMITES_DA_OFICINA = {
   discoUsoPct: 80,
   limpezaAtrasadaH: 36,
   leituraVelhaMin: 5,
+  memoriaUsoPct: 90,
   avisosH: 24,
   passoDoHistoricoMin: 10,
   diasDeHistorico: 7,

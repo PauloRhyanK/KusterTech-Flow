@@ -1,12 +1,19 @@
 'use client'
 
+import Link from 'next/link'
 import { useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { ACOES_POR_TIPO, cabeNaEspera, type Acao, type Cartao } from '@/modules/decidir/cartao'
-import { ROTULO_DO_TIPO, type TipoDeItem } from '@/modules/decidir/model'
+import {
+  ACOES_POR_TIPO,
+  cabeNaEspera,
+  cabeNoDesfecho,
+  type Acao,
+  type Cartao,
+} from '@/modules/decidir/cartao'
+import { ROTULO_DO_TIPO, trechosComLink, type TipoDeItem } from '@/modules/decidir/model'
 import { NIVEIS, TIPOS } from '@/modules/demandas/contrato'
-import type { Espera } from '@/modules/demandas/model'
+import { rotuloDoDesfecho, type Desfecho, type Espera } from '@/modules/demandas/model'
 import { ROTULO_DO_DESTINO, ROTULO_DO_NIVEL } from '@/modules/demandas/apresentacao'
 
 export interface CartaoNaTela {
@@ -103,7 +110,13 @@ export function linhasDoCartao(c: Cartao): Linha[] {
         { rotulo: 'Depois', valor: 'o que faltou vira uma demanda nova no mesmo projeto' },
       ]
     case 'encerrar':
-      return [{ rotulo: 'Ação', valor: 'encerrar a demanda' }]
+      if (!c.desfecho) return [{ rotulo: 'Ação', valor: 'encerrar a demanda' }]
+      return [
+        { rotulo: 'Ação', valor: `encerrar como ${rotuloDoDesfecho(c.desfecho)}` },
+        ...(c.desfecho.de
+          ? [{ rotulo: 'A outra demanda', valor: `/demandas/${c.desfecho.de}` }]
+          : []),
+      ]
     case 'concluir':
       return [{ rotulo: 'Ação', valor: `concluir a etapa ${c.etapa}` }]
   }
@@ -140,7 +153,20 @@ export function CartaoDeFecho({
             key={l.rotulo}
             className={cn('break-words', l.atencao ? 'text-atencao' : 'text-text-primary')}
           >
-            <strong className="font-[650]">{`${l.rotulo}:`}</strong> {l.valor}
+            <strong className="font-[650]">{`${l.rotulo}:`}</strong>{' '}
+            {trechosComLink(l.valor).map((t, i) =>
+              t.href ? (
+                <Link
+                  key={i}
+                  href={t.href}
+                  className="font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
+                >
+                  {t.texto}
+                </Link>
+              ) : (
+                t.texto
+              ),
+            )}
           </li>
         ))}
       </ul>
@@ -232,6 +258,7 @@ const LIMITE: Record<'escopo' | 'resposta' | 'ajuste' | 'comentario', number> = 
 export function FormularioDoCartao({
   tipoDoItem,
   espera = null,
+  desfecho = null,
   inicial,
   foco,
   erro,
@@ -241,6 +268,8 @@ export function FormularioDoCartao({
   tipoDoItem: TipoDeItem
   /** A espera da demanda do item: algumas ações só cabem nela (entregar o que funciona). */
   espera?: Espera | null
+  /** Duplicada ou já resolvida: a trava só encerra. */
+  desfecho?: Desfecho | null
   inicial: InicialDoCartao
   foco?: string
   erro?: string | null
@@ -248,7 +277,9 @@ export function FormularioDoCartao({
   onCancelar: () => void
 }) {
   const base = useId()
-  const acoes = ACOES_POR_TIPO[tipoDoItem].filter((a) => cabeNaEspera(a, espera))
+  const acoes = ACOES_POR_TIPO[tipoDoItem].filter(
+    (a) => cabeNaEspera(a, espera) && cabeNoDesfecho(a, desfecho),
+  )
   const [acao, setAcao] = useState<Acao>(inicial.acao)
   const [v, setV] = useState<Valores>({
     destino: inicial.destino ?? 'fila_de_agentes',

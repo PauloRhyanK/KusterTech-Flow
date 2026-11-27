@@ -69,6 +69,8 @@ O despachante faz sozinho:
 - **Prepara o Warren** (`scripts/preparar_warren.py`, com `"warren": {"prepararAutomatico": true}`): aplica o `--model` no adaptador `claude-code`, instala o drop-in com `WARREN_PLAN_RUN_MERGE_TIMEOUT_MS=10800000` (3 h) e desliga o `warren-automerge.service` e o `warren-auto.service`. Reinicia o Warren só sem runs em curso e reverte se ele não voltar.
 - **Cria o label** `fabrica:decisao` no repositório do cliente.
 - **Toda decisão do Paulo vira uma issue** com esse label. Fechar a issue com um comentário é a resposta, e ela volta ao orquestrador. Uma pausa (cota, falhas seguidas do orquestrador, ação interrompida) também abre uma issue, e fechá-la retoma. Um run do orquestrador que falha (quebra, timeout, cancelamento) não pausa logo: a mesma acordada volta depois de 5, 15 e 45 min, e só a 4ª falha seguida pausa.
+- **Pergunta do orquestrador passa pelo árbitro técnico, se a config pedir:** com `modelos.arbitro` em `.fabrica/config.json` (o padrão do kit traz), a `.fabrica/pergunta.md` do orquestrador não abre issue. Um segundo run (`equipes/arbitro.md`, motivo `arbitragem`) julga a pergunta: se é técnica, ele corrige o plano, o PR mergeia pelas guardas de sempre e fica um aviso no `status` e uma entrada em `.fabrica/planejamento/<feature>/arbitragens.md`; se é do Paulo, ele a reescreve em português simples e aí a issue abre, com o assunto no título. A pergunta do árbitro nunca volta para ele. Mudança de comando de verificação, de fase e de arquivo protegido continua indo ao Paulo. Sem `modelos.arbitro`, a pergunta vai direto ao Paulo, como antes.
+- **A decisão de uma seed é escrita para quem não tem o contexto técnico:** o título é a pergunta (`[fábrica] pergunta: Mergear o PR #209 da etapa executores-config? (FLOW-b3bf)`) e o corpo começa com o que aconteceu, o que o Paulo precisa fazer e como responder; `Seed:`, `PR:`, `Head:` e `Motivos:` ficam num bloco `<details>`. Quando a trava é arquivo protegido, o vigia de seed parada não acorda o orquestrador (ele não pode mergear nem mudar `protegidos`) e a decisão diz que falta o merge do Paulo, mesmo que ele já tenha respondido uma vez sem mergear.
 - **Fecha os PRs substituídos:** os PRs de uma tentativa antiga de raia e os PRs antigos do orquestrador.
 - **Fecha as decisões resolvidas:** a decisão de uma seed que foi mergeada (pelo merge do Paulo, por exemplo) ou saiu do plano, e a de um PR do orquestrador que o Paulo mergeou (o merge é a aprovação). Nenhuma delas acorda o orquestrador.
 - **O que para no Paulo é a config que decide:** um PR de seed só para por caminho protegido se o arquivo casar com `protegidos` na config, ou com `.fabrica/**`, `.warren/**` e `.claude/**`, que valem sempre porque são os gates e as credenciais da própria Fábrica. O padrão do kit também protege migrations, `.github/**` e `**/auth/**`; tire-os da config para que esses PRs mergeiem sozinhos, com revisão e verificação.
@@ -352,6 +354,32 @@ O estado fica em `~/fabrica/fila-estado.json`, na chave `atendente`. O `coordena
 - `atendente: Flow sem o Decidir (tenta de novo 1 h depois de <instante>)`;
 - `atendente: desligado`, sem a URL.
 
+### Buscas com IA (buscador)
+
+Na tela **Demandas → Buscar com IA**, o Paulo descreve o que procura e o Flow guarda a busca com o lote de
+demandas do recorte. O coordenador (`scripts/buscador.py`) pega a busca pendente por `GET /api/fabrica/buscas`
+(o mesmo token da Fábrica), roda duas chamadas ao CLI `claude -p` e responde por
+`POST /api/fabrica/buscas/<id>/respostas`:
+
+1. a etapa 1 lê uma ficha curta de cada demanda e escolhe até 10 candidatas;
+2. a etapa 2 lê o texto completo só delas (`GET /api/fabrica/buscas/<id>/demandas?ids=…`) e diz quais tratam do
+   pedido, com relevância e motivo.
+
+O CLI roda sem ferramentas, sem sessão gravada e sem MCP, com `--max-budget-usd` = `modelos.buscador.maxCustoUsd`
+e teto de 60 s por chamada. O modelo vem de `modelos.buscador` (`claude-haiku-5-5` no kit). Sem esse papel, o
+coordenador avisa `Buscador: configure modelos.buscador …` e as buscas esperam. Com o Flow sem a rota (404), o
+buscador desliga por 1 h. Ligado, ele consulta o Flow a cada 10 s entre os ciclos.
+
+**O CLI precisa existir e estar logado para o usuário que roda o coordenador** (na oficina, `devops`):
+
+```sh
+curl -fsSL https://claude.ai/install.sh | bash   # instala em ~/.local/bin/claude, sem sudo
+claude                                            # uma vez: /login com a conta da Fábrica
+```
+
+O teto de buscas por dia e o tamanho do lote ficam no Flow: `FLOW_BUSCAS_IA_POR_DIA` (30) e
+`FLOW_BUSCAS_IA_TOKENS_DO_LOTE` (150000).
+
 ### Riscos conhecidos
 
 - Um despacho sem `planRunId`, ou cancelamentos que falharam de vez, soltam a vaga pela regra do estado: a raia sai de `executando` mesmo que o Plan Run exista.
@@ -372,6 +400,7 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 | Papel          | Modelo              | Esforço | maxCustoUsd |
 | -------------- | ------------------- | ------- | ----------- |
 | `orquestrador` | `claude-fable-5-1`  | high    | 20          |
+| `arbitro`      | `claude-fable-5-1`  | high    | 20          |
 | `arquiteto`    | `claude-sonnet-5-5` | medium  | 15          |
 | `produto`      | `claude-haiku-5-5`  | medium  | 5           |
 | `ux-ui`        | `claude-sonnet-5-5` | medium  | 10          |
@@ -383,6 +412,7 @@ A tabela do `modelos/config.json` (instalada em `.fabrica/config.json`, onde o P
 | `seguranca`    | `claude-sonnet-5-5` | medium  | 10          |
 | `fixer`        | `claude-haiku-5-5`  | medium  | 5           |
 | `atendente`    | `claude-sonnet-5-5` | medium  | 2           |
+| `buscador`     | `claude-haiku-5-5`  | medium  | 0.5         |
 
 Limitações:
 

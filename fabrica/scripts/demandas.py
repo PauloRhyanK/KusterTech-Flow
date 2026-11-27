@@ -25,7 +25,9 @@ O plano (etapa `planejada`) é um run do orquestrador (`modelos.orquestrador`, p
 triagem no contexto) sob a trava de orquestrador do repositório (`capacidade.tomar_orquestrador` com
 `demanda:<id>`), sem vaga. `planejando` é gravado com o nonce antes do POST; sem `runId`, o run é achado pelo nonce.
 O PR do plano é mergeado pela Fábrica só atrás das guardas (`guardar_merge`), no mesmo head; guarda que falha vira
-`travada` para o Paulo (fase `esperando_paulo`; a retomada dele planeja de novo com nonce novo). Toda saída de
+`travada` para o Paulo (fase `esperando_paulo`; a retomada dele planeja de novo com nonce novo). O PR sem plano cujo
+`cobertura.md` marca no cabeçalho `resultado: duplicada` (com `de`) ou `ja_resolvida` trava com o `desfecho` no
+evento, e o Flow oferece encerrar em vez de retomar. Toda saída de
 `planejando` solta a trava. Em "planejar comigo" nada é despachado (`esperando_sessao`): o plano entregue pela
 sessão chega no retrato (`plano.caminho`) e a demanda vai para `plano_no_repo`.
 
@@ -792,6 +794,14 @@ CAMINHO_DA_PERGUNTA = ".fabrica/pergunta.md"  # o orquestrador pergunta ao Paulo
 MOTIVO_PERGUNTA = "o orquestrador perguntou (responda ao tentar de novo): %s"
 MOTIVO_PROTEGIDO = "o plano mexe em caminho protegido: %s"
 MOTIVO_SEM_PLANO = "o PR não traz o plano %s"
+# o orquestrador concluiu que não há plano a fazer: marca no cabeçalho do `cobertura.md` da demanda (orquestrador.md,
+# "Demanda sem plano"); a trava leva o `desfecho` e o Flow oferece encerrar em vez de retomar
+CAMINHO_DA_COBERTURA = ".fabrica/planejamento/demanda-%s/cobertura.md"
+RESULTADOS_SEM_PLANO = ("duplicada", "ja_resolvida")
+MOTIVO_DUPLICADA = "o orquestrador concluiu que a demanda é duplicada da %s: não há plano a fazer"
+MOTIVO_DUPLICADA_SEM_DE = "o orquestrador concluiu que a demanda é duplicada de outra: não há plano a fazer"
+MOTIVO_JA_RESOLVIDA = "o orquestrador concluiu que o que a demanda pede já está resolvido: não há plano a fazer"
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 MOTIVO_PLANO_INVALIDO = "o plano não passa em validar_plano: %s"
 MOTIVO_PLANO_DE_OUTRA = 'o plano não traz "demanda": "%s"'
 MOTIVO_PLANO_ILEGIVEL = "o plano do PR não é um JSON legível"
@@ -941,6 +951,39 @@ def _titulo_da_pergunta(texto) -> str:
         if limpa:
             return limpa[:200]
     return "veja %s no PR" % CAMINHO_DA_PERGUNTA
+
+
+def desfecho_da_cobertura(texto, demanda_id: str) -> dict | None:
+    """O `resultado` (e o `de`, na duplicada) do cabeçalho `---` do `cobertura.md`; sem marca válida, None.
+
+    O `de` só vale como o uuid completo de outra demanda; fora disso vai None (o Flow encerra sem o link).
+    """
+    linhas = (texto if isinstance(texto, str) else "").lstrip("\ufeff").splitlines()
+    if not linhas or linhas[0].strip() != "---":
+        return None
+    campos = {}
+    for linha in linhas[1:]:
+        if linha.strip() == "---":
+            break
+        chave, sep, valor = linha.partition(":")
+        if sep:
+            # o exemplo do roteiro comenta as linhas; aspas (YAML) e caixa não mudam o valor
+            campos[chave.strip().lower()] = valor.split("#", 1)[0].strip().strip("\"'").strip().lower()
+    else:
+        return None
+    resultado = campos.get("resultado")
+    if resultado not in RESULTADOS_SEM_PLANO:
+        return None
+    de = campos.get("de") if resultado == "duplicada" else None
+    if not (isinstance(de, str) and _UUID.fullmatch(de) and de != demanda_id):
+        de = None
+    return {"resultado": resultado, "de": de}
+
+
+def motivo_do_desfecho(desfecho: dict) -> str:
+    if desfecho["resultado"] == "ja_resolvida":
+        return MOTIVO_JA_RESOLVIDA
+    return MOTIVO_DUPLICADA % desfecho["de"][:8] if desfecho["de"] else MOTIVO_DUPLICADA_SEM_DE
 
 
 def _resposta_da_retomada(item: dict, demanda: dict) -> str:
@@ -1897,7 +1940,12 @@ class _Passo:
             self.salvar()
             return
         if caminho not in arquivos:
-            self.travar_plano(id_, it, MOTIVO_SEM_PLANO % caminho, url)
+            cobertura = CAMINHO_DA_COBERTURA % id_[:8]
+            desfecho = desfecho_da_cobertura(self.forja.arquivo(repo, head, cobertura), id_) if cobertura in arquivos else None
+            if desfecho is not None:
+                self.travar_plano(id_, it, motivo_do_desfecho(desfecho), url, desfecho=desfecho)
+            else:
+                self.travar_plano(id_, it, MOTIVO_SEM_PLANO % caminho, url)
             return
         config = self.config_do_repo(repo)
         if config is None:
@@ -1951,9 +1999,15 @@ class _Passo:
         self.sair_do_planejamento(id_, it, fase="plano_no_repo", alvo=None, plano=caminho, tentativa=0)
         self.eventos.append({"evento": "demanda_plano_criado", "id": id_, "plano": caminho, "prUrl": url})
 
-    def travar_plano(self, id_: str, it: dict, motivo: str, url, *, vivo: bool = False) -> None:
-        """`travada` para o Paulo; a retomada dele (depois do novo `inicio`) planeja de novo com um nonce novo."""
-        enfileirar_evento(self.estado, id_, "travada", {"motivo": motivo[:300], "url": url}, agora=self.agora_texto)
+    def travar_plano(self, id_: str, it: dict, motivo: str, url, *, vivo: bool = False, desfecho: dict | None = None) -> None:
+        """`travada` para o Paulo; a retomada dele (depois do novo `inicio`) planeja de novo com um nonce novo.
+
+        `desfecho`: o orquestrador concluiu que não há plano (duplicada, já resolvida); vai no evento para o Flow.
+        """
+        dados = {"motivo": motivo[:300], "url": url}
+        if desfecho is not None:
+            dados["desfecho"] = desfecho
+        enfileirar_evento(self.estado, id_, "travada", dados, agora=self.agora_texto)
         tentativa = it.get("tentativa") if isinstance(it.get("tentativa"), int) else 0
         self.sair_do_planejamento(id_, it, vivo=vivo, fase="esperando_paulo", alvo=None, prUrl=url, inicio=self.agora_texto, tentativa=tentativa + 1)
         self.eventos.append({"evento": "demanda_plano_travado", "id": id_, "motivo": motivo})

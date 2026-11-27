@@ -1,10 +1,11 @@
 'use client'
 
-import Link from 'next/link'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { trechosComLink } from '@/modules/decidir/model'
+import { corpoParaLeitura, opcoesDaMensagem, rotulosDasOpcoes } from '@/modules/decidir/leitura'
 import { formatarIdade } from '@/modules/inicio/model'
+import { MensagemFormatada } from './mensagem-formatada'
+import { Figura, VisorAmpliado } from './visor-ampliado'
 
 export interface MensagemNaTela {
   seq: string
@@ -51,10 +52,30 @@ function avisoDeEspera(atendenteBuscouEm: Date | null, agora: Date): string {
   return 'O agente está demorando. Você pode decidir sem ele:'
 }
 
+/** A imagem anexada, em miniatura na mensagem; "Ampliar" abre em tela cheia. */
+function MiniaturaDoAnexo({ id, nome }: { id: string; nome: string }) {
+  const [ampliada, setAmpliada] = useState(false)
+  const src = `/decidir/anexos/${id}`
+  return (
+    <>
+      <Figura legenda={nome} onAmpliar={() => setAmpliada(true)}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- arquivo privado servido pela rota com sessão */}
+        <img src={src} alt={nome} loading="lazy" className="max-h-56 max-w-full rounded-[4px]" />
+      </Figura>
+      <VisorAmpliado titulo={nome} aberto={ampliada} onFechar={() => setAmpliada(false)}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- arquivo privado servido pela rota com sessão */}
+        <img src={src} alt={nome} className="mx-auto max-w-full" />
+      </VisorAmpliado>
+    </>
+  )
+}
+
 /**
- * As mensagens da conversa (sempre como texto, nunca HTML), as respostas rápidas e a espera pelo
- * agente. Resposta rápida do Flow vira `onRespostaRapida(chave)`; a sugerida pelo agente, que não
- * é do Flow, vira uma mensagem escrita (`onTextoRapido`).
+ * As mensagens da conversa, as respostas rápidas e a espera pelo agente. A mensagem do agente e a
+ * do Flow são markdown formatado (HTML cru nunca é interpretado); a do Paulo é texto puro.
+ * Resposta rápida do Flow vira `onRespostaRapida(chave)`; a sugerida pelo agente, que não é do
+ * Flow, vira uma mensagem escrita (`onTextoRapido`). Numa decisão da Fábrica, as opções da última
+ * mensagem viram botões (`onOpcao`).
  */
 export function Conversa({
   mensagens,
@@ -65,6 +86,8 @@ export function Conversa({
   onRespostaRapida,
   onTextoRapido,
   desabilitado = false,
+  decisaoDaFabrica = false,
+  onOpcao,
 }: {
   mensagens: readonly MensagemNaTela[]
   aguardaAgenteDesde: Date | null
@@ -74,6 +97,8 @@ export function Conversa({
   onRespostaRapida: (chave: string) => void
   onTextoRapido: (texto: string) => void
   desabilitado?: boolean
+  decisaoDaFabrica?: boolean
+  onOpcao?: (rotulo: string) => void
 }) {
   const fim = useRef<HTMLDivElement>(null)
   const ultima = mensagens.at(-1)?.id
@@ -91,9 +116,20 @@ export function Conversa({
   return (
     <div className="space-y-4">
       <ol className="space-y-4">
-        {mensagens.map((m) => {
+        {mensagens.map((m, indice) => {
           const doPaulo = m.autor === 'paulo'
           const avatar = AVATAR[m.autor]
+          const texto =
+            decisaoDaFabrica && !doPaulo ? corpoParaLeitura(m.texto) || m.texto : m.texto
+          // As opções só viram botão na última mensagem, e quando o agente não mandou as dele.
+          const opcoes =
+            decisaoDaFabrica &&
+            onOpcao &&
+            !doPaulo &&
+            indice === mensagens.length - 1 &&
+            m.respostasRapidas.every((r) => respostasDoFlow.some((f) => f.rotulo === r))
+              ? rotulosDasOpcoes(opcoesDaMensagem(m.texto))
+              : []
           return (
             <li
               key={m.id}
@@ -119,42 +155,41 @@ export function Conversa({
                     : 'border border-border bg-surface text-text-primary',
                 )}
               >
-                <p className="whitespace-pre-wrap break-words">
-                  {m.autor === 'flow'
-                    ? trechosComLink(m.texto).map((t, i) =>
-                        t.href ? (
-                          <Link
-                            key={i}
-                            href={t.href}
-                            className="font-[600] text-text-link underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
-                          >
-                            {t.texto}
-                          </Link>
-                        ) : (
-                          t.texto
-                        ),
-                      )
-                    : m.texto}
-                </p>
+                {doPaulo ? (
+                  <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+                ) : (
+                  <MensagemFormatada texto={texto} linksInternos={m.autor === 'flow'} />
+                )}
                 {m.anexos.length > 0 && (
                   <ul className="mt-2 space-y-1">
                     {m.anexos.map((a) => (
                       <li key={a.id}>
-                        <a
-                          href={`/decidir/anexos/${a.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex max-w-full items-center gap-2 text-[12.5px] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
-                        >
-                          <span
-                            aria-hidden="true"
-                            className="h-5 w-7 shrink-0 rounded-[4px] border border-border-strong bg-surface-subtle"
-                          />
-                          <span className="break-all">{a.nome}</span>
-                        </a>
+                        <MiniaturaDoAnexo id={a.id} nome={a.nome} />
                       </li>
                     ))}
                   </ul>
+                )}
+                {opcoes.length > 0 && (
+                  <div
+                    role="group"
+                    aria-label="Responder com uma opção"
+                    className="mt-3 flex flex-wrap gap-2"
+                  >
+                    {opcoes.map((rotulo, i) => (
+                      <button
+                        key={rotulo}
+                        type="button"
+                        disabled={desabilitado}
+                        onClick={() => onOpcao?.(rotulo)}
+                        className={cn(
+                          BOTAO_RAPIDO,
+                          i === 0 ? 'border-execucao text-execucao' : 'border-border-strong',
+                        )}
+                      >
+                        {rotulo}
+                      </button>
+                    ))}
+                  </div>
                 )}
                 {!doPaulo && m.respostasRapidas.length > 0 && (
                   <div className="mt-2.5 flex flex-wrap gap-2">

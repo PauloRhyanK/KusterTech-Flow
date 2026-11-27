@@ -47,6 +47,7 @@ model Usuario {
   mensagensEscritas         Mensagem[]
   cartoesConfirmados        CartaoDeFecho[]
   fontesDeDemandasCriadas   FonteDeDemandas[]
+  buscasDeDemandas          BuscaDeDemandas[]
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -120,6 +121,7 @@ model Projeto {
   nivelPadraoDeDemanda    NivelDeAcompanhamento    @default(APROVAR_DESENHO)
   modeloDeEtapas          ModeloDeEtapas?          @relation(fields: [modeloDeEtapasId], references: [id], onDelete: SetNull)
   demandas                Demanda[]
+  sistemasConectados      SistemaConectado[]
 }
 
 model ProjetoCliente {
@@ -219,6 +221,7 @@ model RepositorioGitHub {
   configuracaoDePublicacao   ConfiguracaoDePublicacao?
   pedidosDePublicacao        PedidoDePublicacao[]
   consertosDePublicacao      PedidoDeConserto[]
+  sistemasConectados         SistemaConectado[]
 
   @@index([projetoId])
 }
@@ -920,6 +923,8 @@ model PedidoDePublicacao {
   id               String                     @id @default(uuid())
   repositorioId    String
   commit           String?
+  // Pedido sem commit ("a ponta de main"): o worker troca o commit pela cabeça de main até o disparo.
+  segueMain        Boolean                    @default(false)
   modo             ModoDePublicacao
   descricao        String?
   fonteId          String?
@@ -1145,6 +1150,7 @@ model Demanda {
   partes           ParteDaDemanda[]
   consertos        PedidoDeConserto[]
   erros            ErroDoGlitchTip[]     @relation("ErroDaDemanda")
+  relatos          Relato[]
 
   @@unique([fonteId, chaveDaFonte])
   @@index([encerrada, espera])
@@ -1328,6 +1334,7 @@ model ErroDoGlitchTip {
   demandaId         String?
   demandaAnteriorId String?
   esperaDesde       DateTime?
+  grupo             String            @default("")
   serie             Json              @default("[]")
   criadoEm          DateTime          @default(now())
   atualizadoEm      DateTime          @updatedAt
@@ -1335,12 +1342,150 @@ model ErroDoGlitchTip {
   demanda           Demanda?          @relation("ErroDaDemanda", fields: [demandaId], references: [id], onDelete: SetNull)
 
   @@index([projetoGlitchTip, resolvidoEm])
+  @@index([projetoGlitchTip, grupo])
   @@index([demandaId])
 }
 
 model LeituraDoGlitchTip {
   projetoGlitchTip String    @id
+  ligadaEm         DateTime  @default(now())
   ultimoSucessoEm  DateTime?
   ultimaFalhaEm    DateTime?
   motivo           String?
+}
+
+// ——— Busca de demandas com IA (spec 2026-11-26-demandas-busca-com-ia-design.md) ———
+
+enum EstadoDaBusca {
+  PENDENTE
+  EM_CURSO
+  CONCLUIDA
+  FALHOU
+}
+
+model BuscaDeDemandas {
+  id                  String        @id @default(uuid())
+  pergunta            String
+  perguntaNormalizada String
+  pedidaPorId         String?
+  loteIds             String[]
+  /// sha256 dos ids do lote, ordenados: a mesma pergunta no mesmo lote reaproveita a resposta.
+  chaveDoLote         String
+  tokensDoLote        Int
+  estado              EstadoDaBusca @default(PENDENTE)
+  buscadaEm           DateTime?
+  respostaId          String?       @unique
+  impressao           String?
+  resumo              String?
+  itens               Json          @default("[]")
+  falha               String?
+  modelo              String?
+  tokensEntrada       Int?
+  tokensSaida         Int?
+  custoUsd            Float?
+  criadaEm            DateTime      @default(now())
+  concluidaEm         DateTime?
+  pedidaPor           Usuario?      @relation(fields: [pedidaPorId], references: [id], onDelete: SetNull)
+
+  @@index([estado, criadaEm])
+  @@index([perguntaNormalizada, chaveDoLote, criadaEm])
+}
+
+// Relatos de usuários (D83): sistemas conectados, relatos buscados e a caixa de saída do andamento.
+enum EstadoDoSistema {
+  ATIVO
+  DESCONECTADO
+  REVOGADO
+}
+
+enum ResultadoDoRelato {
+  SEGUE
+  ORIENTADO
+}
+
+enum CanalDoRelato {
+  SISTEMA
+  WHATSAPP
+}
+
+enum SituacaoDoEnvio {
+  PENDENTE
+  ENVIADO
+  DESCARTADO
+}
+
+model SistemaConectado {
+  id                String            @id @default(uuid())
+  nome              String
+  /// Base com o prefixo da API (ex.: https://sistema.exemplo.com/v1), sem barra no fim.
+  url               String
+  projetoId         String
+  repositorioId     String
+  /// v1.<iv>.<tag>.<cifrado>, AAD `sistema:<id>`; null depois de revogar. Nunca volta à tela.
+  tokenCifrado      String?
+  cursor            String?
+  estado            EstadoDoSistema   @default(ATIVO)
+  /// Também é a trava da busca: só uma busca por sistema a cada intervalo.
+  ultimaTentativaEm DateTime?
+  ultimaBuscaOkEm   DateTime?
+  ultimoErro        String?
+  criadoEm          DateTime          @default(now())
+  atualizadoEm      DateTime          @updatedAt
+  revogadoEm        DateTime?
+  projeto           Projeto           @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio       RepositorioGitHub @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  relatos           Relato[]
+
+  @@index([estado, ultimaTentativaEm])
+}
+
+model Relato {
+  id             String             @id @default(uuid())
+  sistemaId      String
+  idExterno      String
+  ticket         String?
+  resultado      ResultadoDoRelato
+  canal          CanalDoRelato
+  em             DateTime
+  autorIdExterno String
+  autorNome      String
+  autorPapel     String
+  /// null nos orientados (só o assunto fica).
+  texto          String?
+  transcricao    String?
+  tipoSugerido   String?
+  assunto        String?
+  versao         String?
+  demandaId      String?
+  /// {tipo, caminho, bytes}[]: o download fica para o passo seguinte.
+  anexos         Json               @default("[]")
+  sinais         Json               @default("[]")
+  criadoEm       DateTime           @default(now())
+  atualizadoEm   DateTime           @updatedAt
+  sistema        SistemaConectado   @relation(fields: [sistemaId], references: [id], onDelete: Restrict)
+  demanda        Demanda?           @relation(fields: [demandaId], references: [id], onDelete: SetNull)
+  envios         EnvioDeAndamento[]
+
+  @@unique([sistemaId, idExterno])
+  @@index([demandaId])
+  @@index([resultado, em])
+}
+
+model EnvioDeAndamento {
+  id                 String          @id @default(uuid())
+  relatoId           String
+  estado             String
+  mensagem           String
+  /// 'automatico' | 'paulo'
+  origem             String
+  situacao           SituacaoDoEnvio @default(PENDENTE)
+  tentativas         Int             @default(0)
+  proximaTentativaEm DateTime        @default(now())
+  ultimoErro         String?
+  criadoEm           DateTime        @default(now())
+  enviadoEm          DateTime?
+  relato             Relato          @relation(fields: [relatoId], references: [id], onDelete: Cascade)
+
+  @@unique([relatoId, estado])
+  @@index([situacao, proximaTentativaEm])
 }

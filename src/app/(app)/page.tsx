@@ -8,7 +8,7 @@ import { obterInicio } from '@/modules/inicio/queries'
 import { Atividade } from './_inicio/atividade'
 import { EsperaVoce } from './_inicio/espera-voce'
 import { FabricaAgora } from './_inicio/fabrica-agora'
-import { QuadroDaOficina } from './_inicio/quadro-da-oficina'
+import { QuadroDasMaquinas } from './_inicio/quadro-das-maquinas'
 import { QuadroDoCadastro } from './_inicio/quadro-do-cadastro'
 import { SeusProjetos } from './_inicio/seus-projetos'
 
@@ -36,7 +36,7 @@ export default async function PaginaInicio() {
         contexto={
           inicio.escopo === 'cliente'
             ? 'O que espera você nos seus clientes.'
-            : 'O que espera você, o que a Fábrica está fazendo e como está a oficina.'
+            : 'O que espera você, o que a Fábrica está fazendo e como estão as máquinas.'
         }
       />
       {inicio.escopo === 'cliente' ? (
@@ -58,7 +58,7 @@ export default async function PaginaInicio() {
             )}
           </div>
           <div className="min-w-0 space-y-6">
-            <QuadroDaOficina oficina={inicio.oficina} agora={agora} />
+            <QuadroDasMaquinas maquinas={inicio.maquinas} agora={agora} />
             {inicio.cadastro && <QuadroDoCadastro cadastro={inicio.cadastro} />}
           </div>
         </div>
