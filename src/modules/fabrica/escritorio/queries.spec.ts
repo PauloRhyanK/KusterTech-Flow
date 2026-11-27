@@ -18,6 +18,10 @@ vi.mock('../queries', () => ({
     recebidoEm: new Date('2026-11-21T02:05:00Z'),
   })),
 }))
+vi.mock('@/lib/modulos', () => ({ moduloAtivo: vi.fn(() => true) }))
+vi.mock('@/modules/fila-de-publicacao/queries', () => ({
+  obterTelaDePublicacao: vi.fn(async () => ({ linhas: [{ id: 'l1' }], podeGerenciar: true })),
+}))
 vi.mock('./intervalos', () => ({
   lerHistorico: vi.fn(async () => ({ partes: [], etapas: [], custosPorParte: [] })),
   gastoPorPlano: vi.fn(async () => ({ 'paulorhyank--caisv2--demanda-9c44dfa8--abc123': 9.5 })),
@@ -34,6 +38,8 @@ vi.mock('./intervalos', () => ({
 }))
 
 import { ErroDeAutorizacao, type Sujeito } from '@/lib/auth/autorizar'
+import { moduloAtivo } from '@/lib/modulos'
+import { obterTelaDePublicacao } from '@/modules/fila-de-publicacao/queries'
 import { lerLinhasDosPlanos } from './intervalos'
 import { obterEscritorio } from './queries'
 
@@ -79,6 +85,8 @@ describe('escritório / queries', () => {
       esperaDesde,
       atualizadaEm: new Date('2026-11-21T04:05:00Z'),
       criadaEm: new Date('2026-11-20T00:00:00Z'),
+      tipo: null,
+      destino: null,
       repositorio: { nomeCompleto: 'a/b' },
       projeto: { nome: 'Proj' },
     })
@@ -93,5 +101,46 @@ describe('escritório / queries', () => {
       ['com-coluna', 180, true],
       ['sem-coluna', 60, false],
     ])
+  })
+
+  test('a recepção vem com tipo, projeto e urgência, urgente primeiro', async () => {
+    const linha = (id: string, destino: string | null, criadaEm: string) => ({
+      id,
+      titulo: id,
+      etapas: [{ chave: 'recebida', marco: 'recebida' }],
+      etapaAtual: 'recebida',
+      espera: null,
+      esperaDesde: null,
+      atualizadaEm: new Date('2026-11-21T04:05:00Z'),
+      criadaEm: new Date(criadaEm),
+      tipo: 'DEFEITO',
+      destino,
+      repositorio: { nomeCompleto: 'a/b' },
+      projeto: { nome: 'Proj' },
+    })
+    mockDb.demanda.findMany.mockResolvedValue([
+      linha('velha', 'FILA_DE_AGENTES', '2026-11-10T00:00:00Z'),
+      linha('urg', 'URGENTE', '2026-11-20T00:00:00Z'),
+    ])
+    mockDb.seedDoRepositorio.findMany.mockResolvedValue([])
+    mockDb.eventoDaDemanda.findMany.mockResolvedValue([])
+    const r = await obterEscritorio(admin, new Date('2026-11-21T05:05:00Z'))
+    expect(r.escritorio.recepcao.map((i) => [i.demandaId, i.urgente, i.tipo, i.projeto])).toEqual([
+      ['urg', true, 'defeito', 'Proj'],
+      ['velha', false, 'defeito', 'Proj'],
+    ])
+  })
+
+  test('a publicação vem da tela com o módulo ativo; sem o módulo, é null', async () => {
+    mockDb.demanda.findMany.mockResolvedValue([])
+    mockDb.seedDoRepositorio.findMany.mockResolvedValue([])
+    mockDb.eventoDaDemanda.findMany.mockResolvedValue([])
+    const com = await obterEscritorio(admin, new Date())
+    expect(com.publicacao).toEqual({ linhas: [{ id: 'l1' }], podeGerenciar: true })
+    vi.mocked(moduloAtivo).mockReturnValueOnce(false)
+    vi.mocked(obterTelaDePublicacao).mockClear()
+    const sem = await obterEscritorio(admin, new Date())
+    expect(sem.publicacao).toBeNull()
+    expect(obterTelaDePublicacao).not.toHaveBeenCalled()
   })
 })

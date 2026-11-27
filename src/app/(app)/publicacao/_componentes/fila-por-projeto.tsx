@@ -15,6 +15,7 @@ import {
 import { CLASSE_DO_CARTAO, CLASSE_DO_LINK, TituloDeSecao } from '@/lib/ui/titulo-de-secao'
 import { cn } from '@/lib/utils'
 import { BotaoDeRedefinirNoAr, BotaoDeRetomarFila } from './botoes-da-publicacao'
+import { PedidoExpansivel } from './pedido-expansivel'
 
 export interface FilaPorProjetoProps {
   linhas: readonly LinhaDaFila[]
@@ -115,6 +116,7 @@ function LinhaDoProjeto({
 }: Omit<FilaPorProjetoProps, 'linhas'> & { linha: LinhaDaFila }) {
   const parada = linha.configuracao?.situacao === 'parado'
   const reescrito = historicoReescrito(linha, agora)
+  const pedidos = [...(linha.publicando ? [linha.publicando] : []), ...linha.aguardando]
   return (
     <li
       id={linha.repositorioId}
@@ -163,6 +165,42 @@ function LinhaDoProjeto({
         {parada && podeGerenciar && <BotaoDeRetomarFila repositorioId={linha.repositorioId} />}
         {reescrito && podeRedefinir && <BotaoDeRedefinirNoAr repositorioId={linha.repositorioId} />}
       </div>
+      {pedidos.length === 0 && parada && linha.ultimaFalha && (
+        <div className="col-span-2 md:col-span-4">
+          <PedidoExpansivel
+            pedido={{
+              id: `falha-${linha.repositorioId}`,
+              commit: linha.ultimaFalha.commit,
+              descricao: null,
+              modo: 'imediato',
+              estado: 'publicando',
+              checks: null,
+              criadoEm: agora,
+              iniciadoEm: agora,
+              verificandoDesde: agora,
+            }}
+            linha={linha}
+            agora={agora}
+            podeGerenciar={podeGerenciar}
+            compacto
+            falha={linha.ultimaFalha}
+          />
+        </div>
+      )}
+      {pedidos.length > 0 && (
+        <div className="col-span-2 space-y-2 md:col-span-4">
+          {pedidos.map((p) => (
+            <PedidoExpansivel
+              key={p.id}
+              pedido={p}
+              linha={linha}
+              agora={agora}
+              podeGerenciar={podeGerenciar}
+              compacto
+            />
+          ))}
+        </div>
+      )}
     </li>
   )
 }

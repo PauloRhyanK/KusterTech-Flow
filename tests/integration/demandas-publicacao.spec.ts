@@ -478,10 +478,17 @@ describe('marcarPartesSemPublicacao: parte publicando cujo pedido terminou', () 
   })
 
   test('cancelado e publicado sem conferir saem com o motivo do resultado', async () => {
-    const a = await comPedido({ estado: 'CANCELADO', concluidoEm: AGORA })
+    const a = await comPedido({
+      estado: 'CANCELADO',
+      motivo: 'Cancelado pelo Paulo.',
+      concluidoEm: AGORA,
+    })
     const b = await comPedido({ estado: 'PUBLICADO', concluidoEm: AGORA })
     expect(await marcarPartesSemPublicacao(AGORA)).toBe(2)
-    expect(await ler(a.p.id)).toMatchObject({ estado: 'NAO_CHEGOU', motivo: 'Publicação falhou' })
+    expect(await ler(a.p.id)).toMatchObject({
+      estado: 'NAO_CHEGOU',
+      motivo: 'Cancelado pelo Paulo.',
+    })
     expect(await ler(b.p.id)).toMatchObject({
       estado: 'NAO_CHEGOU',
       motivo: 'Publicada sem conferir o site',

@@ -18,13 +18,14 @@ export default async function PaginaDaFabrica() {
     return <PainelDaFabrica secao="planos" permitido={false} retrato={null} agora={agora} />
   }
 
-  const { escritorio, gestao, recebido } = await obterEscritorio(sessao.sujeito, agora)
+  const { escritorio, gestao, recebido, publicacao } = await obterEscritorio(sessao.sujeito, agora)
   return (
     <>
       <Atualizar />
       <Escritorio
         escritorio={escritorio}
         gestao={gestao}
+        publicacao={publicacao}
         agora={agora.toISOString()}
         tecnico={<PainelDaFabrica secao="planos" permitido retrato={recebido} agora={agora} />}
       />

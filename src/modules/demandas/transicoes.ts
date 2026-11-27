@@ -38,6 +38,8 @@ export type EventoAplicavel =
   | { tipo: 'no_ar'; dados: Record<string, never> }
   /** O teste falhou duas vezes e o Paulo entrega o que funciona; `filha` é a demanda do que faltou. */
   | { tipo: 'entrega_parcial'; dados: { filha: string } }
+  /** O interruptor "Urgente / normal": muda só o destino (`urgente` ↔ `fila_de_agentes`), sem mover a etapa. */
+  | { tipo: 'urgencia_alterada'; dados: { urgente: boolean } }
 
 export interface ContextoDaTransicao {
   etapas: readonly EtapaDefinida[]
@@ -72,7 +74,22 @@ const ATORES: Record<EventoAplicavel['tipo'], readonly Ator[]> = {
   encerrada_pelo_paulo: ['paulo'],
   no_ar: ['flow'],
   entrega_parcial: ['paulo'],
+  urgencia_alterada: ['paulo'],
 }
+
+/**
+ * A urgência só se alterna entre a fila de agentes e urgente: voltar a "normal" grava `fila_de_agentes`,
+ * então lote da noite ou orientada perderiam o destino.
+ */
+export function destinoAceitaUrgencia(destino: Destino | null): boolean {
+  return destino === 'fila_de_agentes' || destino === 'urgente'
+}
+
+/** O destino já é o pedido: o service trata como idempotente (nenhum evento gravado). */
+export const URGENCIA_SEM_MUDANCA = 'A demanda já está com esta urgência.'
+const SEM_DESTINO = 'A demanda ainda não tem destino; decida o destino primeiro.'
+const URGENCIA_SO_NA_FILA =
+  'A urgência só se alterna na fila de agentes; esta demanda tem outro destino.'
 
 const SEM_VERSAO = 'O desenho ainda não tem versão para aprovar.'
 
@@ -318,6 +335,16 @@ export function aplicarEvento(
     case 'no_ar':
       if (atual.marco !== 'no_ar') return naoE('no ar')
       return concluir(estado)
+    // `destino_decidido` só vale em `decidir_destino` e conclui a etapa; a urgência vale em qualquer etapa aberta.
+    case 'urgencia_alterada': {
+      if (!destinoAceitaUrgencia(estado.destino)) {
+        const semDestino = estado.destino === null || estado.destino === 'decisao_do_paulo'
+        return recusa(semDestino ? SEM_DESTINO : URGENCIA_SO_NA_FILA)
+      }
+      const ehUrgente = estado.destino === 'urgente'
+      if (evento.dados.urgente === ehUrgente) return recusa(URGENCIA_SEM_MUDANCA)
+      return aceita({ ...estado, destino: evento.dados.urgente ? 'urgente' : 'fila_de_agentes' })
+    }
     case 'encerrada_pelo_paulo':
       return aceita({
         ...estado,

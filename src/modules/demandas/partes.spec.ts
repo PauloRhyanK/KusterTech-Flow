@@ -205,10 +205,15 @@ describe('resultadoDoPedido', () => {
       motivo: 'Publicada sem conferir o site',
     })
   })
-  test('CANCELADO', () => {
-    expect(resultadoDoPedido({ ...base, estado: 'CANCELADO' })).toEqual({
+  test('CANCELADO leva o motivo do pedido', () => {
+    expect(
+      resultadoDoPedido({ ...base, estado: 'CANCELADO', motivo: 'Cancelado pelo Paulo.' }),
+    ).toEqual({ estado: 'nao_chegou', motivo: 'Cancelado pelo Paulo.' })
+  })
+  test('CANCELADO sem motivo diz que foi cancelada', () => {
+    expect(resultadoDoPedido({ ...base, estado: 'CANCELADO', motivo: null })).toEqual({
       estado: 'nao_chegou',
-      motivo: 'Publicação falhou',
+      motivo: 'Publicação cancelada',
     })
   })
 })

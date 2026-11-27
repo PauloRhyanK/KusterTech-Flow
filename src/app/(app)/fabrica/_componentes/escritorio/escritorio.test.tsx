@@ -1,11 +1,20 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { Escritorio } from './escritorio'
 import { AGORA, escritorioDeTeste } from './teste-dados'
 
+vi.mock('../../actions', () => ({ alternarUrgenciaAction: vi.fn() }))
+vi.mock('@/app/(app)/publicacao/actions', () => ({}))
+
 function montar(dados = escritorioDeTeste()) {
   return (
-    <Escritorio escritorio={dados} gestao={{}} agora={AGORA.toISOString()} tecnico={<i>tec</i>} />
+    <Escritorio
+      escritorio={dados}
+      gestao={{}}
+      publicacao={null}
+      agora={AGORA.toISOString()}
+      tecnico={<i>tec</i>}
+    />
   )
 }
 
@@ -52,4 +61,22 @@ test('o que espera o Paulo aparece no topo, com há quanto tempo espera', () => 
 test('sem espera, a faixa "Esperando você" não aparece', () => {
   render(montar())
   expect(screen.queryByRole('region', { name: 'Esperando você' })).toBeNull()
+})
+
+test('clicar na recepção abre a gaveta com o foco; Esc fecha e devolve o foco', () => {
+  render(montar())
+  const recepcao = screen.getByRole('button', { name: /RECEPÇÃO/ })
+  fireEvent.click(recepcao)
+  const gaveta = screen.getByRole('dialog', { name: 'Fila' })
+  expect(gaveta.contains(document.activeElement)).toBe(true)
+  expect(recepcao).toHaveAttribute('aria-expanded', 'true')
+  fireEvent.keyDown(gaveta, { key: 'Escape' })
+  expect(screen.queryByRole('dialog', { name: 'Fila' })).toBeNull()
+  expect(document.activeElement).toBe(recepcao)
+})
+
+test('no celular a fila abre por um botão próprio', () => {
+  render(montar())
+  fireEvent.click(screen.getByRole('button', { name: /^Fila · / }))
+  expect(screen.getByRole('dialog', { name: 'Fila' })).toBeInTheDocument()
 })

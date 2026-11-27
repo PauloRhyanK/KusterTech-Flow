@@ -1,7 +1,14 @@
 // Modelo de tela do escritório da Fábrica: regras puras que transformam o retrato e as demandas no que a tela
 // desenha (andares, agentes, caixas e o plano da entrega). Spec: docs/superpowers/specs/2026-11-21-escritorio-da-fabrica-design.md
 import { TEXTO_DA_ESPERA } from '@/modules/demandas/apresentacao'
-import { type Marco, type TempoDeEspera, tempoDeEspera } from '@/modules/demandas/model'
+import {
+  compararNaFila,
+  type Destino,
+  type Marco,
+  type TempoDeEspera,
+  tempoDeEspera,
+} from '@/modules/demandas/model'
+import { destinoAceitaUrgencia } from '@/modules/demandas/transicoes'
 import type { ExecucaoV2, RaiaV2, RetratoV2 } from '../contrato'
 import type { RetratoRecebido } from '../queries'
 
@@ -22,6 +29,9 @@ export interface DemandaDaTela {
   espera: string | null
   /** quando a espera começou (`inicioDaEspera`); null sem espera */
   esperaDesde: Date | null
+  tipo: string | null
+  destino: Destino | null
+  criadaEm: Date
 }
 
 export interface EntradaDoEscritorio {
@@ -121,6 +131,12 @@ export interface ItemDaRecepcao {
   /** a demanda ainda não tem andar, mas espera o Paulo (etapa dele ou com espera) */
   esperaPaulo: boolean
   esperando: TempoDeEspera | null
+  tipo: string
+  projeto: string | null
+  urgente: boolean
+  criadaEm: Date
+  /** o interruptor de urgência só vale com a demanda aberta e destino já decidido */
+  podeAlternarUrgencia: boolean
 }
 
 /** Uma demanda que espera o Paulo, com o tempo de espera. */
@@ -535,12 +551,18 @@ export function montarEscritorio(entrada: EntradaDoEscritorio, agora: Date): Esc
     .filter(
       ({ d, esperaPaulo }) => esperaPaulo || d.marco === 'recebida' || d.marco === 'planejada',
     )
+    .sort((a, b) => compararNaFila(a.d, b.d))
     .map(({ d, esperaPaulo }) => ({
       demandaId: d.id,
       titulo: d.titulo,
       repositorio: d.repositorio,
       esperaPaulo,
       esperando: esperandoDesde(d, agora),
+      tipo: d.tipo ?? 'sem tipo',
+      projeto: d.projeto ?? null,
+      urgente: d.destino === 'urgente',
+      criadaEm: d.criadaEm,
+      podeAlternarUrgencia: destinoAceitaUrgencia(d.destino),
     }))
   return {
     andares,

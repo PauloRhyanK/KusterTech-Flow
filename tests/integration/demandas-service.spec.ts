@@ -9,6 +9,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { ArmazenamentoNaoConfigurado } from '@/modules/demandas/arquivos'
 import { MODELO_PADRAO, type EtapaDefinida } from '@/modules/demandas/model'
 import {
+  alternarUrgencia,
   aprovarDesenho,
   criarDemanda,
   criarModeloDeEtapas,
@@ -1328,5 +1329,93 @@ describe('demandas / eventos de parte e compatibilidade v1 (integração)', () =
     expect(d.etapaAtual).toBe('no_ar')
     expect(d.encerrada).toBeNull()
     expect((d.etapas as unknown as EtapaDefinida[]).at(-1)?.marco).toBe('no_ar')
+  })
+})
+
+describe('alternarUrgencia (integração)', () => {
+  async function demandaNaFila() {
+    const { projeto, repositorio } = await cenario()
+    const { id } = await criarDemanda(admin, {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Urgência',
+      descricao: null,
+      nivel: 'vai_sozinho',
+      temTela: false,
+      anexos: [],
+    })
+    expect((await daFabrica(id, triagem('fila_de_agentes'))).resultado).toBe('aplicado')
+    return id
+  }
+  const eventosDeUrgencia = (demandaId: string) =>
+    db.eventoDaDemanda.findMany({
+      where: { demandaId, tipo: 'urgencia_alterada' },
+      orderBy: { seq: 'asc' },
+    })
+
+  test('urgente grava o destino e o evento com o autor, sem mover a etapa; normal volta à fila', async () => {
+    const id = await demandaNaFila()
+    const antes = await db.demanda.findUniqueOrThrow({ where: { id } })
+    await alternarUrgencia(admin, id, true)
+    const d = await db.demanda.findUniqueOrThrow({ where: { id } })
+    expect(d.destino).toBe('URGENTE')
+    expect(d.etapaAtual).toBe(antes.etapaAtual)
+    expect(d.espera).toBe(antes.espera)
+    const [ev] = await eventosDeUrgencia(id)
+    expect(ev).toMatchObject({
+      origem: 'paulo',
+      usuarioId: admin.usuarioId,
+      dados: { urgente: true },
+    })
+
+    await alternarUrgencia(admin, id, false)
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).destino).toBe('FILA_DE_AGENTES')
+    expect(await eventosDeUrgencia(id)).toHaveLength(2)
+  })
+
+  test('alternar de novo para o mesmo valor é idempotente: nenhum evento a mais', async () => {
+    const id = await demandaNaFila()
+    await alternarUrgencia(admin, id, true)
+    await alternarUrgencia(admin, id, true)
+    expect(await eventosDeUrgencia(id)).toHaveLength(1)
+    await alternarUrgencia(admin, id, false)
+    await alternarUrgencia(admin, id, false)
+    expect(await eventosDeUrgencia(id)).toHaveLength(2)
+  })
+
+  test('lote da noite recusa o interruptor e mantém o destino, sem evento', async () => {
+    const { projeto, repositorio } = await cenario()
+    const { id } = await criarDemanda(admin, {
+      projetoId: projeto.id,
+      repositorioId: repositorio.id,
+      titulo: 'Lote',
+      descricao: null,
+      nivel: 'vai_sozinho',
+      temTela: false,
+      anexos: [],
+    })
+    expect((await daFabrica(id, triagem('lote_da_noite'))).resultado).toBe('aplicado')
+    await expect(alternarUrgencia(admin, id, true)).rejects.toThrow(
+      new ErroDeDominio(
+        'A urgência só se alterna na fila de agentes; esta demanda tem outro destino.',
+      ),
+    )
+    await expect(alternarUrgencia(admin, id, false)).rejects.toBeInstanceOf(ErroDeDominio)
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).destino).toBe('LOTE_DA_NOITE')
+    expect(await eventosDeUrgencia(id)).toHaveLength(0)
+  })
+
+  test('demanda encerrada lança ErroDeDominio', async () => {
+    const id = await demandaNaFila()
+    await encerrarDemanda(admin, id)
+    await expect(alternarUrgencia(admin, id, true)).rejects.toBeInstanceOf(ErroDeDominio)
+    expect(await eventosDeUrgencia(id)).toHaveLength(0)
+  })
+
+  test('sem projetos.gerenciar lança ErroDeAutorizacao e não grava', async () => {
+    const id = await demandaNaFila()
+    await expect(alternarUrgencia(aprovador, id, true)).rejects.toBeInstanceOf(ErroDeAutorizacao)
+    expect((await db.demanda.findUniqueOrThrow({ where: { id } })).destino).toBe('FILA_DE_AGENTES')
+    expect(await eventosDeUrgencia(id)).toHaveLength(0)
   })
 })
