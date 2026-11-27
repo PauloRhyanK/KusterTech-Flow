@@ -213,7 +213,10 @@ export function blocosDaMensagem(texto: string): BlocoDaMensagem[] {
 
 /** O título da decisão sem `[fábrica] ` e sem `pergunta: `. */
 export function tituloDaDecisao(titulo: string): string {
-  return titulo.replace(/^\[fábrica\] /, '').replace(/^pergunta:\s*/, '')
+  return titulo
+    .replace(/^\[fábrica\] /, '')
+    .replace(/^pergunta:\s*/, '')
+    .replace(/\s\([A-Za-z][A-Za-z0-9]*-[0-9a-z]{1,8}\)$/, '')
 }
 
 /** A frase de `**O que preciso de você:** …`, ou null. */

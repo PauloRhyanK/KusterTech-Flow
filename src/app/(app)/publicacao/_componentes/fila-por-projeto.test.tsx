@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import type { LinhaDaFila } from '@/modules/fila-de-publicacao/apresentacao'
 import { MOTIVOS } from '@/modules/fila-de-publicacao/model'
@@ -8,6 +9,9 @@ vi.mock('../actions', () => ({
   definirPausaGeralAction: vi.fn(),
   retomarFilaAction: vi.fn(),
   redefinirNoArAction: vi.fn(),
+  mudarModoDoPedidoAction: vi.fn(),
+  cancelarPedidoAction: vi.fn(),
+  publicarAgoraAction: vi.fn(),
 }))
 
 const AGORA = new Date('2026-11-19T15:00:00.000Z')
@@ -80,6 +84,7 @@ describe('FilaPorProjeto', () => {
               modo: 'imediato',
               estado: 'publicando',
               checks: 'sucesso',
+              criadoEm: minutos(-5),
               iniciadoEm: minutos(-2),
               verificandoDesde: null,
             },
@@ -89,8 +94,8 @@ describe('FilaPorProjeto', () => {
     )
     const item = screen.getByRole('listitem')
     expect(within(item).getByText('a41c9e2 · 3 h')).toBeVisible()
-    expect(within(item).getByText('PDF cortado')).toBeVisible()
-    expect(within(item).getByText('Publicando')).toBeVisible()
+    expect(within(item).getAllByText('PDF cortado')[0]).toBeVisible()
+    expect(within(item).getAllByText('Publicando')[0]).toBeVisible()
     expect(screen.getByText('checks verdes')).toBeVisible()
     expect(screen.getByText('vermelhos')).toBeVisible()
     expect(screen.getByText('sem CI — não bloqueiam')).toBeVisible()
@@ -145,6 +150,20 @@ describe('FilaPorProjeto', () => {
     )
     expect(screen.queryByRole('button', { name: 'Retomar a fila' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Redefinir o que está no ar' })).toBeNull()
+  })
+
+  test('a trilha da falha oferece "Tentar de novo" só para quem pode gerenciar', async () => {
+    const parada = linha({
+      configuracao: { ...linha().configuracao!, situacao: 'parado', situacaoMotivo: 'caiu' },
+      ultimaFalha: { commit: 'f'.repeat(40), execucaoUrl: null, motivo: 'O deploy caiu' },
+    })
+    const { rerender } = render(<FilaPorProjeto {...props} linhas={[parada]} />)
+    await userEvent.click(screen.getByRole('button', { name: /fffffff/ }))
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeVisible()
+
+    rerender(<FilaPorProjeto {...props} podeGerenciar={false} linhas={[parada]} />)
+    expect(screen.getByText('O deploy caiu')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
   })
 
   test('com a versão no ar configurada, mostra o commit conferido no site e quando', () => {

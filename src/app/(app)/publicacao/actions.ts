@@ -8,7 +8,14 @@ import { obterSessao } from '@/lib/auth/sessao'
 import { ErroDeDominio } from '@/lib/erros'
 import { log } from '@/lib/log'
 import { exigirModulo } from '@/lib/modulos-rota'
-import { definirPausaGeral, redefinirNoAr, retomarFila } from '@/modules/fila-de-publicacao/service'
+import {
+  cancelarPedido,
+  definirPausaGeral,
+  mudarModoDoPedido,
+  publicarAgora,
+  redefinirNoAr,
+  retomarFila,
+} from '@/modules/fila-de-publicacao/service'
 import { resumirErroParaLog } from '@/modules/github/model'
 
 export interface EstadoDaPublicacao {
@@ -88,5 +95,67 @@ export async function redefinirNoArAction(
     return { sucesso: 'O próximo pedido vale como o primeiro.' }
   } catch (erro) {
     return traduzirErro(erro, 'redefinir o que está no ar')
+  }
+}
+
+const pedidoSchema = z.object({ pedidoId: z.uuid({ error: 'Pedido inválido.' }) })
+const modoSchema = z.object({
+  pedidoId: z.uuid({ error: 'Pedido inválido.' }),
+  modo: z.enum(['imediato', 'lote'], { error: 'Modo inválido.' }),
+})
+
+function revalidarFila() {
+  revalidatePath('/publicacao')
+  revalidatePath('/fabrica')
+}
+
+export async function mudarModoDoPedidoAction(
+  _estado: EstadoDaPublicacao,
+  form: FormData,
+): Promise<EstadoDaPublicacao> {
+  const sessao = await exigirSessao()
+  const parse = modoSchema.safeParse({ pedidoId: form.get('pedidoId'), modo: form.get('modo') })
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  try {
+    await mudarModoDoPedido(sessao.sujeito, parse.data.pedidoId, parse.data.modo)
+    revalidarFila()
+    return { sucesso: 'O modo do pedido foi alterado.' }
+  } catch (erro) {
+    return traduzirErro(erro, 'mudar o modo do pedido')
+  }
+}
+
+export async function cancelarPedidoAction(
+  _estado: EstadoDaPublicacao,
+  form: FormData,
+): Promise<EstadoDaPublicacao> {
+  const sessao = await exigirSessao()
+  const parse = pedidoSchema.safeParse({ pedidoId: form.get('pedidoId') })
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  try {
+    await cancelarPedido(sessao.sujeito, parse.data.pedidoId)
+    revalidarFila()
+    return { sucesso: 'O pedido foi cancelado.' }
+  } catch (erro) {
+    return traduzirErro(erro, 'cancelar o pedido')
+  }
+}
+
+export async function publicarAgoraAction(
+  _estado: EstadoDaPublicacao,
+  form: FormData,
+): Promise<EstadoDaPublicacao> {
+  const sessao = await exigirSessao()
+  const parse = repositorioSchema.safeParse({ repositorioId: form.get('repositorioId') })
+  if (!parse.success) return { erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' }
+  try {
+    const resultado = await publicarAgora(sessao.sujeito, parse.data.repositorioId)
+    revalidarFila()
+    if (resultado.estado === 'recusado') return { erro: resultado.motivo ?? MENSAGEM_GENERICA }
+    // Um segundo clique é dispensado: não é erro.
+    if (resultado.estado === 'dispensado') return { sucesso: `Nada a fazer: ${resultado.motivo}.` }
+    return { sucesso: 'Publicação pedida.' }
+  } catch (erro) {
+    return traduzirErro(erro, 'pedir a publicação')
   }
 }

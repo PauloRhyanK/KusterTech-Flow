@@ -1027,6 +1027,9 @@ export function textoDoEvento(tipo: string, dados: unknown): string {
     return `Retomada com resposta: ${curta}`
   }
   if (tipo === 'migrada' && typeof d.texto === 'string') return d.texto
+  if (tipo === 'urgencia_alterada') {
+    return d.urgente === true ? 'Marcada como urgente' : 'Voltou à fila normal'
+  }
   if (tipo === 'erro-voltou' && typeof d.horas === 'number') {
     const como = d.antesDeCorrigir
       ? 'antes de contar como corrigido: a correção não resolveu'

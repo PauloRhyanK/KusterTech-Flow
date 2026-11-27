@@ -15,6 +15,8 @@ export interface PredioProps {
   recepcao: ItemDaRecepcao[]
   selecionado: string | null
   onSelecionar: (planoId: string) => void
+  onAbrirFila: (gatilho: HTMLElement) => void
+  filaAberta?: boolean
 }
 
 export function origemDoAndar(andar: Pick<Andar, 'projeto' | 'repositorio'>): string {
@@ -33,7 +35,14 @@ export function textoDaEspera(andar: Pick<Andar, 'esperando'>): string {
     : 'espera você'
 }
 
-export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioProps) {
+export function Predio({
+  andares,
+  recepcao,
+  selecionado,
+  onSelecionar,
+  onAbrirFila,
+  filaAberta = false,
+}: PredioProps) {
   // o andar mais novo fica em cima: a lista vem do mais antigo para o mais novo
   const esperam = recepcao.filter((r) => r.esperaPaulo).length
   // em cima, quem espera o Paulo há mais tempo; depois, do mais novo para o mais antigo (o número do andar é a ordem de chegada)
@@ -108,10 +117,16 @@ export function Predio({ andares, recepcao, selecionado, onSelecionar }: PredioP
         </div>
         <div className={s.terreo}>
           <span className={s.toldo} />
-          <span className={s.recepcao}>
+          <button
+            type="button"
+            className={s.recepcao}
+            aria-haspopup="dialog"
+            aria-expanded={filaAberta}
+            onClick={(e) => onAbrirFila(e.currentTarget)}
+          >
             RECEPÇÃO · {recepcao.length} na fila
             {esperam > 0 ? ` · ${esperam} espera${esperam > 1 ? 'm' : ''} você` : ''}
-          </span>
+          </button>
           <span className={s.porta} />
         </div>
         <div className={s.calcada} />

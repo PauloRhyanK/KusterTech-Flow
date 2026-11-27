@@ -670,9 +670,16 @@ body,
   border: 2px solid var(--pixel-madeira-escura);
   border-radius: 3px;
   background: var(--pixel-toldo-claro);
+  z-index: 1;
+  color: inherit;
+  cursor: pointer;
   font:
     700 9px 'Courier New',
     monospace;
+}
+.esc-recepcao:focus-visible {
+  outline: 2px solid var(--pixel-contorno);
+  outline-offset: 2px;
 }
 .esc-porta {
   position: absolute;

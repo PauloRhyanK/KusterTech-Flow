@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import {
+  acoesDoPedido,
   avisosDaPublicacao,
   colunaDeEstado,
+  etapasDaFalha,
+  etapasDoPedido,
+  filtrarLinhas,
   itensDoUltimoLote,
+  lerFiltrosDaFila,
   montarResumoDaPublicacao,
   noArDaLinha,
   oQueEstaNoAr,
@@ -29,6 +34,7 @@ function pedido(extra: Partial<PedidoDaLinha> = {}): PedidoDaLinha {
     modo: 'imediato',
     estado: 'na_fila',
     checks: null,
+    criadoEm: minutos(-10),
     iniciadoEm: null,
     verificandoDesde: null,
     ...extra,
@@ -714,5 +720,194 @@ test('colunaDeEstado: workflow verde e o site sendo conferido → "Conferindo o 
     tipo: 'texto',
     texto: 'Conferindo o site',
     tom: 'secundario',
+  })
+})
+
+describe('etapasDoPedido', () => {
+  const estados = (e: ReturnType<typeof etapasDoPedido>) => e.map((x) => x.estado)
+
+  test('pedido recém-criado: fila feita e o resto pendente', () => {
+    const e = etapasDoPedido(pedido(), AGORA)
+    expect(e.map((x) => x.chave)).toEqual([
+      'fila',
+      'verificando',
+      'ci',
+      'deploy',
+      'versao',
+      'no_ar',
+    ])
+    expect(estados(e)).toEqual([
+      'feita',
+      'pendente',
+      'pendente',
+      'pendente',
+      'pendente',
+      'pendente',
+    ])
+    expect(e.every((x, i) => i === 0 || x.detalhe === null)).toBe(true)
+  })
+
+  test('verificando: etapa atual e checks pendentes', () => {
+    const e = etapasDoPedido(
+      pedido({ estado: 'verificando', verificandoDesde: minutos(-1), checks: 'pendente' }),
+      AGORA,
+    )
+    expect(e[1]).toMatchObject({ estado: 'atual' })
+    expect(e[1]!.detalhe).toBe('11:59')
+    expect(e[2]!.estado).toBe('atual')
+    expect(e[2]!.detalhe).toBeTruthy()
+  })
+
+  test('publicando com checks verdes: deploy atual', () => {
+    const e = etapasDoPedido(
+      pedido({ estado: 'publicando', checks: 'sucesso', verificandoDesde: minutos(-5) }),
+      AGORA,
+    )
+    expect(estados(e)).toEqual(['feita', 'feita', 'feita', 'atual', 'pendente', 'pendente'])
+  })
+
+  test('conferindo: deploy feito e versão atual', () => {
+    const e = etapasDoPedido(
+      pedido({
+        estado: 'publicando',
+        checks: 'sem_checks',
+        verificandoDesde: minutos(-5),
+        conferindoDesde: minutos(-1),
+      }),
+      AGORA,
+    )
+    expect(estados(e)).toEqual(['feita', 'feita', 'feita', 'feita', 'atual', 'pendente'])
+  })
+
+  test('checks com falha e motivo: ci falhou com o motivo', () => {
+    const e = etapasDoPedido(
+      pedido({ estado: 'publicando', checks: 'falha', verificandoDesde: minutos(-5) }),
+      AGORA,
+      { motivo: 'lint quebrou' },
+    )
+    expect(e[2]).toMatchObject({ estado: 'falhou', detalhe: 'lint quebrou' })
+  })
+
+  test('publicando sem ter passado por verificando: as etapas anteriores ficam feitas', () => {
+    const e = etapasDoPedido(pedido({ estado: 'publicando', checks: null }), AGORA)
+    expect(estados(e)).toEqual(['feita', 'feita', 'feita', 'atual', 'pendente', 'pendente'])
+  })
+
+  test('falha sem checks marca a primeira etapa não feita', () => {
+    const e = etapasDoPedido(pedido({ commit: null }), AGORA, { motivo: null })
+    expect(e[1]).toMatchObject({ estado: 'falhou', detalhe: null })
+  })
+})
+
+describe('acoesDoPedido', () => {
+  const ctx = { podeGerenciar: true, pausado: false }
+  test('imediato na fila', () => {
+    expect(acoesDoPedido(pedido(), ctx)).toEqual(['cancelar', 'mandar_para_lote'])
+  })
+  test('lote na fila', () => {
+    expect(acoesDoPedido(pedido({ modo: 'lote' }), ctx)).toEqual([
+      'cancelar',
+      'mudar_para_imediato',
+      'publicar_agora',
+    ])
+  })
+  test('verificando ou publicando: nenhuma', () => {
+    expect(acoesDoPedido(pedido({ estado: 'verificando' }), ctx)).toEqual([])
+    expect(acoesDoPedido(pedido({ estado: 'publicando' }), ctx)).toEqual([])
+  })
+  test('sem permissão: nenhuma', () => {
+    expect(acoesDoPedido(pedido(), { ...ctx, podeGerenciar: false })).toEqual([])
+  })
+  test('pedido de um conserto: sem cancelar', () => {
+    expect(acoesDoPedido(pedido({ origem: 'conserto' }), ctx)).toEqual(['mandar_para_lote'])
+    expect(acoesDoPedido(pedido({ origem: 'conserto', modo: 'lote' }), ctx)).toEqual([
+      'mudar_para_imediato',
+      'publicar_agora',
+    ])
+  })
+})
+
+describe('filtros da fila', () => {
+  test('valor inválido vira null e a busca é aparada', () => {
+    expect(
+      lerFiltrosDaFila({ estado: 'xyz', modo: 'lote', busca: '  ' + 'a'.repeat(100) }),
+    ).toEqual({
+      projeto: null,
+      estado: null,
+      modo: 'lote',
+      busca: 'a'.repeat(80),
+    })
+    expect(lerFiltrosDaFila({ projeto: ['P2', 'P3'] }).projeto).toBe('P2')
+  })
+
+  const A = linha({ repositorioId: 'a', projetoId: 'P1', rotulo: 'Alfa', aguardando: [pedido()] })
+  const B = linha({
+    repositorioId: 'b',
+    projetoId: 'P2',
+    rotulo: 'Beta',
+    aguardando: [pedido({ id: 'p2', modo: 'lote', descricao: 'Corrige PDF' })],
+  })
+  const vazio = { projeto: null, estado: null, modo: null, busca: '' } as const
+
+  test('por modo', () => {
+    expect(filtrarLinhas([A, B], { ...vazio, modo: 'lote' })).toEqual([B])
+  })
+  test('por busca, sem diferenciar maiúsculas', () => {
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'pdf' })).toEqual([B])
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'ALFA' })).toEqual([A])
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'aaaaaaa' })).toEqual([A, B])
+  })
+  test('só projeto e sem resultado', () => {
+    expect(filtrarLinhas([A, B], { ...vazio, projeto: 'P2' })).toEqual([B])
+    expect(filtrarLinhas([A, B], { ...vazio, busca: 'nada' })).toEqual([])
+  })
+
+  test('estado e modo reduzem os pedidos da linha aos que casam', () => {
+    const L = linha({
+      projetoId: 'P3',
+      rotulo: 'Gama',
+      publicando: pedido({ id: 'pub', estado: 'publicando', modo: 'imediato' }),
+      aguardando: [pedido({ id: 'x', modo: 'lote' }), pedido({ id: 'y', modo: 'imediato' })],
+    })
+    const [so] = filtrarLinhas([L], { ...vazio, modo: 'lote' })
+    expect(so?.publicando).toBeNull()
+    expect(so?.aguardando.map((p) => p.id)).toEqual(['x'])
+    const [pub] = filtrarLinhas([L], { ...vazio, estado: 'publicando' })
+    expect(pub?.publicando?.id).toBe('pub')
+    expect(pub?.aguardando).toEqual([])
+    expect(filtrarLinhas([L], { ...vazio, estado: 'verificando' })).toEqual([])
+  })
+
+  test('busca por texto de pedido reduz; busca no rótulo mantém todos os pedidos', () => {
+    const L = linha({
+      rotulo: 'Gama',
+      aguardando: [pedido({ id: 'x', descricao: 'Corrige PDF' }), pedido({ id: 'y' })],
+    })
+    expect(filtrarLinhas([L], { ...vazio, busca: 'pdf' })[0]?.aguardando.map((p) => p.id)).toEqual([
+      'x',
+    ])
+    expect(filtrarLinhas([L], { ...vazio, busca: 'gama' })[0]?.aguardando).toHaveLength(2)
+  })
+
+  test('linha sem pedidos some com estado/modo, mas fica só com projeto ou rótulo', () => {
+    const V = linha({ projetoId: 'P9', rotulo: 'Vazia', publicando: null, aguardando: [] })
+    expect(filtrarLinhas([V], { ...vazio, modo: 'lote' })).toEqual([])
+    expect(filtrarLinhas([V], { ...vazio, projeto: 'P9' })).toEqual([V])
+    expect(filtrarLinhas([V], { ...vazio, busca: 'vazia' })).toEqual([V])
+  })
+})
+
+describe('etapasDaFalha', () => {
+  test('marca só a publicação como falhou, sem horas inventadas', () => {
+    const e = etapasDaFalha({ motivo: 'O deploy caiu' })
+    expect(e.map((x) => x.estado)).toEqual([
+      'feita',
+      'feita',
+      'feita',
+      'falhou',
+      'pendente',
+      'pendente',
+    ])
+    expect(e.map((x) => x.detalhe)).toEqual([null, null, null, 'O deploy caiu', null, null])
   })
 })

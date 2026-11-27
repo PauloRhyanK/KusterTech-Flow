@@ -510,6 +510,28 @@ class TestesJornada(Base):
         self.instante += despachante.SEM_PROGRESSO
         self.assertEqual(d._acoes_de_seeds_paradas(), [{"tipo": "aguardar_humano", "seed": "s-1", "motivos": [trava]}])
 
+    def test_vigia_reconhece_arquivo_protegido_pelos_fatos_mesmo_com_o_motivo_perdido(self):
+        # produção, 27/11: a decisão genérica já tinha gravado "PR parado há 194 min" em `motivoHumano`; o que diz
+        # que falta o merge do Paulo é o próprio estado: head aprovado e verificado, e o PR toca arquivo protegido
+        d = self._seed_parada()
+        seed = d.estado["seeds"]["s-1"]
+        head = seed["headSha"]
+        seed.update(
+            pendenteHumano=None,
+            motivoHumano="PR parado há 194 min, mesmo depois de acordar o orquestrador",
+            arquivos=["src/a/x.ts", "prisma/migrations/001.sql"],
+            veredito={"sha": head, "resultado": "aprovado", "achados": []},
+            verificacao={"sha": head, "codigo": 0, "saida": ""},
+        )
+        self.instante += despachante.SEM_PROGRESSO * 3
+        self.assertEqual(
+            d._acoes_de_seeds_paradas(),
+            [{"tipo": "aguardar_humano", "seed": "s-1", "motivos": ["toca arquivos protegidos: prisma/migrations/001.sql"]}],
+        )
+        # com a revisão pedindo correções, a causa não é o arquivo protegido
+        seed["veredito"]["resultado"] = "correcoes"
+        self.assertEqual(d._acoes_de_seeds_paradas(), [{"tipo": "acordar", "motivo": "seed_parada", "alvo": "s-1"}])
+
     def test_vigia_sem_trava_do_paulo_cita_a_ultima_trava_registrada(self):
         d = self._seed_parada()
         d.estado["seeds"]["s-1"].update(pendenteHumano=None, motivoHumano="revisor sem veredito válido")
