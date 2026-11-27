@@ -107,20 +107,25 @@ def prova(modelo):
         itens["retomada"] = {"ok": "pronto" in resposta.lower(), "segundos": t, "resposta": resposta[:80]}
 
     # 6. Cancelamento: SIGTERM no meio de uma tarefa longa
-    proc = subprocess.Popen([CLAUDE, *base(modelo, "Conte devagar de 1 a 500, um número por linha.")],
+    pedido = "Rode o comando `sleep 120` com a ferramenta Bash e depois responda: fim."
+    proc = subprocess.Popen([CLAUDE, *base(modelo, pedido, "--allowedTools", "Bash(sleep:*)")],
                             cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             start_new_session=True)
-    time.sleep(8)
+    time.sleep(15)
+    viva = proc.poll() is None  # sem isso o item passaria mesmo com a tarefa já terminada
     inicio = time.monotonic()
-    os.killpg(proc.pid, signal.SIGTERM)
+    if viva:
+        os.killpg(proc.pid, signal.SIGTERM)
     try:
         proc.wait(timeout=20)
         encerrou = True
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         encerrou = False
-    sobra = subprocess.run(["pgrep", "-f", str(repo)], capture_output=True, text=True).stdout.strip()
-    itens["cancelamento"] = {"ok": encerrou and not sobra, "segundosAteEncerrar": round(time.monotonic() - inicio, 1),
+    time.sleep(1)
+    # o grupo inteiro (CLI e o `sleep` filho) precisa ter sumido
+    sobra = subprocess.run(["pgrep", "-g", str(proc.pid)], capture_output=True, text=True).stdout.strip()
+    itens["cancelamento"] = {"ok": viva and encerrou and not sobra, "vivaAoCancelar": viva, "segundosAteEncerrar": round(time.monotonic() - inicio, 1),
                              "codigo": proc.returncode}
 
     # 7. Erro classificável: modelo inexistente

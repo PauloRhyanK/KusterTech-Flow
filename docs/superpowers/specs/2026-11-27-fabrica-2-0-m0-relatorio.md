@@ -11,7 +11,7 @@ O M0 não altera a execução atual. Nada do Warren, do kit ou do Flow foi desli
 | Inventário rastreável do kit e do Flow | **feito** | §1–2 do plano (preservar, adaptar, substituir, eliminar, com caminho:linha) |
 | Baseline documentado | **feito para novembro**; pós-27/11 **em coleta** (janela ainda curta) | §1 abaixo; `fabrica/scripts/baseline.py` |
 | Backup e restauração testados | **feito** | §2 abaixo |
-| Prova do adaptador Claude | **feita no Mac; na oficina aguarda o login do usuário `fabrica`** | §3 abaixo |
+| Prova do adaptador Claude | **feita** no Mac e na oficina (conta principal); conta reserva aguarda login | §3 abaixo |
 | Termos de conta reserva, Codex e Antigravity | **pendente do dono (P3)**, só antes do M5 | — |
 
 ## 1. Baseline
@@ -56,23 +56,25 @@ US$ 49,00 em 43 execuções; orquestrador 60,9%, revisor 21,5%. A janela inclui 
 
 Roteiro: `fabrica/scripts/prova_adaptador_claude.py` (repositório Git descartável, modelo econômico, 8 itens).
 
-| Item | Mac (2.1.318, 27/11) |
-|---|---|
-| Versão e login | ok |
-| Sem interface, modelo explícito, eventos e uso (`stream-json`) | ok — uso e custo equivalente por execução (US$ 0,0055) |
-| Saída estruturada (`--json-schema`) | ok |
-| Modo leitura (`plan` + ferramentas de escrita negadas): pedido de escrita não cria arquivo | ok — a execução termina bem e recusa |
-| Escrita restrita ao workspace | ok |
-| Retomada pela sessão (`--resume`) | ok — lembrou o contexto |
-| Cancelamento (SIGTERM no grupo de processos) | ok — encerra em < 1 s, sem processo sobrando |
-| Erro de configuração classificável (modelo inexistente) | ok — mensagem explícita |
+| Item | Mac (2.1.318, 27/11) | Oficina, conta principal (2.1.332, Max) |
+|---|---|---|
+| Versão e login | ok | ok |
+| Sem interface, modelo explícito, eventos e uso (`stream-json`) | ok — uso e custo equivalente por execução (US$ 0,0055) | ok — modelo efetivo `claude-haiku-5-5`, US$ 0,0017 |
+| Saída estruturada (`--json-schema`) | ok | ok |
+| Modo leitura (`plan` + ferramentas de escrita negadas): pedido de escrita não cria arquivo | ok — a execução termina bem e recusa | ok |
+| Escrita restrita ao workspace | ok | ok |
+| Retomada pela sessão (`--resume`) | ok — lembrou o contexto | ok |
+| Cancelamento (SIGTERM no grupo de processos) | ok — encerra em < 1 s, sem processo sobrando | ok — execução viva ao cancelar, grupo encerrado em 3,7 s (código 143) |
+| Erro de configuração classificável (modelo inexistente) | ok — mensagem explícita | ok |
 
 Achado: nas opções de lista (`--allowedTools a b …`) o pedido precisa vir antes; no fim ele é engolido como nome de ferramenta e a execução falha em 1 s. O adaptador deve sempre montar o pedido logo após `-p` (ou via stdin).
 
-**Na oficina:** usuário dedicado `fabrica` criado (sem sudo, sem grupo docker, sem credenciais do GitHub), com o Claude Code 2.1.332 em `/opt/claude`. **Falta o login da assinatura, que só o dono pode fazer.** Depois dele, rodar:
+Segundo achado: na primeira rodada da oficina o cancelamento "passou" sem provar nada, porque a tarefa já tinha terminado antes do sinal. O roteiro agora usa uma tarefa longa de verdade (`sleep 120`) e exige que a execução esteja viva ao cancelar e que todo o grupo de processos suma.
+
+**Na oficina:** dois usuários dedicados, `fabrica` (conta principal, logada, Max) e `fabrica-reserva` (conta reserva, pedida pelo dono em 27/11; login pendente), sem sudo, sem grupo docker e sem credenciais do GitHub, com o Claude Code 2.1.332 em `/opt/claude`. Cada usuário guarda o próprio login. Uso da reserva: **escolha manual liberada; troca automática por cota desligada até o dono confirmar os termos (P3)**. Para repetir a prova:
 
 ```bash
-sudo -iu fabrica python3 -I -B prova_adaptador_claude.py --saida prova-oficina.json
+sudo -iu fabrica python3 -I -B prova_adaptador_claude.py --saida prova-oficina.json   # ou -iu fabrica-reserva
 ```
 
 Ainda não provados (ficam para o M2): limite de cota real (a regra de leitura do horário de retorno já existe em `esgotados.py`), isolamento por `bwrap` combinado com a CLI e convivência com o contêiner de verificação.
