@@ -58,7 +58,7 @@
     {
       "id": "motor-roteador",
       "papel": "backend",
-      "planoSeeds": "pl-2d58",
+      "planoSeeds": "pl-fd24",
       "dependeDe": [
         "executores-config"
       ],
