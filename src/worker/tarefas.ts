@@ -166,7 +166,7 @@ export function criarTarefasDoCiclo(d: {
         }
         const resumo = await limparArquivosDeDemandas(agora)
         ultimaLimpezaDeArquivos = agora.getTime()
-        if (resumo.capturas + resumo.parciais > 0) {
+        if (resumo.capturas + resumo.parciais + resumo.anexosDeRelatos > 0) {
           log.info(
             { tarefa: 'limpar-arquivos-de-demandas', ...resumo },
             'arquivos de demandas limpos',

@@ -4,9 +4,11 @@ import {
   URGENCIA_SEM_MUDANCA,
   avaliarArquivo,
   aplicarEvento,
+  anexoDeRelatoVencido,
   capturaVencida,
   compararEvento,
   dadosDaRetomada,
+  inicioDaRetencaoDoRelato,
   jsonCanonico,
   type EventoAplicavel,
 } from './transicoes'
@@ -711,5 +713,24 @@ describe('dadosDaRetomada', () => {
     const a = { tipo: 'retomada', dados: { resposta: 'x' } }
     expect(compararEvento(a, { tipo: 'retomada', dados: { resposta: 'x' } })).toBe('repetido')
     expect(compararEvento(a, { tipo: 'retomada', dados: {} })).toBe('conflito')
+  })
+})
+
+describe('retenção das mídias de relatos', () => {
+  test('inicioDaRetencaoDoRelato: a primeira entre no ar e encerrada', () => {
+    const a = new Date('2026-08-01')
+    const b = new Date('2026-07-01')
+    expect(
+      inicioDaRetencaoDoRelato({ noArEm: a, encerrada: 'descartada', encerradaEm: b }),
+    ).toEqual(b)
+    expect(inicioDaRetencaoDoRelato({ noArEm: a, encerrada: null, encerradaEm: null })).toEqual(a)
+    expect(inicioDaRetencaoDoRelato({ noArEm: null, encerrada: null, encerradaEm: b })).toBeNull()
+  })
+
+  test('anexoDeRelatoVencido aos 90 dias', () => {
+    const inicio = new Date('2026-08-01T00:00:00Z')
+    expect(anexoDeRelatoVencido(inicio, new Date('2026-10-30T00:00:00Z'))).toBe(false)
+    expect(anexoDeRelatoVencido(inicio, new Date('2026-10-30T00:00:01Z'))).toBe(true)
+    expect(anexoDeRelatoVencido(null, new Date('2030-01-01'))).toBe(false)
   })
 })
