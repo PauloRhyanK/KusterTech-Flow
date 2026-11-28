@@ -64,6 +64,9 @@ COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/dist ./
 # O volume nomeado flow_arquivos herda este dono na primeira montagem.
 RUN mkdir -p /var/lib/flow/arquivos && chown node:node /var/lib/flow/arquivos
+# O commit desta imagem, para /api/versao (D76). Fica no fim para não invalidar o cache das camadas.
+ARG FLOW_COMMIT=""
+ENV FLOW_COMMIT=$FLOW_COMMIT
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

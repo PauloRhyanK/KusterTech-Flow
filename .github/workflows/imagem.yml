@@ -32,6 +32,8 @@ jobs:
           load: true
           push: false
           tags: flow:fumaca
+          build-args: |
+            FLOW_COMMIT=${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/PauloRhyanK/KusterTech-Flow
             org.opencontainers.image.revision=${{ github.sha }}
