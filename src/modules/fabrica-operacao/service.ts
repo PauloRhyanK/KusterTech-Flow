@@ -29,6 +29,8 @@ export interface EtapaDoPlano {
   chave: string
   tipo: TipoDaEtapa
   papel: string
+  /** O que o agente deve fazer; vazio é recusado em etapas de implementação. */
+  instrucoes: string
   repositorioId: string
   arquivos: string[]
   dependeDe: string[]
@@ -41,6 +43,9 @@ export interface TarefaParaWorker {
   geracao: number
   /** `reconciliar`: a reserva anterior venceu; confira sessão, commits e PR antes de repetir qualquer efeito. */
   tipo: 'executar' | 'reconciliar'
+  etapaChave: string
+  tipoDaEtapa: TipoDaEtapa
+  instrucoes: string
   papel: string
   repo: string
   prUrl: string | null
@@ -114,6 +119,9 @@ function validarEtapas(etapas: EtapaDoPlano[]): void {
     chaves.add(e.chave)
     if (!TIPOS.includes(e.tipo)) throw new ErroDeDominio(`Tipo de etapa inválido: "${e.tipo}".`)
     if (e.papel.trim() === '') throw new ErroDeDominio(`Etapa "${e.chave}" sem papel.`)
+    if (e.tipo === 'implementacao' && e.instrucoes.trim() === '') {
+      throw new ErroDeDominio(`Etapa "${e.chave}" sem instruções.`)
+    }
   }
   for (const e of etapas) {
     const falta = e.dependeDe.find((d) => !chaves.has(d) || d === e.chave)
@@ -296,6 +304,9 @@ async function reatribuirVencida(
     etapaId: vencida.etapaId,
     geracao: atualizada.geracao,
     tipo: 'reconciliar',
+    etapaChave: vencida.etapa.chave,
+    tipoDaEtapa: vencida.etapa.tipo as TipoDaEtapa,
+    instrucoes: vencida.etapa.instrucoes,
     papel: vencida.papel,
     repo: vencida.etapa.repositorio.nomeCompleto,
     prUrl: vencida.etapa.prUrl,
@@ -364,6 +375,9 @@ export async function pegarTarefa(workerId: string, agora: Date): Promise<Tarefa
       etapaId: linha.id,
       geracao: 1,
       tipo: 'executar',
+      etapaChave: linha.chave,
+      tipoDaEtapa: linha.tipo as TipoDaEtapa,
+      instrucoes: linha.instrucoes,
       papel: linha.papel,
       repo: linha.repositorio.nomeCompleto,
       prUrl: linha.prUrl,
