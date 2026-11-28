@@ -7,6 +7,7 @@ import {
   receberResultadoDoWorker,
   receberSinal,
 } from '@/modules/fabrica-operacao/recepcao'
+import { obterPainelDeOperacao } from '@/modules/fabrica-operacao/queries'
 import { DURACAO_DA_RESERVA_MS } from '@/modules/fabrica-operacao/reserva'
 import {
   autenticarWorker,
@@ -459,5 +460,31 @@ describe('achados da revisão independente', () => {
       AGORA,
     )
     expect(r.status).toBe(422)
+  })
+})
+
+describe('painel da operação', () => {
+  test('reflete a etapa em execução e a máquina ocupada', async () => {
+    await plano([
+      etapa('a', { papel: 'revisor', tipo: 'leitura' }),
+      etapa('b', { dependeDe: ['a'] }),
+    ])
+    await pegarTarefa(w1, AGORA)
+    const p = await obterPainelDeOperacao(admin, depois(6 * MIN))
+    expect(p.situacao.tipo).toBe('andando')
+    expect(p.emAndamento[0]).toMatchObject({
+      titulo: 'Piloto',
+      cor: 'conferindo',
+      agora: { texto: 'Revisor conferindo o código', desde: 'há 6 min' },
+    })
+    expect(p.maquinas.find((m) => m.nome === 'oficina-1')).toMatchObject({
+      estado: 'sem_sinal',
+    })
+  })
+
+  test('sem permissão é recusado', async () => {
+    await expect(
+      obterPainelDeOperacao({ usuarioId: admin.usuarioId, papeis: [] }, AGORA),
+    ).rejects.toThrow()
   })
 })

@@ -98,7 +98,13 @@ export function montarPainel(d: DadosDoPainel, agora: Date): Painel {
         })),
     )
     .sort((a, b) => a.ordem - b.ordem)
-    .map(({ ordem: _ordem, ...t }) => t)
+    .map((t) => ({
+      demandaId: t.demandaId,
+      titulo: t.titulo,
+      etapa: t.etapa,
+      motivo: t.motivo,
+      proximaTentativa: t.proximaTentativa,
+    }))
 
   const emAndamento: Painel['emAndamento'] = d.demandas.flatMap((dm) => {
     const atual =
