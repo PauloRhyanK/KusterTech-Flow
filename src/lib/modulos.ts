@@ -16,6 +16,7 @@ export type ModuloId =
   | 'erros'
   | 'relatos'
   | 'tickets'
+  | 'fabrica-operacao'
 
 export const CATALOGO_DE_MODULOS: Record<
   ModuloId,
@@ -38,6 +39,7 @@ export const CATALOGO_DE_MODULOS: Record<
   erros: { ativo: true, dependeDe: ['demandas'] },
   relatos: { ativo: true, dependeDe: ['demandas', 'decidir'] },
   tickets: { ativo: true, dependeDe: ['relatos'] },
+  'fabrica-operacao': { ativo: false, dependeDe: ['fabrica', 'demandas'] },
 }
 
 export class ErroDeConfiguracaoDeModulos extends Error {}
