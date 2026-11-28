@@ -200,7 +200,7 @@ describe('arquivos de demandas no volume', () => {
     }
   })
 
-  test('todo tipo aceito que não é HTML (imagens e áudios) sai inline com o próprio tipo e sem CSP', () => {
+  test('todo tipo aceito que não é HTML (imagens, áudios e vídeos) sai inline com o próprio tipo e sem CSP', () => {
     const aceitos = new Set(Object.values(CONTEUDOS_ACEITOS).flat())
     aceitos.delete('text/html')
     expect([...aceitos].sort()).toEqual(
@@ -212,6 +212,9 @@ describe('arquivos de demandas no volume', () => {
         'image/jpeg',
         'image/png',
         'image/webp',
+        'video/mp4',
+        'video/quicktime',
+        'video/webm',
       ].sort(),
     )
     for (const c of aceitos) {

@@ -18,6 +18,7 @@ import type {
   PaginaBuscada,
 } from '@/modules/relatos/cliente'
 import { lerPagina } from '@/modules/relatos/contrato'
+import { idDoAnexo } from '@/modules/relatos/model'
 import { ID_A, ID_B, relatoDeExemplo } from '@/modules/relatos/exemplos'
 import {
   criarSistema,
@@ -686,7 +687,7 @@ describe('recuperar anexos faltantes', () => {
     })
   })
 
-  test('vídeo e arquivo nunca são baixados, nem gastam o teto nem contam como falha', async () => {
+  test('arquivo e acima de 10 MB nunca são baixados, nem gastam o teto nem contam como falha', async () => {
     const { sistemaId, demanda } = await relatoSemCopia(0)
     const base = {
       sistemaId,
@@ -708,7 +709,7 @@ describe('recuperar anexos faltantes', () => {
         em: new Date('2026-11-26T12:00:00.000Z'),
         anexos: [
           ...Array.from({ length: 25 }, (_, i) => ({
-            tipo: i % 2 ? 'video' : 'arquivo',
+            tipo: 'arquivo',
             bytes: 3,
             caminho: url(`v${i}`),
           })),
@@ -731,5 +732,34 @@ describe('recuperar anexos faltantes', () => {
     })
     expect(pedidos).toEqual([url('nova')])
     expect(r).toEqual({ copiados: 1, falhas: 0 })
+  })
+
+  test('recupera vídeo do relato como anexo da demanda', async () => {
+    const { sistemaId, demanda } = await relatoSemCopia(0)
+    const url = `https://alfa.exemplo.com/v1/relatos/anexos/video-1`
+    await db.relato.create({
+      data: {
+        sistemaId,
+        ticket: 'R-8',
+        canal: 'SISTEMA',
+        idExterno: ID_B,
+        em: new Date('2026-11-26T12:00:00.000Z'),
+        autorIdExterno: 'u-2',
+        autorNome: 'Bia',
+        autorPapel: 'Assessora',
+        resultado: 'SEGUE',
+        demandaId: demanda.id,
+        sinais: [],
+        anexos: [{ tipo: 'video', bytes: 3, caminho: url }],
+      },
+    })
+    const r = await recuperarAnexosFaltantes(agora, {
+      baixar: async () => ({ ok: true, conteudo: 'video/mp4', bytes: Buffer.from([0, 0, 0]) }),
+      chave,
+    })
+    expect(r).toEqual({ copiados: 1, falhas: 0 })
+    const arquivo = await db.arquivoDaDemanda.findFirstOrThrow({ where: { demandaId: demanda.id } })
+    expect(arquivo.conteudo).toBe('video/mp4')
+    expect(arquivo.id).toBe(idDoAnexo(`${sistemaId}:${ID_B}`, 0))
   })
 })
