@@ -107,6 +107,13 @@ class Workspace:
         shutil.copytree(copia.limpa, copia.agente, symlinks=True, ignore=_ignorar_git)
         return copia
 
+    def head(self, copia: Copia) -> str:
+        return _git("rev-parse", "HEAD", cwd=copia.limpa)
+
+    def diff(self, copia: Copia, base: str) -> str:
+        """O diff do head contra o ponto em que saiu da base (o que o PR muda)."""
+        return _git("diff", "--no-ext-diff", "--no-textconv", f"refs/heads/{base}...HEAD", cwd=copia.limpa)
+
     def tem_mudancas(self, copia: Copia) -> bool:
         _sincronizar(copia.agente, copia.limpa)
         return _git("status", "--porcelain", "--untracked-files=all", cwd=copia.limpa) != ""

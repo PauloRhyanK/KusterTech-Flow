@@ -17,7 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 import esgotados  # noqa: E402  (leitura do horário de retorno, a mesma do kit)
 
 FERRAMENTAS_DE_ESCRITA = ("Edit", "Write", "NotebookEdit", "Bash")
