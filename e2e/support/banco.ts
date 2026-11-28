@@ -1177,6 +1177,7 @@ export async function limparDemandasNoBanco(): Promise<void> {
   })
   await db.demanda.deleteMany({ where: dosExemplos })
   // Relatos e sistemas conectados dos repositórios de exemplo (FK RESTRICT no sistema e no projeto).
+  // Apagar as demandas antes dos relatos só funciona porque Relato.demandaId é SetNull.
   await db.relato.deleteMany({ where: { sistema: dosExemplos } })
   await db.sistemaConectado.deleteMany({ where: dosExemplos })
   for (const [id, nome] of exibidosComoNoBanco) {

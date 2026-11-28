@@ -128,9 +128,9 @@ export function DetalheDoTicket({
           ticket.sistema.nome,
           ROTULO_DO_CANAL[ticket.canal],
           `${ticket.autor.nome} · ${ticket.autor.papel}`,
-        ].map((t) => (
+        ].map((t, i) => (
           <li
-            key={t}
+            key={i}
             className="whitespace-nowrap rounded-compacto border border-border px-1.5 py-px text-[11px] text-text-secondary"
           >
             {t}

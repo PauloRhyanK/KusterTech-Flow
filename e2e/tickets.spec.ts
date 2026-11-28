@@ -38,7 +38,9 @@ async function entrar(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/$/)
 }
 
+// As capturas versionadas só são regravadas com CAPTURAS=1 (conferência D74), nunca a cada execução.
 async function capturar(page: Page, nome: string): Promise<void> {
+  if (process.env.CAPTURAS !== '1') return
   mkdirSync(PASTA, { recursive: true })
   await page.screenshot({ path: join(PASTA, `${nome}.png`), fullPage: true })
 }
@@ -113,7 +115,7 @@ test.afterEach(async () => {
   await limparDemandasNoBanco()
 })
 
-test('tickets: quadros, lista de hoje, detalhe com imagem, link da demanda e filtro; capturas', async ({
+test('tickets: quadros, lista do app, detalhe com imagem, link da demanda e filtro; capturas', async ({
   page,
 }, testInfo) => {
   const mobile = testInfo.project.name === 'mobile'
@@ -122,7 +124,9 @@ test('tickets: quadros, lista de hoje, detalhe com imagem, link da demanda e fil
   const { demandaId } = await semear(page)
   await entrar(page)
 
-  await page.goto('/tickets')
+  // Agrupado por app: o grupo "Hoje" dependeria do relógio (perto da meia-noite viraria "Ontem");
+  // o agrupamento por dia já é coberto pelos testes de agruparTickets.
+  await page.goto('/tickets?agrupar=app')
   await expect(page.getByRole('heading', { level: 1, name: 'Tickets' })).toBeVisible()
   for (const [rotulo, n] of [
     ['chegaram em 7 dias', 2],
@@ -132,9 +136,9 @@ test('tickets: quadros, lista de hoje, detalhe com imagem, link da demanda e fil
   ] as const) {
     await expect(page.getByText(rotulo, { exact: true }).locator('..')).toHaveText(`${n}${rotulo}`)
   }
-  const hoje = page.getByRole('region', { name: 'Hoje' })
-  await expect(hoje.getByRole('heading')).toHaveText('Hoje · 2')
-  const linhas = hoje.getByRole('link')
+  const doApp = page.getByRole('region', { name: 'CAIS v2' })
+  await expect(doApp.getByRole('heading')).toHaveText('CAIS v2 · 2')
+  const linhas = doApp.getByRole('link')
   await expect(linhas).toHaveCount(2)
   await expect(linhas.nth(0)).toContainText('Isabeli Casa Grande · CAIS v2 · app')
   await expect(linhas.nth(0)).toContainText('1 imagem')
@@ -176,7 +180,7 @@ test('tickets: quadros, lista de hoje, detalhe com imagem, link da demanda e fil
   await expect(historico.nth(3)).toContainText('Buscado pelo Flow')
   if (mobile) {
     // Com um ticket escolhido, o celular mostra só o detalhe, com o caminho de volta.
-    await expect(hoje).toBeHidden()
+    await expect(doApp).toBeHidden()
     await expect(page.getByRole('link', { name: 'Voltar à lista' })).toBeVisible()
     await capturar(page, '03-detalhe-mobile')
   } else {
@@ -189,11 +193,12 @@ test('tickets: quadros, lista de hoje, detalhe com imagem, link da demanda e fil
   await expect(page.getByRole('heading', { level: 1, name: TITULO_DA_DEMANDA })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Tickets de origem: 1' })).toBeVisible()
 
-  await page.goto('/tickets')
+  await page.goto('/tickets?agrupar=app')
   await page.getByLabel('Resultado').selectOption('orientado')
   await page.getByRole('button', { name: 'Filtrar' }).click()
   await expect(page).toHaveURL(/[?&]resultado=orientado/)
-  const filtradas = page.getByRole('region', { name: 'Hoje' }).getByRole('link')
+  await expect(page).toHaveURL(/[?&]agrupar=app/)
+  const filtradas = page.getByRole('region', { name: 'CAIS v2' }).getByRole('link')
   await expect(filtradas).toHaveCount(1)
   await expect(filtradas.nth(0)).toContainText('Marcos Lima')
   await expect(filtradas.nth(0)).toContainText('orientado')
