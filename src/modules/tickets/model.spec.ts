@@ -182,7 +182,10 @@ describe('agrupamento e quadros', () => {
       }),
     ]
     expect(agruparTickets(lista, 'app', agora).map((x) => x.rotulo)).toEqual(['App A', 'Zeta'])
-    expect(agruparTickets(lista, 'autor', agora).map((x) => x.rotulo)).toEqual(['Abel', 'Ana'])
+    expect(agruparTickets(lista, 'autor', agora).map((x) => x.rotulo)).toEqual([
+      'Abel · App A',
+      'Ana · Zeta',
+    ])
   })
   test('agruparTickets por autor separa o mesmo id de apps diferentes', () => {
     const lista = [
@@ -195,9 +198,12 @@ describe('agrupamento e quadros', () => {
         id: 'b',
         em: new Date('2026-11-27T09:00:00-03:00'),
         autor: { id: 's2:u1', nome: 'Ana', papel: 'x' },
+        sistema: { id: 's2', nome: 'Zeta' },
       }),
     ]
-    expect(agruparTickets(lista, 'autor', agora)).toHaveLength(2)
+    const g = agruparTickets(lista, 'autor', agora)
+    expect(g).toHaveLength(2)
+    expect(g.map((x) => x.rotulo)).toEqual(['Ana · App A', 'Ana · Zeta'])
   })
   test('quadrosDosTickets conta os três resultados', () => {
     expect(
