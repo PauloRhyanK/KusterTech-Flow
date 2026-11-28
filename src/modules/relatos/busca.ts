@@ -6,7 +6,12 @@ import { db } from '@/lib/db'
 import { log } from '@/lib/log'
 import { chaveDosSegredos, ErroDeSegredo } from '@/lib/segredos'
 import { abrirDemanda, guardarArquivo } from '@/modules/demandas/service'
-import { LIMITE_POR_ARQUIVO } from '@/modules/demandas/transicoes'
+import {
+  anexoDeRelatoVencido,
+  CONTEUDOS_ACEITOS,
+  inicioDaRetencaoDoRelato,
+  LIMITE_POR_ARQUIVO,
+} from '@/modules/demandas/transicoes'
 import { resumirErroParaLog } from '@/modules/github/model'
 import { type AlvoDoSistema, baixarAnexo, buscarPagina } from './cliente'
 import { PAGINAS_POR_BUSCA, type RelatoDoFio, type SinalDoFio } from './contrato'
@@ -24,6 +29,20 @@ import { alvoDoSistema, NAO_DECIFROU_O_TOKEN } from './sistemas'
 
 const TRANSACAO = { maxWait: 15_000, timeout: 15_000 }
 const SISTEMAS_AO_MESMO_TEMPO = 4
+export const TETO_DA_RECUPERACAO = 20
+
+const PREFIXO_DO_CONTEUDO = {
+  imagem: 'image/',
+  audio: 'audio/',
+  video: 'video/',
+  arquivo: 'application/',
+} as const
+
+/** Só vale baixar o que a demanda pode aceitar: tipo de conteúdo aceito e até o limite por arquivo. */
+function anexoRecuperavel(a: AnexoGravado): boolean {
+  const prefixo = PREFIXO_DO_CONTEUDO[a.tipo]
+  return a.bytes <= LIMITE_POR_ARQUIVO && CONTEUDOS_ACEITOS.anexo.some((c) => c.startsWith(prefixo))
+}
 
 export interface DependenciasDaBusca {
   buscar?: typeof buscarPagina
@@ -91,6 +110,8 @@ async function gravarRelato(
       autorPapel: r.autor.papel,
       assunto: r.contexto.tela,
       versao: r.contexto.versao,
+      plataforma: r.contexto.plataforma,
+      aparelho: r.contexto.aparelho,
       sinais,
     }
     if (r.resultado === 'orientado') {
@@ -126,12 +147,14 @@ async function copiarAnexos(
   alvo: AlvoDoSistema,
   copia: NonNullable<Copia>,
   baixar: typeof baixarAnexo,
-): Promise<void> {
+): Promise<{ copiados: number; falhas: number }> {
+  const resumo = { copiados: 0, falhas: 0 }
   for (const a of copia.anexos) {
     try {
       const b = await baixar(alvo, a.url, LIMITE_POR_ARQUIVO)
       if (!b.ok) {
         log.warn({ demandaId: copia.demandaId, motivo: b.motivo }, 'Anexo do relato não baixou.')
+        resumo.falhas++
         continue
       }
       const g = await guardarArquivo({
@@ -150,14 +173,17 @@ async function copiarAnexos(
           { demandaId: copia.demandaId, status: g.status },
           'Anexo do relato não foi aceito na demanda.',
         )
-      }
+        resumo.falhas++
+      } else resumo.copiados++
     } catch (erro) {
       log.warn(
         { demandaId: copia.demandaId, erro: resumirErroParaLog(erro) },
         'Falha ao copiar anexo do relato.',
       )
+      resumo.falhas++
     }
   }
+  return resumo
 }
 
 function camposDoSegue(s: SistemaParaBuscar, r: RelatoDoFio) {
@@ -325,6 +351,92 @@ export async function buscarTodos(
         )
       }
     }
+  }
+  return total
+}
+
+/**
+ * Copia os anexos de relatos que chegaram antes da cópia existir (ou cuja cópia nunca rodou):
+ * relato `segue` com demanda, sistema ativo e nenhuma linha de arquivo para o id derivado. Linha
+ * apagada pela retenção também conta como existente. Nunca altera a demanda; `guardarArquivo`
+ * aceita demanda no ar ou encerrada. Teto de 20 arquivos por rodada; falha tenta de novo na próxima.
+ */
+export async function recuperarAnexosFaltantes(
+  agora: Date,
+  deps: { baixar?: typeof baixarAnexo; chave?: Buffer | null } = {},
+): Promise<{ copiados: number; falhas: number }> {
+  const total = { copiados: 0, falhas: 0 }
+  const chave = deps.chave === undefined ? chaveDosSegredos(process.env) : deps.chave
+  if (!chave) return total
+  const baixar = deps.baixar ?? baixarAnexo
+  const relatos = await db.relato.findMany({
+    where: {
+      resultado: 'SEGUE',
+      demandaId: { not: null },
+      sistema: { estado: 'ATIVO', tokenCifrado: { not: null } },
+    },
+    orderBy: { em: 'asc' },
+    select: {
+      sistemaId: true,
+      idExterno: true,
+      demandaId: true,
+      anexos: true,
+      sistema: { select: { id: true, nome: true, url: true, tokenCifrado: true } },
+      demanda: {
+        select: {
+          noArEm: true,
+          encerrada: true,
+          eventos: { orderBy: { seq: 'desc' }, take: 1, select: { em: true } },
+        },
+      },
+    },
+  })
+  const candidatos = relatos.flatMap((r) => {
+    if (!r.demandaId || !r.demanda || !Array.isArray(r.anexos)) return []
+    const inicio = inicioDaRetencaoDoRelato({
+      noArEm: r.demanda.noArEm,
+      encerrada: r.demanda.encerrada,
+      encerradaEm: r.demanda.eventos[0]?.em ?? null,
+    })
+    if (anexoDeRelatoVencido(inicio, agora)) return []
+    // O que nunca seria aceito sai antes (caminho nulo mantém as posições dos ids derivados),
+    // para não ser baixado de hora em hora nem gastar o teto.
+    const anexos = anexosParaCopiar(
+      `${r.sistemaId}:${r.idExterno}`,
+      (r.anexos as unknown as AnexoGravado[]).map((a) =>
+        anexoRecuperavel(a) ? a : { ...a, caminho: null },
+      ),
+    )
+    return anexos.length > 0 ? [{ r, demandaId: r.demandaId, anexos }] : []
+  })
+  if (candidatos.length === 0) return total
+  const existentes = new Set(
+    (
+      await db.arquivoDaDemanda.findMany({
+        where: { id: { in: candidatos.flatMap((c) => c.anexos.map((a) => a.arquivoId)) } },
+        select: { id: true },
+      })
+    ).map((a) => a.id),
+  )
+  let restante = TETO_DA_RECUPERACAO
+  for (const c of candidatos) {
+    if (restante <= 0) break
+    const faltam = c.anexos.filter((a) => !existentes.has(a.arquivoId)).slice(0, restante)
+    if (faltam.length === 0) continue
+    let alvo: AlvoDoSistema
+    try {
+      alvo = alvoDoSistema(c.r.sistema, chave)
+    } catch {
+      log.warn(
+        { sistemaId: c.r.sistemaId },
+        'Token do sistema não decifrou; anexos não recuperados.',
+      )
+      continue
+    }
+    restante -= faltam.length
+    const r = await copiarAnexos(alvo, { demandaId: c.demandaId, anexos: faltam }, baixar)
+    total.copiados += r.copiados
+    total.falhas += r.falhas
   }
   return total
 }

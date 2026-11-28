@@ -169,7 +169,7 @@ export function agruparTickets(
       rotulo = t.sistema.nome
     } else if (por === 'autor') {
       chave = t.autor.id
-      rotulo = t.autor.nome
+      rotulo = `${t.autor.nome} · ${t.sistema.nome}`
     } else {
       chave = t.demanda?.id ?? ''
       rotulo = t.demanda?.titulo ?? 'Sem demanda'

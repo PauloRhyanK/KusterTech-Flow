@@ -70,9 +70,14 @@ export const relatoDoFioSchema = z.object({
   transcricao: opcional(z.string()),
   anexos: z.array(anexoSchema).max(20).default([]),
   contexto: z
-    .object({ tela: opcional(z.string().max(120)), versao: opcional(z.string().max(40)) })
+    .object({
+      tela: opcional(z.string().max(120)),
+      versao: opcional(z.string().max(40)),
+      plataforma: opcional(z.string().max(40)),
+      aparelho: opcional(z.string().max(80)),
+    })
     .nullish()
-    .transform((v) => v ?? { tela: null, versao: null }),
+    .transform((v) => v ?? { tela: null, versao: null, plataforma: null, aparelho: null }),
   sinais: z.array(sinalSchema).max(200).default([]),
   cursor: opcional(z.string().regex(/^[0-9]{1,30}$/)),
 })

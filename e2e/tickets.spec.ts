@@ -181,10 +181,13 @@ test('tickets: quadros, lista do app, detalhe com imagem, link da demanda e filt
   if (mobile) {
     // Com um ticket escolhido, o celular mostra só o detalhe, com o caminho de volta.
     await expect(doApp).toBeHidden()
+    await expect(page.getByRole('search', { name: 'Filtros dos tickets' })).toBeHidden()
+    await expect(page.getByText('orientados na hora', { exact: true })).toBeHidden()
     await expect(page.getByRole('link', { name: 'Voltar à lista' })).toBeVisible()
     await capturar(page, '03-detalhe-mobile')
   } else {
     await expect(linhas.nth(0)).toHaveAttribute('aria-current', 'true')
+    await expect(page.getByRole('search', { name: 'Filtros dos tickets' })).toBeVisible()
     await capturar(page, '02-detalhe-desktop')
   }
 

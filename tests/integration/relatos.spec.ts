@@ -10,7 +10,7 @@ import { decifrarSegredo, MENSAGEM_SEM_CHAVE } from '@/lib/segredos'
 import { criarFonteFixtures } from '@/modules/github/fonte-fixtures'
 import { sincronizarCatalogo } from '@/modules/github/reconciliacao'
 import { enfileirarAutomaticos, enviarPendentes } from '@/modules/relatos/andamento'
-import { buscarSistema, buscarTodos } from '@/modules/relatos/busca'
+import { buscarSistema, buscarTodos, recuperarAnexosFaltantes } from '@/modules/relatos/busca'
 import type {
   baixarAnexo,
   buscarPagina,
@@ -448,6 +448,28 @@ describe('tela', () => {
   })
 })
 
+describe('contexto do relato', () => {
+  test('grava versão, plataforma e aparelho do contexto; ausentes ficam nulos', async () => {
+    const { id } = await criarSistema(admin, dados())
+    const { buscar } = sistemaFalso([
+      {
+        relatos: [
+          relatoDeExemplo({
+            contexto: { tela: 'Pedidos', versao: '2.3', plataforma: 'ios', aparelho: 'iPhone 15' },
+          }),
+          relatoDeExemplo({ id: ID_B, ticket: 'R-0002' }),
+        ],
+        cursor: '2',
+      },
+    ])
+    await buscarSistema(id, agora, { buscar, chave })
+    const a = await db.relato.findFirstOrThrow({ where: { idExterno: ID_A } })
+    expect(a).toMatchObject({ versao: '2.3', plataforma: 'ios', aparelho: 'iPhone 15' })
+    const b = await db.relato.findFirstOrThrow({ where: { idExterno: ID_B } })
+    expect(b).toMatchObject({ plataforma: null, aparelho: null })
+  })
+})
+
 describe('anexos do relato', () => {
   let dir: string
   let dirAntes: string | undefined
@@ -513,5 +535,201 @@ describe('anexos do relato', () => {
     await buscarSistema(id, new Date(agora.getTime() + MIN), { buscar, chave, baixar })
     expect(chamadas).toBe(2)
     expect(await db.arquivoDaDemanda.count()).toBe(2)
+  })
+})
+
+describe('recuperar anexos faltantes', () => {
+  let dir: string
+  let dirAntes: string | undefined
+  beforeAll(async () => {
+    dirAntes = process.env.FLOW_ARQUIVOS_DIR
+    dir = await mkdtemp(join(tmpdir(), 'flow-relatos-recuperar-'))
+    process.env.FLOW_ARQUIVOS_DIR = dir
+  })
+  afterAll(async () => {
+    if (dirAntes === undefined) delete process.env.FLOW_ARQUIVOS_DIR
+    else process.env.FLOW_ARQUIVOS_DIR = dirAntes
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const anexo = (n: number) => ({
+    tipo: 'imagem',
+    url: `https://alfa.exemplo.com/v1/relatos/anexos/p${n}`,
+    bytes: 3,
+  })
+  const baixaTudo: typeof baixarAnexo = async () => ({
+    ok: true,
+    conteudo: 'image/png',
+    bytes: Buffer.from([137, 80, 78]),
+  })
+  const naoBaixa: typeof baixarAnexo = async () => ({
+    ok: false,
+    motivo: 'O sistema respondeu 500.',
+  })
+
+  /** Relato que chegou antes da cópia existir: demanda aberta, nenhuma linha de arquivo. */
+  async function relatoSemCopia(n = 2, extra: Record<string, unknown> = {}) {
+    const { id } = await criarSistema(admin, dados())
+    const { buscar } = sistemaFalso([
+      {
+        relatos: [
+          relatoDeExemplo({ anexos: Array.from({ length: n }, (_, i) => anexo(i + 1)), ...extra }),
+        ],
+        cursor: '1',
+      },
+    ])
+    await buscarSistema(id, agora, { buscar, chave, baixar: naoBaixa })
+    expect(await db.arquivoDaDemanda.count()).toBe(0)
+    return { sistemaId: id, demanda: await db.demanda.findFirstOrThrow() }
+  }
+
+  test('copia o que falta, também para demanda já no ar, sem alterar a demanda', async () => {
+    const { demanda } = await relatoSemCopia()
+    await db.demanda.update({ where: { id: demanda.id }, data: { noArEm: agora } })
+    const antes = await db.demanda.findUniqueOrThrow({ where: { id: demanda.id } })
+    const r = await recuperarAnexosFaltantes(new Date(agora.getTime() + MIN), {
+      baixar: baixaTudo,
+      chave,
+    })
+    expect(r).toEqual({ copiados: 2, falhas: 0 })
+    const arquivos = await db.arquivoDaDemanda.findMany({ orderBy: { nome: 'asc' } })
+    expect(arquivos.map((a) => a.nome)).toEqual(['print-1-do-relato', 'print-2-do-relato'])
+    expect(await db.demanda.findUniqueOrThrow({ where: { id: demanda.id } })).toEqual(antes)
+  })
+
+  test('não recopia o que já existe', async () => {
+    await relatoSemCopia()
+    await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
+    let chamadas = 0
+    const r = await recuperarAnexosFaltantes(agora, {
+      baixar: async (...a) => (chamadas++, baixaTudo(...a)),
+      chave,
+    })
+    expect(r).toEqual({ copiados: 0, falhas: 0 })
+    expect(chamadas).toBe(0)
+  })
+
+  test('não recopia o apagado pela retenção', async () => {
+    await relatoSemCopia()
+    await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
+    await db.arquivoDaDemanda.updateMany({ data: { apagadoEm: agora } })
+    const r = await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
+    expect(r).toEqual({ copiados: 0, falhas: 0 })
+    expect(await db.arquivoDaDemanda.count({ where: { apagadoEm: null } })).toBe(0)
+  })
+
+  test('pula a demanda com a retenção vencida', async () => {
+    const { demanda } = await relatoSemCopia()
+    await db.demanda.update({ where: { id: demanda.id }, data: { noArEm: agora } })
+    const depois = new Date(agora.getTime() + 91 * 24 * 60 * 60_000)
+    const r = await recuperarAnexosFaltantes(depois, { baixar: baixaTudo, chave })
+    expect(r).toEqual({ copiados: 0, falhas: 0 })
+    expect(await db.arquivoDaDemanda.count()).toBe(0)
+  })
+
+  test('falha de download conta e não quebra; a próxima rodada tenta de novo', async () => {
+    await relatoSemCopia()
+    const r = await recuperarAnexosFaltantes(agora, { baixar: naoBaixa, chave })
+    expect(r).toEqual({ copiados: 0, falhas: 2 })
+    const lancou: typeof baixarAnexo = async () => {
+      throw new Error('rede')
+    }
+    expect(await recuperarAnexosFaltantes(agora, { baixar: lancou, chave })).toEqual({
+      copiados: 0,
+      falhas: 2,
+    })
+    expect(await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })).toEqual({
+      copiados: 2,
+      falhas: 0,
+    })
+  })
+
+  test('respeita o teto de 20 arquivos por rodada', async () => {
+    await relatoSemCopia(8)
+    await db.relato.create({
+      data: {
+        sistemaId: (await db.sistemaConectado.findFirstOrThrow()).id,
+        idExterno: ID_B,
+        ticket: 'R-0002',
+        canal: 'SISTEMA',
+        em: new Date('2026-11-26T13:30:00.000Z'),
+        autorIdExterno: 'u-2',
+        autorNome: 'Bia',
+        autorPapel: 'Assessora',
+        resultado: 'SEGUE',
+        demandaId: (await db.demanda.findFirstOrThrow()).id,
+        anexos: Array.from({ length: 16 }, (_, i) => ({
+          tipo: 'imagem',
+          bytes: 3,
+          caminho: `https://alfa.exemplo.com/v1/relatos/anexos/q${i}`,
+        })),
+        sinais: [],
+      },
+    })
+    const r1 = await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
+    expect(r1).toEqual({ copiados: 20, falhas: 0 })
+    const r2 = await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
+    expect(r2).toEqual({ copiados: 4, falhas: 0 })
+    expect(await db.arquivoDaDemanda.count()).toBe(24)
+  })
+
+  test('ignora sistema que não está ativo e relato orientado', async () => {
+    const { sistemaId } = await relatoSemCopia()
+    await db.sistemaConectado.update({ where: { id: sistemaId }, data: { estado: 'DESCONECTADO' } })
+    const r = await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
+    expect(r).toEqual({ copiados: 0, falhas: 0 })
+    await db.sistemaConectado.update({ where: { id: sistemaId }, data: { estado: 'ATIVO' } })
+    await db.relato.updateMany({ data: { resultado: 'ORIENTADO' } })
+    expect(await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })).toEqual({
+      copiados: 0,
+      falhas: 0,
+    })
+  })
+
+  test('vídeo e arquivo nunca são baixados, nem gastam o teto nem contam como falha', async () => {
+    const { sistemaId, demanda } = await relatoSemCopia(0)
+    const base = {
+      sistemaId,
+      ticket: 'R-9',
+      canal: 'SISTEMA' as const,
+      em: new Date('2026-11-26T13:00:00.000Z'),
+      autorIdExterno: 'u-2',
+      autorNome: 'Bia',
+      autorPapel: 'Assessora',
+      resultado: 'SEGUE' as const,
+      demandaId: demanda.id,
+      sinais: [],
+    }
+    const url = (n: string) => `https://alfa.exemplo.com/v1/relatos/anexos/${n}`
+    await db.relato.create({
+      data: {
+        ...base,
+        idExterno: ID_B,
+        em: new Date('2026-11-26T12:00:00.000Z'),
+        anexos: [
+          ...Array.from({ length: 25 }, (_, i) => ({
+            tipo: i % 2 ? 'video' : 'arquivo',
+            bytes: 3,
+            caminho: url(`v${i}`),
+          })),
+          { tipo: 'imagem', bytes: 11 * 1024 * 1024, caminho: url('grande') },
+        ],
+      },
+    })
+    await db.relato.create({
+      data: {
+        ...base,
+        idExterno: ID_C,
+        em: new Date('2026-11-26T14:00:00.000Z'),
+        anexos: [{ tipo: 'imagem', bytes: 3, caminho: url('nova') }],
+      },
+    })
+    const pedidos: string[] = []
+    const r = await recuperarAnexosFaltantes(agora, {
+      baixar: async (a, u, l) => (pedidos.push(u), baixaTudo(a, u, l)),
+      chave,
+    })
+    expect(pedidos).toEqual([url('nova')])
+    expect(r).toEqual({ copiados: 1, falhas: 0 })
   })
 })

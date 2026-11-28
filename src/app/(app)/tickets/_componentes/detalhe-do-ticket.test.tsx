@@ -28,6 +28,8 @@ const base: TicketDetalhado = {
   transcricao: null,
   tela: '/leads',
   versao: '2.14.3',
+  plataforma: null,
+  aparelho: null,
   tipoSugerido: null,
   idExterno: 'rel_8f2a',
   projeto: { nome: 'CAIS', clientes: ['CAIS'] },
@@ -74,6 +76,25 @@ describe('DetalheDoTicket', () => {
     }
     expect(screen.getByText('Alfa, Beta')).toBeInTheDocument()
     expect(screen.getByText('Defeito')).toBeInTheDocument()
+  })
+
+  test('De onde veio mostra plataforma e aparelho só quando houver valor', () => {
+    const { rerender } = render(
+      <DetalheDoTicket ticket={base} filtros={filtros} emPagina={false} />,
+    )
+    expect(screen.queryByText('Plataforma')).toBeNull()
+    expect(screen.queryByText('Aparelho')).toBeNull()
+    rerender(
+      <DetalheDoTicket
+        ticket={{ ...base, plataforma: 'android', aparelho: 'Pixel 8' }}
+        filtros={filtros}
+        emPagina={false}
+      />,
+    )
+    expect(screen.getByText('Plataforma')).toBeInTheDocument()
+    expect(screen.getByText('android')).toBeInTheDocument()
+    expect(screen.getByText('Aparelho')).toBeInTheDocument()
+    expect(screen.getByText('Pixel 8')).toBeInTheDocument()
   })
 
   test('sem clientes e sem tipo sugerido omite as linhas', () => {

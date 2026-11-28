@@ -2,7 +2,7 @@
 import { log } from '@/lib/log'
 import { chaveDosSegredos, ErroDeSegredo } from '@/lib/segredos'
 import { enfileirarAutomaticos, enviarPendentes } from './andamento'
-import { buscarTodos } from './busca'
+import { buscarTodos, recuperarAnexosFaltantes } from './busca'
 
 function chaveOuAviso(tarefa: string): Buffer | null {
   try {
@@ -35,4 +35,12 @@ export async function enviarAndamentoDosRelatos(agora: Date): Promise<void> {
   if (enfileirados + resumo.enviados + resumo.reagendados + resumo.descartados > 0) {
     log.info({ tarefa: 'enviar-andamento', enfileirados, ...resumo }, 'andamento dos relatos')
   }
+}
+
+export async function recuperarAnexosDosRelatos(
+  agora: Date,
+): Promise<{ copiados: number; falhas: number }> {
+  const chave = chaveOuAviso('recuperar-anexos-de-relatos')
+  if (!chave) return { copiados: 0, falhas: 0 }
+  return recuperarAnexosFaltantes(agora, { chave })
 }

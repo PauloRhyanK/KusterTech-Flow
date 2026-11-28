@@ -211,6 +211,8 @@ test('t válido preenche escolhido com mídias, demanda e histórico; inválido 
     ticket: 'T-9',
     assunto: 'Checkout',
     versao: '1.2.3',
+    plataforma: 'android',
+    aparelho: 'Pixel 8',
     anexos: [
       { tipo: 'imagem', bytes: 10, caminho: '/x.png' },
       { tipo: 'audio', bytes: 20, caminho: null },
@@ -256,6 +258,8 @@ test('t válido preenche escolhido com mídias, demanda e histórico; inválido 
     ticket: 'T-9',
     tela: 'Checkout',
     versao: '1.2.3',
+    plataforma: 'android',
+    aparelho: 'Pixel 8',
     idExterno: 'r-det',
     projeto: { nome: 'Projeto Alfa', clientes: [] },
   })
