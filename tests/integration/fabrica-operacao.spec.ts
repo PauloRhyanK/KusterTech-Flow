@@ -85,6 +85,7 @@ const etapa = (chave: string, extra: Partial<EtapaDoPlano> = {}): EtapaDoPlano =
   chave,
   tipo: 'implementacao',
   papel: 'engenheiro',
+  instrucoes: `Faça ${chave}.`,
   repositorioId,
   arquivos: [`src/${chave}/**`],
   dependeDe: [],
@@ -119,6 +120,10 @@ describe('plano aprovado', () => {
     expect((await db.demanda.findUniqueOrThrow({ where: { id: demandaId } })).motor).toBe('v2')
   })
 
+  test('implementação sem instruções é recusada', async () => {
+    await expect(plano([etapa('a', { instrucoes: '  ' })])).rejects.toThrow(/instruções/)
+  })
+
   test('dependência inexistente é recusada', async () => {
     await expect(plano([etapa('a', { dependeDe: ['fantasma'] })])).rejects.toThrow(/fantasma/)
   })
@@ -138,6 +143,9 @@ describe('pegarTarefa', () => {
       tipo: 'executar',
       geracao: 1,
       papel: 'engenheiro',
+      etapaChave: 'a',
+      tipoDaEtapa: 'implementacao',
+      instrucoes: 'Faça a.',
       repo: 'exemplo/flow',
       prUrl: null,
       expiraEm: depois(DURACAO_DA_RESERVA_MS).toISOString(),
