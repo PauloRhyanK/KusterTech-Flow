@@ -294,8 +294,7 @@ export async function receberEventoDaFabrica(
     if (!UUID.test(demandaId)) return { status: 404, corpo: NAO_ENCONTRADA }
 
     const { id, em, tipo, dados } = lido.data
-    const motor = await db.demanda.findUnique({ where: { id: demandaId }, select: { motor: true } })
-    if (motor?.motor === 'v2') {
+    if (UUID.test(demandaId) && (await ehDoMotorNovo(demandaId))) {
       return { status: 409, corpo: { erro: 'Esta demanda é do motor novo da Fábrica.' } }
     }
     let r
@@ -337,6 +336,11 @@ export async function receberEventoDaFabrica(
   }
 }
 
+async function ehDoMotorNovo(demandaId: string): Promise<boolean> {
+  const d = await db.demanda.findUnique({ where: { id: demandaId }, select: { motor: true } })
+  return d?.motor === 'v2'
+}
+
 export async function receberArquivoDaFabrica(
   authorization: string | null,
   demandaId: string,
@@ -347,6 +351,9 @@ export async function receberArquivoDaFabrica(
   try {
     const fonte = await autenticarFonte(authorization)
     if (fonte === null) return { status: 401, corpo: NAO_AUTORIZADO }
+    if (UUID.test(demandaId) && (await ehDoMotorNovo(demandaId))) {
+      return { status: 409, corpo: { erro: 'Esta demanda é do motor novo da Fábrica.' } }
+    }
 
     const id = query.get('id') ?? ''
     const tipo = query.get('tipo')

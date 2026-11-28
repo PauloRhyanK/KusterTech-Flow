@@ -24,6 +24,7 @@ function foto(extra: Partial<FotoDaDemandaV2> = {}): FotoDaDemandaV2 {
       commitAlvo: null,
     },
     ultimaTrava: null,
+    travasEmitidas: 0,
     ...extra,
   }
 }
@@ -137,7 +138,7 @@ describe('proximoPasso', () => {
     })
   })
 
-  test('desenvolvida sem nenhum PR mergeado (só leitura): nada a entregar', () => {
+  test('desenvolvida sem nenhum PR mergeado (só leitura): trava avisando que não há o que publicar', () => {
     expect(
       proximoPasso(
         foto({
@@ -145,7 +146,9 @@ describe('proximoPasso', () => {
           etapas: [{ chave: 'b', estado: 'concluida', prUrl: null, motivo: null, tentativas: 1 }],
         }),
       ),
-    ).toBeNull()
+    ).toMatchObject({
+      evento: { tipo: 'travada', dados: { motivo: expect.stringMatching(/sem nenhuma mudança/) } },
+    })
   })
 
   test('entregue: pede publicação na fila só quando a parte chega por publicação', () => {
@@ -186,7 +189,7 @@ describe('proximoPasso', () => {
     const trava = proximoPasso(foto({ marco: 'desenvolvida', ...bloqueada }))
     expect(trava).toMatchObject({
       tipo: 'evento',
-      chave: 'travada:rev1:a#4',
+      chave: 'travada:rev1:1',
       evento: {
         tipo: 'travada',
         dados: { motivo: 'A etapa "a" travou: verificação falhou 3 vezes', url: null },
@@ -197,10 +200,43 @@ describe('proximoPasso', () => {
     ).toBeNull()
     expect(
       proximoPasso(
-        foto({ marco: 'desenvolvida', espera: 'travada', ultimaTrava: 'travada:rev1:a#4' }),
+        foto({
+          marco: 'desenvolvida',
+          espera: 'travada',
+          ultimaTrava: 'travada:rev1:1',
+          travasEmitidas: 1,
+        }),
       ),
-    ).toMatchObject({ chave: 'travada:rev1:a#4:fim', evento: { tipo: 'destravada', dados: {} } })
+    ).toMatchObject({ chave: 'travada:rev1:1:fim', evento: { tipo: 'destravada', dados: {} } })
   })
+
+  test('trava de novo depois de destravar tem chave nova', () => {
+    const b = {
+      etapas: [
+        { chave: 'a', estado: 'bloqueada' as const, prUrl: null, motivo: 'x', tentativas: 4 },
+      ],
+    }
+    expect(proximoPasso(foto({ marco: 'desenvolvida', ...b, travasEmitidas: 1 }))).toMatchObject({
+      chave: 'travada:rev1:2',
+    })
+  })
+
+  test.each(['desenho', 'testada'])('marco %s (tela) trava avisando o dono', (marco) => {
+    expect(proximoPasso(foto({ marco }))).toMatchObject({ evento: { tipo: 'travada' } })
+  })
+
+  test.each(['DESCARTADA', 'NAO_CHEGOU'] as const)(
+    'parte %s trava em vez de parar em silêncio',
+    (estado) => {
+      expect(
+        proximoPasso(
+          foto({ marco: 'desenvolvida', ...feitas, parte: { ...foto().parte, estado } }),
+        ),
+      ).toMatchObject({
+        evento: { tipo: 'travada' },
+      })
+    },
+  )
 
   test('outra espera (do dono) segura tudo', () => {
     expect(proximoPasso(foto({ espera: 'decidir_destino' }))).toBeNull()

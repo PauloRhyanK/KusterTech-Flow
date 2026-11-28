@@ -48,3 +48,19 @@
 
 - [ ] Produção: `Projeto(Flow).motorPadrao = 'v2'`; `ConfiguracaoDePublicacao(Flow) = { workflow: '', deployAutomatico: true, urlDaVersao: 'http://web:3000/api/versao' }`; habilitar `fabrica-worker` com Sonnet/Opus.
 - [ ] Primeira demanda real: escolhida pelo dono, plano aprovado por ele, até no ar conferido.
+
+## Revisão independente (28/11) — o que foi feito com cada achado
+
+| Achado | Decisão |
+|---|---|
+| A fila não conhecia `deployAutomatico`: um pedido no repositório do Flow a travaria (workflow vazio) e as partes por versão nunca fechariam | corrigido: em repositório com `deployAutomatico`, a fila dispensa os pedidos pendentes e nunca dispara; as partes fecham pela versão conferida |
+| Demanda v2 com tela parava em silêncio em `desenho`/`testada` | corrigido: fica travada para o dono com o motivo (o motor novo ainda não desenha nem testa no navegador) |
+| Plano com etapas em mais de um repositório gravava commit de outro repositório | corrigido: nesta fase, o plano só aceita etapas no repositório da demanda (multi-repo é M5) |
+| Revisão do plano aprovada depois da entrega não segurava a demanda | corrigido: plano novo para demanda entregue ou encerrada é recusado ("abra uma demanda nova") |
+| Kit ainda enviava arquivo e resposta de conversa para demanda v2 | corrigido: 409 nos dois |
+| Trava repetida não reaparecia | corrigido: cada trava tem chave nova (contador) |
+| Parte descartada/não chegou e plano sem código paravam em silêncio | corrigido: travam com motivo |
+| `publicar` podia repetir pedidos | corrigido: só segue se o pedido ficou ligado à parte |
+| `motorPadrao` texto livre | corrigido: `CHECK` em `legado`/`v2` |
+| Consulta do motor fora da transação do evento do kit | **aceito**: a troca de motor só acontece por `registrarPlanoAprovado` e o kit está pausado para o Flow |
+| Tela de configuração da fila recusa `workflow: ''` e não mostra `deployAutomatico` | **aceito nesta fase**: a configuração do Flow é feita uma vez, fora da tela |

@@ -178,6 +178,16 @@ export async function receberRespostaDoAtendente(
     if (!UUID.test(conversaId)) {
       return { status: 404, corpo: { erro: 'Conversa não encontrada.' } }
     }
+    const daConversa = await db.conversa.findUnique({
+      where: { id: conversaId },
+      select: { demanda: { select: { motor: true } } },
+    })
+    if (daConversa?.demanda?.motor === 'v2') {
+      return {
+        status: 409,
+        corpo: { erro: 'Esta conversa é de uma demanda do motor novo da Fábrica.' },
+      }
+    }
 
     const r = await registrarRespostaDoAtendente(fonte.id, conversaId, lido.data, agora)
     if (r.status === 200 || r.status === 201) {

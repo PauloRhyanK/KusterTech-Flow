@@ -3,6 +3,8 @@ import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { abrirDemanda } from '@/modules/demandas/service'
 import { registrarPlanoAprovado } from '@/modules/fabrica-operacao/service'
+import { processarFilaDePublicacao } from '@/modules/fila-de-publicacao/worker'
+import type { FonteGitHub } from '@/modules/github/fonte'
 import {
   conferirVersoesAutomaticas,
   sincronizarDemandasV2,
@@ -198,5 +200,57 @@ describe('sincronizarDemandasV2', () => {
     )
     await sincronizarDemandasV2(AGORA)
     expect(await eventos(id)).not.toContain('triagem')
+  })
+
+  test('plano novo depois da entrega é recusado', async () => {
+    const id = await demandaComPlano()
+    await db.demanda.update({ where: { id }, data: { entregueEm: AGORA } })
+    await expect(
+      registrarPlanoAprovado(admin, {
+        demandaId: id,
+        conteudo: { o: 2 },
+        etapas: [
+          {
+            chave: 'outra',
+            tipo: 'implementacao',
+            papel: 'engenheiro',
+            instrucoes: 'x',
+            verificacao: 'true',
+            repositorioId,
+            arquivos: ['x'],
+            dependeDe: [],
+            prioridade: 0,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/entregue/)
+  })
+})
+
+describe('fila de publicação com deploy automático', () => {
+  test('pedido pendente no repositório que se publica sozinho é dispensado, sem disparar nada', async () => {
+    await db.pedidoDePublicacao.create({
+      data: {
+        repositorioId,
+        commit: SHA,
+        estado: 'NA_FILA',
+        modo: 'IMEDIATO',
+        descricao: 'pedido legado',
+      } as never,
+    })
+    const chamadas: string[] = []
+    const fonte = new Proxy(
+      {},
+      {
+        get: (_alvo, nome) => async () => {
+          chamadas.push(String(nome))
+          return null
+        },
+      },
+    )
+    await processarFilaDePublicacao(fonte as unknown as FonteGitHub, AGORA)
+    const pedido = await db.pedidoDePublicacao.findFirstOrThrow({ where: { repositorioId } })
+    expect(pedido.estado).toBe('DISPENSADO')
+    expect(chamadas).not.toContain('dispararWorkflow')
   })
 })

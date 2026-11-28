@@ -99,6 +99,9 @@ async function fotografar(demandaId: string): Promise<{
       em: pr?.mergeadoNoGitHub?.toISOString() ?? null,
     }
   }
+  const travasEmitidas = await db.eventoDaDemanda.count({
+    where: { demandaId, tipo: 'travada', idExterno: { startsWith: `v2:${demandaId}:` } },
+  })
   const trava = await db.eventoDaDemanda.findFirst({
     where: { demandaId, tipo: 'travada', idExterno: { startsWith: `v2:${demandaId}:` } },
     orderBy: { seq: 'desc' },
@@ -134,6 +137,7 @@ async function fotografar(demandaId: string): Promise<{
         commitAlvo: parte.commitAlvo,
       },
       ultimaTrava: trava?.idExterno.slice(`v2:${demandaId}:`.length) ?? null,
+      travasEmitidas,
     },
   }
 }
@@ -159,6 +163,15 @@ async function aplicarPasso(demandaId: string, agora: Date): Promise<boolean> {
       agora,
       lido.parteId,
     )
+    // só segue se o pedido ficou ligado à parte; senão o próximo ciclo pediria de novo
+    const parte = await db.parteDaDemanda.findUnique({
+      where: { id: lido.parteId },
+      select: { pedidoId: true },
+    })
+    if (parte?.pedidoId === null || parte?.pedidoId === undefined) {
+      log.warn({ demandaId }, 'fábrica 2.0: o pedido de publicação não ficou ligado à parte')
+      return false
+    }
     return true
   }
   const r = await registrarEvento({

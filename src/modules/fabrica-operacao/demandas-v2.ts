@@ -34,6 +34,8 @@ export interface FotoDaDemandaV2 {
   }
   /** Chave (sem prefixo) da última trava emitida por este motor, para destravar. */
   ultimaTrava: string | null
+  /** Quantas travas este motor já emitiu nesta demanda (cada nova trava tem chave nova). */
+  travasEmitidas: number
 }
 
 export type PassoDaDemanda =
@@ -69,21 +71,39 @@ function triagem(f: FotoDaDemandaV2, revisao: NonNullable<FotoDaDemandaV2['revis
   return dados
 }
 
+/** Algo que o motor novo não resolve sozinho: a demanda fica travada para o dono, com o motivo. */
+function problemaDaDemanda(f: FotoDaDemandaV2): string | null {
+  const bloqueada = f.etapas.find((e) => e.estado === 'bloqueada')
+  if (bloqueada)
+    return `A etapa "${bloqueada.chave}" travou: ${bloqueada.motivo ?? 'sem motivo registrado'}`
+  if (f.marco === 'desenho' || f.marco === 'testada') {
+    return 'O motor novo ainda não faz desenho nem teste no navegador; esta demanda precisa do dono.'
+  }
+  if (f.parte.estado === 'DESCARTADA' || f.parte.estado === 'NAO_CHEGOU') {
+    return `A parte de entrega está "${f.parte.estado.toLowerCase()}"; o motor novo não a retoma sozinho.`
+  }
+  if (
+    f.marco === 'desenvolvida' &&
+    f.etapas.length > 0 &&
+    f.etapas.every((e) => FINAIS_OK.includes(e.estado)) &&
+    !f.etapas.some((e) => e.estado === 'mergeada' && e.prUrl !== null)
+  ) {
+    return 'O plano terminou sem nenhuma mudança de código para publicar.'
+  }
+  return null
+}
+
 export function proximoPasso(f: FotoDaDemandaV2): PassoDaDemanda | null {
   if (f.encerrada || f.revisao === null) return null
   const r = f.revisao
 
-  const bloqueadas = f.etapas.filter((e) => e.estado === 'bloqueada')
-  if (bloqueadas.length > 0) {
-    if (f.espera === 'travada') return null
-    const e = bloqueadas[0]!
-    const chave = `travada:${r.id}:${bloqueadas.map((b) => `${b.chave}#${b.tentativas}`).join(',')}`
-    const motivo = `A etapa "${e.chave}" travou: ${e.motivo ?? 'sem motivo registrado'}`.slice(
-      0,
-      300,
-    )
-    return { tipo: 'evento', chave, evento: { tipo: 'travada', dados: { motivo, url: null } } }
-  }
+  const travar = (motivo: string): PassoDaDemanda => ({
+    tipo: 'evento',
+    chave: `travada:${r.id}:${f.travasEmitidas + 1}`,
+    evento: { tipo: 'travada', dados: { motivo: motivo.slice(0, 300), url: null } },
+  })
+  const problema = problemaDaDemanda(f)
+  if (problema !== null) return f.espera === 'travada' ? null : travar(problema)
   if (f.espera === 'travada') {
     // só destrava o que este motor travou
     if (f.ultimaTrava === null) return null

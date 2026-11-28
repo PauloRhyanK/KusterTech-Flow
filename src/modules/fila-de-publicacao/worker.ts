@@ -172,6 +172,24 @@ class CicloDoRepositorio {
   }
 
   private async fila(): Promise<void> {
+    const automatico = await db.configuracaoDePublicacao.findUnique({
+      where: { repositorioId: this.repo.id },
+      select: { deployAutomatico: true },
+    })
+    if (automatico?.deployAutomatico) {
+      // o repositório se publica sozinho a cada merge (o próprio Flow): não há workflow a disparar;
+      // a versão no ar é conferida pela Fábrica 2.0 e as partes fecham por `fecharPartesContidas`
+      const { count } = await db.pedidoDePublicacao.updateMany({
+        where: { repositorioId: this.repo.id, estado: { in: [...PENDENTES] } },
+        data: {
+          estado: 'DISPENSADO',
+          motivo:
+            'O repositório se publica sozinho a cada merge; a versão no ar é conferida no site.',
+        },
+      })
+      this.resumo.dispensados += count
+      return
+    }
     const pendentes = await db.pedidoDePublicacao.count({
       where: { repositorioId: this.repo.id, estado: { in: [...PENDENTES] } },
     })
