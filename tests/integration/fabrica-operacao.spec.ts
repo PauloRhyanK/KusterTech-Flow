@@ -86,6 +86,7 @@ const etapa = (chave: string, extra: Partial<EtapaDoPlano> = {}): EtapaDoPlano =
   tipo: 'implementacao',
   papel: 'engenheiro',
   instrucoes: `Faça ${chave}.`,
+  verificacao: 'pnpm test',
   repositorioId,
   arquivos: [`src/${chave}/**`],
   dependeDe: [],
@@ -494,5 +495,117 @@ describe('painel da operação', () => {
     await expect(
       obterPainelDeOperacao({ usuarioId: admin.usuarioId, papeis: [] }, AGORA),
     ).rejects.toThrow()
+  })
+})
+
+describe('gates do PR', () => {
+  const SHA = 'a'.repeat(40)
+  const OUTRO = 'b'.repeat(40)
+
+  async function emGates(sha: string | null = SHA) {
+    await plano([etapa('a')])
+    const t = await pegarTarefa(w1, AGORA)
+    await receberResultado(
+      w1,
+      {
+        idExterno: 'pr',
+        execucaoId: t!.execucaoId,
+        geracao: 1,
+        resultado: { tipo: 'pr_aberto', prUrl: 'https://github.com/exemplo/flow/pull/7' },
+      },
+      AGORA,
+    )
+    await db.etapaOperacional.updateMany({ data: { headSha: sha } })
+    return (await db.etapaOperacional.findFirstOrThrow({ where: { chave: 'a' } })).id
+  }
+
+  const enviar = (t: { execucaoId: string }, resultado: never, id = 'g1', quando = AGORA) =>
+    receberResultado(w1, { idExterno: id, execucaoId: t.execucaoId, geracao: 1, resultado }, quando)
+
+  test('sem head não oferece gate', async () => {
+    await emGates(null)
+    expect(await pegarTarefa(w1, AGORA)).toBeNull()
+  })
+
+  test('verifica primeiro, revisa depois, e a etapa não muda de estado', async () => {
+    await emGates()
+    const v = await pegarTarefa(w1, AGORA)
+    expect(v).toMatchObject({
+      finalidade: 'verificar',
+      sha: SHA,
+      verificacao: 'pnpm test',
+      papel: 'verificador',
+    })
+    expect(await enviar(v!, { tipo: 'verificacao', sha: SHA, codigo: 0 } as never)).toBe('aplicado')
+    expect(await estadoDa('a')).toBe('aguardando_gates')
+    const r = await pegarTarefa(w1, AGORA)
+    expect(r).toMatchObject({ finalidade: 'revisar', sha: SHA, papel: 'revisor' })
+    await enviar(
+      r!,
+      { tipo: 'revisao', sha: SHA, veredito: { resultado: 'aprovado', achados: [] } } as never,
+      'g2',
+    )
+    expect(await pegarTarefa(w1, AGORA)).toBeNull()
+    const ev = await db.evidenciaDaEtapa.findMany({ orderBy: { criadaEm: 'asc' } })
+    expect(ev.map((e) => [e.tipo, e.sha])).toEqual([
+      ['verificacao', SHA],
+      ['revisao', SHA],
+    ])
+    expect(ev[1]!.dados).toEqual({ resultado: 'aprovado', achados: [] })
+  })
+
+  test('verificação vermelha não pede revisão', async () => {
+    await emGates()
+    const v = await pegarTarefa(w1, AGORA)
+    await enviar(v!, { tipo: 'verificacao', sha: SHA, codigo: 1 } as never)
+    expect(await pegarTarefa(w1, AGORA)).toBeNull()
+  })
+
+  test('evidência de outro SHA não vale e conta como falha', async () => {
+    await emGates()
+    const v = await pegarTarefa(w1, AGORA)
+    await enviar(v!, { tipo: 'verificacao', sha: OUTRO, codigo: 0 } as never)
+    expect(await db.evidenciaDaEtapa.count()).toBe(0)
+    const e = await db.etapaOperacional.findFirstOrThrow({ where: { chave: 'a' } })
+    expect(e.proximaTentativaEm).toEqual(depois(5 * MIN))
+  })
+
+  test('falha técnica no gate recua; na 3ª bloqueia', async () => {
+    await emGates()
+    let quando = AGORA
+    for (let i = 1; i <= 3; i++) {
+      const v = await pegarTarefa(w1, quando)
+      expect(v).toMatchObject({ finalidade: 'verificar' })
+      await enviar(v!, { tipo: 'falha_tecnica', motivo: 'docker caiu' } as never, `f${i}`, quando)
+      quando = depois(i * 60 * MIN)
+    }
+    const e = await db.etapaOperacional.findFirstOrThrow({ where: { chave: 'a' } })
+    expect(e.estado).toBe('bloqueada')
+    expect(e.motivo).toMatch(/verificação falhou 3 vezes/)
+  })
+
+  test('head novo pede verificação nova', async () => {
+    await emGates()
+    const v = await pegarTarefa(w1, AGORA)
+    await enviar(v!, { tipo: 'verificacao', sha: SHA, codigo: 0 } as never)
+    await db.etapaOperacional.updateMany({ data: { headSha: OUTRO } })
+    expect(await pegarTarefa(w1, AGORA)).toMatchObject({ finalidade: 'verificar', sha: OUTRO })
+  })
+
+  test('correção leva os motivos do gate', async () => {
+    const id = await emGates()
+    await db.etapaOperacional.update({
+      where: { id },
+      data: { estado: 'pendente', correcoes: 1, motivo: 'CI vermelho', headSha: null },
+    })
+    expect(await pegarTarefa(w1, AGORA)).toMatchObject({
+      finalidade: 'executar',
+      correcao: 'CI vermelho',
+      prUrl: 'https://github.com/exemplo/flow/pull/7',
+    })
+  })
+
+  test('implementação sem verificação é recusada no plano', async () => {
+    await expect(plano([etapa('z', { verificacao: '' })])).rejects.toThrow(/verificação/)
   })
 })

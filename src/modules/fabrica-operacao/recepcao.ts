@@ -22,6 +22,7 @@ const NAO_AUTORIZADO = { erro: 'Não autorizado.' }
 const INVALIDO = { status: 422, corpo: { erro: 'Corpo inválido.' } } as const
 const texto = (max: number) => z.string().min(1).max(max)
 const geracao = z.number().int().min(1)
+const SHA = z.string().regex(/^[0-9a-f]{40}$/)
 
 export const resultadoSchema = z.discriminatedUnion('tipo', [
   z.strictObject({
@@ -41,6 +42,22 @@ export const resultadoSchema = z.discriminatedUnion('tipo', [
   z.strictObject({ tipo: z.literal('saida_invalida'), motivo: texto(500) }),
   z.strictObject({ tipo: z.literal('cancelada') }),
   z.strictObject({ tipo: z.literal('incerto') }),
+  z.strictObject({ tipo: z.literal('verificacao'), sha: SHA, codigo: z.number().int() }),
+  z.strictObject({
+    tipo: z.literal('revisao'),
+    sha: SHA,
+    veredito: z.object({
+      resultado: z.enum(['aprovado', 'correcoes']),
+      achados: z
+        .array(z.object({ arquivo: z.string().max(300), motivo: z.string().max(1000) }))
+        .max(50)
+        .optional(),
+      criterios: z
+        .array(z.object({ indice: z.number().int().min(0), cumprido: z.boolean() }))
+        .max(50)
+        .optional(),
+    }),
+  }),
 ])
 
 const envioSchema = z.strictObject({
