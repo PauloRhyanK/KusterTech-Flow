@@ -59,6 +59,9 @@ const TIPOS: readonly TipoDaEtapa[] = ['implementacao', 'leitura']
 const OCUPANDO: readonly EstadoDaEtapa[] = ['executando', 'aguardando_gates']
 const TRAVA_DA_ADMISSAO = Prisma.sql`SELECT pg_advisory_xact_lock(hashtext('fabrica-operacao-admissao'))`
 
+/** Teto de gerações (execução original + reconciliações) antes de bloquear a etapa. */
+const MAX_GERACOES = 5
+
 const expiracao = (agora: Date) => new Date(agora.getTime() + DURACAO_DA_RESERVA_MS)
 
 // ---------------------------------------------------------------- workers
@@ -118,6 +121,33 @@ function validarEtapas(etapas: EtapaDoPlano[]): void {
       throw new ErroDeDominio(`Etapa "${e.chave}" depende de "${falta}", que não está no plano.`)
     }
   }
+  const ciclo = acharCiclo(etapas)
+  if (ciclo !== null) throw new ErroDeDominio(`O plano tem um ciclo de dependências: ${ciclo}.`)
+}
+
+/** Primeiro ciclo encontrado (`a → b → a`) ou null. */
+function acharCiclo(etapas: EtapaDoPlano[]): string | null {
+  const deps = new Map(etapas.map((e) => [e.chave, e.dependeDe]))
+  const estado = new Map<string, 'visitando' | 'feito'>()
+  const caminho: string[] = []
+  const visitar = (c: string): string | null => {
+    if (estado.get(c) === 'feito') return null
+    if (estado.get(c) === 'visitando') return [...caminho.slice(caminho.indexOf(c)), c].join(' → ')
+    estado.set(c, 'visitando')
+    caminho.push(c)
+    for (const d of deps.get(c) ?? []) {
+      const achado = visitar(d)
+      if (achado !== null) return achado
+    }
+    caminho.pop()
+    estado.set(c, 'feito')
+    return null
+  }
+  for (const e of etapas) {
+    const achado = visitar(e.chave)
+    if (achado !== null) return achado
+  }
+  return null
 }
 
 /**
@@ -131,6 +161,18 @@ export async function registrarPlanoAprovado(
   exigirPermissao(sujeito, 'configuracoes.gerenciar')
   validarEtapas(e.etapas)
   const hash = createHash('sha256').update(jsonCanonico(e.conteudo)).digest('hex')
+  const demanda = await db.demanda.findUnique({
+    where: { id: e.demandaId },
+    select: { projetoId: true },
+  })
+  if (!demanda) throw new ErroDeDominio('Demanda não encontrada.')
+  const repos = [...new Set(e.etapas.map((et) => et.repositorioId))]
+  const doProjeto = await db.repositorioGitHub.count({
+    where: { id: { in: repos }, projetoId: demanda.projetoId },
+  })
+  if (doProjeto !== repos.length) {
+    throw new ErroDeDominio('Toda etapa precisa de um repositório do projeto da demanda.')
+  }
   return db.$transaction(async (tx) => {
     const plano = await tx.planoOperacional.upsert({
       where: { demandaId: e.demandaId },
@@ -194,7 +236,19 @@ async function etapasVigentes(tx: Tx): Promise<LinhaDaEtapa[]> {
     select: { id: true },
   })
   return tx.etapaOperacional.findMany({
-    where: { revisaoId: { in: revisoes.map((r) => r.id) } },
+    where: {
+      revisaoId: { in: revisoes.map((r) => r.id) },
+      // revisão sem nada pendente não tem o que oferecer
+      revisao: { etapas: { some: { estado: 'pendente' } } },
+    },
+    include: { repositorio: { select: { nomeCompleto: true } } },
+  })
+}
+
+/** Quem ocupa arquivos, de qualquer revisão: uma revisão superada com PR aberto ainda muda o código. */
+async function etapasOcupando(tx: Tx): Promise<LinhaDaEtapa[]> {
+  return tx.etapaOperacional.findMany({
+    where: { estado: { in: [...OCUPANDO] } },
     include: { repositorio: { select: { nomeCompleto: true } } },
   })
 }
@@ -210,10 +264,33 @@ async function reatribuirVencida(
     include: { etapa: { include: { repositorio: { select: { nomeCompleto: true } } } } },
   })
   if (!vencida) return null
-  const atualizada = await tx.execucaoOperacional.update({
-    where: { id: vencida.id },
+  if (vencida.geracao >= MAX_GERACOES) {
+    // ninguém conseguiu concluir nem reconciliar: para de oferecer e pede atenção
+    await tx.execucaoOperacional.updateMany({
+      where: { id: vencida.id, encerradaEm: null },
+      data: { encerradaEm: agora, reservaExpiraEm: null },
+    })
+    await tx.etapaOperacional.update({
+      where: { id: vencida.etapaId },
+      data: {
+        estado: 'bloqueada',
+        motivo: `reconciliação falhou ${vencida.geracao} vezes: conferir sessão, commits e PR`,
+      },
+    })
+    return null
+  }
+  // condicional: um resultado gravado entre a leitura e aqui encerra a execução e ela não reabre
+  const { count } = await tx.execucaoOperacional.updateMany({
+    where: {
+      id: vencida.id,
+      encerradaEm: null,
+      geracao: vencida.geracao,
+      reservaExpiraEm: { lte: agora },
+    },
     data: { geracao: vencida.geracao + 1, workerId, reservaExpiraEm: expiracao(agora) },
   })
+  if (count === 0) return null
+  const atualizada = await tx.execucaoOperacional.findUniqueOrThrow({ where: { id: vencida.id } })
   return {
     execucaoId: atualizada.id,
     etapaId: vencida.etapaId,
@@ -261,7 +338,7 @@ export async function pegarTarefa(workerId: string, agora: Date): Promise<Tarefa
         if (elegiveis.has(et.id) && (espera === null || espera <= agora)) candidatas.push(et)
       }
     }
-    const ativas = linhas.filter((l) => OCUPANDO.includes(l.estado as EstadoDaEtapa)).map(paraEtapa)
+    const ativas = (await etapasOcupando(tx)).map(paraEtapa)
     const [escolhida] = admitir(candidatas, ativas, 1)
     if (escolhida === undefined) return null
     const linha = linhas.find((l) => l.id === escolhida)!
@@ -333,22 +410,25 @@ export async function receberResultado(
   agora: Date,
 ): Promise<'aplicado' | 'repetido' | 'conflito' | 'obsoleto'> {
   const dados = { execucaoId: envio.execucaoId, geracao: envio.geracao, resultado: envio.resultado }
+  const jaRecebido = async (tx: Tx | typeof db) => {
+    const anterior = await tx.eventoOperacional.findUnique({
+      where: { idExterno: envio.idExterno },
+      select: { tipo: true, dados: true, origem: true },
+    })
+    if (!anterior) return null
+    const mesmo =
+      anterior.tipo === 'resultado' &&
+      anterior.origem === `worker:${workerId}` &&
+      jsonCanonico(anterior.dados) === jsonCanonico(dados)
+    return mesmo ? 'repetido' : 'conflito'
+  }
   try {
     return await db.$transaction(async (tx) => {
-      const anterior = await tx.eventoOperacional.findUnique({
-        where: { idExterno: envio.idExterno },
-        select: { tipo: true, dados: true, origem: true },
-      })
-      if (anterior) {
-        const mesmo =
-          anterior.tipo === 'resultado' &&
-          anterior.origem === `worker:${workerId}` &&
-          jsonCanonico(anterior.dados) === jsonCanonico(dados)
-        return mesmo ? 'repetido' : 'conflito'
-      }
-
       const travadas = await tx.$queryRaw<{ id: string }[]>`
         SELECT "id" FROM "ExecucaoOperacional" WHERE "id" = ${envio.execucaoId} FOR UPDATE`
+      // depois da trava: um reenvio simultâneo vê o evento que o primeiro gravou
+      const anterior = await jaRecebido(tx)
+      if (anterior !== null) return anterior
       if (travadas.length === 0) return 'obsoleto'
       const execucao = await tx.execucaoOperacional.findUniqueOrThrow({
         where: { id: envio.execucaoId },
@@ -407,7 +487,7 @@ export async function receberResultado(
     })
   } catch (erro) {
     // o mesmo idExterno gravado ao mesmo tempo por outro pedido: o índice único decide
-    if (ehUnicoRepetido(erro)) return 'conflito'
+    if (ehUnicoRepetido(erro)) return (await jaRecebido(db)) ?? 'conflito'
     throw erro
   }
 }

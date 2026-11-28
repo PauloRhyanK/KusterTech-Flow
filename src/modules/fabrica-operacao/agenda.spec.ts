@@ -41,6 +41,12 @@ describe('proximaTentativa', () => {
     expect(proximaTentativa(r, 1, AGORA)).toBeNull()
   })
 
+  test('retorno muito distante é limitado a 6 h', () => {
+    expect(
+      proximaTentativa({ tipo: 'limite_de_uso', retornoEm: '9999-01-01T00:00:00Z' }, 0, AGORA),
+    ).toEqual(em(360))
+  })
+
   test('recuos iguais aos do kit', () => {
     expect(RECUOS_MIN).toEqual([5, 15, 45])
   })

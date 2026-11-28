@@ -87,3 +87,19 @@ Tela "Fábrica → Operação" (desenho para aprovação antes), decisão de gat
 - **Só a última revisão aprovada de cada plano é vigente**; revisões antigas não oferecem trabalho.
 - **Etapas `aguardando_gates` também ocupam arquivos**: o PR aberto ainda vai mudar o código.
 
+
+## Revisão independente (27/11) — o que foi feito com cada achado
+
+| Achado | Decisão |
+|---|---|
+| Reatribuição podia reabrir execução encerrada numa corrida com o resultado | corrigido: gravação condicional (`encerradaEm` nulo, mesma geração, reserva vencida) |
+| Etapa de revisão superada não contava como ocupando arquivos | corrigido: colisão considera etapas em execução ou com PR de qualquer revisão |
+| Reenvio simultâneo do mesmo resultado saía `obsoleto`/`conflito` | corrigido: o evento é conferido depois da trava e relido no P2002 |
+| Ciclo no plano era aceito | corrigido: recusado com o caminho do ciclo |
+| `retornoEm` muito distante tirava a etapa de oferta para sempre | corrigido: teto de 6 h |
+| `incerto`/worker que cai sempre reconciliava para sempre | corrigido: na 5ª geração a execução encerra e a etapa fica `bloqueada` |
+| `prUrl` aceitava qualquer URL (`javascript:`) | corrigido: só `https://github.com/<dono>/<repo>/pull/<n>` |
+| Repositório de outro projeto era aceito no plano | corrigido: recusado com mensagem |
+| `pegarTarefa` lia etapas de revisões já terminadas | corrigido: só revisões com etapa pendente |
+| `idExterno` único entre todos os workers | **aceito**: workers são máquinas nossas; um id alheio vira `conflito`, sem efeito |
+| Duas aprovações simultâneas do mesmo plano dão P2002 sem mensagem | **aceito**: só administrador; a conversa de aprovação (M4) serializa |

@@ -373,3 +373,91 @@ describe('recepção HTTP do worker', () => {
     ).toBe(401)
   })
 })
+
+describe('achados da revisão independente', () => {
+  test('execução encerrada com reserva vencida nunca é reatribuída', async () => {
+    await plano([etapa('a')])
+    const t = await pegarTarefa(w1, AGORA)
+    await db.execucaoOperacional.update({
+      where: { id: t!.execucaoId },
+      data: { encerradaEm: AGORA, reservaExpiraEm: AGORA },
+    })
+    expect(await pegarTarefa(w2, depois(DURACAO_DA_RESERVA_MS + 1))).toBeNull()
+  })
+
+  test('etapa de revisão superada que ainda ocupa arquivos segura a nova revisão', async () => {
+    await plano([etapa('a', { arquivos: ['src/x/**'] })])
+    expect(await pegarTarefa(w1, AGORA)).not.toBeNull()
+    await plano([etapa('b', { arquivos: ['src/x/y.ts'] })])
+    expect(await pegarTarefa(w2, AGORA)).toBeNull()
+  })
+
+  test('reenvio simultâneo do mesmo resultado: um aplicado e um repetido', async () => {
+    await plano([etapa('a')])
+    const t = await pegarTarefa(w1, AGORA)
+    const envio = {
+      idExterno: 'r1',
+      execucaoId: t!.execucaoId,
+      geracao: 1,
+      resultado: { tipo: 'incerto' as const },
+    }
+    const r = await Promise.all([
+      receberResultado(w1, envio, AGORA),
+      receberResultado(w1, envio, AGORA),
+    ])
+    expect([...r].sort()).toEqual(['aplicado', 'repetido'])
+  })
+
+  test('plano com ciclo é recusado', async () => {
+    await expect(
+      plano([etapa('a', { dependeDe: ['b'] }), etapa('b', { dependeDe: ['a'] })]),
+    ).rejects.toThrow(/ciclo/)
+  })
+
+  test('repositório de outro projeto é recusado', async () => {
+    const outro = await db.repositorioGitHub.create({
+      data: {
+        githubId: BigInt(9102),
+        instalacaoId: BigInt(1),
+        nomeCompleto: 'exemplo/outro',
+        urlHtml: 'https://github.com/exemplo/outro',
+        privado: false,
+        catalogadoEm: AGORA,
+      } as never,
+    })
+    await expect(plano([etapa('a', { repositorioId: outro.id })])).rejects.toThrow(/projeto/)
+  })
+
+  test('reconciliação que nunca termina bloqueia a etapa', async () => {
+    await plano([etapa('a')])
+    let instante = AGORA
+    let t = await pegarTarefa(w1, instante)
+    for (let i = 0; i < 10 && t !== null; i++) {
+      instante = new Date(instante.getTime() + DURACAO_DA_RESERVA_MS + 1)
+      t = await pegarTarefa(i % 2 ? w1 : w2, instante)
+    }
+    const e = await db.etapaOperacional.findFirstOrThrow({ where: { chave: 'a' } })
+    expect(e.estado).toBe('bloqueada')
+    expect(e.motivo).toMatch(/reconcilia/)
+    expect(await db.execucaoOperacional.count({ where: { encerradaEm: null } })).toBe(0)
+  })
+
+  test('prUrl que não é PR do GitHub é recusado na recepção', async () => {
+    const corpo = JSON.stringify({
+      idExterno: 'x',
+      geracao: 1,
+      resultado: { tipo: 'pr_aberto', prUrl: 'javascript:alert(1)' },
+    })
+    const r = await receberResultadoDoWorker(
+      '11111111-1111-4111-8111-111111111111',
+      {
+        authorization: `Bearer ${token1}`,
+        contentType: 'application/json',
+        contentLength: String(corpo.length),
+        corpo: async () => corpo,
+      },
+      AGORA,
+    )
+    expect(r.status).toBe(422)
+  })
+})

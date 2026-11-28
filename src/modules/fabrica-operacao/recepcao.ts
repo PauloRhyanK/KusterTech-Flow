@@ -24,7 +24,13 @@ const texto = (max: number) => z.string().min(1).max(max)
 const geracao = z.number().int().min(1)
 
 export const resultadoSchema = z.discriminatedUnion('tipo', [
-  z.strictObject({ tipo: z.literal('pr_aberto'), prUrl: z.string().url().max(500) }),
+  z.strictObject({
+    tipo: z.literal('pr_aberto'),
+    prUrl: z
+      .string()
+      .max(300)
+      .regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/),
+  }),
   z.strictObject({ tipo: z.literal('sem_pr') }),
   z.strictObject({ tipo: z.literal('falha_tecnica'), motivo: texto(500) }),
   z.strictObject({
