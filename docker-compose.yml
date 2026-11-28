@@ -45,6 +45,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Módulos desligados por padrão que esta instalação liga (ex.: fabrica-operacao); ver src/lib/modulos.ts.
+      FLOW_MODULOS_EXTRAS: ${FLOW_MODULOS_EXTRAS:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       # O Decidir lê o PR do fim de fase, responde as decisões da Fábrica e mergeia a partir da
       # web (Server Actions), então a web também conhece a GitHub App (docs/github-app.md).
@@ -84,6 +86,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-kustertech_flow}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Módulos desligados por padrão que esta instalação liga (ex.: fabrica-operacao); ver src/lib/modulos.ts.
+      FLOW_MODULOS_EXTRAS: ${FLOW_MODULOS_EXTRAS:-}
       GITHUB_FONTE: ${GITHUB_FONTE:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
