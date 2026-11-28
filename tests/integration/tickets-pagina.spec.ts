@@ -143,6 +143,22 @@ test('t que não acha ticket vale como sem seleção: lista visível, detalhe s�
   expect(html).toContain('O botão não funciona')
 })
 
+test('no celular, com ticket aberto, quadros e filtros ficam escondidos; sem ticket, aparecem', async () => {
+  const s = await sistema('App Alfa')
+  const r = await db.relato.create({ data: dadosDoRelato(s.id, 1) })
+  const com = await renderizar({ t: r.id })
+  const abre = com.indexOf('class="hidden space-y-5 lg:block"')
+  expect(abre).toBeGreaterThan(-1)
+  const lista = com.indexOf('class="grid gap-5')
+  const bloco = com.slice(abre, lista)
+  expect(bloco).toContain('role="search"')
+  expect(bloco).toContain('chegaram em 7 dias')
+  const sem = await renderizar()
+  expect(sem).not.toContain('class="hidden space-y-5 lg:block"')
+  expect(sem).toContain('class="space-y-5"><div')
+  expect(sem).toContain('role="search"')
+})
+
 test('filtro sem resultado mostra "Nada com estes filtros" e link Limpar', async () => {
   const s = await sistema('App Alfa')
   await db.relato.create({ data: dadosDoRelato(s.id, 1) })

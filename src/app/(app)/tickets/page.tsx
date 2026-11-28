@@ -83,13 +83,16 @@ export default async function PaginaDosTickets({
           )
         }
       />
-      <QuadrosDosTickets quadros={tela.quadros} periodo={filtros.periodo} />
-      <BarraDeFiltrosDosTickets filtros={filtros} opcoes={tela.opcoes} />
-      {tela.truncado && (
-        <p className="text-[12.5px] text-text-tertiary">
-          {tela.total} tickets no período; mostrando os 300 mais recentes.
-        </p>
-      )}
+      {/* No celular, com um ticket aberto, só o detalhe e o caminho de volta ocupam a tela. */}
+      <div className={comEscolha ? 'hidden space-y-5 lg:block' : 'space-y-5'}>
+        <QuadrosDosTickets quadros={tela.quadros} periodo={filtros.periodo} />
+        <BarraDeFiltrosDosTickets filtros={filtros} opcoes={tela.opcoes} />
+        {tela.truncado && (
+          <p className="text-[12.5px] text-text-tertiary">
+            {tela.total} tickets no período; mostrando os 300 mais recentes.
+          </p>
+        )}
+      </div>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,44fr)_minmax(0,56fr)]">
         <div className={comEscolha ? 'hidden min-w-0 lg:block' : 'min-w-0'}>
           <ListaDeTickets grupos={tela.grupos} filtros={filtros} escolhidoId={filtros.t} />
