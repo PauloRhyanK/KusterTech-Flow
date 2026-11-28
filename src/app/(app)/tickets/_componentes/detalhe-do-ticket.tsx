@@ -24,7 +24,7 @@ function Secao({ id, titulo, children }: { id: string; titulo: string; children:
   )
 }
 
-function Midia({ midia, transcricao }: { midia: MidiaDoTicket; transcricao: string | null }) {
+function Midia({ midia }: { midia: MidiaDoTicket }) {
   const nome = `${ROTULO_DO_TIPO[midia.tipo]} ${midia.posicao + 1}`
   if (midia.situacao === 'indisponivel') {
     return (
@@ -60,16 +60,7 @@ function Midia({ midia, transcricao }: { midia: MidiaDoTicket; transcricao: stri
     )
   }
   if (midia.tipo === 'audio') {
-    return (
-      <div className="w-full space-y-1">
-        <audio controls src={url} className="w-full" />
-        {transcricao && (
-          <p className="text-xs text-text-secondary">
-            <b className="font-medium text-text-primary">Transcrição:</b> {transcricao}
-          </p>
-        )}
-      </div>
-    )
+    return <audio controls src={url} className="w-full" />
   }
   if (midia.tipo === 'video') {
     return <video controls src={url} className="max-h-[200px] rounded-compacto" />
@@ -107,7 +98,6 @@ export function DetalheDoTicket({
     )
   }
   const orientado = ticket.resultado === 'orientado'
-  const temAudio = ticket.midias.some((m) => m.tipo === 'audio')
   const d = ticket.demanda
   return (
     <article
@@ -150,11 +140,11 @@ export function DetalheDoTicket({
         ) : (
           <div className="flex flex-wrap gap-2">
             {ticket.midias.map((m) => (
-              <Midia key={m.posicao} midia={m} transcricao={ticket.transcricao} />
+              <Midia key={m.posicao} midia={m} />
             ))}
           </div>
         )}
-        {ticket.transcricao && !temAudio && (
+        {ticket.transcricao && (
           <p className="mt-1.5 text-xs text-text-secondary">
             <b className="font-medium text-text-primary">Transcrição:</b> {ticket.transcricao}
           </p>

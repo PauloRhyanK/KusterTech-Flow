@@ -187,6 +187,52 @@ describe('DetalheDoTicket', () => {
     expect(screen.getByText('apagada em 01/11/2026 (retenção de 90 dias)')).toBeInTheDocument()
   })
 
+  test('áudio apagado: a transcrição continua visível', () => {
+    render(
+      <DetalheDoTicket
+        ticket={{
+          ...base,
+          texto: null,
+          transcricao: 'só o que foi dito',
+          midias: [
+            {
+              posicao: 0,
+              tipo: 'audio',
+              bytes: 100,
+              situacao: 'apagada',
+              url: null,
+              apagadaEm: new Date('2026-11-01T15:00:00Z'),
+            },
+          ],
+        }}
+        filtros={filtros}
+        emPagina={false}
+      />,
+    )
+    expect(screen.getByText(/só o que foi dito/)).toBeInTheDocument()
+    expect(screen.getByText('apagada em 01/11/2026 (retenção de 90 dias)')).toBeInTheDocument()
+  })
+
+  test('dois áudios mostram a transcrição uma vez só', () => {
+    const audio = (posicao: number) => ({
+      posicao,
+      tipo: 'audio' as const,
+      bytes: 100,
+      situacao: 'disponivel' as const,
+      url: `/demandas/d1/arquivos/a${posicao}`,
+      apagadaEm: null,
+    })
+    render(
+      <DetalheDoTicket
+        ticket={{ ...base, transcricao: 'fala única', midias: [audio(0), audio(1)] }}
+        filtros={filtros}
+        emPagina={false}
+      />,
+    )
+    expect(document.querySelectorAll('audio')).toHaveLength(2)
+    expect(screen.getAllByText(/fala única/)).toHaveLength(1)
+  })
+
   test('emPagina false mostra "Abrir em página"; true não', () => {
     const { rerender } = render(
       <DetalheDoTicket ticket={base} filtros={filtros} emPagina={false} />,
