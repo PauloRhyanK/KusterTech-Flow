@@ -678,5 +678,58 @@ describe('recuperar anexos faltantes', () => {
     await db.sistemaConectado.update({ where: { id: sistemaId }, data: { estado: 'DESCONECTADO' } })
     const r = await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })
     expect(r).toEqual({ copiados: 0, falhas: 0 })
+    await db.sistemaConectado.update({ where: { id: sistemaId }, data: { estado: 'ATIVO' } })
+    await db.relato.updateMany({ data: { resultado: 'ORIENTADO' } })
+    expect(await recuperarAnexosFaltantes(agora, { baixar: baixaTudo, chave })).toEqual({
+      copiados: 0,
+      falhas: 0,
+    })
+  })
+
+  test('vídeo e arquivo nunca são baixados, nem gastam o teto nem contam como falha', async () => {
+    const { sistemaId, demanda } = await relatoSemCopia(0)
+    const base = {
+      sistemaId,
+      ticket: 'R-9',
+      canal: 'SISTEMA' as const,
+      em: new Date('2026-11-26T13:00:00.000Z'),
+      autorIdExterno: 'u-2',
+      autorNome: 'Bia',
+      autorPapel: 'Assessora',
+      resultado: 'SEGUE' as const,
+      demandaId: demanda.id,
+      sinais: [],
+    }
+    const url = (n: string) => `https://alfa.exemplo.com/v1/relatos/anexos/${n}`
+    await db.relato.create({
+      data: {
+        ...base,
+        idExterno: ID_B,
+        em: new Date('2026-11-26T12:00:00.000Z'),
+        anexos: [
+          ...Array.from({ length: 25 }, (_, i) => ({
+            tipo: i % 2 ? 'video' : 'arquivo',
+            bytes: 3,
+            caminho: url(`v${i}`),
+          })),
+          { tipo: 'imagem', bytes: 11 * 1024 * 1024, caminho: url('grande') },
+        ],
+      },
+    })
+    await db.relato.create({
+      data: {
+        ...base,
+        idExterno: ID_C,
+        em: new Date('2026-11-26T14:00:00.000Z'),
+        anexos: [{ tipo: 'imagem', bytes: 3, caminho: url('nova') }],
+      },
+    })
+    const pedidos: string[] = []
+    const r = await recuperarAnexosFaltantes(agora, {
+      baixar: async (a, u, l) => (pedidos.push(u), baixaTudo(a, u, l)),
+      chave,
+    })
+    expect(pedidos).toEqual([url('nova')])
+    expect(r).toEqual({ copiados: 1, falhas: 0 })
   })
 })

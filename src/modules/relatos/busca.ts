@@ -8,6 +8,7 @@ import { chaveDosSegredos, ErroDeSegredo } from '@/lib/segredos'
 import { abrirDemanda, guardarArquivo } from '@/modules/demandas/service'
 import {
   anexoDeRelatoVencido,
+  CONTEUDOS_ACEITOS,
   inicioDaRetencaoDoRelato,
   LIMITE_POR_ARQUIVO,
 } from '@/modules/demandas/transicoes'
@@ -29,6 +30,19 @@ import { alvoDoSistema, NAO_DECIFROU_O_TOKEN } from './sistemas'
 const TRANSACAO = { maxWait: 15_000, timeout: 15_000 }
 const SISTEMAS_AO_MESMO_TEMPO = 4
 export const TETO_DA_RECUPERACAO = 20
+
+const PREFIXO_DO_CONTEUDO = {
+  imagem: 'image/',
+  audio: 'audio/',
+  video: 'video/',
+  arquivo: 'application/',
+} as const
+
+/** Só vale baixar o que a demanda pode aceitar: tipo de conteúdo aceito e até o limite por arquivo. */
+function anexoRecuperavel(a: AnexoGravado): boolean {
+  const prefixo = PREFIXO_DO_CONTEUDO[a.tipo]
+  return a.bytes <= LIMITE_POR_ARQUIVO && CONTEUDOS_ACEITOS.anexo.some((c) => c.startsWith(prefixo))
+}
 
 export interface DependenciasDaBusca {
   buscar?: typeof buscarPagina
@@ -385,9 +399,13 @@ export async function recuperarAnexosFaltantes(
       encerradaEm: r.demanda.eventos[0]?.em ?? null,
     })
     if (anexoDeRelatoVencido(inicio, agora)) return []
+    // O que nunca seria aceito sai antes (caminho nulo mantém as posições dos ids derivados),
+    // para não ser baixado de hora em hora nem gastar o teto.
     const anexos = anexosParaCopiar(
       `${r.sistemaId}:${r.idExterno}`,
-      r.anexos as unknown as AnexoGravado[],
+      (r.anexos as unknown as AnexoGravado[]).map((a) =>
+        anexoRecuperavel(a) ? a : { ...a, caminho: null },
+      ),
     )
     return anexos.length > 0 ? [{ r, demandaId: r.demandaId, anexos }] : []
   })
