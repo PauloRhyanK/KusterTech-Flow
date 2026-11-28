@@ -11,7 +11,11 @@ import { executarCiclo } from '@/modules/github/reconciliacao'
 import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/modules/decidir/worker'
 import { limparArquivosDeDemandas, marcarPartesSemPublicacao } from '@/modules/demandas/worker'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
-import { enviarAndamentoDosRelatos, buscarRelatosDosSistemas } from '@/modules/relatos/worker'
+import {
+  enviarAndamentoDosRelatos,
+  buscarRelatosDosSistemas,
+  recuperarAnexosDosRelatos,
+} from '@/modules/relatos/worker'
 import { tarefaAtualizarFila } from '@/modules/homologacao/fila'
 import { detectarRetestes } from '@/modules/homologacao/retestes'
 import { executarTarefasGitHub } from '@/modules/homologacao/tarefas-github'
@@ -19,6 +23,7 @@ import { calcularComposicoes } from '@/modules/publicacao/composicoes'
 import { detectarDivergencias } from '@/modules/publicacao/divergencias'
 
 const INTERVALO_DA_LIMPEZA_DE_ARQUIVOS_MS = 60 * 60_000
+const INTERVALO_DA_RECUPERACAO_DE_ANEXOS_MS = 60 * 60_000
 const INTERVALO_DA_MARCACAO_DE_PARTES_MS = 10 * 60_000
 const INTERVALO_DO_ARQUIVAMENTO_MS = 5 * 60_000
 const INTERVALO_DA_LEITURA_DO_GLITCHTIP_MS = 2 * 60_000
@@ -37,6 +42,7 @@ export function criarTarefasDoCiclo(d: {
   const ativos = d.ativos ?? modulosAtivos()
   // Em memória do processo: depois de reiniciar, a limpeza roda no primeiro ciclo.
   let ultimaLimpezaDeArquivos: number | null = null
+  let ultimaRecuperacaoDeAnexos: number | null = null
   let ultimaMarcacaoDePartes: number | null = null
   let ultimoArquivamento: number | null = null
   let ultimaLimpezaDeConversas: number | null = null
@@ -250,6 +256,26 @@ export function criarTarefasDoCiclo(d: {
       nome: 'enviar-andamento',
       modulo: 'relatos',
       executar: enviarAndamentoDosRelatos,
+    },
+    {
+      nome: 'recuperar-anexos-de-relatos',
+      modulo: 'relatos',
+      async executar(agora) {
+        if (
+          ultimaRecuperacaoDeAnexos !== null &&
+          agora.getTime() - ultimaRecuperacaoDeAnexos < INTERVALO_DA_RECUPERACAO_DE_ANEXOS_MS
+        ) {
+          return
+        }
+        const resumo = await recuperarAnexosDosRelatos(agora)
+        ultimaRecuperacaoDeAnexos = agora.getTime()
+        if (resumo.copiados + resumo.falhas > 0) {
+          log.info(
+            { tarefa: 'recuperar-anexos-de-relatos', ...resumo },
+            'anexos de relatos recuperados',
+          )
+        }
+      },
     },
   ]
   return tarefas.filter((t) => ativos.has(t.modulo))

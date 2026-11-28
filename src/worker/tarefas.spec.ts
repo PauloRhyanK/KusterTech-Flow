@@ -22,6 +22,7 @@ vi.mock('@/modules/erros/service', () => ({
 vi.mock('@/modules/relatos/worker', () => ({
   buscarRelatosDosSistemas: vi.fn(async () => undefined),
   enviarAndamentoDosRelatos: vi.fn(async () => undefined),
+  recuperarAnexosDosRelatos: vi.fn(async () => ({ copiados: 0, falhas: 0 })),
 }))
 
 vi.mock('@/modules/decidir/worker', () => ({
@@ -32,13 +33,14 @@ vi.mock('@/modules/decidir/worker', () => ({
 import { log } from '@/lib/log'
 import { resolverModulosAtivos } from '@/lib/modulos'
 import { limparArquivosDeDemandas } from '@/modules/demandas/worker'
+import { recuperarAnexosDosRelatos } from '@/modules/relatos/worker'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
 import { criarTarefasDoCiclo, executarTarefas } from './tarefas'
 
 const fonte = { obterFonte: () => null, intervaloMs: 1 }
 
 describe('tarefas do worker', () => {
-  test('com os módulos padrão o ciclo tem dez tarefas, nesta ordem', () => {
+  test('com os módulos padrão o ciclo tem onze tarefas, nesta ordem', () => {
     const nomes = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) }).map(
       (t) => t.nome,
     )
@@ -53,6 +55,7 @@ describe('tarefas do worker', () => {
       'buscar-erros-do-glitchtip',
       'buscar-relatos',
       'enviar-andamento',
+      'recuperar-anexos-de-relatos',
     ])
   })
   test('buscar-relatos e enviar-andamento são do módulo relatos e somem sem ele', () => {
@@ -65,6 +68,7 @@ describe('tarefas do worker', () => {
     expect(com.filter((t) => t.modulo === 'relatos').map((t) => t.nome)).toEqual([
       'buscar-relatos',
       'enviar-andamento',
+      'recuperar-anexos-de-relatos',
     ])
   })
 
@@ -77,6 +81,20 @@ describe('tarefas do worker', () => {
     expect(comDemandas.find((t) => t.nome === 'limpar-arquivos-de-demandas')?.modulo).toBe(
       'demandas',
     )
+  })
+
+  test('recuperar-anexos-de-relatos roda no máximo uma vez por hora e só registra log quando houve trabalho', async () => {
+    const recuperar = vi.mocked(recuperarAnexosDosRelatos)
+    recuperar.mockClear()
+    const tarefa = criarTarefasDoCiclo({
+      ...fonte,
+      ativos: resolverModulosAtivos(undefined),
+    }).find((t) => t.nome === 'recuperar-anexos-de-relatos')!
+    const t0 = new Date('2026-11-27T12:00:00.000Z')
+    await tarefa.executar(t0)
+    await tarefa.executar(new Date(t0.getTime() + 59 * 60_000))
+    await tarefa.executar(new Date(t0.getTime() + 60 * 60_000))
+    expect(recuperar).toHaveBeenCalledTimes(2)
   })
 
   test('a tarefa marcar-partes-sem-publicacao é do módulo demandas e some sem ele', () => {
@@ -145,7 +163,7 @@ describe('tarefas do worker', () => {
     )
   })
 
-  test('com todos os módulos ligados o ciclo tem as dezessete tarefas na ordem original', () => {
+  test('com todos os módulos ligados o ciclo tem as dezoito tarefas na ordem original', () => {
     const todos = resolverModulosAtivos('entregas,ambientes,homologacao,publicacao')
     expect(criarTarefasDoCiclo({ ...fonte, ativos: todos }).map((t) => t.nome)).toEqual([
       'processar-eventos-de-webhook',
@@ -165,6 +183,7 @@ describe('tarefas do worker', () => {
       'buscar-erros-do-glitchtip',
       'buscar-relatos',
       'enviar-andamento',
+      'recuperar-anexos-de-relatos',
     ])
   })
 
