@@ -2,6 +2,11 @@ import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import type { Sujeito } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { MODELO_PADRAO } from '@/modules/demandas/model'
+import {
+  pedirTarefa,
+  receberResultadoDoWorker,
+  receberSinal,
+} from '@/modules/fabrica-operacao/recepcao'
 import { DURACAO_DA_RESERVA_MS } from '@/modules/fabrica-operacao/reserva'
 import {
   autenticarWorker,
@@ -278,5 +283,93 @@ describe('receberResultado', () => {
         AGORA,
       ),
     ).toBe('obsoleto')
+  })
+})
+
+describe('recepção HTTP do worker', () => {
+  const entrada = (corpo: unknown, o: { auth?: string | null; tipo?: string } = {}) => {
+    const texto = typeof corpo === 'string' ? corpo : JSON.stringify(corpo)
+    return {
+      authorization: o.auth === undefined ? `Bearer ${token1}` : o.auth,
+      contentType: o.tipo ?? 'application/json',
+      contentLength: String(Buffer.byteLength(texto)),
+      corpo: async () => texto,
+    }
+  }
+
+  test('sem token é 401; sem trabalho devolve tarefa nula', async () => {
+    expect((await pedirTarefa(null, AGORA)).status).toBe(401)
+    expect(await pedirTarefa(`Bearer ${token1}`, AGORA)).toEqual({
+      status: 200,
+      corpo: { tarefa: null },
+    })
+  })
+
+  test('fluxo completo: pede, sinaliza, envia; reenvio é repetido', async () => {
+    await plano([etapa('a')])
+    const { corpo } = await pedirTarefa(`Bearer ${token1}`, AGORA)
+    const tarefa = (corpo as { tarefa: { execucaoId: string } }).tarefa
+    expect((await receberSinal(tarefa.execucaoId, entrada({ geracao: 1 }), AGORA)).status).toBe(200)
+    const envio = {
+      idExterno: 'r1',
+      geracao: 1,
+      resultado: { tipo: 'pr_aberto', prUrl: 'https://github.com/exemplo/flow/pull/7' },
+    }
+    expect(await receberResultadoDoWorker(tarefa.execucaoId, entrada(envio), AGORA)).toEqual({
+      status: 200,
+      corpo: { resultado: 'aplicado' },
+    })
+    expect(await receberResultadoDoWorker(tarefa.execucaoId, entrada(envio), AGORA)).toEqual({
+      status: 200,
+      corpo: { resultado: 'repetido' },
+    })
+    const conflito = { ...envio, resultado: { tipo: 'sem_pr' } }
+    expect(
+      (await receberResultadoDoWorker(tarefa.execucaoId, entrada(conflito), AGORA)).status,
+    ).toBe(409)
+    // a execução encerrou: o sinal agora é obsoleto e o worker deve parar
+    expect((await receberSinal(tarefa.execucaoId, entrada({ geracao: 1 }), AGORA)).status).toBe(409)
+  })
+
+  test.each([
+    ['não é JSON', '{', 'application/json', 422],
+    [
+      'tipo desconhecido',
+      { idExterno: 'x', geracao: 1, resultado: { tipo: 'talvez' } },
+      'application/json',
+      422,
+    ],
+    [
+      'geração zero',
+      { idExterno: 'x', geracao: 0, resultado: { tipo: 'sem_pr' } },
+      'application/json',
+      422,
+    ],
+    [
+      'campo a mais',
+      { idExterno: 'x', geracao: 1, resultado: { tipo: 'sem_pr', x: 1 } },
+      'application/json',
+      422,
+    ],
+    [
+      'content-type errado',
+      { idExterno: 'x', geracao: 1, resultado: { tipo: 'sem_pr' } },
+      'text/plain',
+      415,
+    ],
+  ])('%s é recusado', async (_, corpo, tipo, status) => {
+    const id = '11111111-1111-4111-8111-111111111111'
+    expect((await receberResultadoDoWorker(id, entrada(corpo, { tipo }), AGORA)).status).toBe(
+      status,
+    )
+  })
+
+  test('id que não é UUID é 404; token de fonte (ff_) não serve', async () => {
+    const ok = { idExterno: 'x', geracao: 1, resultado: { tipo: 'sem_pr' } }
+    expect((await receberResultadoDoWorker('abc', entrada(ok), AGORA)).status).toBe(404)
+    expect(
+      (await receberResultadoDoWorker('abc', entrada(ok, { auth: 'Bearer ff_qualquer' }), AGORA))
+        .status,
+    ).toBe(401)
   })
 })
