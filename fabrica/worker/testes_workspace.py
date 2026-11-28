@@ -121,5 +121,38 @@ class WorkspaceTest(unittest.TestCase):
                 self.preparar()
 
 
+class UsuarioDoAgenteTest(unittest.TestCase):
+    def setUp(self):
+        base = pathlib.Path(tempfile.mkdtemp())
+        self.remoto = base / "remoto.git"
+        git("init", "-q", "--bare", "-b", "main", str(self.remoto), cwd=base)
+        semente = base / "semente"
+        git("clone", "-q", str(self.remoto), str(semente), cwd=base)
+        (semente / "src").mkdir()
+        (semente / "src" / "a.ts").write_text("a\n")
+        git("add", "-A", cwd=semente)
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "inicio", cwd=semente)
+        git("push", "-q", "origin", "main", cwd=semente)
+        self.pasta = base / "agente-separado"
+        self.chamadas = []
+        self.ws = workspace.Workspace(base / "raiz", pasta_do_agente=self.pasta, usuario_do_agente="fabrica")
+        self.ws._como_agente = lambda *args: self.chamadas.append(args)
+
+    def test_copia_do_agente_fica_na_pasta_separada_com_grupo_gravavel(self):
+        c = self.ws.preparar(str(self.remoto), "dono/repo", "fabrica/abc", "main", "ex1")
+        self.assertEqual(c.agente, self.pasta / "ex1")
+        for caminho in [c.agente, c.agente / "src", c.agente / "src" / "a.ts"]:
+            modo = caminho.stat().st_mode
+            self.assertTrue(modo & 0o020, caminho)  # grupo grava
+        self.assertTrue((c.agente / "src").stat().st_mode & 0o2000)  # setgid nas pastas
+
+    def test_limpar_apaga_como_o_agente_antes(self):
+        c = self.ws.preparar(str(self.remoto), "dono/repo", "fabrica/abc", "main", "ex1")
+        self.chamadas.clear()
+        self.ws.limpar(c)
+        self.assertEqual(self.chamadas, [("rm", "-rf", "--", str(c.agente))])
+        self.assertFalse(c.agente.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

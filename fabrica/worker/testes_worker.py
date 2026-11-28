@@ -250,6 +250,24 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("CI vermelho; revisão: falta teste", p)
         self.assertNotIn("Correção", worker.montar_pedido(tarefa(correcao=None)))
 
+    def test_com_usuario_do_agente_o_comando_vai_por_sudo(self):
+        self.config.usuario_do_agente = "fabrica"
+        f = FlowFalso([tarefa(instrucoes="nada")])
+        w = self.worker(f)
+        w.workspace._como_agente = lambda *a: None
+        vistos = []
+
+        def rodar(comando, cwd, ambiente, prazo, cancelar, ao_encerrar=None):
+            vistos.append((comando, ao_encerrar))
+            return worker.adaptador_claude.Saida("ok", texto="ok")
+
+        w.rodar = rodar
+        w.ciclo()
+        comando, ao_encerrar = vistos[0]
+        self.assertEqual(comando[:6], ["sudo", "-n", "-u", "fabrica", "-H", "--"])
+        self.assertEqual(comando[6], self.config.claude)
+        self.assertIsNotNone(ao_encerrar)
+
     def test_pedido_leva_as_regras_de_entrega(self):
         p = worker.montar_pedido(tarefa(instrucoes="Faça o rodapé."))
         self.assertTrue(p.startswith("Faça o rodapé."))

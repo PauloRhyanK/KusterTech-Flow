@@ -1,0 +1,19 @@
+# Worker da Fábrica 2.0 (unit de usuário do devops). Ver fabrica/worker/README.md.
+# O agente roda como o usuário do FABRICA_USUARIO_DO_AGENTE, via sudo, sem acesso aos tokens deste usuário.
+[Unit]
+Description=Worker da Fábrica 2.0
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/fabrica-2/worker.env
+ExecStart=/usr/bin/python3 -I -B %h/fabrica-2/kit/fabrica/worker/worker.py
+# SIGTERM cancela a execução atual; o resultado `cancelada` vai à caixa antes de sair
+KillMode=mixed
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=30
+Nice=5
+
+[Install]
+WantedBy=default.target

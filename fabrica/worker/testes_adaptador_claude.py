@@ -107,6 +107,12 @@ class RodarTest(unittest.TestCase):
         self.assertLess(time.monotonic() - inicio, 15)
         self.assertEqual(subprocess.run(["pgrep", "-f", "DEMORA"], capture_output=True).stdout, b"")
 
+    def test_ao_encerrar_roda_depois_do_cancelamento_e_do_fim(self):
+        chamado = []
+        comando = [sys.executable, FALSO, *ad.montar_comando("claude", "tudo certo", "m", "escrita")[1:]]
+        ad.rodar(comando, self.cwd, {"PATH": os.environ["PATH"]}, 30, threading.Event(), ao_encerrar=lambda: chamado.append(1))
+        self.assertEqual(chamado, [1])
+
     def test_cancelamento(self):
         cancelar = threading.Event()
         threading.Timer(1, cancelar.set).start()

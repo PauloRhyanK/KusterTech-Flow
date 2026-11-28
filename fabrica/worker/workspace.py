@@ -80,9 +80,29 @@ def _sincronizar(origem: pathlib.Path, destino: pathlib.Path) -> None:
     shutil.copytree(origem, destino, symlinks=True, ignore=_ignorar_git, dirs_exist_ok=True)
 
 
+def _abrir_para_o_grupo(pasta: pathlib.Path) -> None:
+    """Grupo lê e grava tudo; pastas com setgid, para o que o agente criar continuar no grupo."""
+    for raiz, pastas, arquivos in os.walk(pasta):
+        os.chmod(raiz, os.stat(raiz).st_mode | 0o2070)
+        for nome in arquivos:
+            caminho = os.path.join(raiz, nome)
+            if not os.path.islink(caminho):
+                os.chmod(caminho, os.stat(caminho).st_mode | 0o060)
+
+
 class Workspace:
-    def __init__(self, raiz):
+    """Com `usuario_do_agente`, a cópia do agente fica em `pasta_do_agente` (fora da home do worker),
+    gravável pelo grupo comum (ex.: `fabrica-trabalho`), e é apagada primeiro como o agente."""
+
+    def __init__(self, raiz, pasta_do_agente=None, usuario_do_agente: str | None = None):
         self.raiz = pathlib.Path(raiz)
+        self.pasta_do_agente = pathlib.Path(pasta_do_agente) if pasta_do_agente else self.raiz / "agente"
+        self.usuario_do_agente = usuario_do_agente
+
+    def _como_agente(self, *args) -> None:
+        subprocess.run(
+            ["sudo", "-n", "-u", self.usuario_do_agente, *args], capture_output=True, timeout=120, env=_ambiente(None)
+        )
 
     def _espelho(self, repo: str) -> pathlib.Path:
         return self.raiz / "espelhos" / (repo.replace("/", "__") + ".git")
@@ -98,7 +118,7 @@ class Workspace:
             _git("config", "remote.origin.url", str(espelho.resolve()), cwd=espelho)
             _git("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*", cwd=espelho)
         _git("fetch", "-q", "--prune", url, "+refs/heads/*:refs/heads/*", cwd=espelho, cabecalho=cabecalho)
-        copia = Copia(self.raiz / "agente" / execucao_id, self.raiz / "limpa" / execucao_id)
+        copia = Copia(self.pasta_do_agente / execucao_id, self.raiz / "limpa" / execucao_id)
         self.limpar(copia)
         copia.limpa.parent.mkdir(parents=True, exist_ok=True)
         copia.agente.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +128,8 @@ class Workspace:
         ).returncode == 0
         _git("worktree", "add", "-q", "--detach", str(copia.limpa), branch if existe else base, cwd=espelho)
         shutil.copytree(copia.limpa, copia.agente, symlinks=True, ignore=_ignorar_git)
+        if self.usuario_do_agente:
+            _abrir_para_o_grupo(copia.agente)
         return copia
 
     def head(self, copia: Copia) -> str:
@@ -131,6 +153,9 @@ class Workspace:
         return sha
 
     def limpar(self, copia: Copia) -> None:
+        if self.usuario_do_agente and copia.agente.exists():
+            # o que o agente criou é dele: só ele apaga as pastas dele
+            self._como_agente("rm", "-rf", "--", str(copia.agente))
         shutil.rmtree(copia.agente, ignore_errors=True)
         if copia.limpa.exists():
             shutil.rmtree(copia.limpa, ignore_errors=True)
@@ -141,6 +166,6 @@ class Workspace:
 
     def limpar_tudo(self) -> None:
         """No início do worker: nada de execução anterior fica no disco (a reconciliação cuida do resto)."""
-        for pasta in ("agente", "limpa"):
-            for item in (self.raiz / pasta).glob("*") if (self.raiz / pasta).exists() else []:
-                self.limpar(Copia(self.raiz / "agente" / item.name, self.raiz / "limpa" / item.name))
+        for pasta in (self.pasta_do_agente, self.raiz / "limpa"):
+            for item in pasta.glob("*") if pasta.exists() else []:
+                self.limpar(Copia(self.pasta_do_agente / item.name, self.raiz / "limpa" / item.name))

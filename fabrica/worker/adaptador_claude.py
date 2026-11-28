@@ -116,7 +116,19 @@ def classificar(codigo: int, saida: str, erro: str, agora: datetime) -> Saida:
     return Saida("falha_tecnica", texto=texto, motivo=motivo, **base)
 
 
-def rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora=lambda: datetime.now(timezone.utc)) -> Saida:
+def rodar(
+    comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora=lambda: datetime.now(timezone.utc), ao_encerrar=None
+) -> Saida:
+    """`ao_encerrar` roda no fim, em qualquer caso: com o agente em outro usuário, o `killpg` não alcança os
+    filhos dele (o `sudo` não repassa SIGKILL), então quem chama mata o que sobrou."""
+    try:
+        return _rodar(comando, cwd, ambiente, prazo_s, cancelar, agora)
+    finally:
+        if ao_encerrar is not None:
+            ao_encerrar()
+
+
+def _rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora) -> Saida:
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as out, tempfile.TemporaryFile(
         "w+", encoding="utf-8", errors="replace"
     ) as err:

@@ -20,6 +20,7 @@
     "importar-cadastro": "node --import tsx scripts/importar-cadastro.ts",
     "migrar:ate-o-ar": "node --import tsx scripts/migrar-demandas-ate-o-ar.ts",
     "semear-intervalos": "node --import tsx scripts/semear-intervalos.ts",
+    "fabrica-operacao": "node --import tsx scripts/fabrica-operacao.ts",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "build:worker": "node scripts/empacotar-worker.mjs"
