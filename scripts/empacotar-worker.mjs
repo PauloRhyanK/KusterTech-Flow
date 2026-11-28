@@ -1,6 +1,6 @@
 // Empacota o worker e os scripts de operação em arquivos únicos para a imagem de produção.
 // Saída: dist/worker.mjs, dist/scripts/criar-admin.mjs e dist/scripts/importar-cadastro.mjs
-// e dist/scripts/migrar-demandas-ate-o-ar.mjs.
+// dist/scripts/migrar-demandas-ate-o-ar.mjs e dist/scripts/fabrica-operacao.mjs.
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { build } from 'esbuild'
@@ -16,6 +16,7 @@ await build({
     'scripts/criar-admin': 'scripts/criar-admin.ts',
     'scripts/importar-cadastro': 'scripts/importar-cadastro.ts',
     'scripts/migrar-demandas-ate-o-ar': 'scripts/migrar-demandas-ate-o-ar.ts',
+    'scripts/fabrica-operacao': 'scripts/fabrica-operacao.ts',
   },
   outdir: 'dist',
   outExtension: { '.js': '.mjs' },

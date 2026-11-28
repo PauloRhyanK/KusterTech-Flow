@@ -22,6 +22,7 @@ import esgotados  # noqa: E402  (leitura do horário de retorno, a mesma do kit)
 
 FERRAMENTAS_DE_ESCRITA = ("Edit", "Write", "NotebookEdit", "Bash")
 FERRAMENTAS_PERMITIDAS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
+PREFIXO_DO_PEDIDO = "Pedido da Fábrica:\n"
 AMBIENTE_PERMITIDO = ("PATH", "HOME", "LANG", "TERM", "CLAUDE_CONFIG_DIR")
 ESPERA_DO_SIGKILL_S = 20
 
@@ -44,8 +45,9 @@ class Saida:
 def montar_comando(claude: str, pedido: str, modelo: str, modo: str, sessao: str | None = None) -> list[str]:
     if modo not in ("leitura", "escrita"):
         raise ValueError(f"modo desconhecido: {modo!r}")
-    # o pedido vem logo depois de -p: opções de lista (--allowedTools a b ...) engoliriam um posicional
-    comando = [claude, "-p", pedido, "--model", modelo, "--output-format", "stream-json", "--verbose"]
+    # o pedido vem logo depois de -p (opções de lista engoliriam um posicional no fim) e sempre começa com
+    # um prefixo fixo: instruções que comecem com `--settings=...` nunca viram opção do Claude
+    comando = [claude, "-p", PREFIXO_DO_PEDIDO + pedido, "--model", modelo, "--output-format", "stream-json", "--verbose"]
     if sessao:
         comando += ["--resume", sessao]
     if modo == "leitura":
@@ -63,7 +65,8 @@ def _encerrar(proc: subprocess.Popen) -> None:
     for sinal_, espera in ((signal.SIGTERM, ESPERA_DO_SIGKILL_S), (signal.SIGKILL, 5)):
         try:
             os.killpg(proc.pid, sinal_)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
+            # grupo sumiu, ou é de outro usuário (agente isolado): quem chama mata pelo auxiliar
             return
         try:
             proc.wait(timeout=espera)
@@ -116,7 +119,19 @@ def classificar(codigo: int, saida: str, erro: str, agora: datetime) -> Saida:
     return Saida("falha_tecnica", texto=texto, motivo=motivo, **base)
 
 
-def rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora=lambda: datetime.now(timezone.utc)) -> Saida:
+def rodar(
+    comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora=lambda: datetime.now(timezone.utc), ao_encerrar=None
+) -> Saida:
+    """`ao_encerrar` roda no fim, em qualquer caso: com o agente em outro usuário, o `killpg` não alcança os
+    filhos dele (o `sudo` não repassa SIGKILL), então quem chama mata o que sobrou."""
+    try:
+        return _rodar(comando, cwd, ambiente, prazo_s, cancelar, agora)
+    finally:
+        if ao_encerrar is not None:
+            ao_encerrar()
+
+
+def _rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora) -> Saida:
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as out, tempfile.TemporaryFile(
         "w+", encoding="utf-8", errors="replace"
     ) as err:
@@ -140,7 +155,7 @@ def rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora=lamb
         # o agente pode ter deixado filhos no grupo: nada sobrevive à execução
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         out.seek(0)
         err.seek(0)

@@ -17,9 +17,13 @@ FALSO = str(pathlib.Path(__file__).resolve().parent / "claude_falso.py")
 class MontarComandoTest(unittest.TestCase):
     def test_pedido_vem_logo_depois_de_p_e_modelo_e_explicito(self):
         c = ad.montar_comando("claude", "faça x", "sonnet", "escrita")
-        self.assertEqual(c[:3], ["claude", "-p", "faça x"])
+        self.assertEqual(c[:3], ["claude", "-p", "Pedido da Fábrica:\nfaça x"])
         self.assertEqual(c[c.index("--model") + 1], "sonnet")
         self.assertEqual(c[c.index("--output-format") + 1], "stream-json")
+
+    def test_pedido_que_parece_opcao_nao_vira_opcao(self):
+        c = ad.montar_comando("claude", "--settings=/tmp/x.json", "m", "escrita")
+        self.assertFalse(c[2].startswith("-"))
 
     def test_leitura_nega_escrita_e_escrita_permite_o_necessario(self):
         leitura = ad.montar_comando("claude", "x", "opus", "leitura")
@@ -106,6 +110,12 @@ class RodarTest(unittest.TestCase):
         self.assertEqual((s.tipo, s.motivo), ("falha_tecnica", "prazo de 1 s estourado"))
         self.assertLess(time.monotonic() - inicio, 15)
         self.assertEqual(subprocess.run(["pgrep", "-f", "DEMORA"], capture_output=True).stdout, b"")
+
+    def test_ao_encerrar_roda_depois_do_cancelamento_e_do_fim(self):
+        chamado = []
+        comando = [sys.executable, FALSO, *ad.montar_comando("claude", "tudo certo", "m", "escrita")[1:]]
+        ad.rodar(comando, self.cwd, {"PATH": os.environ["PATH"]}, 30, threading.Event(), ao_encerrar=lambda: chamado.append(1))
+        self.assertEqual(chamado, [1])
 
     def test_cancelamento(self):
         cancelar = threading.Event()

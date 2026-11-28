@@ -250,6 +250,39 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("CI vermelho; revisão: falta teste", p)
         self.assertNotIn("Correção", worker.montar_pedido(tarefa(correcao=None)))
 
+    def test_agente_isolado_roda_pelo_auxiliar_e_e_morto_antes_e_depois(self):
+        f = FlowFalso([tarefa(instrucoes="nada")])
+        local = workspace.AgenteLocal(self.config.raiz / "agente")
+        mortes = []
+
+        class Isolado:
+            isolado = True
+
+            def __getattr__(self, nome):
+                return getattr(local, nome)
+
+            def comando(self, execucao_id, comando):
+                return ["sudo", "-n", "-u", "fabrica", "/usr/local/sbin/fabrica-agente", "rodar", execucao_id, *comando], "/"
+
+            def matar(self):
+                mortes.append(1)
+
+        w = worker.Worker(f, self.caixa, GitHubFalso(), workspace.Workspace(self.config.raiz, Isolado()), self.config)
+        vistos = []
+
+        def rodar(comando, cwd, ambiente, prazo, cancelar, ao_encerrar=None):
+            vistos.append((comando, cwd))
+            ao_encerrar()
+            return worker.adaptador_claude.Saida("ok", texto="ok")
+
+        w.rodar = rodar
+        w.ciclo()
+        comando, cwd = vistos[0]
+        self.assertEqual(comando[:6], ["sudo", "-n", "-u", "fabrica", "/usr/local/sbin/fabrica-agente", "rodar"])
+        self.assertEqual(cwd, "/")
+        self.assertEqual(len(mortes), 2)  # antes de rodar e no fim
+        self.assertEqual(f.enviados[0][1]["resultado"], {"tipo": "sem_pr"})
+
     def test_pedido_leva_as_regras_de_entrega(self):
         p = worker.montar_pedido(tarefa(instrucoes="Faça o rodapé."))
         self.assertTrue(p.startswith("Faça o rodapé."))

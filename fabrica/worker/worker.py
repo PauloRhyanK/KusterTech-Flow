@@ -149,11 +149,12 @@ class Worker:
             return gates_do_pr.verificar(tarefa, self.workspace, url, base, cabecalho, self.verificador)
         if finalidade == "revisar":
             return gates_do_pr.revisar(
-                tarefa, self.workspace, url, base, cabecalho, self.rodar, self.config.claude,
-                self.config.modelo("revisor"), self.config.prazo_s, cancelar,
+                tarefa, self.workspace, url, base, cabecalho, self._rodar_agente,
+                self.config.claude, self.config.modelo("revisor"), cancelar,
             )
         copia = self.workspace.preparar(url, repo, branch, base, tarefa["execucaoId"], cabecalho)
         try:
+            self.workspace.levar_ao_agente(copia)
             implementacao = tarefa["tipoDaEtapa"] == "implementacao"
             comando = adaptador_claude.montar_comando(
                 self.config.claude,
@@ -161,10 +162,7 @@ class Worker:
                 self.config.modelo(tarefa["papel"]),
                 "escrita" if implementacao else "leitura",
             )
-            saida = self.rodar(
-                comando, str(copia.agente), adaptador_claude.ambiente_do_agente(dict(os.environ)),
-                self.config.prazo_s, cancelar,
-            )
+            saida = self._rodar_agente(comando, copia, cancelar)
             falha = gates_do_pr.resultado_de_falha(saida)
             if falha is not None:
                 if "motivo" in falha:
@@ -181,6 +179,17 @@ class Worker:
         finally:
             self.workspace.limpar(copia)
 
+    def _rodar_agente(self, comando, copia, cancelar):
+        agente = self.workspace.agente
+        extra = {}
+        if agente.isolado:
+            agente.matar()  # nada de execução anterior fica rodando junto
+            extra["ao_encerrar"] = agente.matar  # o killpg não alcança processos de outro usuário
+        cmd, cwd = agente.comando(copia.execucao_id, comando)
+        return self.rodar(
+            cmd, cwd, adaptador_claude.ambiente_do_agente(dict(os.environ)), self.config.prazo_s, cancelar, **extra
+        )
+
     def _abrir_pr(self, tarefa: dict, branch: str, base: str) -> str:
         return self.github.abrir_pr(
             tarefa["repo"], branch, base, f"fabrica: {tarefa['etapaChave']}",
@@ -194,7 +203,12 @@ def main() -> int:
         flow_.ClienteFlow(config.flow_url, config.token_do_worker),
         caixa_.CaixaDeSaida(config.raiz / "caixa.json"),
         github_.GitHub(config.token_do_github),
-        workspace_.Workspace(config.raiz),
+        workspace_.Workspace(
+            config.raiz,
+            workspace_.AgenteIsolado(config.usuario_do_agente)
+            if config.usuario_do_agente
+            else workspace_.AgenteLocal(config.pasta_do_agente or config.raiz / "agente"),
+        ),
         config,
     )
 
