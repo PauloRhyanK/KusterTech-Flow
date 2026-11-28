@@ -88,7 +88,8 @@ export async function buscarDemandasParaAFabrica(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('demanda-eventos'))`
       return tx.eventoDaDemanda.groupBy({
         by: ['demandaId'],
-        where: { seq: { gt: inicio } },
+        // demandas do motor novo (Fábrica 2.0) nunca vão ao kit legado
+        where: { seq: { gt: inicio }, demanda: { motor: 'legado' } },
         _min: { seq: true },
         _max: { seq: true },
         orderBy: { _min: { seq: 'asc' } },
@@ -108,7 +109,7 @@ export async function buscarDemandasParaAFabrica(
 
     const ids = pagina.map((g) => g.demandaId)
     const demandas = await db.demanda.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, motor: 'legado' },
       include: {
         repositorio: { select: { nomeCompleto: true } },
         projeto: { select: { nome: true } },
@@ -293,6 +294,9 @@ export async function receberEventoDaFabrica(
     if (!UUID.test(demandaId)) return { status: 404, corpo: NAO_ENCONTRADA }
 
     const { id, em, tipo, dados } = lido.data
+    if (UUID.test(demandaId) && (await ehDoMotorNovo(demandaId))) {
+      return { status: 409, corpo: { erro: 'Esta demanda é do motor novo da Fábrica.' } }
+    }
     let r
     try {
       r = await registrarEvento({
@@ -332,6 +336,11 @@ export async function receberEventoDaFabrica(
   }
 }
 
+async function ehDoMotorNovo(demandaId: string): Promise<boolean> {
+  const d = await db.demanda.findUnique({ where: { id: demandaId }, select: { motor: true } })
+  return d?.motor === 'v2'
+}
+
 export async function receberArquivoDaFabrica(
   authorization: string | null,
   demandaId: string,
@@ -342,6 +351,9 @@ export async function receberArquivoDaFabrica(
   try {
     const fonte = await autenticarFonte(authorization)
     if (fonte === null) return { status: 401, corpo: NAO_AUTORIZADO }
+    if (UUID.test(demandaId) && (await ehDoMotorNovo(demandaId))) {
+      return { status: 409, corpo: { erro: 'Esta demanda é do motor novo da Fábrica.' } }
+    }
 
     const id = query.get('id') ?? ''
     const tipo = query.get('tipo')

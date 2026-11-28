@@ -120,6 +120,8 @@ model Projeto {
   autorizacoesProd        AutorizacaoProd[]
   recursos                RecursoProjeto[]
   modeloDeEtapasId        String?
+  /// Motor das demandas novas do projeto: `legado` (kit + Warren) ou `v2` (Fábrica 2.0).
+  motorPadrao             String                   @default("legado")
   nivelPadraoDeDemanda    NivelDeAcompanhamento    @default(APROVAR_DESENHO)
   modeloDeEtapas          ModeloDeEtapas?          @relation(fields: [modeloDeEtapasId], references: [id], onDelete: SetNull)
   demandas                Demanda[]
@@ -894,6 +896,9 @@ model ConfiguracaoDePublicacao {
   ultimoLoteEm      DateTime?
   baseRedefinidaEm  DateTime?
   // A versão no ar: o site publica {"commit": "<sha>"} nesta URL e o Flow confere depois do deploy.
+  /// O repositório se publica sozinho a cada merge (ex.: o próprio Flow): partes chegam por versão,
+  /// sem pedido na fila; a Fábrica 2.0 confere a versão em `urlDaVersao`.
+  deployAutomatico  Boolean                    @default(false)
   urlDaVersao       String?
   versaoNoAr        String?
   versaoConferidaEm DateTime?

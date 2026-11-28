@@ -435,7 +435,7 @@ describe('achados da revisão independente', () => {
         catalogadoEm: AGORA,
       } as never,
     })
-    await expect(plano([etapa('a', { repositorioId: outro.id })])).rejects.toThrow(/projeto/)
+    await expect(plano([etapa('a', { repositorioId: outro.id })])).rejects.toThrow(/repositório/)
   })
 
   test('reconciliação que nunca termina bloqueia a etapa', async () => {

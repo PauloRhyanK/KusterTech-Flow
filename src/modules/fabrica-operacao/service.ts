@@ -203,9 +203,18 @@ export async function registrarPlanoAprovado(
   const hash = createHash('sha256').update(jsonCanonico(e.conteudo)).digest('hex')
   const demanda = await db.demanda.findUnique({
     where: { id: e.demandaId },
-    select: { projetoId: true },
+    select: { projetoId: true, repositorioId: true, encerrada: true, entregueEm: true },
   })
   if (!demanda) throw new ErroDeDominio('Demanda não encontrada.')
+  if (demanda.encerrada !== null || demanda.entregueEm !== null) {
+    throw new ErroDeDominio(
+      'A demanda já foi entregue ou encerrada; abra uma demanda nova para mudar.',
+    )
+  }
+  // várias partes em vários repositórios entram no M5; até lá, tudo no repositório da demanda
+  if (e.etapas.some((et) => et.repositorioId !== demanda.repositorioId)) {
+    throw new ErroDeDominio('Nesta fase, todas as etapas precisam ser no repositório da demanda.')
+  }
   const repos = [...new Set(e.etapas.map((et) => et.repositorioId))]
   const doProjeto = await db.repositorioGitHub.count({
     where: { id: { in: repos }, projetoId: demanda.projetoId },

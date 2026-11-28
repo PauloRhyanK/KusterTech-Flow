@@ -68,6 +68,9 @@ describe('tarefas do worker', () => {
     expect(ligado.find((t) => t.nome === 'avaliar-gates-da-fabrica')?.modulo).toBe(
       'fabrica-operacao',
     )
+    expect(ligado.find((t) => t.nome === 'sincronizar-demandas-v2')?.modulo).toBe(
+      'fabrica-operacao',
+    )
   })
 
   test('buscar-relatos e enviar-andamento são do módulo relatos e somem sem ele', () => {

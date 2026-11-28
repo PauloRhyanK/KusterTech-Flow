@@ -67,7 +67,12 @@ export async function buscarConversasParaOAtendente(
     })
 
     const esperando = await db.conversa.findMany({
-      where: { encerradaEm: null, aguardaAgenteDesde: { not: null } },
+      where: {
+        encerradaEm: null,
+        aguardaAgenteDesde: { not: null },
+        // conversas de demandas do motor novo não vão ao atendente do kit legado
+        OR: [{ demandaId: null }, { demanda: { motor: 'legado' } }],
+      },
       orderBy: [{ aguardaAgenteDesde: 'asc' }, { criadaEm: 'asc' }],
     })
     const retrato = (await lerRetratoMaisRecente())?.retrato ?? null
@@ -172,6 +177,16 @@ export async function receberRespostaDoAtendente(
     if (!lido.success) return invalido
     if (!UUID.test(conversaId)) {
       return { status: 404, corpo: { erro: 'Conversa não encontrada.' } }
+    }
+    const daConversa = await db.conversa.findUnique({
+      where: { id: conversaId },
+      select: { demanda: { select: { motor: true } } },
+    })
+    if (daConversa?.demanda?.motor === 'v2') {
+      return {
+        status: 409,
+        corpo: { erro: 'Esta conversa é de uma demanda do motor novo da Fábrica.' },
+      }
     }
 
     const r = await registrarRespostaDoAtendente(fonte.id, conversaId, lido.data, agora)
