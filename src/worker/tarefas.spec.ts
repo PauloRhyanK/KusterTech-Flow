@@ -58,6 +58,18 @@ describe('tarefas do worker', () => {
       'recuperar-anexos-de-relatos',
     ])
   })
+  test('os gates da Fábrica 2.0 só rodam com o módulo fabrica-operacao ligado', () => {
+    const padrao = criarTarefasDoCiclo({ ...fonte, ativos: resolverModulosAtivos(undefined) })
+    expect(padrao.map((t) => t.nome)).not.toContain('avaliar-gates-da-fabrica')
+    const ligado = criarTarefasDoCiclo({
+      ...fonte,
+      ativos: resolverModulosAtivos('fabrica-operacao'),
+    })
+    expect(ligado.find((t) => t.nome === 'avaliar-gates-da-fabrica')?.modulo).toBe(
+      'fabrica-operacao',
+    )
+  })
+
   test('buscar-relatos e enviar-andamento são do módulo relatos e somem sem ele', () => {
     const semRelatos = new Set(resolverModulosAtivos(undefined))
     semRelatos.delete('relatos')

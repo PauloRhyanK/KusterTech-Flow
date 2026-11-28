@@ -11,6 +11,7 @@ import { ErroDeDominio } from '@/lib/erros'
 import { jsonCanonico } from '@/modules/demandas/transicoes'
 import { hashDoTokenDaFabrica } from '@/modules/fabrica/model'
 import { proximaTentativa } from './agenda'
+import { proximaTarefaDeGate } from './gates-da-etapa'
 import {
   admitir,
   aplicarResultado,
@@ -31,6 +32,8 @@ export interface EtapaDoPlano {
   papel: string
   /** O que o agente deve fazer; vazio é recusado em etapas de implementação. */
   instrucoes: string
+  /** Comando de verificação no contêiner limpo; obrigatório em implementação. */
+  verificacao: string
   repositorioId: string
   arquivos: string[]
   dependeDe: string[]
@@ -43,6 +46,12 @@ export interface TarefaParaWorker {
   geracao: number
   /** `reconciliar`: a reserva anterior venceu; confira sessão, commits e PR antes de repetir qualquer efeito. */
   tipo: 'executar' | 'reconciliar'
+  /** `executar` a etapa, ou um gate do PR no `sha`: `verificar` (contêiner) e `revisar` (revisão cega). */
+  finalidade: Finalidade
+  sha: string | null
+  verificacao: string
+  /** Motivos do gate quando a etapa volta para correção. */
+  correcao: string | null
   etapaChave: string
   tipoDaEtapa: TipoDaEtapa
   instrucoes: string
@@ -52,12 +61,32 @@ export interface TarefaParaWorker {
   expiraEm: string
 }
 
+export type Finalidade = 'executar' | 'verificar' | 'revisar'
+
+/** Evidência de um gate no SHA exato. */
+export type ResultadoDeGate =
+  | { tipo: 'verificacao'; sha: string; codigo: number }
+  | {
+      tipo: 'revisao'
+      sha: string
+      veredito: { resultado: 'aprovado' | 'correcoes'; achados?: unknown; criterios?: unknown }
+    }
+
+export type ResultadoDoWorker = ResultadoDaExecucao | ResultadoDeGate
+
 export interface EnvioDeResultado {
   idExterno: string
   execucaoId: string
   geracao: number
-  resultado: ResultadoDaExecucao
+  resultado: ResultadoDoWorker
 }
+
+const EVIDENCIA_DA_FINALIDADE: Record<Exclude<Finalidade, 'executar'>, ResultadoDeGate['tipo']> = {
+  verificar: 'verificacao',
+  revisar: 'revisao',
+}
+/** Na 3ª falha técnica do mesmo gate no mesmo SHA, a etapa pede atenção. */
+const MAX_FALHAS_DE_GATE = 3
 
 const TIPOS: readonly TipoDaEtapa[] = ['implementacao', 'leitura']
 /** Ocupam arquivos: em execução ou com PR aberto esperando os gates. */
@@ -121,6 +150,9 @@ function validarEtapas(etapas: EtapaDoPlano[]): void {
     if (e.papel.trim() === '') throw new ErroDeDominio(`Etapa "${e.chave}" sem papel.`)
     if (e.tipo === 'implementacao' && e.instrucoes.trim() === '') {
       throw new ErroDeDominio(`Etapa "${e.chave}" sem instruções.`)
+    }
+    if (e.tipo === 'implementacao' && e.verificacao.trim() === '') {
+      throw new ErroDeDominio(`Etapa "${e.chave}" sem comando de verificação.`)
     }
   }
   for (const e of etapas) {
@@ -278,8 +310,12 @@ async function reatribuirVencida(
       where: { id: vencida.id, encerradaEm: null },
       data: { encerradaEm: agora, reservaExpiraEm: null },
     })
-    await tx.etapaOperacional.update({
-      where: { id: vencida.etapaId },
+    // só mexe na etapa se ela ainda espera por esta execução
+    await tx.etapaOperacional.updateMany({
+      where: {
+        id: vencida.etapaId,
+        estado: vencida.finalidade === 'executar' ? 'executando' : 'aguardando_gates',
+      },
       data: {
         estado: 'bloqueada',
         motivo: `reconciliação falhou ${vencida.geracao} vezes: conferir sessão, commits e PR`,
@@ -303,7 +339,15 @@ async function reatribuirVencida(
     execucaoId: atualizada.id,
     etapaId: vencida.etapaId,
     geracao: atualizada.geracao,
-    tipo: 'reconciliar',
+    // verificar e revisar não têm efeito externo: repetir é seguro
+    tipo: vencida.finalidade === 'executar' ? 'reconciliar' : 'executar',
+    finalidade: vencida.finalidade as Finalidade,
+    sha: vencida.sha,
+    verificacao: vencida.etapa.verificacao,
+    correcao:
+      vencida.finalidade === 'executar' && vencida.etapa.correcoes > 0
+        ? vencida.etapa.pedidoDeCorrecao
+        : null,
     etapaChave: vencida.etapa.chave,
     tipoDaEtapa: vencida.etapa.tipo as TipoDaEtapa,
     instrucoes: vencida.etapa.instrucoes,
@@ -312,6 +356,155 @@ async function reatribuirVencida(
     prUrl: vencida.etapa.prUrl,
     expiraEm: atualizada.reservaExpiraEm!.toISOString(),
   }
+}
+
+async function oferecerGate(
+  tx: Tx,
+  workerId: string,
+  agora: Date,
+): Promise<TarefaParaWorker | null> {
+  const etapas = await tx.etapaOperacional.findMany({
+    where: {
+      estado: 'aguardando_gates',
+      headSha: { not: null },
+      OR: [{ proximaTentativaEm: null }, { proximaTentativaEm: { lte: agora } }],
+      execucoes: { none: { encerradaEm: null } },
+    },
+    orderBy: { atualizadaEm: 'asc' },
+    include: {
+      repositorio: { select: { nomeCompleto: true } },
+      evidencias: { select: { tipo: true, sha: true, dados: true } },
+    },
+  })
+  for (const etapa of etapas) {
+    const head = etapa.headSha!
+    const doHead = (tipo: string) => etapa.evidencias.find((e) => e.tipo === tipo && e.sha === head)
+    const verificacao = doHead('verificacao')
+    const finalidade = proximaTarefaDeGate({
+      head,
+      verificacao: verificacao ? (verificacao.dados as { codigo: number }) : null,
+      revisao: doHead('revisao') ? {} : null,
+    })
+    if (finalidade === null) continue
+    const tentativas = await tx.execucaoOperacional.count({ where: { etapaId: etapa.id } })
+    const execucao = await tx.execucaoOperacional.create({
+      data: {
+        etapaId: etapa.id,
+        tentativa: tentativas + 1,
+        papel: finalidade === 'verificar' ? 'verificador' : 'revisor',
+        finalidade,
+        sha: head,
+        workerId,
+        geracao: 1,
+        reservaExpiraEm: expiracao(agora),
+        iniciadaEm: agora,
+      },
+    })
+    return {
+      execucaoId: execucao.id,
+      etapaId: etapa.id,
+      geracao: 1,
+      tipo: 'executar',
+      finalidade,
+      sha: head,
+      verificacao: etapa.verificacao,
+      correcao: null,
+      etapaChave: etapa.chave,
+      tipoDaEtapa: etapa.tipo as TipoDaEtapa,
+      instrucoes: etapa.instrucoes,
+      papel: execucao.papel,
+      repo: etapa.repositorio.nomeCompleto,
+      prUrl: etapa.prUrl,
+      expiraEm: execucao.reservaExpiraEm!.toISOString(),
+    }
+  }
+  return null
+}
+
+/** Espera depois de uma tarefa de gate cancelada (push durante o gate): o avaliador grava o head novo. */
+const ESPERA_DO_GATE_CANCELADO_MS = 60_000
+
+/** Resultado de uma tarefa de gate: guarda a evidência ou recua a etapa; nunca muda o estado dela. */
+async function aplicarResultadoDeGate(
+  tx: Tx,
+  execucao: { id: string; etapaId: string; finalidade: string; sha: string | null },
+  resultado: ResultadoDoWorker,
+  agora: Date,
+): Promise<void> {
+  if (resultado.tipo === 'incerto') return // continua aberta para repetir
+  const finalidade = execucao.finalidade as Exclude<Finalidade, 'executar'>
+  const esperado = EVIDENCIA_DA_FINALIDADE[finalidade]
+  const doTipo = resultado.tipo === 'verificacao' || resultado.tipo === 'revisao'
+  const evidencia = doTipo && resultado.tipo === esperado && resultado.sha === execucao.sha
+  // evidência de outro SHA ou de outro tipo é saída inválida e conta como falha
+  const registrado: ResultadoDoWorker =
+    doTipo && !evidencia
+      ? { tipo: 'saida_invalida', motivo: `evidência que não é de ${finalidade} no SHA pedido` }
+      : resultado
+  await tx.execucaoOperacional.update({
+    where: { id: execucao.id },
+    data: {
+      encerradaEm: agora,
+      reservaExpiraEm: null,
+      resultado: registrado as Prisma.InputJsonValue,
+    },
+  })
+  if (evidencia) {
+    await tx.evidenciaDaEtapa.createMany({
+      data: [
+        {
+          etapaId: execucao.etapaId,
+          tipo: esperado,
+          sha: execucao.sha!,
+          dados: (resultado.tipo === 'revisao'
+            ? resultado.veredito
+            : { codigo: resultado.codigo }) as Prisma.InputJsonValue,
+          execucaoId: execucao.id,
+        },
+      ],
+      skipDuplicates: true,
+    })
+    return
+  }
+  // a etapa só recua ou bloqueia se ainda espera por este gate neste SHA
+  const daEtapa = { id: execucao.etapaId, estado: 'aguardando_gates', headSha: execucao.sha }
+  if (registrado.tipo === 'cancelada') {
+    await tx.etapaOperacional.updateMany({
+      where: daEtapa,
+      data: { proximaTentativaEm: new Date(agora.getTime() + ESPERA_DO_GATE_CANCELADO_MS) },
+    })
+    return
+  }
+  const motivo =
+    'motivo' in registrado
+      ? registrado.motivo
+      : registrado.tipo === 'limite_de_uso'
+        ? 'limite de uso'
+        : `resultado inesperado para ${finalidade}: ${registrado.tipo}`
+  const anteriores = await tx.execucaoOperacional.findMany({
+    where: { etapaId: execucao.etapaId, finalidade, sha: execucao.sha, encerradaEm: { not: null } },
+    select: { resultado: true },
+  })
+  const falhas = anteriores.filter((a) => {
+    const t = (a.resultado as { tipo?: string } | null)?.tipo
+    return t !== esperado && t !== 'cancelada' && t !== 'limite_de_uso'
+  }).length
+  if (registrado.tipo !== 'limite_de_uso' && falhas >= MAX_FALHAS_DE_GATE) {
+    await tx.etapaOperacional.updateMany({
+      where: daEtapa,
+      data: {
+        estado: 'bloqueada',
+        motivo: `${finalidade === 'verificar' ? 'verificação' : 'revisão'} falhou ${falhas} vezes: ${motivo}`,
+      },
+    })
+    return
+  }
+  const recuo =
+    registrado.tipo === 'limite_de_uso' ? registrado : ({ tipo: 'falha_tecnica', motivo } as const)
+  await tx.etapaOperacional.updateMany({
+    where: daEtapa,
+    data: { motivo, proximaTentativaEm: proximaTentativa(recuo, Math.max(falhas, 1), agora) },
+  })
 }
 
 /**
@@ -331,6 +524,10 @@ export async function pegarTarefa(workerId: string, agora: Date): Promise<Tarefa
 
     const reconciliar = await reatribuirVencida(tx, workerId, agora)
     if (reconciliar) return reconciliar
+
+    // gates primeiro: destravam merges e liberam a vaga das etapas
+    const deGate = await oferecerGate(tx, workerId, agora)
+    if (deGate) return deGate
 
     const linhas = await etapasVigentes(tx)
     const porRevisao = new Map<string, LinhaDaEtapa[]>()
@@ -375,6 +572,10 @@ export async function pegarTarefa(workerId: string, agora: Date): Promise<Tarefa
       etapaId: linha.id,
       geracao: 1,
       tipo: 'executar',
+      finalidade: 'executar',
+      sha: null,
+      verificacao: linha.verificacao,
+      correcao: linha.correcoes > 0 ? linha.pedidoDeCorrecao : null,
       etapaChave: linha.chave,
       tipoDaEtapa: linha.tipo as TipoDaEtapa,
       instrucoes: linha.instrucoes,
@@ -456,15 +657,35 @@ export async function receberResultado(
         return 'obsoleto'
       }
       await tx.$queryRaw`SELECT "id" FROM "EtapaOperacional" WHERE "id" = ${execucao.etapaId} FOR UPDATE`
+      const registrar = () =>
+        tx.eventoOperacional.create({
+          data: {
+            idExterno: envio.idExterno,
+            entidade: 'execucao',
+            entidadeId: execucao.id,
+            tipo: 'resultado',
+            origem: `worker:${workerId}`,
+            dados: dados as Prisma.InputJsonValue,
+            em: agora,
+          },
+        })
+      if (execucao.finalidade !== 'executar') {
+        await aplicarResultadoDeGate(tx, execucao, envio.resultado, agora)
+        await registrar()
+        return 'aplicado'
+      }
       const linha = await tx.etapaOperacional.findUniqueOrThrow({
         where: { id: execucao.etapaId },
         include: { repositorio: { select: { nomeCompleto: true } } },
       })
-      const nova = aplicarResultado(paraEtapa(linha), envio.resultado)
+      // evidência de gate numa execução da etapa não faz sentido: é saída inválida
+      const resultado: ResultadoDaExecucao =
+        envio.resultado.tipo === 'verificacao' || envio.resultado.tipo === 'revisao'
+          ? { tipo: 'saida_invalida', motivo: 'evidência de gate numa execução da etapa' }
+          : envio.resultado
+      const nova = aplicarResultado(paraEtapa(linha), resultado)
       const espera =
-        nova.estado === 'pendente'
-          ? proximaTentativa(envio.resultado, nova.falhasTecnicas, agora)
-          : null
+        nova.estado === 'pendente' ? proximaTentativa(resultado, nova.falhasTecnicas, agora) : null
       await tx.etapaOperacional.update({
         where: { id: linha.id },
         data: {
@@ -486,17 +707,7 @@ export async function receberResultado(
           },
         })
       }
-      await tx.eventoOperacional.create({
-        data: {
-          idExterno: envio.idExterno,
-          entidade: 'execucao',
-          entidadeId: execucao.id,
-          tipo: 'resultado',
-          origem: `worker:${workerId}`,
-          dados: dados as Prisma.InputJsonValue,
-          em: agora,
-        },
-      })
+      await registrar()
       return 'aplicado'
     })
   } catch (erro) {

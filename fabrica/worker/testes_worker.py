@@ -220,6 +220,36 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(r["tipo"], "falha_tecnica")
         self.assertLessEqual(len(r["motivo"]), 500)
 
+    def _branch_no_remoto(self):
+        semente = pathlib.Path(tempfile.mkdtemp()) / "s"
+        git("clone", "-q", str(self.remoto), str(semente), cwd=semente.parent)
+        git("checkout", "-qb", "fabrica/22222222", cwd=semente)
+        (semente / ".fabrica").mkdir()
+        (semente / ".fabrica" / "config.json").write_text('{"verificacao": {"imagem": "node:22"}}')
+        git("add", "-A", cwd=semente)
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "etapa", cwd=semente)
+        git("push", "-q", "origin", "fabrica/22222222", cwd=semente)
+        return git("rev-parse", "HEAD", cwd=semente)
+
+    def test_verificar_devolve_a_evidencia(self):
+        sha = self._branch_no_remoto()
+        f = FlowFalso([tarefa(finalidade="verificar", sha=sha, verificacao="pnpm test", papel="verificador")])
+        w = self.worker(f)
+        w.verificador = lambda repo_dir, s, comando, *, conteiner: {"sha": s, "codigo": 0, "saida": ""}
+        w.ciclo()
+        self.assertEqual(f.enviados[0][1]["resultado"], {"tipo": "verificacao", "sha": sha, "codigo": 0})
+
+    def test_revisar_sem_veredito_e_saida_invalida(self):
+        sha = self._branch_no_remoto()
+        f = FlowFalso([tarefa(finalidade="revisar", sha=sha, papel="revisor", prUrl="https://github.com/dono/repo/pull/9")])
+        self.worker(f).ciclo()
+        self.assertEqual(f.enviados[0][1]["resultado"]["tipo"], "saida_invalida")
+
+    def test_correcao_vai_no_pedido(self):
+        p = worker.montar_pedido(tarefa(instrucoes="Faça o rodapé.", correcao="CI vermelho; revisão: falta teste"))
+        self.assertIn("CI vermelho; revisão: falta teste", p)
+        self.assertNotIn("Correção", worker.montar_pedido(tarefa(correcao=None)))
+
     def test_pedido_leva_as_regras_de_entrega(self):
         p = worker.montar_pedido(tarefa(instrucoes="Faça o rodapé."))
         self.assertTrue(p.startswith("Faça o rodapé."))

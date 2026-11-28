@@ -94,6 +94,9 @@ class Workspace:
         if not espelho.exists():
             espelho.parent.mkdir(parents=True, exist_ok=True)
             _git("init", "-q", "--bare", str(espelho), cwd=self.raiz)
+            # `origin` aponta para o próprio espelho: o verificador do kit faz `git fetch origin`
+            _git("config", "remote.origin.url", str(espelho.resolve()), cwd=espelho)
+            _git("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*", cwd=espelho)
         _git("fetch", "-q", "--prune", url, "+refs/heads/*:refs/heads/*", cwd=espelho, cabecalho=cabecalho)
         copia = Copia(self.raiz / "agente" / execucao_id, self.raiz / "limpa" / execucao_id)
         self.limpar(copia)
@@ -106,6 +109,13 @@ class Workspace:
         _git("worktree", "add", "-q", "--detach", str(copia.limpa), branch if existe else base, cwd=espelho)
         shutil.copytree(copia.limpa, copia.agente, symlinks=True, ignore=_ignorar_git)
         return copia
+
+    def head(self, copia: Copia) -> str:
+        return _git("rev-parse", "HEAD", cwd=copia.limpa)
+
+    def diff(self, copia: Copia, base: str) -> str:
+        """O diff do head contra o ponto em que saiu da base (o que o PR muda)."""
+        return _git("diff", "--no-ext-diff", "--no-textconv", f"refs/heads/{base}...HEAD", cwd=copia.limpa)
 
     def tem_mudancas(self, copia: Copia) -> bool:
         _sincronizar(copia.agente, copia.limpa)

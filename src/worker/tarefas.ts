@@ -11,6 +11,7 @@ import { executarCiclo } from '@/modules/github/reconciliacao'
 import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/modules/decidir/worker'
 import { limparArquivosDeDemandas, marcarPartesSemPublicacao } from '@/modules/demandas/worker'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
+import { avaliarEtapasEmGates } from '@/modules/fabrica-operacao/avaliador'
 import {
   enviarAndamentoDosRelatos,
   buscarRelatosDosSistemas,
@@ -57,6 +58,16 @@ export function criarTarefasDoCiclo(d: {
         if (resumo.processados + resumo.falhas + resumo.removidos > 0) {
           log.info({ tarefa: 'processar-eventos-de-webhook', ...resumo }, 'eventos de webhook')
         }
+      },
+    },
+    {
+      nome: 'avaliar-gates-da-fabrica',
+      modulo: 'fabrica-operacao',
+      async executar(agora) {
+        // Fábrica 2.0: decide e mergeia pelo SHA as etapas com PR aberto e evidências completas.
+        const r = await avaliarEtapasEmGates(d.obterFonte(), agora)
+        if (r.mergeadas > 0)
+          log.info({ tarefa: 'avaliar-gates-da-fabrica', ...r }, 'gates da Fábrica')
       },
     },
     {

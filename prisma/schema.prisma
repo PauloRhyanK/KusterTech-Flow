@@ -1538,6 +1538,12 @@ model EtapaOperacional {
   papel              String
   /// O que o agente deve fazer (brief enxuto, em português).
   instrucoes         String                @default("")
+  /// Comando de verificação no contêiner limpo (obrigatório em implementação).
+  verificacao        String                @default("")
+  /// Motivos do último gate que pediu correção; vão ao executor na próxima execução.
+  pedidoDeCorrecao   String?
+  /// Head do PR na última avaliação dos gates.
+  headSha            String?
   repositorioId      String
   arquivos           String[]
   /// Chaves de outras etapas da mesma revisão.
@@ -1554,6 +1560,7 @@ model EtapaOperacional {
   revisao            RevisaoDoPlano        @relation(fields: [revisaoId], references: [id], onDelete: Cascade)
   repositorio        RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
   execucoes          ExecucaoOperacional[]
+  evidencias         EvidenciaDaEtapa[]
 
   @@unique([revisaoId, chave])
   @@index([estado, proximaTentativaEm])
@@ -1566,6 +1573,9 @@ model ExecucaoOperacional {
   etapaId         String
   tentativa       Int
   papel           String
+  /// `executar` (a etapa), `verificar` ou `revisar` (gates do PR no `sha`).
+  finalidade      String           @default("executar")
+  sha             String?
   workerId        String?
   geracao         Int              @default(0)
   reservaExpiraEm DateTime?
@@ -1605,4 +1615,18 @@ model EventoOperacional {
   em         DateTime @default(now())
 
   @@index([entidade, entidadeId, seq])
+}
+
+/// Evidência de gate de uma etapa num SHA exato: verificação em contêiner limpo ou revisão cega.
+model EvidenciaDaEtapa {
+  id         String           @id @default(uuid())
+  etapaId    String
+  tipo       String
+  sha        String
+  dados      Json
+  execucaoId String?
+  criadaEm   DateTime         @default(now())
+  etapa      EtapaOperacional @relation(fields: [etapaId], references: [id], onDelete: Cascade)
+
+  @@unique([etapaId, tipo, sha])
 }

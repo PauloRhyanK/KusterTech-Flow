@@ -19,6 +19,7 @@ import adaptador_claude  # noqa: E402
 import caixa as caixa_  # noqa: E402
 import config as config_  # noqa: E402
 import flow as flow_  # noqa: E402
+import gates_do_pr  # noqa: E402
 import github as github_  # noqa: E402
 import workspace as workspace_  # noqa: E402
 
@@ -34,7 +35,13 @@ REGRAS_DE_LEITURA = "Regras da Fábrica: só leia e analise; não altere arquivo
 
 def montar_pedido(tarefa: dict) -> str:
     regras = REGRAS_DE_ESCRITA if tarefa["tipoDaEtapa"] == "implementacao" else REGRAS_DE_LEITURA
-    return f"{tarefa['instrucoes'].strip()}\n\n{regras}"
+    partes = [tarefa["instrucoes"].strip()]
+    if tarefa.get("correcao"):
+        partes.append(
+            "Correção pedida pela revisão e pelos testes da Fábrica (o PR desta etapa já existe; corrija nele):\n"
+            + tarefa["correcao"].strip()
+        )
+    return "\n\n".join([*partes, regras])
 
 
 def _motivo(texto: str) -> str:
@@ -50,13 +57,14 @@ def _motivo(texto: str) -> str:
 
 
 class Worker:
-    def __init__(self, flow, caixa, github, workspace, config, rodar=adaptador_claude.rodar):
+    def __init__(self, flow, caixa, github, workspace, config, rodar=adaptador_claude.rodar, verificador=None):
         self.flow = flow
         self.caixa = caixa
         self.github = github
         self.workspace = workspace
         self.config = config
         self.rodar = rodar
+        self.verificador = verificador  # None: o `verificacao.verificar` do kit (Docker)
         self.parar = threading.Event()
         self._cancelar_atual: threading.Event | None = None
 
@@ -136,6 +144,14 @@ class Worker:
         base = self.github.branch_padrao(repo)
         url = self.config.url_do_repo.format(repo=repo)
         cabecalho = workspace_.cabecalho_do_token(self.config.token_do_github)
+        finalidade = tarefa.get("finalidade", "executar")
+        if finalidade == "verificar":
+            return gates_do_pr.verificar(tarefa, self.workspace, url, base, cabecalho, self.verificador)
+        if finalidade == "revisar":
+            return gates_do_pr.revisar(
+                tarefa, self.workspace, url, base, cabecalho, self.rodar, self.config.claude,
+                self.config.modelo("revisor"), self.config.prazo_s, cancelar,
+            )
         copia = self.workspace.preparar(url, repo, branch, base, tarefa["execucaoId"], cabecalho)
         try:
             implementacao = tarefa["tipoDaEtapa"] == "implementacao"
@@ -149,12 +165,11 @@ class Worker:
                 comando, str(copia.agente), adaptador_claude.ambiente_do_agente(dict(os.environ)),
                 self.config.prazo_s, cancelar,
             )
-            if saida.tipo == "cancelada":
-                return {"tipo": "cancelada"}
-            if saida.tipo == "limite_de_uso":
-                return {"tipo": "limite_de_uso", "retornoEm": saida.retorno_em}
-            if saida.tipo in ("erro_de_configuracao", "falha_tecnica"):
-                return {"tipo": saida.tipo, "motivo": _motivo(saida.motivo)}
+            falha = gates_do_pr.resultado_de_falha(saida)
+            if falha is not None:
+                if "motivo" in falha:
+                    falha["motivo"] = _motivo(falha["motivo"])
+                return falha
             if not implementacao or not self.workspace.tem_mudancas(copia):
                 return {"tipo": "sem_pr"}
             if cancelar.is_set():  # a reserva deixou de ser nossa: outro worker reconcilia
