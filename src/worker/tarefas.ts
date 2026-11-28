@@ -12,6 +12,7 @@ import { arquivarConversasResolvidas, limparParciaisDeConversas } from '@/module
 import { limparArquivosDeDemandas, marcarPartesSemPublicacao } from '@/modules/demandas/worker'
 import { buscarErrosDoGlitchTip } from '@/modules/erros/service'
 import { avaliarEtapasEmGates } from '@/modules/fabrica-operacao/avaliador'
+import { sincronizarDemandasV2 } from '@/modules/fabrica-operacao/sincronizacao'
 import {
   enviarAndamentoDosRelatos,
   buscarRelatosDosSistemas,
@@ -68,6 +69,16 @@ export function criarTarefasDoCiclo(d: {
         const r = await avaliarEtapasEmGates(d.obterFonte(), agora)
         if (r.mergeadas > 0)
           log.info({ tarefa: 'avaliar-gates-da-fabrica', ...r }, 'gates da Fábrica')
+      },
+    },
+    {
+      nome: 'sincronizar-demandas-v2',
+      modulo: 'fabrica-operacao',
+      async executar(agora) {
+        // Fábrica 2.0: leva as demandas do motor novo de "recebida" até "no ar" pelos eventos de sempre.
+        const r = await sincronizarDemandasV2(agora)
+        if (r.passos > 0)
+          log.info({ tarefa: 'sincronizar-demandas-v2', ...r }, 'demandas do motor novo')
       },
     },
     {

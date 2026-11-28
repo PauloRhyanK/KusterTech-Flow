@@ -41,7 +41,7 @@
 ### Task 3: Sincronização das demandas v2
 
 **Files:** `src/modules/fabrica-operacao/demandas-v2.ts` (puro: `proximoPasso`), `sincronizacao.ts` (I/O), `src/worker/tarefas.ts`; testes unitários e de integração.
-- [ ] Passos, nesta ordem, um por ciclo e por demanda: `triagem` (recebida) → `partes_planejadas` + `plano_criado` (planejada) → `parte_feita` + `etapa_concluida{desenvolvida}` quando todas as etapas terminaram bem e os merges têm `shaMerge` → `registrarChegada` (só `publicacao`) + `etapa_concluida{entregue}` → a fila fecha. `travada`/`destravada` acompanham etapas bloqueadas.
+- [ ] Passos, nesta ordem, um por ciclo e por demanda: `triagem` (recebida) → `plano_criado` (planejada; a parte de entrada já nasce `versao` quando o repositório tem `deployAutomatico`) → `parte_feita` + `etapa_concluida{desenvolvida}` quando todas as etapas terminaram bem e os merges têm `shaMerge` → `registrarChegada` (só `publicacao`) + `etapa_concluida{entregue}` → a fila fecha. `travada`/`destravada` acompanham etapas bloqueadas.
 - [ ] Conferência da versão para repositórios com `deployAutomatico` e `urlDaVersao`. Commit.
 
 ### Task 4: Ligar o piloto

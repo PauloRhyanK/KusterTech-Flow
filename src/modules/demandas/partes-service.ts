@@ -38,7 +38,10 @@ export async function criarParteDeEntrada(
 ): Promise<void> {
   const repo = await tx.repositorioGitHub.findUniqueOrThrow({
     where: { id: demanda.repositorioId },
-    select: { nomeCompleto: true },
+    select: {
+      nomeCompleto: true,
+      configuracaoDePublicacao: { select: { deployAutomatico: true } },
+    },
   })
   await tx.parteDaDemanda.create({
     data: {
@@ -47,6 +50,8 @@ export async function criarParteDeEntrada(
       repositorioId: demanda.repositorioId,
       ordem: 1,
       dependeDe: [],
+      // repositório que se publica sozinho a cada merge (o próprio Flow): a parte chega por versão
+      ...(repo.configuracaoDePublicacao?.deployAutomatico ? { chegaAoAr: 'VERSAO' as const } : {}),
     },
   })
 }
