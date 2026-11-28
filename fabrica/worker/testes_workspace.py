@@ -1,4 +1,3 @@
-import os
 import pathlib
 import subprocess
 import tempfile
@@ -6,6 +5,9 @@ import unittest
 from unittest import mock
 
 import workspace
+
+EX1 = "11111111-aaaa-4bbb-8ccc-000000000001"
+EX2 = "11111111-aaaa-4bbb-8ccc-000000000002"
 
 
 def git(*args, cwd):
@@ -27,20 +29,25 @@ class WorkspaceTest(unittest.TestCase):
         self.ws = workspace.Workspace(base / "raiz")
         self.url = str(self.remoto)
 
-    def preparar(self, execucao="ex1"):
-        return self.ws.preparar(self.url, "dono/repo", "fabrica/abc", "main", execucao)
+    def preparar(self, execucao=EX1):
+        c = self.ws.preparar(self.url, "dono/repo", "fabrica/abc", "main", execucao)
+        self.ws.levar_ao_agente(c)
+        return c
+
+    def agente(self, c):
+        return self.ws.agente.pasta(c.execucao_id)
 
     def test_agente_recebe_so_os_arquivos_sem_git(self):
         c = self.preparar()
-        self.assertTrue((c.agente / "LEIA.md").exists())
-        self.assertFalse((c.agente / ".git").exists())
+        self.assertTrue((self.agente(c) / "LEIA.md").exists())
+        self.assertFalse((self.agente(c) / ".git").exists())
         self.assertFalse(self.ws.tem_mudancas(c))
 
     def test_entrega_leva_criados_alterados_e_removidos(self):
         c = self.preparar()
-        (c.agente / "novo.txt").write_text("x\n")
-        (c.agente / "LEIA.md").write_text("mudou\n")
-        (c.agente / "velho.txt").unlink()
+        (self.agente(c) / "novo.txt").write_text("x\n")
+        (self.agente(c) / "LEIA.md").write_text("mudou\n")
+        (self.agente(c) / "velho.txt").unlink()
         self.assertTrue(self.ws.tem_mudancas(c))
         sha = self.ws.entregar(c, "fabrica/abc", "feat: novo", self.url)
         self.assertEqual(git("rev-parse", "fabrica/abc", cwd=self.remoto), sha)
@@ -50,13 +57,23 @@ class WorkspaceTest(unittest.TestCase):
 
     def test_repositorio_aninhado_criado_pelo_agente_nao_entra(self):
         c = self.preparar()
-        (c.agente / "sub" / ".git").mkdir(parents=True)
-        (c.agente / "sub" / ".git" / "config").write_text("[core]\n")
-        (c.agente / "sub" / "a.txt").write_text("a\n")
+        (self.agente(c) / "sub" / ".git").mkdir(parents=True)
+        (self.agente(c) / "sub" / ".git" / "config").write_text("[core]\n")
+        (self.agente(c) / "sub" / "a.txt").write_text("a\n")
+        self.ws.tem_mudancas(c)
         self.ws.entregar(c, "fabrica/abc", "sub", self.url)
         arquivos = git("ls-tree", "-r", "--name-only", "fabrica/abc", cwd=self.remoto).split()
         self.assertIn("sub/a.txt", arquivos)
         self.assertNotIn("sub/.git/config", arquivos)
+
+    def test_atalho_para_fora_plantado_pelo_agente_nao_entra(self):
+        c = self.preparar()
+        segredo = self.ws.raiz / "segredo"
+        segredo.write_text("token")
+        (self.agente(c) / "vaza").symlink_to(segredo)
+        with self.assertRaises(Exception):
+            self.ws.tem_mudancas(c)
+        self.assertFalse((c.limpa / "vaza").exists())
 
     def test_hooks_nao_rodam_na_entrega(self):
         c = self.preparar()
@@ -69,31 +86,37 @@ class WorkspaceTest(unittest.TestCase):
             h.parent.mkdir(parents=True, exist_ok=True)
             h.write_text(f"#!/bin/sh\ntouch {marca}\n")
             h.chmod(0o755)
-        (c.agente / "n.txt").write_text("n\n")
+        (self.agente(c) / "n.txt").write_text("n\n")
+        self.ws.tem_mudancas(c)
         self.ws.entregar(c, "fabrica/abc", "n", self.url)
         self.assertFalse(marca.exists())
 
     def test_branch_existente_continua_de_onde_parou(self):
         c = self.preparar()
-        (c.agente / "a.txt").write_text("a\n")
+        (self.agente(c) / "a.txt").write_text("a\n")
+        self.ws.tem_mudancas(c)
         self.ws.entregar(c, "fabrica/abc", "a", self.url)
         self.ws.limpar(c)
-        c2 = self.preparar("ex2")
-        self.assertTrue((c2.agente / "a.txt").exists())
+        c2 = self.preparar(EX2)
+        self.assertTrue((self.agente(c2) / "a.txt").exists())
 
     def test_limpar_e_limpar_tudo(self):
         c = self.preparar()
         self.ws.limpar(c)
-        self.assertFalse(c.agente.exists() or c.limpa.exists())
-        c = self.preparar("ex3")
+        self.assertFalse(self.agente(c).exists() or c.limpa.exists())
+        c = self.preparar(EX2)
         self.ws.limpar_tudo()
-        self.assertFalse(c.agente.exists() or c.limpa.exists())
+        self.assertFalse(self.agente(c).exists() or c.limpa.exists())
 
     def test_preparar_de_novo_a_mesma_execucao_recomeca_limpo(self):
         c = self.preparar()
-        (c.agente / "lixo.txt").write_text("x")
+        (self.agente(c) / "lixo.txt").write_text("x")
         c = self.preparar()
-        self.assertFalse((c.agente / "lixo.txt").exists())
+        self.assertFalse((self.agente(c) / "lixo.txt").exists())
+
+    def test_id_invalido_e_recusado(self):
+        with self.assertRaises(Exception):
+            self.ws.preparar(self.url, "dono/repo", "fabrica/abc", "main", "../../x")
 
     def test_credencial_nao_vai_em_argumento_nem_fica_em_arquivo(self):
         chamadas = []
@@ -105,8 +128,10 @@ class WorkspaceTest(unittest.TestCase):
 
         cab = workspace.cabecalho_do_token("segredo123")
         with mock.patch.object(workspace.subprocess, "run", espiar):
-            c = self.ws.preparar(self.url, "dono/repo", "fabrica/abc", "main", "ex1", cab)
-            (c.agente / "n.txt").write_text("n")
+            c = self.ws.preparar(self.url, "dono/repo", "fabrica/abc", "main", EX1, cab)
+            self.ws.levar_ao_agente(c)
+            (self.agente(c) / "n.txt").write_text("n")
+            self.ws.tem_mudancas(c)
             self.ws.entregar(c, "fabrica/abc", "n", self.url, cab)
         segredo = cab.split()[-1]
         self.assertFalse(any(segredo in " ".join(args) for args, _ in chamadas))
@@ -121,37 +146,44 @@ class WorkspaceTest(unittest.TestCase):
                 self.preparar()
 
 
-class UsuarioDoAgenteTest(unittest.TestCase):
+class AgenteIsoladoTest(unittest.TestCase):
     def setUp(self):
-        base = pathlib.Path(tempfile.mkdtemp())
-        self.remoto = base / "remoto.git"
-        git("init", "-q", "--bare", "-b", "main", str(self.remoto), cwd=base)
-        semente = base / "semente"
-        git("clone", "-q", str(self.remoto), str(semente), cwd=base)
-        (semente / "src").mkdir()
-        (semente / "src" / "a.ts").write_text("a\n")
-        git("add", "-A", cwd=semente)
-        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "inicio", cwd=semente)
-        git("push", "-q", "origin", "main", cwd=semente)
-        self.pasta = base / "agente-separado"
         self.chamadas = []
-        self.ws = workspace.Workspace(base / "raiz", pasta_do_agente=self.pasta, usuario_do_agente="fabrica")
-        self.ws._como_agente = lambda *args: self.chamadas.append(args)
+        self.agente = workspace.AgenteIsolado("fabrica", auxiliar="/usr/local/sbin/fabrica-agente")
 
-    def test_copia_do_agente_fica_na_pasta_separada_com_grupo_gravavel(self):
-        c = self.ws.preparar(str(self.remoto), "dono/repo", "fabrica/abc", "main", "ex1")
-        self.assertEqual(c.agente, self.pasta / "ex1")
-        for caminho in [c.agente, c.agente / "src", c.agente / "src" / "a.ts"]:
-            modo = caminho.stat().st_mode
-            self.assertTrue(modo & 0o020, caminho)  # grupo grava
-        self.assertTrue((c.agente / "src").stat().st_mode & 0o2000)  # setgid nas pastas
+    def espiar(self, args, *a, **k):
+        self.chamadas.append((list(args), k.get("input")))
+        return subprocess.CompletedProcess(args, 0, b"PACOTE", b"")
 
-    def test_limpar_apaga_como_o_agente_antes(self):
-        c = self.ws.preparar(str(self.remoto), "dono/repo", "fabrica/abc", "main", "ex1")
-        self.chamadas.clear()
-        self.ws.limpar(c)
-        self.assertEqual(self.chamadas, [("rm", "-rf", "--", str(c.agente))])
-        self.assertFalse(c.agente.exists())
+    def test_tudo_passa_pelo_auxiliar_via_sudo(self):
+        with mock.patch.object(workspace.subprocess, "run", self.espiar):
+            self.agente.receber(EX1, b"tar")
+            self.assertEqual(self.agente.entregar(EX1), b"PACOTE")
+            self.agente.limpar(EX1)
+            self.agente.matar()
+        prefixo = ["sudo", "-n", "-u", "fabrica", "/usr/local/sbin/fabrica-agente"]
+        self.assertEqual(
+            self.chamadas,
+            [
+                ([*prefixo, "preparar", EX1], b"tar"),
+                ([*prefixo, "entregar", EX1], b""),
+                ([*prefixo, "limpar", EX1], b""),
+                ([*prefixo, "matar"], b""),
+            ],
+        )
+
+    def test_comando_roda_pelo_auxiliar_fora_da_pasta(self):
+        cmd, cwd = self.agente.comando(EX1, ["/opt/claude/claude-2", "-p", "x"])
+        self.assertEqual(cmd[:7], ["sudo", "-n", "-u", "fabrica", "/usr/local/sbin/fabrica-agente", "rodar", EX1])
+        self.assertEqual(cwd, "/")
+
+    def test_falha_do_auxiliar_vira_erro_sem_detalhe(self):
+        with mock.patch.object(
+            workspace.subprocess, "run", return_value=subprocess.CompletedProcess([], 2, b"", b"segredo")
+        ):
+            with self.assertRaises(workspace.ErroDoAgente) as ctx:
+                self.agente.entregar(EX1)
+        self.assertNotIn("segredo", str(ctx.exception))
 
 
 if __name__ == "__main__":

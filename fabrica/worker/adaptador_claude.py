@@ -63,7 +63,8 @@ def _encerrar(proc: subprocess.Popen) -> None:
     for sinal_, espera in ((signal.SIGTERM, ESPERA_DO_SIGKILL_S), (signal.SIGKILL, 5)):
         try:
             os.killpg(proc.pid, sinal_)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
+            # grupo sumiu, ou é de outro usuário (agente isolado): quem chama mata pelo auxiliar
             return
         try:
             proc.wait(timeout=espera)
@@ -152,7 +153,7 @@ def _rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora) ->
         # o agente pode ter deixado filhos no grupo: nada sobrevive à execução
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         out.seek(0)
         err.seek(0)

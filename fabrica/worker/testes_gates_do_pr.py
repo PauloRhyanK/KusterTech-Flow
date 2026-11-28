@@ -93,7 +93,7 @@ class VerificarTest(Base):
 
 class OrigemTest(Base):
     def test_copia_limpa_tem_origin_para_o_verificador_do_kit(self):
-        copia = self.ws.preparar(self.url, "dono/repo", "fabrica/22222222", "main", "ex9")
+        copia = self.ws.preparar(self.url, "dono/repo", "fabrica/22222222", "main", "11111111-aaaa-4bbb-8ccc-000000000009")
         p = subprocess.run(["git", "fetch", "--quiet", "origin"], cwd=copia.limpa, capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(git("cat-file", "-t", self.sha, cwd=copia.limpa), "commit")
@@ -101,13 +101,13 @@ class OrigemTest(Base):
 
 class RevisarTest(Base):
     def rodar_com(self, texto):
-        def rodar(comando, cwd, ambiente, prazo, cancelar):
+        def rodar_agente(comando, copia, cancelar):
             self.pedido = comando[comando.index("-p") + 1]
-            self.cwd = pathlib.Path(cwd)
+            self.cwd = self.ws.agente.pasta(copia.execucao_id)
             self.diff = (self.cwd / gates.ARQUIVO_DO_DIFF).read_text()
             return ad.Saida("ok", texto=texto)
 
-        return rodar
+        return rodar_agente
 
     def veredito(self, dados):
         return f"análise...\n{gates.prompts.INICIO_VEREDITO}\n{json.dumps(dados)}\n{gates.prompts.FIM_VEREDITO}"
@@ -116,7 +116,7 @@ class RevisarTest(Base):
         texto = self.veredito({"sha": self.sha, "resultado": "aprovado", "achados": []})
         r = gates.revisar(
             self.tarefa(finalidade="revisar"), self.ws, self.url, "main", None,
-            self.rodar_com(texto), "claude", "opus", 60, threading.Event(),
+            self.rodar_com(texto), "claude", "opus", threading.Event(),
         )
         self.assertEqual(r, {"tipo": "revisao", "sha": self.sha, "veredito": {"resultado": "aprovado", "achados": []}})
         self.assertIn("Mostre a versão no rodapé.", self.pedido)
@@ -128,7 +128,7 @@ class RevisarTest(Base):
         for texto in ("sem bloco", self.veredito({"sha": "x" * 40, "resultado": "aprovado", "achados": []})):
             r = gates.revisar(
                 self.tarefa(finalidade="revisar"), self.ws, self.url, "main", None,
-                self.rodar_com(texto), "claude", "opus", 60, threading.Event(),
+                self.rodar_com(texto), "claude", "opus", threading.Event(),
             )
             self.assertEqual(r["tipo"], "saida_invalida")
 
@@ -137,7 +137,7 @@ class RevisarTest(Base):
         texto = self.veredito({"sha": self.sha, "resultado": "correcoes", "achados": achados})
         r = gates.revisar(
             self.tarefa(finalidade="revisar"), self.ws, self.url, "main", None,
-            self.rodar_com(texto), "claude", "opus", 60, threading.Event(),
+            self.rodar_com(texto), "claude", "opus", threading.Event(),
         )
         a = r["veredito"]["achados"]
         self.assertEqual(len(a), 50)

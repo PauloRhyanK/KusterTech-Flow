@@ -44,29 +44,6 @@ def montar_pedido(tarefa: dict) -> str:
     return "\n\n".join([*partes, regras])
 
 
-def comando_do_agente(config, comando: list[str]) -> list[str]:
-    if not config.usuario_do_agente:
-        return comando
-    # -n: nunca pede senha (sem regra no sudoers, falha na hora); -H: a home e o login do agente
-    return ["sudo", "-n", "-u", config.usuario_do_agente, "-H", "--", *comando]
-
-
-def encerrar_o_agente(config):
-    """Mata o que sobrou do agente; só existe quando ele roda em outro usuário."""
-    if not config.usuario_do_agente:
-        return None
-
-    def encerrar():
-        import subprocess
-
-        subprocess.run(
-            ["sudo", "-n", "-u", config.usuario_do_agente, "pkill", "-KILL", "-u", config.usuario_do_agente],
-            capture_output=True, timeout=30,
-        )
-
-    return encerrar
-
-
 def _motivo(texto: str) -> str:
     """Cabe no limite do Flow, que conta unidades UTF-16 (um emoji vale 2)."""
     texto = texto or "falha sem descrição"
@@ -172,12 +149,12 @@ class Worker:
             return gates_do_pr.verificar(tarefa, self.workspace, url, base, cabecalho, self.verificador)
         if finalidade == "revisar":
             return gates_do_pr.revisar(
-                tarefa, self.workspace, url, base, cabecalho,
-                lambda comando, cwd, _amb, _prazo, canc: self._rodar_agente(comando, cwd, canc),
-                self.config.claude, self.config.modelo("revisor"), self.config.prazo_s, cancelar,
+                tarefa, self.workspace, url, base, cabecalho, self._rodar_agente,
+                self.config.claude, self.config.modelo("revisor"), cancelar,
             )
         copia = self.workspace.preparar(url, repo, branch, base, tarefa["execucaoId"], cabecalho)
         try:
+            self.workspace.levar_ao_agente(copia)
             implementacao = tarefa["tipoDaEtapa"] == "implementacao"
             comando = adaptador_claude.montar_comando(
                 self.config.claude,
@@ -185,7 +162,7 @@ class Worker:
                 self.config.modelo(tarefa["papel"]),
                 "escrita" if implementacao else "leitura",
             )
-            saida = self._rodar_agente(comando, copia.agente, cancelar)
+            saida = self._rodar_agente(comando, copia, cancelar)
             falha = gates_do_pr.resultado_de_falha(saida)
             if falha is not None:
                 if "motivo" in falha:
@@ -202,14 +179,15 @@ class Worker:
         finally:
             self.workspace.limpar(copia)
 
-    def _rodar_agente(self, comando, pasta, cancelar):
+    def _rodar_agente(self, comando, copia, cancelar):
+        agente = self.workspace.agente
         extra = {}
-        encerrar = encerrar_o_agente(self.config)
-        if encerrar is not None:
-            extra["ao_encerrar"] = encerrar
+        if agente.isolado:
+            agente.matar()  # nada de execução anterior fica rodando junto
+            extra["ao_encerrar"] = agente.matar  # o killpg não alcança processos de outro usuário
+        cmd, cwd = agente.comando(copia.execucao_id, comando)
         return self.rodar(
-            comando_do_agente(self.config, comando), str(pasta),
-            adaptador_claude.ambiente_do_agente(dict(os.environ)), self.config.prazo_s, cancelar, **extra,
+            cmd, cwd, adaptador_claude.ambiente_do_agente(dict(os.environ)), self.config.prazo_s, cancelar, **extra
         )
 
     def _abrir_pr(self, tarefa: dict, branch: str, base: str) -> str:
@@ -225,7 +203,12 @@ def main() -> int:
         flow_.ClienteFlow(config.flow_url, config.token_do_worker),
         caixa_.CaixaDeSaida(config.raiz / "caixa.json"),
         github_.GitHub(config.token_do_github),
-        workspace_.Workspace(config.raiz, config.pasta_do_agente, config.usuario_do_agente),
+        workspace_.Workspace(
+            config.raiz,
+            workspace_.AgenteIsolado(config.usuario_do_agente)
+            if config.usuario_do_agente
+            else workspace_.AgenteLocal(config.pasta_do_agente or config.raiz / "agente"),
+        ),
         config,
     )
 

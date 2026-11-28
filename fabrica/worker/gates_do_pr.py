@@ -96,14 +96,16 @@ def _limpar_veredito(v: dict) -> dict:
     return saida
 
 
-def revisar(tarefa, ws, url, base, cabecalho, rodar, claude, modelo, prazo_s, cancelar: threading.Event) -> dict:
+def revisar(tarefa, ws, url, base, cabecalho, rodar_agente, claude, modelo, cancelar: threading.Event) -> dict:
+    """`rodar_agente(comando, copia, cancelar)` roda o Claude na pasta do agente (isolada ou local)."""
     copia = ws.preparar(url, tarefa["repo"], _branch(tarefa), base, tarefa["execucaoId"], cabecalho)
     try:
         if ws.head(copia) != tarefa["sha"]:
             return HEAD_MUDOU
-        (copia.agente / ARQUIVO_DO_DIFF).write_text(ws.diff(copia, base)[:LIMITE_DO_DIFF])
+        # o diff vai dentro do pacote: o worker nunca grava na pasta do agente
+        ws.levar_ao_agente(copia, {ARQUIVO_DO_DIFF: ws.diff(copia, base)[:LIMITE_DO_DIFF]})
         comando = ad.montar_comando(claude, montar_pedido_da_revisao(tarefa, base), modelo, "leitura")
-        s = rodar(comando, str(copia.agente), ad.ambiente_do_agente(dict(os.environ)), prazo_s, cancelar)
+        s = rodar_agente(comando, copia, cancelar)
         falha = resultado_de_falha(s)
         if falha is not None:
             return falha

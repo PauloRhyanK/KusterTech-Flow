@@ -1,9 +1,11 @@
 """Cópias de trabalho de cada execução.
 
-O agente recebe só os arquivos (`agente/<id>`, sem `.git`). O worker guarda uma `git worktree` limpa
-(`limpa/<id>`) que o agente nunca toca: depois da execução, copia o resultado para ela e faz o commit e
-o push ali, com hooks desligados e sem configuração global. Assim o agente não consegue instalar hook,
-mudar a configuração do Git nem fazer commit por conta própria.
+O worker guarda uma `git worktree` limpa (`limpa/<id>`) que o agente nunca toca. O agente recebe só os
+arquivos, sem `.git`, num pacote tar; no fim, o worker recebe outro pacote e o abre com o filtro `data`
+(sem atalho para fora, sem `..`, sem arquivo especial) numa pasta dele, e só então copia para a limpa e
+faz o commit e o push, com hooks desligados e sem configuração global. **O worker nunca percorre a pasta
+do agente**: com o agente isolado (`AgenteIsolado`), quem cria, empacota e apaga a pasta é o auxiliar
+`fabrica-agente`, rodando como o próprio agente.
 
 A credencial do GitHub vai só no ambiente do `git fetch`/`git push` (`GIT_CONFIG_*`): nunca na URL
 (o Git a gravaria em FETCH_HEAD), nunca em argumento (visível no `ps`), nunca em arquivo.
@@ -14,6 +16,10 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fabrica_agente  # noqa: E402
 
 AUTOR = ("Fábrica KusterTech", "fabrica@kustertech.invalid")
 PRAZO_DO_GIT_S = 600
@@ -27,8 +33,12 @@ class ErroDeGit(Exception):
 
 @dataclasses.dataclass
 class Copia:
-    agente: pathlib.Path
+    execucao_id: str
     limpa: pathlib.Path
+
+
+class ErroDoAgente(Exception):
+    pass
 
 
 def cabecalho_do_token(token: str) -> str:
@@ -64,12 +74,8 @@ def _git(*args, cwd, cabecalho: str | None = None) -> str:
     return p.stdout.strip()
 
 
-def _ignorar_git(_pasta, nomes):
-    return [n for n in nomes if n == ".git"]
-
-
 def _sincronizar(origem: pathlib.Path, destino: pathlib.Path) -> None:
-    """Deixa `destino` (sem contar `.git`) igual a `origem`, ignorando qualquer `.git` aninhado."""
+    """Deixa `destino` (sem contar `.git`) igual a `origem`. `origem` é do worker (extraída com filtro)."""
     for item in list(destino.iterdir()):
         if item.name == ".git":
             continue
@@ -77,32 +83,96 @@ def _sincronizar(origem: pathlib.Path, destino: pathlib.Path) -> None:
             shutil.rmtree(item)
         else:
             item.unlink()
-    shutil.copytree(origem, destino, symlinks=True, ignore=_ignorar_git, dirs_exist_ok=True)
+    shutil.copytree(origem, destino, symlinks=True, dirs_exist_ok=True)
 
 
-def _abrir_para_o_grupo(pasta: pathlib.Path) -> None:
-    """Grupo lê e grava tudo; pastas com setgid, para o que o agente criar continuar no grupo."""
-    for raiz, pastas, arquivos in os.walk(pasta):
-        os.chmod(raiz, os.stat(raiz).st_mode | 0o2070)
-        for nome in arquivos:
-            caminho = os.path.join(raiz, nome)
-            if not os.path.islink(caminho):
-                os.chmod(caminho, os.stat(caminho).st_mode | 0o060)
+class AgenteLocal:
+    """Sem isolamento (testes e desenvolvimento): a pasta do agente é do próprio worker."""
+
+    isolado = False
+
+    def __init__(self, base):
+        self.base = pathlib.Path(base)
+
+    def pasta(self, execucao_id: str) -> pathlib.Path:
+        return pathlib.Path(fabrica_agente.pasta_da_execucao(str(self.base), execucao_id))
+
+    def receber(self, execucao_id: str, pacote: bytes) -> None:
+        pasta = self.pasta(execucao_id)
+        shutil.rmtree(pasta, ignore_errors=True)
+        pasta.mkdir(parents=True)
+        fabrica_agente.desempacotar(pacote, str(pasta))
+
+    def entregar(self, execucao_id: str) -> bytes:
+        return fabrica_agente.empacotar(str(self.pasta(execucao_id)))
+
+    def limpar(self, execucao_id: str) -> None:
+        shutil.rmtree(self.pasta(execucao_id), ignore_errors=True)
+
+    def comando(self, execucao_id: str, comando: list[str]) -> tuple[list[str], str]:
+        return comando, str(self.pasta(execucao_id))
+
+    def matar(self) -> None:
+        pass
+
+    def ids(self) -> list[str]:
+        return [p.name for p in self.base.glob("*")] if self.base.exists() else []
+
+
+class AgenteIsolado:
+    """O agente é outro usuário Unix; tudo na pasta dele passa pelo auxiliar `fabrica-agente` via sudo."""
+
+    isolado = True
+
+    def __init__(self, usuario: str, auxiliar: str = "/usr/local/sbin/fabrica-agente"):
+        self.usuario = usuario
+        self.auxiliar = auxiliar
+
+    def _prefixo(self) -> list[str]:
+        return ["sudo", "-n", "-u", self.usuario, self.auxiliar]
+
+    def _chamar(self, *args, entrada: bytes | None = None) -> bytes:
+        try:
+            p = subprocess.run(
+                [*self._prefixo(), *args], input=entrada or b"", capture_output=True, timeout=PRAZO_DO_GIT_S,
+                env=_ambiente(None),
+            )
+        except subprocess.TimeoutExpired:
+            raise ErroDoAgente(f"fabrica-agente {args[0]} passou do prazo") from None
+        if p.returncode != 0:
+            raise ErroDoAgente(f"fabrica-agente {args[0]} falhou (código {p.returncode})")
+        return p.stdout
+
+    def receber(self, execucao_id: str, pacote: bytes) -> None:
+        self._chamar("preparar", execucao_id, entrada=pacote)
+
+    def entregar(self, execucao_id: str) -> bytes:
+        return self._chamar("entregar", execucao_id)
+
+    def limpar(self, execucao_id: str) -> None:
+        try:
+            self._chamar("limpar", execucao_id)
+        except ErroDoAgente:
+            pass
+
+    def comando(self, execucao_id: str, comando: list[str]) -> tuple[list[str], str]:
+        # o auxiliar entra na pasta (0700, do agente) e executa o Claude; o worker fica fora dela
+        return [*self._prefixo(), "rodar", execucao_id, *comando], "/"
+
+    def matar(self) -> None:
+        try:
+            self._chamar("matar")
+        except ErroDoAgente:
+            pass
+
+    def ids(self) -> list[str]:
+        return []  # a pasta-mãe é do agente (0700): quem limpa é `limpar_tudo`, pelas cópias limpas
 
 
 class Workspace:
-    """Com `usuario_do_agente`, a cópia do agente fica em `pasta_do_agente` (fora da home do worker),
-    gravável pelo grupo comum (ex.: `fabrica-trabalho`), e é apagada primeiro como o agente."""
-
-    def __init__(self, raiz, pasta_do_agente=None, usuario_do_agente: str | None = None):
+    def __init__(self, raiz, agente=None):
         self.raiz = pathlib.Path(raiz)
-        self.pasta_do_agente = pathlib.Path(pasta_do_agente) if pasta_do_agente else self.raiz / "agente"
-        self.usuario_do_agente = usuario_do_agente
-
-    def _como_agente(self, *args) -> None:
-        subprocess.run(
-            ["sudo", "-n", "-u", self.usuario_do_agente, *args], capture_output=True, timeout=120, env=_ambiente(None)
-        )
+        self.agente = agente or AgenteLocal(self.raiz / "agente")
 
     def _espelho(self, repo: str) -> pathlib.Path:
         return self.raiz / "espelhos" / (repo.replace("/", "__") + ".git")
@@ -110,6 +180,8 @@ class Workspace:
     def preparar(
         self, url: str, repo: str, branch: str, base: str, execucao_id: str, cabecalho: str | None = None
     ) -> Copia:
+        """Cria só a cópia limpa no head da branch (ou da base); `levar_ao_agente` entrega os arquivos."""
+        fabrica_agente.pasta_da_execucao("/", execucao_id)  # valida o id antes de usar como nome de pasta
         espelho = self._espelho(repo)
         if not espelho.exists():
             espelho.parent.mkdir(parents=True, exist_ok=True)
@@ -118,19 +190,28 @@ class Workspace:
             _git("config", "remote.origin.url", str(espelho.resolve()), cwd=espelho)
             _git("config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*", cwd=espelho)
         _git("fetch", "-q", "--prune", url, "+refs/heads/*:refs/heads/*", cwd=espelho, cabecalho=cabecalho)
-        copia = Copia(self.pasta_do_agente / execucao_id, self.raiz / "limpa" / execucao_id)
+        copia = Copia(execucao_id, self.raiz / "limpa" / execucao_id)
         self.limpar(copia)
         copia.limpa.parent.mkdir(parents=True, exist_ok=True)
-        copia.agente.parent.mkdir(parents=True, exist_ok=True)
         existe = subprocess.run(
             ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=espelho,
             env=_ambiente(None), timeout=PRAZO_DO_GIT_S,
         ).returncode == 0
         _git("worktree", "add", "-q", "--detach", str(copia.limpa), branch if existe else base, cwd=espelho)
-        shutil.copytree(copia.limpa, copia.agente, symlinks=True, ignore=_ignorar_git)
-        if self.usuario_do_agente:
-            _abrir_para_o_grupo(copia.agente)
         return copia
+
+    def levar_ao_agente(self, copia: Copia, extras: dict[str, str] | None = None) -> None:
+        self.agente.receber(copia.execucao_id, fabrica_agente.empacotar(str(copia.limpa), extras or {}))
+
+    def _trazer_do_agente(self, copia: Copia) -> None:
+        recebido = self.raiz / "recebido" / copia.execucao_id
+        shutil.rmtree(recebido, ignore_errors=True)
+        recebido.mkdir(parents=True)
+        try:
+            fabrica_agente.desempacotar(self.agente.entregar(copia.execucao_id), str(recebido))
+            _sincronizar(recebido, copia.limpa)
+        finally:
+            shutil.rmtree(recebido, ignore_errors=True)
 
     def head(self, copia: Copia) -> str:
         return _git("rev-parse", "HEAD", cwd=copia.limpa)
@@ -140,11 +221,11 @@ class Workspace:
         return _git("diff", "--no-ext-diff", "--no-textconv", f"refs/heads/{base}...HEAD", cwd=copia.limpa)
 
     def tem_mudancas(self, copia: Copia) -> bool:
-        _sincronizar(copia.agente, copia.limpa)
+        self._trazer_do_agente(copia)
         return _git("status", "--porcelain", "--untracked-files=all", cwd=copia.limpa) != ""
 
     def entregar(self, copia: Copia, branch: str, mensagem: str, url: str, cabecalho: str | None = None) -> str:
-        _sincronizar(copia.agente, copia.limpa)
+        """Commit e push do que já foi trazido por `tem_mudancas` (a cópia limpa é só do worker)."""
         _git("add", "-A", cwd=copia.limpa)
         nome, email = AUTOR
         _git("-c", f"user.name={nome}", "-c", f"user.email={email}", "commit", "-q", "--no-verify", "-m", mensagem, cwd=copia.limpa)
@@ -153,10 +234,7 @@ class Workspace:
         return sha
 
     def limpar(self, copia: Copia) -> None:
-        if self.usuario_do_agente and copia.agente.exists():
-            # o que o agente criou é dele: só ele apaga as pastas dele
-            self._como_agente("rm", "-rf", "--", str(copia.agente))
-        shutil.rmtree(copia.agente, ignore_errors=True)
+        self.agente.limpar(copia.execucao_id)
         if copia.limpa.exists():
             shutil.rmtree(copia.limpa, ignore_errors=True)
         espelhos = self.raiz / "espelhos"
@@ -166,6 +244,8 @@ class Workspace:
 
     def limpar_tudo(self) -> None:
         """No início do worker: nada de execução anterior fica no disco (a reconciliação cuida do resto)."""
-        for pasta in (self.pasta_do_agente, self.raiz / "limpa"):
-            for item in pasta.glob("*") if pasta.exists() else []:
-                self.limpar(Copia(self.pasta_do_agente / item.name, self.raiz / "limpa" / item.name))
+        self.agente.matar()
+        limpas = self.raiz / "limpa"
+        ids = {p.name for p in limpas.glob("*")} if limpas.exists() else set()
+        for execucao_id in ids | set(self.agente.ids()):
+            self.limpar(Copia(execucao_id, limpas / execucao_id))
