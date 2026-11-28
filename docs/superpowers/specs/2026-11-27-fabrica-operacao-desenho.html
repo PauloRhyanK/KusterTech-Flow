@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fábrica → Operação (desenho)</title>
+    <style>
+      /* Tokens do tema escuro, copiados de src/app/globals.css. Este arquivo é só o desenho. */
+      :root {
+        --background: #0b1120;
+        --surface: #121a2c;
+        --surface-subtle: #0f1728;
+        --surface-elevated: #1a2338;
+        --text-primary: #e8efff;
+        --text-secondary: #a7b4c9;
+        --text-tertiary: #7e8da6;
+        --border: #26334a;
+        --border-strong: #34445f;
+        --marca-tech: #5b8ff9;
+        --marca-flow: #72d9c3;
+        --sucesso: #72d9a2;
+        --atencao: #f2b85b;
+        --perigo: #f28b82;
+        --execucao: #b49ae8;
+        --r: 12px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--text-primary);
+        font: 14px/1.5 Inter, system-ui, sans-serif;
+        padding: 32px 16px;
+      }
+      .quadro {
+        max-width: 1100px;
+        margin: 0 auto 56px;
+      }
+      .quadro > h2 {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin: 0 0 12px;
+      }
+      .nota {
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin: 12px 0 0;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0;
+      }
+      .sub {
+        color: var(--text-tertiary);
+        font-size: 13px;
+        margin: 2px 0 20px;
+      }
+      .resumo {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .numero {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        padding: 14px 16px;
+      }
+      .numero b {
+        display: block;
+        font-size: 30px;
+        line-height: 1.1;
+      }
+      .numero span {
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+      .numero.alerta {
+        border-color: var(--atencao);
+      }
+      .numero.alerta b {
+        color: var(--atencao);
+      }
+      .cartao {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+      .cabeca {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .cabeca h3 {
+        margin: 0;
+        font-size: 16px;
+      }
+      .cabeca small {
+        color: var(--text-tertiary);
+      }
+      .fluxo {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .seta {
+        color: var(--text-tertiary);
+      }
+      .etapa {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border-strong);
+        background: var(--surface-subtle);
+        font-size: 13px;
+      }
+      .etapa i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-tertiary);
+        font-style: normal;
+      }
+      .etapa.feita {
+        color: var(--text-secondary);
+      }
+      .etapa.feita i {
+        background: var(--text-secondary);
+      }
+      .etapa.rodando {
+        border-color: var(--execucao);
+      }
+      .etapa.rodando i {
+        background: var(--execucao);
+        box-shadow: 0 0 0 4px rgba(180, 154, 232, 0.2);
+      }
+      .etapa.gates {
+        border-color: var(--marca-tech);
+      }
+      .etapa.gates i {
+        background: var(--marca-tech);
+      }
+      .etapa.travada {
+        border-color: var(--atencao);
+      }
+      .etapa.travada i {
+        background: var(--atencao);
+      }
+      .motivo {
+        margin-top: 10px;
+        padding: 8px 12px;
+        border-left: 3px solid var(--atencao);
+        background: var(--surface-subtle);
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+      .workers {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+      .worker {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        padding: 12px 16px;
+      }
+      .worker small {
+        color: var(--text-tertiary);
+        display: block;
+      }
+      .vivo {
+        color: var(--sucesso);
+        font-size: 13px;
+      }
+      .mudo {
+        color: var(--atencao);
+        font-size: 13px;
+      }
+      h4 {
+        font-size: 13px;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin: 24px 0 10px;
+      }
+      .celular {
+        max-width: 390px;
+        border: 1px solid var(--border-strong);
+        border-radius: 24px;
+        padding: 20px 14px;
+      }
+      .celular .resumo {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .celular .workers {
+        grid-template-columns: 1fr;
+      }
+      .vazio {
+        text-align: center;
+        padding: 48px 16px;
+        color: var(--text-secondary);
+        background: var(--surface);
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--r);
+      }
+      .vazio b {
+        display: block;
+        color: var(--text-primary);
+        font-size: 16px;
+        margin-bottom: 4px;
+      }
+      @media (max-width: 720px) {
+        .resumo {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .workers {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="quadro">
+      <h2>1 · Computador — Fábrica → Operação (motor novo, só observação)</h2>
+      <h1>Operação</h1>
+      <p class="sub">Motor novo · demandas do piloto · atualizado há 20 s</p>
+
+      <div class="resumo">
+        <div class="numero"><b>2</b><span>rodando agora</span></div>
+        <div class="numero"><b>1</b><span>esperando revisão e testes</span></div>
+        <div class="numero alerta"><b>1</b><span>travada</span></div>
+        <div class="numero"><b>2/2</b><span>máquinas ativas</span></div>
+      </div>
+
+      <div class="cartao">
+        <div class="cabeca">
+          <h3>Busca de demandas por período</h3>
+          <small>Flow · 3 de 5 etapas</small>
+        </div>
+        <div class="fluxo">
+          <span class="etapa feita"><i></i>Pesquisa</span><span class="seta">→</span>
+          <span class="etapa feita"><i></i>Filtro no banco</span><span class="seta">→</span>
+          <span class="etapa gates"><i></i>Tela da tabela · PR #271</span><span class="seta">→</span>
+          <span class="etapa rodando"><i></i>Revisão</span><span class="seta">→</span>
+          <span class="etapa"><i></i>Teste no navegador</span>
+        </div>
+      </div>
+
+      <div class="cartao">
+        <div class="cabeca">
+          <h3>Aviso de versão nova no rodapé</h3>
+          <small>Flow · 0 de 2 etapas</small>
+        </div>
+        <div class="fluxo">
+          <span class="etapa travada"><i></i>Rodapé</span><span class="seta">→</span>
+          <span class="etapa"><i></i>Teste no navegador</span>
+        </div>
+        <div class="motivo">
+          Travou depois de 3 falhas técnicas: o teste não instala as dependências. A Fábrica tenta de
+          novo às 16:40.
+        </div>
+      </div>
+
+      <h4>Máquinas</h4>
+      <div class="workers">
+        <div class="worker">
+          <div>oficina-1 <small>Claude · conta principal</small></div>
+          <span class="vivo">● rodando Revisão</span>
+        </div>
+        <div class="worker">
+          <div>oficina-2 <small>Claude · conta principal</small></div>
+          <span class="vivo">● livre</span>
+        </div>
+      </div>
+      <p class="nota">
+        Só leitura nesta fase: sem botões. Cor só nos estados que pedem atenção (rodando, nos gates,
+        travada); etapa concluída fica neutra. Clicar no cartão abre a demanda.
+      </p>
+    </section>
+
+    <section class="quadro">
+      <h2>2 · Celular</h2>
+      <div class="celular">
+        <h1>Operação</h1>
+        <p class="sub">Motor novo · há 20 s</p>
+        <div class="resumo">
+          <div class="numero"><b>2</b><span>rodando</span></div>
+          <div class="numero"><b>1</b><span>nos testes</span></div>
+          <div class="numero alerta"><b>1</b><span>travada</span></div>
+          <div class="numero"><b>2/2</b><span>máquinas</span></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h3>Aviso de versão nova</h3></div>
+          <div class="fluxo">
+            <span class="etapa travada"><i></i>Rodapé</span><span class="seta">→</span>
+            <span class="etapa"><i></i>Teste</span>
+          </div>
+          <div class="motivo">3 falhas técnicas · tenta de novo às 16:40</div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h3>Busca por período</h3></div>
+          <div class="fluxo">
+            <span class="etapa gates"><i></i>Tela · PR #271</span><span class="seta">→</span>
+            <span class="etapa rodando"><i></i>Revisão</span><span class="seta">→</span>
+            <span class="etapa"><i></i>Teste</span>
+          </div>
+        </div>
+      </div>
+      <p class="nota">No celular, travadas primeiro e só as etapas que faltam.</p>
+    </section>
+
+    <section class="quadro">
+      <h2>3 · Vazio (antes do piloto)</h2>
+      <div class="vazio">
+        <b>Nenhuma demanda no motor novo</b>
+        As demandas continuam no motor atual até o piloto começar.
+      </div>
+    </section>
+  </body>
+</html>
