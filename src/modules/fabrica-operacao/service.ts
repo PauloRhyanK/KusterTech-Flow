@@ -437,7 +437,6 @@ async function aplicarResultadoDeGate(
     },
   })
   if (evidencia) {
-    const { tipo: _tipo, sha: _sha, ...dados } = resultado
     await tx.evidenciaDaEtapa.createMany({
       data: [
         {
@@ -446,7 +445,7 @@ async function aplicarResultadoDeGate(
           sha: execucao.sha!,
           dados: (resultado.tipo === 'revisao'
             ? resultado.veredito
-            : dados) as Prisma.InputJsonValue,
+            : { codigo: resultado.codigo }) as Prisma.InputJsonValue,
           execucaoId: execucao.id,
         },
       ],
