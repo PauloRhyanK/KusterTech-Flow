@@ -36,6 +36,8 @@ export interface TicketDetalhado extends Omit<TicketNaLista, 'midias'> {
   transcricao: string | null
   tela: string | null
   versao: string | null
+  plataforma: string | null
+  aparelho: string | null
   tipoSugerido: string | null
   idExterno: string
   buscadoEm: Date
@@ -214,6 +216,8 @@ export async function obterTicket(
       ticket: true,
       tipoSugerido: true,
       versao: true,
+      plataforma: true,
+      aparelho: true,
       idExterno: true,
       sistemaId: true,
       criadoEm: true,
@@ -264,6 +268,8 @@ export async function obterTicket(
     // A "tela" do relato é o assunto que o app informou.
     tela: r.assunto,
     versao: r.versao,
+    plataforma: r.plataforma,
+    aparelho: r.aparelho,
     tipoSugerido: r.tipoSugerido,
     idExterno: r.idExterno,
     buscadoEm: r.criadoEm,

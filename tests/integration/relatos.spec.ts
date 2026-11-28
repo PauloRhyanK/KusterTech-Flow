@@ -448,6 +448,28 @@ describe('tela', () => {
   })
 })
 
+describe('contexto do relato', () => {
+  test('grava versão, plataforma e aparelho do contexto; ausentes ficam nulos', async () => {
+    const { id } = await criarSistema(admin, dados())
+    const { buscar } = sistemaFalso([
+      {
+        relatos: [
+          relatoDeExemplo({
+            contexto: { tela: 'Pedidos', versao: '2.3', plataforma: 'ios', aparelho: 'iPhone 15' },
+          }),
+          relatoDeExemplo({ id: ID_B, ticket: 'R-0002' }),
+        ],
+        cursor: '2',
+      },
+    ])
+    await buscarSistema(id, agora, { buscar, chave })
+    const a = await db.relato.findFirstOrThrow({ where: { idExterno: ID_A } })
+    expect(a).toMatchObject({ versao: '2.3', plataforma: 'ios', aparelho: 'iPhone 15' })
+    const b = await db.relato.findFirstOrThrow({ where: { idExterno: ID_B } })
+    expect(b).toMatchObject({ plataforma: null, aparelho: null })
+  })
+})
+
 describe('anexos do relato', () => {
   let dir: string
   let dirAntes: string | undefined

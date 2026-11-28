@@ -44,7 +44,12 @@ describe('lerPagina', () => {
               { tipo: 'video', url: 'https://alfa.exemplo.com/v1/relatos/anexos/x', bytes: 10 },
               { tipo: 'arquivo', url: 'https://alfa.exemplo.com/v1/relatos/anexos/y', bytes: 20 },
             ],
-            contexto: { tela: 'Pedidos', versao: '2.3' },
+            contexto: {
+              tela: 'Pedidos',
+              versao: '2.3',
+              plataforma: 'android',
+              aparelho: 'Pixel 8',
+            },
             sinais: [
               {
                 tipo: 'urgencia',
@@ -62,7 +67,28 @@ describe('lerPagina', () => {
     if (!r.ok) throw new Error(r.motivo)
     expect(r.relatos[0]!.anexos).toHaveLength(2)
     expect(r.relatos[0]!.sinais[0]).toMatchObject({ tipo: 'urgencia', texto: 'Cliente esperando' })
-    expect(r.relatos[0]!.contexto).toEqual({ tela: 'Pedidos', versao: '2.3' })
+    expect(r.relatos[0]!.contexto).toEqual({
+      tela: 'Pedidos',
+      versao: '2.3',
+      plataforma: 'android',
+      aparelho: 'Pixel 8',
+    })
+  })
+
+  test('contexto sem plataforma e aparelho, ou ausente, vira nulo; texto longo demais é recusado', () => {
+    const ler = (contexto: unknown) => {
+      const r = lerPagina({ relatos: [relatoDeExemplo({ contexto })], cursor: '1' }, 50)
+      return r.ok ? r.relatos[0]!.contexto : r
+    }
+    expect(ler({ tela: 'Pedidos', versao: '2.3' })).toEqual({
+      tela: 'Pedidos',
+      versao: '2.3',
+      plataforma: null,
+      aparelho: null,
+    })
+    expect(ler(null)).toEqual({ tela: null, versao: null, plataforma: null, aparelho: null })
+    expect(ler({ plataforma: 'x'.repeat(41) })).toMatchObject({ ok: false })
+    expect(ler({ aparelho: 'x'.repeat(81) })).toMatchObject({ ok: false })
   })
 
   test('envelope torto → "A resposta do sistema não segue o contrato."', () => {

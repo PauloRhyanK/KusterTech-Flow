@@ -96,6 +96,8 @@ async function gravarRelato(
       autorPapel: r.autor.papel,
       assunto: r.contexto.tela,
       versao: r.contexto.versao,
+      plataforma: r.contexto.plataforma,
+      aparelho: r.contexto.aparelho,
       sinais,
     }
     if (r.resultado === 'orientado') {

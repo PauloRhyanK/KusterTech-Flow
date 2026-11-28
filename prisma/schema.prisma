@@ -1457,6 +1457,8 @@ model Relato {
   tipoSugerido   String?
   assunto        String?
   versao         String?
+  plataforma     String?
+  aparelho       String?
   demandaId      String?
   /// {tipo, caminho, bytes}[]: o download fica para o passo seguinte.
   anexos         Json               @default("[]")

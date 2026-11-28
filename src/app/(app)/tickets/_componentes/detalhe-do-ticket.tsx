@@ -180,6 +180,8 @@ export function DetalheDoTicket({
           <Dado rotulo="Canal" valor={ROTULO_DO_CANAL[ticket.canal]} />
           {ticket.tela && <Dado rotulo="Tela" valor={ticket.tela} />}
           {ticket.versao && <Dado rotulo="Versão" valor={ticket.versao} />}
+          {ticket.plataforma && <Dado rotulo="Plataforma" valor={ticket.plataforma} />}
+          {ticket.aparelho && <Dado rotulo="Aparelho" valor={ticket.aparelho} />}
           <Dado rotulo="Quem enviou" valor={`${ticket.autor.nome} · ${ticket.autor.papel}`} />
           {ticket.tipoSugerido && <Dado rotulo="Tipo sugerido" valor={ticket.tipoSugerido} />}
           <Dado rotulo="Id no app" valor={ticket.idExterno} />
