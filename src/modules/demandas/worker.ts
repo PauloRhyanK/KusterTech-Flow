@@ -3,10 +3,16 @@ import { join } from 'node:path'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { instanteDoLote } from '@/modules/fila-de-publicacao/model'
+import { idDoAnexo } from '@/modules/relatos/model'
 import { apagarArquivo, diretorioDosArquivos, ehParcial, type Pasta } from './arquivos'
 import { MOTIVOS, nuncaPublicada, resultadoDoPedido, type Parte, type PrDaParte } from './partes'
 import { situacaoDoPedido, travarDemandas } from './partes-no-ar'
-import { capturaVencida, RETENCAO_DAS_CAPTURAS_MS } from './transicoes'
+import {
+  anexoDeRelatoVencido,
+  capturaVencida,
+  inicioDaRetencaoDoRelato,
+  RETENCAO_DAS_CAPTURAS_MS,
+} from './transicoes'
 
 const IDADE_MAXIMA_DO_PARCIAL_MS = 24 * 60 * 60_000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -14,8 +20,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Capturas vencidas saem do disco e ganham `apagadoEm`; `.parcial` com mais de 1 dia saem. */
 export async function limparArquivosDeDemandas(
   agora: Date,
-): Promise<{ capturas: number; parciais: number }> {
-  return { capturas: await limparCapturas(agora), parciais: await limparParciais(agora) }
+): Promise<{ capturas: number; parciais: number; anexosDeRelatos: number }> {
+  return {
+    capturas: await limparCapturas(agora),
+    parciais: await limparParciais(agora),
+    anexosDeRelatos: await limparAnexosDeRelatos(agora),
+  }
 }
 
 async function limparCapturas(agora: Date): Promise<number> {
@@ -40,6 +50,67 @@ async function limparCapturas(agora: Date): Promise<number> {
     apagadas += count
   }
   return apagadas
+}
+
+/**
+ * Mídias de relatos ligados a demandas saem 90 dias depois da primeira entre o "no ar" e o
+ * encerramento (data do último evento). Só vale o `ANEXO` cujo id é o derivado de um relato da
+ * própria demanda; o anexo manual nunca entra.
+ */
+async function limparAnexosDeRelatos(agora: Date): Promise<number> {
+  const relatos = await db.relato.findMany({
+    where: {
+      demandaId: { not: null },
+      demanda: {
+        OR: [{ noArEm: { not: null } }, { encerrada: { not: null } }],
+        arquivos: { some: { tipo: 'ANEXO', apagadoEm: null } },
+      },
+    },
+    select: {
+      sistemaId: true,
+      idExterno: true,
+      demandaId: true,
+      anexos: true,
+      demanda: {
+        select: {
+          noArEm: true,
+          encerrada: true,
+          eventos: { orderBy: { seq: 'desc' }, take: 1, select: { em: true } },
+        },
+      },
+    },
+  })
+  // id derivado -> demanda dona, só dos relatos já vencidos.
+  const donos = new Map<string, string>()
+  for (const r of relatos) {
+    if (!r.demandaId || !r.demanda || !Array.isArray(r.anexos)) continue
+    const inicio = inicioDaRetencaoDoRelato({
+      noArEm: r.demanda.noArEm,
+      encerrada: r.demanda.encerrada,
+      encerradaEm: r.demanda.eventos[0]?.em ?? null,
+    })
+    if (!anexoDeRelatoVencido(inicio, agora)) continue
+    r.anexos.forEach((_, i) =>
+      donos.set(idDoAnexo(`${r.sistemaId}:${r.idExterno}`, i), r.demandaId!),
+    )
+  }
+  if (donos.size === 0) return 0
+  const arquivos = await db.arquivoDaDemanda.findMany({
+    where: { id: { in: [...donos.keys()] }, tipo: 'ANEXO', apagadoEm: null },
+    select: { id: true, demandaId: true },
+  })
+  let apagados = 0
+  for (const a of arquivos) {
+    if (donos.get(a.id) !== a.demandaId) continue
+    // Disco antes do banco, como nas capturas.
+    await apagarArquivo(a.demandaId, a.id)
+    const { count } = await db.arquivoDaDemanda.updateMany({
+      where: { id: a.id, apagadoEm: null },
+      data: { apagadoEm: agora },
+    })
+    apagados += count
+  }
+  return apagados
 }
 
 /** `.parcial` com mais de 1 dia em `<dir>/<pasta>/<dono>/` (demandas e conversas do Decidir). */

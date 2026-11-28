@@ -1097,6 +1097,8 @@ export interface PaginaDaDemanda {
   artefatoUrl: string | null
   capturas: { id: string; tela: 'desktop' | 'celular' }[]
   capturasApagadasEm: Date | null
+  /** Quantos relatos (tickets dos apps) deram origem à demanda; null com o módulo `tickets` desligado. */
+  ticketsDeOrigem: number | null
   temTela: boolean
   historico: EventoNoHistorico[]
   podeAgir: boolean

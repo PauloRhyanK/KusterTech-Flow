@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest'
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn() } }))
 vi.mock('@/modules/demandas/worker', () => ({
-  limparArquivosDeDemandas: vi.fn(async () => ({ capturas: 0, parciais: 0 })),
+  limparArquivosDeDemandas: vi.fn(async () => ({ capturas: 0, parciais: 0, anexosDeRelatos: 0 })),
   marcarPartesSemPublicacao: vi.fn(async () => 0),
 }))
 

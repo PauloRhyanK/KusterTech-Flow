@@ -15,6 +15,7 @@ export type ModuloId =
   | 'decidir'
   | 'erros'
   | 'relatos'
+  | 'tickets'
   | 'fabrica-operacao'
 
 export const CATALOGO_DE_MODULOS: Record<
@@ -37,6 +38,7 @@ export const CATALOGO_DE_MODULOS: Record<
   decidir: { ativo: true, dependeDe: ['demandas', 'fabrica', 'github'] },
   erros: { ativo: true, dependeDe: ['demandas'] },
   relatos: { ativo: true, dependeDe: ['demandas', 'decidir'] },
+  tickets: { ativo: true, dependeDe: ['relatos'] },
   'fabrica-operacao': { ativo: false, dependeDe: ['fabrica', 'demandas'] },
 }
 

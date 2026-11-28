@@ -56,6 +56,17 @@ export default async function PaginaDaDemanda({ params }: { params: Promise<{ id
         </div>
       </header>
 
+      {p.ticketsDeOrigem !== null && p.ticketsDeOrigem > 0 && (
+        <p className="text-[13px] text-text-secondary">
+          <Link
+            href={`/tickets?demanda=${p.id}&agrupar=demanda`}
+            className="text-text-link hover:underline"
+          >
+            Tickets de origem: {p.ticketsDeOrigem}
+          </Link>
+        </p>
+      )}
+
       <TrilhoAteOAr grande pontos={p.trilho} />
 
       {p.descartada && (

@@ -440,3 +440,18 @@ export function capturaVencida(
   if (arquivo.tipo !== 'captura' || arquivo.apagadoEm || !entregueEm) return false
   return agora.getTime() - entregueEm.getTime() > RETENCAO_DAS_CAPTURAS_MS
 }
+
+/** Início da retenção das mídias dos relatos: a primeira entre no ar e o encerramento. */
+export function inicioDaRetencaoDoRelato(d: {
+  noArEm: Date | null
+  encerrada: string | null
+  encerradaEm: Date | null
+}): Date | null {
+  const encerramento = d.encerrada !== null ? d.encerradaEm : null
+  if (d.noArEm && encerramento) return d.noArEm <= encerramento ? d.noArEm : encerramento
+  return d.noArEm ?? encerramento
+}
+
+export function anexoDeRelatoVencido(inicio: Date | null, agora: Date): boolean {
+  return inicio !== null && agora.getTime() - inicio.getTime() > RETENCAO_DAS_CAPTURAS_MS
+}
