@@ -43,7 +43,8 @@ def _ler_config(pasta: pathlib.Path) -> dict:
     return dados if isinstance(dados, dict) else {}
 
 
-HEAD_MUDOU = {"tipo": "falha_tecnica", "motivo": "o head da branch não é mais o SHA pedido"}
+# um push durante o gate não é falha: a tarefa perdeu o sentido e o Flow oferece o SHA novo
+HEAD_MUDOU = {"tipo": "cancelada"}
 
 
 def verificar(tarefa, ws, url, base, cabecalho, verificador=None, config_do_repo=_ler_config) -> dict:

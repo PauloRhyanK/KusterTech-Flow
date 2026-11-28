@@ -1540,6 +1540,8 @@ model EtapaOperacional {
   instrucoes         String                @default("")
   /// Comando de verificação no contêiner limpo (obrigatório em implementação).
   verificacao        String                @default("")
+  /// Motivos do último gate que pediu correção; vão ao executor na próxima execução.
+  pedidoDeCorrecao   String?
   /// Head do PR na última avaliação dos gates.
   headSha            String?
   repositorioId      String

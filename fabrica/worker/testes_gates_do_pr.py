@@ -84,11 +84,19 @@ class VerificarTest(Base):
 
     def test_head_mudou(self):
         r = gates.verificar(self.tarefa(sha="f" * 40), self.ws, self.url, "main", None, lambda *a, **k: 1 / 0)
-        self.assertEqual(r, {"tipo": "falha_tecnica", "motivo": "o head da branch não é mais o SHA pedido"})
+        self.assertEqual(r, {"tipo": "cancelada"})
 
     def test_sem_config_de_verificacao_e_erro_de_configuracao(self):
         r = gates.verificar(self.tarefa(), self.ws, self.url, "main", None, lambda *a, **k: 1 / 0, config_do_repo=lambda p: {})
         self.assertEqual(r["tipo"], "erro_de_configuracao")
+
+
+class OrigemTest(Base):
+    def test_copia_limpa_tem_origin_para_o_verificador_do_kit(self):
+        copia = self.ws.preparar(self.url, "dono/repo", "fabrica/22222222", "main", "ex9")
+        p = subprocess.run(["git", "fetch", "--quiet", "origin"], cwd=copia.limpa, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(git("cat-file", "-t", self.sha, cwd=copia.limpa), "commit")
 
 
 class RevisarTest(Base):

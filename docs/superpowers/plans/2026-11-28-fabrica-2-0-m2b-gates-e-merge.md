@@ -55,3 +55,17 @@
 - [ ] `revisar`: Claude em leitura na cópia do agente, com as instruções da etapa como requisito (sem a justificativa do executor) e o pedido de veredito do kit; `extrair_veredito` → `{tipo: 'revisao', sha, veredito}`; ilegível → `saida_invalida`.
 - [ ] Execução com `correcao` leva os motivos no pedido. Testes, implementar, commit.
 - [ ] Verificação completa, revisão independente, PR.
+
+## Revisão independente (28/11) — o que foi feito com cada achado
+
+| Achado | Decisão |
+|---|---|
+| Verificador real sempre vermelho: o kit faz `git fetch origin` e o espelho não tinha `origin` | corrigido: `origin` do espelho aponta para ele mesmo; teste com Git real (sem verificador falso) |
+| Etapa que volta aos gates no mesmo head ficava presa (evento idempotente impedia decidir de novo) | corrigido: a chave do evento inclui a rodada (`correcoes`); no teto, escala e bloqueia |
+| PR inválido ou sumido não bloqueava antes de existir head gravado | corrigido: a decisão aceita head nulo |
+| Resultado de gate atrasado mexia em etapa que já saiu dos gates | corrigido: recuo e bloqueio só se a etapa ainda está em `aguardando_gates` no mesmo SHA; idem no teto de reconciliação |
+| Pedido de correção era sobrescrito por falhas técnicas e sumia na reconciliação | corrigido: campo próprio `pedidoDeCorrecao` |
+| Push durante o gate contava como falha técnica | corrigido: vira `cancelada`, espera 1 min, sem contar falha |
+| Evidência de outro SHA recuava sem contar falha | corrigido: registrada como `saida_invalida`, conta e bloqueia na 3ª |
+| Merge sem esperar checks que ainda vão aparecer (`ciAusenteRecente`) | **aceito nesta fase**: os três repositórios não exigem CI; entra com a configuração por repositório |
+| Merge feito sem travar a etapa | **aceito**: o merge é pelo SHA e a gravação do estado revalida com a etapa travada; uma mudança humana no meio só perde a gravação |

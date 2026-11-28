@@ -596,13 +596,73 @@ describe('gates do PR', () => {
     const id = await emGates()
     await db.etapaOperacional.update({
       where: { id },
-      data: { estado: 'pendente', correcoes: 1, motivo: 'CI vermelho', headSha: null },
+      data: {
+        estado: 'pendente',
+        correcoes: 1,
+        motivo: 'CI vermelho',
+        pedidoDeCorrecao: 'CI vermelho',
+        headSha: null,
+      },
     })
     expect(await pegarTarefa(w1, AGORA)).toMatchObject({
       finalidade: 'executar',
       correcao: 'CI vermelho',
       prUrl: 'https://github.com/exemplo/flow/pull/7',
     })
+  })
+
+  test('resultado de gate atrasado não mexe numa etapa que já saiu dos gates', async () => {
+    const id = await emGates()
+    const v = await pegarTarefa(w1, AGORA)
+    await db.etapaOperacional.update({ where: { id }, data: { estado: 'mergeada' } })
+    for (let i = 1; i <= 3; i++) {
+      await db.execucaoOperacional.updateMany({
+        where: { id: v!.execucaoId },
+        data: { encerradaEm: null },
+      })
+      await enviar(v!, { tipo: 'falha_tecnica', motivo: 'docker' } as never, `x${i}`)
+    }
+    expect(await db.etapaOperacional.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      estado: 'mergeada',
+      motivo: null,
+    })
+  })
+
+  test('head mudou durante o gate não conta como falha e espera 1 min', async () => {
+    await emGates()
+    const v = await pegarTarefa(w1, AGORA)
+    await enviar(v!, { tipo: 'cancelada' } as never)
+    const e = await db.etapaOperacional.findFirstOrThrow({ where: { chave: 'a' } })
+    expect(e.proximaTentativaEm).toEqual(depois(1 * MIN))
+    expect(await pegarTarefa(w1, depois(1 * MIN))).toMatchObject({ finalidade: 'verificar' })
+  })
+
+  test('evidência de outro SHA conta como falha e não recua para sempre', async () => {
+    await emGates()
+    let quando = AGORA
+    for (let i = 1; i <= 3; i++) {
+      const v = await pegarTarefa(w1, quando)
+      await enviar(v!, { tipo: 'verificacao', sha: OUTRO, codigo: 0 } as never, `o${i}`, quando)
+      quando = depois(i * 60 * MIN)
+    }
+    expect((await db.etapaOperacional.findFirstOrThrow({ where: { chave: 'a' } })).estado).toBe(
+      'bloqueada',
+    )
+  })
+
+  test('a correção vem do pedido guardado, não do último motivo', async () => {
+    const id = await emGates()
+    await db.etapaOperacional.update({
+      where: { id },
+      data: {
+        estado: 'pendente',
+        correcoes: 1,
+        motivo: 'execução terminou sem PR',
+        pedidoDeCorrecao: 'CI vermelho',
+        headSha: null,
+      },
+    })
+    expect(await pegarTarefa(w1, AGORA)).toMatchObject({ correcao: 'CI vermelho' })
   })
 
   test('implementação sem verificação é recusada no plano', async () => {

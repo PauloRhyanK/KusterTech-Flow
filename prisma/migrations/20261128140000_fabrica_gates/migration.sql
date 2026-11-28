@@ -2,6 +2,7 @@
 
 -- AlterTable
 ALTER TABLE "EtapaOperacional" ADD COLUMN     "headSha" TEXT,
+ADD COLUMN     "pedidoDeCorrecao" TEXT,
 ADD COLUMN     "verificacao" TEXT NOT NULL DEFAULT '';
 
 -- AlterTable

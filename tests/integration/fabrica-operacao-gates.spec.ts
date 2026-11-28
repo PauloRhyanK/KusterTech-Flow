@@ -213,7 +213,7 @@ describe('avaliarEtapasEmGates', () => {
     expect((await etapa()).estado).toBe('bloqueada')
   })
 
-  test('verificação vermelha volta para correção uma vez só', async () => {
+  test('verificação vermelha volta para correção, e repetir o ciclo na mesma rodada não soma de novo', async () => {
     const f = fonte()
     await evidencias(1, null)
     await avaliarEtapasEmGates(como(f), AGORA)
@@ -221,11 +221,7 @@ describe('avaliarEtapasEmGates', () => {
       estado: 'pendente',
       correcoes: 1,
       motivo: 'verificação falhou (código 1)',
-    })
-    // o worker corrige e reabre os gates no mesmo head (sem push): a decisão não se repete
-    await db.etapaOperacional.update({
-      where: { id: etapaId },
-      data: { estado: 'aguardando_gates' },
+      pedidoDeCorrecao: 'verificação falhou (código 1)',
     })
     await avaliarEtapasEmGates(como(f), AGORA)
     expect((await etapa()).correcoes).toBe(1)
@@ -268,5 +264,47 @@ describe('avaliarEtapasEmGates', () => {
     })
     await avaliarEtapasEmGates(como(fonte()), AGORA)
     expect((await etapa()).estado).toBe('bloqueada')
+  })
+
+  test('volta aos gates no mesmo head depois de uma correção: decide de novo e escala no teto', async () => {
+    const f = fonte()
+    await evidencias(1, null)
+    for (let rodada = 1; rodada <= 3; rodada++) {
+      await avaliarEtapasEmGates(como(f), AGORA)
+      if (rodada < 3) {
+        expect(await etapa()).toMatchObject({ estado: 'pendente', correcoes: rodada })
+        // a correção reconciliou sem push: o PR continua no mesmo head
+        await db.etapaOperacional.update({
+          where: { id: etapaId },
+          data: { estado: 'aguardando_gates' },
+        })
+      }
+    }
+    expect(await etapa()).toMatchObject({
+      estado: 'bloqueada',
+      motivo: expect.stringMatching(/^escalar/),
+    })
+  })
+
+  test('PR sumido bloqueia mesmo antes de existir head gravado', async () => {
+    await db.etapaOperacional.update({ where: { id: etapaId }, data: { headSha: null } })
+    const f = fonte()
+    f.pr = null
+    await avaliarEtapasEmGates(como(f), AGORA)
+    expect(await etapa()).toMatchObject({
+      estado: 'bloqueada',
+      motivo: 'o PR não foi encontrado no GitHub',
+    })
+  })
+
+  test('o pedido de correção fica guardado à parte do motivo', async () => {
+    const f = fonte()
+    await evidencias(0, 'correcoes')
+    await avaliarEtapasEmGates(como(f), AGORA)
+    await db.etapaOperacional.update({
+      where: { id: etapaId },
+      data: { motivo: 'execução terminou sem PR' },
+    })
+    expect((await etapa()).pedidoDeCorrecao).toBe('revisão pediu correções: src/a.ts: falta teste')
   })
 })

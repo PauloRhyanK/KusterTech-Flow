@@ -44,10 +44,13 @@ function paraEtapa(l: Linha): Etapa {
   }
 }
 
-/** Aplica a decisão uma vez só, com a etapa travada e ainda no mesmo head. */
+/**
+ * Aplica a decisão uma vez só por rodada, com a etapa travada e ainda no mesmo head. A rodada é o número de
+ * correções: uma etapa que volta aos gates no mesmo head (correção sem push) é decidida de novo.
+ */
 async function aplicar(
   etapaId: string,
-  head: string,
+  head: string | null,
   decisao: string,
   transformar: (e: Etapa) => Etapa,
   agora: Date,
@@ -62,10 +65,11 @@ async function aplicar(
       },
     })
     if (l.estado !== 'aguardando_gates' || l.headSha !== head) return false
+    const rodada = l.correcoes
     const { count } = await tx.eventoOperacional.createMany({
       data: [
         {
-          idExterno: `gate:${etapaId}:${head}:${decisao}`,
+          idExterno: `gate:${etapaId}:${head ?? 'sem-head'}:${decisao}:${rodada}`,
           entidade: 'etapa',
           entidadeId: etapaId,
           tipo: `gate_${decisao}`,
@@ -80,7 +84,15 @@ async function aplicar(
     const nova = transformar(paraEtapa(l))
     await tx.etapaOperacional.update({
       where: { id: etapaId },
-      data: { estado: nova.estado, correcoes: nova.correcoes, motivo: nova.motivo },
+      data: {
+        estado: nova.estado,
+        correcoes: nova.correcoes,
+        motivo: nova.motivo,
+        // o que o gate pediu fica guardado à parte: falhas técnicas depois não apagam
+        ...(decisao === 'corrigir' && nova.estado === 'pendente'
+          ? { pedidoDeCorrecao: nova.motivo }
+          : {}),
+      },
     })
     return true
   })
@@ -90,7 +102,7 @@ const bloquear = (motivo: string) => (e: Etapa) => ({ ...e, estado: 'bloqueada' 
 
 async function avaliarUma(fonte: FonteGitHub, l: Linha, agora: Date): Promise<boolean> {
   const casa = PR.exec(l.prUrl ?? '')
-  const head0 = l.headSha ?? 'sem-head'
+  const head0 = l.headSha
   if (!casa || casa[1]!.toLowerCase() !== l.repositorio.nomeCompleto.toLowerCase()) {
     await aplicar(l.id, head0, 'pr_invalido', bloquear('o PR não é do repositório da etapa'), agora)
     return false

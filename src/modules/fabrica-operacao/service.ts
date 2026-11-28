@@ -310,8 +310,12 @@ async function reatribuirVencida(
       where: { id: vencida.id, encerradaEm: null },
       data: { encerradaEm: agora, reservaExpiraEm: null },
     })
-    await tx.etapaOperacional.update({
-      where: { id: vencida.etapaId },
+    // só mexe na etapa se ela ainda espera por esta execução
+    await tx.etapaOperacional.updateMany({
+      where: {
+        id: vencida.etapaId,
+        estado: vencida.finalidade === 'executar' ? 'executando' : 'aguardando_gates',
+      },
       data: {
         estado: 'bloqueada',
         motivo: `reconciliação falhou ${vencida.geracao} vezes: conferir sessão, commits e PR`,
@@ -340,7 +344,10 @@ async function reatribuirVencida(
     finalidade: vencida.finalidade as Finalidade,
     sha: vencida.sha,
     verificacao: vencida.etapa.verificacao,
-    correcao: null,
+    correcao:
+      vencida.finalidade === 'executar' && vencida.etapa.correcoes > 0
+        ? vencida.etapa.pedidoDeCorrecao
+        : null,
     etapaChave: vencida.etapa.chave,
     tipoDaEtapa: vencida.etapa.tipo as TipoDaEtapa,
     instrucoes: vencida.etapa.instrucoes,
@@ -414,6 +421,9 @@ async function oferecerGate(
   return null
 }
 
+/** Espera depois de uma tarefa de gate cancelada (push durante o gate): o avaliador grava o head novo. */
+const ESPERA_DO_GATE_CANCELADO_MS = 60_000
+
 /** Resultado de uma tarefa de gate: guarda a evidência ou recua a etapa; nunca muda o estado dela. */
 async function aplicarResultadoDeGate(
   tx: Tx,
@@ -424,16 +434,19 @@ async function aplicarResultadoDeGate(
   if (resultado.tipo === 'incerto') return // continua aberta para repetir
   const finalidade = execucao.finalidade as Exclude<Finalidade, 'executar'>
   const esperado = EVIDENCIA_DA_FINALIDADE[finalidade]
-  const evidencia =
-    (resultado.tipo === 'verificacao' || resultado.tipo === 'revisao') &&
-    resultado.tipo === esperado &&
-    resultado.sha === execucao.sha
+  const doTipo = resultado.tipo === 'verificacao' || resultado.tipo === 'revisao'
+  const evidencia = doTipo && resultado.tipo === esperado && resultado.sha === execucao.sha
+  // evidência de outro SHA ou de outro tipo é saída inválida e conta como falha
+  const registrado: ResultadoDoWorker =
+    doTipo && !evidencia
+      ? { tipo: 'saida_invalida', motivo: `evidência que não é de ${finalidade} no SHA pedido` }
+      : resultado
   await tx.execucaoOperacional.update({
     where: { id: execucao.id },
     data: {
       encerradaEm: agora,
       reservaExpiraEm: null,
-      resultado: resultado as Prisma.InputJsonValue,
+      resultado: registrado as Prisma.InputJsonValue,
     },
   })
   if (evidencia) {
@@ -453,13 +466,21 @@ async function aplicarResultadoDeGate(
     })
     return
   }
-  if (resultado.tipo === 'cancelada') return
+  // a etapa só recua ou bloqueia se ainda espera por este gate neste SHA
+  const daEtapa = { id: execucao.etapaId, estado: 'aguardando_gates', headSha: execucao.sha }
+  if (registrado.tipo === 'cancelada') {
+    await tx.etapaOperacional.updateMany({
+      where: daEtapa,
+      data: { proximaTentativaEm: new Date(agora.getTime() + ESPERA_DO_GATE_CANCELADO_MS) },
+    })
+    return
+  }
   const motivo =
-    'motivo' in resultado
-      ? resultado.motivo
-      : resultado.tipo === 'limite_de_uso'
+    'motivo' in registrado
+      ? registrado.motivo
+      : registrado.tipo === 'limite_de_uso'
         ? 'limite de uso'
-        : `resultado inesperado para ${finalidade}: ${resultado.tipo}`
+        : `resultado inesperado para ${finalidade}: ${registrado.tipo}`
   const anteriores = await tx.execucaoOperacional.findMany({
     where: { etapaId: execucao.etapaId, finalidade, sha: execucao.sha, encerradaEm: { not: null } },
     select: { resultado: true },
@@ -468,9 +489,9 @@ async function aplicarResultadoDeGate(
     const t = (a.resultado as { tipo?: string } | null)?.tipo
     return t !== esperado && t !== 'cancelada' && t !== 'limite_de_uso'
   }).length
-  if (resultado.tipo !== 'limite_de_uso' && falhas >= MAX_FALHAS_DE_GATE) {
-    await tx.etapaOperacional.update({
-      where: { id: execucao.etapaId },
+  if (registrado.tipo !== 'limite_de_uso' && falhas >= MAX_FALHAS_DE_GATE) {
+    await tx.etapaOperacional.updateMany({
+      where: daEtapa,
       data: {
         estado: 'bloqueada',
         motivo: `${finalidade === 'verificar' ? 'verificação' : 'revisão'} falhou ${falhas} vezes: ${motivo}`,
@@ -479,9 +500,9 @@ async function aplicarResultadoDeGate(
     return
   }
   const recuo =
-    resultado.tipo === 'limite_de_uso' ? resultado : ({ tipo: 'falha_tecnica', motivo } as const)
-  await tx.etapaOperacional.update({
-    where: { id: execucao.etapaId },
+    registrado.tipo === 'limite_de_uso' ? registrado : ({ tipo: 'falha_tecnica', motivo } as const)
+  await tx.etapaOperacional.updateMany({
+    where: daEtapa,
     data: { motivo, proximaTentativaEm: proximaTentativa(recuo, Math.max(falhas, 1), agora) },
   })
 }
@@ -554,7 +575,7 @@ export async function pegarTarefa(workerId: string, agora: Date): Promise<Tarefa
       finalidade: 'executar',
       sha: null,
       verificacao: linha.verificacao,
-      correcao: linha.correcoes > 0 ? linha.motivo : null,
+      correcao: linha.correcoes > 0 ? linha.pedidoDeCorrecao : null,
       etapaChave: linha.chave,
       tipoDaEtapa: linha.tipo as TipoDaEtapa,
       instrucoes: linha.instrucoes,
