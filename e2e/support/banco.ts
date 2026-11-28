@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Papel } from '@/lib/auth/autorizar'
 import { db } from '@/lib/db'
 import { temaParaBanco, type Tema } from '@/lib/tema/tema'
@@ -12,6 +14,8 @@ import { validarNomeDeProjeto } from '@/modules/projetos/model'
 import { criarUsuario } from '@/modules/usuarios/service'
 import { MODELO_PADRAO } from '@/modules/demandas/model'
 import { criarDemanda, registrarEvento } from '@/modules/demandas/service'
+import { idDoAnexo } from '@/modules/relatos/model'
+import { PASTA_DOS_ARQUIVOS_E2E } from './arquivos'
 import { MAQUINA_LOCAL_E2E } from './oficina'
 import { rodarWorkerUmaVez } from './worker'
 import { gravarHomologacaoDePublicacao } from '../../tests/support/homologacao-de-publicacao'
@@ -1172,6 +1176,9 @@ export async function limparDemandasNoBanco(): Promise<void> {
     data: { demandaId: null },
   })
   await db.demanda.deleteMany({ where: dosExemplos })
+  // Relatos e sistemas conectados dos repositórios de exemplo (FK RESTRICT no sistema e no projeto).
+  await db.relato.deleteMany({ where: { sistema: dosExemplos } })
+  await db.sistemaConectado.deleteMany({ where: dosExemplos })
   for (const [id, nome] of exibidosComoNoBanco) {
     await db.projeto.updateMany({ where: { id }, data: { nome, arquivadoEm: new Date() } })
     exibidosComoNoBanco.delete(id)
@@ -1488,4 +1495,96 @@ export async function gravarVersaoConferidaNoBanco(
     where: { repositorioId: repositorio.id },
     data: { versaoNoAr: commit, versaoConferidaEm: new Date() },
   })
+}
+
+// App conectado (sem token: o E2E não busca relatos; só a tela os lê).
+export async function criarSistemaConectadoNoBanco(e: {
+  nome: string
+  projetoId: string
+  repositorio: string
+}): Promise<{ id: string }> {
+  const repositorio = await db.repositorioGitHub.findFirstOrThrow({
+    where: { nomeCompleto: e.repositorio },
+    select: { id: true },
+  })
+  return db.sistemaConectado.create({
+    data: {
+      nome: e.nome,
+      url: 'https://app.exemplo.com/v1',
+      projetoId: e.projetoId,
+      repositorioId: repositorio.id,
+    },
+    select: { id: true },
+  })
+}
+
+// Relato como a busca grava; com `imagem`, o anexo 0 vira o arquivo da demanda (id derivado, D83)
+// gravado na pasta dos arquivos do E2E, como o download faria.
+export async function criarRelatoNoBanco(e: {
+  sistemaId: string
+  idExterno: string
+  resultado: 'SEGUE' | 'ORIENTADO'
+  em: Date
+  autorNome: string
+  autorPapel: string
+  texto?: string | null
+  assunto?: string | null
+  versao?: string | null
+  ticket?: string | null
+  demandaId?: string | null
+  imagem?: Buffer
+  envios?: readonly { estado: string; mensagem: string; enviadoEm: Date }[]
+}): Promise<{ id: string }> {
+  const r = await db.relato.create({
+    data: {
+      sistemaId: e.sistemaId,
+      idExterno: e.idExterno,
+      ticket: e.ticket ?? null,
+      resultado: e.resultado,
+      canal: 'SISTEMA',
+      em: e.em,
+      autorIdExterno: `u-${e.idExterno}`,
+      autorNome: e.autorNome,
+      autorPapel: e.autorPapel,
+      texto: e.texto ?? null,
+      assunto: e.assunto ?? null,
+      versao: e.versao ?? null,
+      demandaId: e.demandaId ?? null,
+      anexos: e.imagem
+        ? [{ tipo: 'imagem', bytes: e.imagem.length, caminho: '/relatos/print-1.png' }]
+        : [],
+    },
+    select: { id: true },
+  })
+  for (const v of e.envios ?? []) {
+    await db.envioDeAndamento.create({
+      data: {
+        relatoId: r.id,
+        estado: v.estado,
+        mensagem: v.mensagem,
+        origem: 'automatico',
+        situacao: 'ENVIADO',
+        enviadoEm: v.enviadoEm,
+      },
+    })
+  }
+  if (e.imagem) {
+    if (!e.demandaId) throw new Error('A imagem do relato só existe numa demanda.')
+    const arquivoId = idDoAnexo(`${e.sistemaId}:${e.idExterno}`, 0)
+    await db.arquivoDaDemanda.create({
+      data: {
+        id: arquivoId,
+        demandaId: e.demandaId,
+        tipo: 'ANEXO',
+        nome: 'imagem-1-do-relato',
+        conteudo: 'image/png',
+        tamanho: e.imagem.length,
+        enviadoPor: 'sistema',
+      },
+    })
+    const pasta = join(PASTA_DOS_ARQUIVOS_E2E, 'demandas', e.demandaId)
+    mkdirSync(pasta, { recursive: true })
+    writeFileSync(join(pasta, arquivoId), e.imagem)
+  }
+  return r
 }

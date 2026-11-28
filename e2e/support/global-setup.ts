@@ -51,6 +51,9 @@ export default async function globalSetup(): Promise<void> {
     })
     // Demandas antes dos repositórios e projetos (FK RESTRICT); eventos e arquivos em cascata.
     await db.demanda.deleteMany({ where: dosExemplos })
+    // Relatos e apps conectados (tickets) antes dos repositórios e projetos (FK RESTRICT).
+    await db.relato.deleteMany({ where: { sistema: dosExemplos } })
+    await db.sistemaConectado.deleteMany({ where: dosExemplos })
     await db.issueVinculo.deleteMany({
       where: {
         OR: [
