@@ -65,7 +65,7 @@ export default async function PaginaDosTickets({
     )
   }
 
-  const comEscolha = filtros.t !== null
+  const comEscolha = tela.escolhido !== null
 
   return (
     <div className="space-y-5">

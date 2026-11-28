@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterAll, beforeEach, expect, test, vi } from 'vitest'
 import type { SessaoAtual } from '@/lib/auth/sessao'
@@ -129,6 +130,17 @@ test('lista sem escolha mostra "Escolha um ticket"; com t renderiza o detalhe ao
   const com = await renderizar({ t: r.id })
   expect(com).not.toContain('Escolha um ticket')
   expect(com).toContain('Voltar à lista')
+})
+
+test('t que não acha ticket vale como sem seleção: lista visível, detalhe só no desktop', async () => {
+  const s = await sistema('App Alfa')
+  await db.relato.create({ data: dadosDoRelato(s.id, 1) })
+  const html = await renderizar({ t: randomUUID() })
+  expect(html).not.toContain('Voltar à lista')
+  expect(html).toContain('Escolha um ticket')
+  expect(html.split('hidden min-w-0 lg:block')).toHaveLength(2)
+  expect(html).not.toContain('class="hidden min-w-0 lg:block"><ul')
+  expect(html).toContain('O botão não funciona')
 })
 
 test('filtro sem resultado mostra "Nada com estes filtros" e link Limpar', async () => {

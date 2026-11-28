@@ -49,11 +49,26 @@ export function lerFiltrosDosTickets(params: Params): FiltrosDosTickets {
     autor: primeiro(params, 'autor'),
     resultado: dentre(primeiro(params, 'resultado'), RESULTADOS),
     periodo: dentre(primeiro(params, 'periodo'), PERIODOS) ?? '7',
-    q: primeiro(params, 'q'),
+    q: primeiro(params, 'q')?.slice(0, 120).trim() || null,
     demanda: primeiro(params, 'demanda'),
     agrupar: dentre(primeiro(params, 'agrupar'), AGRUPAMENTOS) ?? 'dia',
     t: primeiro(params, 't'),
   }
+}
+
+/** `autorIdExterno` só é único por app: a chave do autor leva o app junto. */
+export function chaveDoAutor(sistemaId: string, autorIdExterno: string): string {
+  return `${sistemaId}:${autorIdExterno}`
+}
+
+/** Desfaz `chaveDoAutor`; valor malformado → null (o filtro é ignorado). */
+export function lerChaveDoAutor(
+  chave: string | null,
+): { sistemaId: string; autorIdExterno: string } | null {
+  if (!chave) return null
+  const i = chave.indexOf(':')
+  if (i <= 0 || i === chave.length - 1) return null
+  return { sistemaId: chave.slice(0, i), autorIdExterno: chave.slice(i + 1) }
 }
 
 /** A URL com os filtros atuais trocados por `mudar`; padrões e nulos ficam de fora. */

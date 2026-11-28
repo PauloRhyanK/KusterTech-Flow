@@ -46,6 +46,10 @@ describe('filtros', () => {
       q: null,
     })
   })
+  test('lerFiltrosDosTickets: q é aparada e limitada a 120 caracteres', () => {
+    expect(lerFiltrosDosTickets({ q: `  ${'a'.repeat(200)}  ` }).q).toBe('a'.repeat(120))
+    expect(lerFiltrosDosTickets({ q: ' abc ' }).q).toBe('abc')
+  })
   test('lerFiltrosDosTickets: canal na URL é minúsculo', () => {
     expect(lerFiltrosDosTickets({ canal: 'whatsapp' }).canal).toBe('WHATSAPP')
     expect(lerFiltrosDosTickets({ canal: 'sistema' }).canal).toBe('SISTEMA')
@@ -179,6 +183,21 @@ describe('agrupamento e quadros', () => {
     ]
     expect(agruparTickets(lista, 'app', agora).map((x) => x.rotulo)).toEqual(['App A', 'Zeta'])
     expect(agruparTickets(lista, 'autor', agora).map((x) => x.rotulo)).toEqual(['Abel', 'Ana'])
+  })
+  test('agruparTickets por autor separa o mesmo id de apps diferentes', () => {
+    const lista = [
+      ticket({
+        id: 'a',
+        em: new Date('2026-11-27T10:00:00-03:00'),
+        autor: { id: 's1:u1', nome: 'Ana', papel: 'x' },
+      }),
+      ticket({
+        id: 'b',
+        em: new Date('2026-11-27T09:00:00-03:00'),
+        autor: { id: 's2:u1', nome: 'Ana', papel: 'x' },
+      }),
+    ]
+    expect(agruparTickets(lista, 'autor', agora)).toHaveLength(2)
   })
   test('quadrosDosTickets conta os três resultados', () => {
     expect(

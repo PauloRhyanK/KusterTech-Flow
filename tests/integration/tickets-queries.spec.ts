@@ -145,7 +145,11 @@ test('padrão: 7 dias, agrupado por dia, o de 40 dias fica fora, quadros correto
   expect(t.semSistemas).toBe(false)
   expect(t.sistemasDesconectados).toEqual(['App Beta'])
   expect(t.opcoes.apps.map((x) => x.nome)).toEqual(['App Alfa', 'App Beta'])
-  expect(t.opcoes.autores.map((x) => x.nome)).toEqual(['Ana', 'Bia'])
+  expect(t.opcoes.autores.map((x) => x.nome)).toEqual([
+    'Ana · App Alfa',
+    'Ana · App Beta',
+    'Bia · App Alfa',
+  ])
   expect(t.escolhido).toBeNull()
   const doApp = t.grupos.flatMap((g) => g.tickets).find((x) => x.id === s.a.id)
   expect(doApp?.demanda).toMatchObject({ id: s.d.id, titulo: 'Corrigir botão' })
@@ -162,7 +166,7 @@ test('periodo=tudo traz o de 40 dias; app, canal, autor, resultado e demanda fil
   expect(ids(porApp).sort()).toEqual([s.c.id, s.w.id].sort())
   const porCanal = await obterTelaDeTickets(admin, { canal: 'whatsapp' }, AGORA)
   expect(ids(porCanal)).toEqual([s.w.id])
-  const porAutor = await obterTelaDeTickets(admin, { autor: 'u2' }, AGORA)
+  const porAutor = await obterTelaDeTickets(admin, { autor: `${sistemaA}:u2` }, AGORA)
   expect(ids(porAutor)).toEqual([s.b.id])
   const semDemanda = await obterTelaDeTickets(admin, { resultado: 'sem_demanda' }, AGORA)
   expect(ids(semDemanda).sort()).toEqual([s.b.id, s.w.id].sort())
@@ -312,8 +316,23 @@ test('a lista trunca em 300 e avisa', async () => {
   })
   const t = await obterTelaDeTickets(admin, {}, AGORA)
   expect(t.truncado).toBe(true)
-  expect(t.total).toBe(300)
+  expect(t.total).toBe(301)
   expect(t.quadros.chegaram).toBe(301)
+})
+
+test('o mesmo id de autor em dois apps é distinto no filtro, nas opções e no agrupamento', async () => {
+  const a = await relato('x-a', sistemaA, { autorIdExterno: 'u1', autorNome: 'Ana' })
+  const b = await relato('x-b', sistemaB, { autorIdExterno: 'u1', autorNome: 'Ana' })
+  const t = await obterTelaDeTickets(admin, { agrupar: 'autor' }, AGORA)
+  expect(t.opcoes.autores).toHaveLength(2)
+  expect(new Set(t.opcoes.autores.map((x) => x.id)).size).toBe(2)
+  expect(t.grupos).toHaveLength(2)
+  const doA = await obterTelaDeTickets(admin, { autor: `${sistemaA}:u1` }, AGORA)
+  expect(ids(doA)).toEqual([a.id])
+  const doB = await obterTelaDeTickets(admin, { autor: `${sistemaB}:u1` }, AGORA)
+  expect(ids(doB)).toEqual([b.id])
+  const ruim = await obterTelaDeTickets(admin, { autor: 'u1' }, AGORA)
+  expect(ids(ruim).sort()).toEqual([a.id, b.id].sort())
 })
 
 test('obterPaginaDaDemanda traz ticketsDeOrigem', async () => {

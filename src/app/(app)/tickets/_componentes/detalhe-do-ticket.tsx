@@ -174,11 +174,17 @@ export function DetalheDoTicket({
         <dl className="grid grid-cols-[110px_1fr] gap-x-2.5 gap-y-1 text-xs">
           <Dado rotulo="App" valor={ticket.sistema.nome} />
           <Dado rotulo="Projeto" valor={ticket.projeto.nome} />
+          {ticket.projeto.clientes.length > 0 && (
+            <Dado rotulo="Clientes" valor={ticket.projeto.clientes.join(', ')} />
+          )}
           <Dado rotulo="Canal" valor={ROTULO_DO_CANAL[ticket.canal]} />
           {ticket.tela && <Dado rotulo="Tela" valor={ticket.tela} />}
           {ticket.versao && <Dado rotulo="Versão" valor={ticket.versao} />}
           <Dado rotulo="Quem enviou" valor={`${ticket.autor.nome} · ${ticket.autor.papel}`} />
+          {ticket.tipoSugerido && <Dado rotulo="Tipo sugerido" valor={ticket.tipoSugerido} />}
           <Dado rotulo="Id no app" valor={ticket.idExterno} />
+          <Dado rotulo="Relatado em" valor={formatarDataHora(ticket.em)} />
+          <Dado rotulo="Buscado em" valor={formatarDataHora(ticket.buscadoEm)} />
         </dl>
       </Secao>
 

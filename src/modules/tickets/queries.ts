@@ -9,8 +9,10 @@ import type { SinalDoFio } from '@/modules/relatos/contrato'
 import { idDoAnexo, type AnexoGravado } from '@/modules/relatos/model'
 import {
   agruparTickets,
+  chaveDoAutor,
   contarMidias,
   inicioDoPeriodo,
+  lerChaveDoAutor,
   lerFiltrosDosTickets,
   LIMITE_DA_LISTA,
   midiasDoTicket,
@@ -87,7 +89,11 @@ function semMidias(r: LinhaDaLista): Omit<TicketNaLista, 'midias'> {
     em: r.em,
     canal: r.canal,
     sistema: r.sistema,
-    autor: { id: r.autorIdExterno, nome: r.autorNome, papel: r.autorPapel },
+    autor: {
+      id: chaveDoAutor(r.sistema.id, r.autorIdExterno),
+      nome: r.autorNome,
+      papel: r.autorPapel,
+    },
     resumo: resumoDoTicket(r),
     resultado: resultadoNaTela(r),
     demanda: r.demanda,
@@ -107,7 +113,8 @@ function ondeDaLista(f: FiltrosDosTickets, agora: Date): Prisma.RelatoWhereInput
   const e: Prisma.RelatoWhereInput[] = [ondeDoPeriodo(f, agora)]
   if (f.app) e.push({ sistemaId: f.app })
   if (f.canal) e.push({ canal: f.canal })
-  if (f.autor) e.push({ autorIdExterno: f.autor })
+  const autor = lerChaveDoAutor(f.autor)
+  if (autor) e.push({ sistemaId: autor.sistemaId, autorIdExterno: autor.autorIdExterno })
   if (f.demanda) e.push({ demandaId: f.demanda })
   if (f.resultado === 'virou_demanda') e.push({ resultado: 'SEGUE', demandaId: { not: null } })
   if (f.resultado === 'orientado') e.push({ resultado: 'ORIENTADO' })
@@ -142,13 +149,15 @@ export async function obterTelaDeTickets(
   exigirPermissao(sujeito, 'desenvolvimento.ler')
   const filtros = lerFiltrosDosTickets(params)
   const conectado = { estado: { not: 'REVOGADO' } } as const
-  const [linhas, quadros, apps, autores, escolhido] = await Promise.all([
+  const onde = ondeDaLista(filtros, agora)
+  const [linhas, total, quadros, apps, autores, escolhido] = await Promise.all([
     db.relato.findMany({
-      where: ondeDaLista(filtros, agora),
+      where: onde,
       orderBy: { em: 'desc' },
       take: LIMITE_DA_LISTA + 1,
       select: NA_LISTA,
     }),
+    db.relato.count({ where: onde }),
     quadrosDoPeriodo(filtros, agora),
     db.sistemaConectado.findMany({
       where: conectado,
@@ -156,9 +165,14 @@ export async function obterTelaDeTickets(
       select: { id: true, nome: true, estado: true },
     }),
     db.relato.findMany({
-      distinct: ['autorIdExterno'],
-      orderBy: [{ autorIdExterno: 'asc' }, { em: 'desc' }],
-      select: { autorIdExterno: true, autorNome: true },
+      distinct: ['sistemaId', 'autorIdExterno'],
+      orderBy: [{ sistemaId: 'asc' }, { autorIdExterno: 'asc' }, { em: 'desc' }],
+      select: {
+        sistemaId: true,
+        autorIdExterno: true,
+        autorNome: true,
+        sistema: { select: { nome: true } },
+      },
     }),
     filtros.t ? obterTicket(sujeito, filtros.t, agora) : null,
   ])
@@ -168,12 +182,15 @@ export async function obterTelaDeTickets(
     filtros,
     quadros,
     grupos: agruparTickets(visiveis, filtros.agrupar, agora),
-    total: visiveis.length,
+    total,
     truncado,
     opcoes: {
       apps: apps.map((a) => ({ id: a.id, nome: a.nome })),
       autores: autores
-        .map((a) => ({ id: a.autorIdExterno, nome: a.autorNome }))
+        .map((a) => ({
+          id: chaveDoAutor(a.sistemaId, a.autorIdExterno),
+          nome: `${a.autorNome} · ${a.sistema.nome}`,
+        }))
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
     },
     semSistemas: apps.length === 0,

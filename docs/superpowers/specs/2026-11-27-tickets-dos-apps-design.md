@@ -1,7 +1,7 @@
 # Tickets dos apps — desenho
 
 **Data:** 27/11/2026
-**Estado:** aguardando aprovação do Paulo (D74)
+**Estado:** aprovado pelo Paulo em 27/11/2026; tela conferida no navegador (capturas em `docs/superpowers/specs/assets/tickets/`)
 **Depende de:** Relatos de usuários (D83, já na `main`) e Demandas.
 
 ## 1. Por que

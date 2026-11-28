@@ -62,6 +62,27 @@ describe('DetalheDoTicket', () => {
     expect(screen.getByText('Relatado no app')).toBeInTheDocument()
   })
 
+  test('De onde veio traz clientes, tipo sugerido, relatado em e buscado em', () => {
+    const t = {
+      ...base,
+      tipoSugerido: 'Defeito',
+      projeto: { nome: 'CAIS', clientes: ['Alfa', 'Beta'] },
+    }
+    render(<DetalheDoTicket ticket={t} filtros={filtros} emPagina={false} />)
+    for (const r of ['Clientes', 'Tipo sugerido', 'Relatado em', 'Buscado em']) {
+      expect(screen.getByText(r)).toBeInTheDocument()
+    }
+    expect(screen.getByText('Alfa, Beta')).toBeInTheDocument()
+    expect(screen.getByText('Defeito')).toBeInTheDocument()
+  })
+
+  test('sem clientes e sem tipo sugerido omite as linhas', () => {
+    const t = { ...base, projeto: { nome: 'CAIS', clientes: [] } }
+    render(<DetalheDoTicket ticket={t} filtros={filtros} emPagina={false} />)
+    expect(screen.queryByText('Clientes')).toBeNull()
+    expect(screen.queryByText('Tipo sugerido')).toBeNull()
+  })
+
   test('sem ticket escolhido mostra "Escolha um ticket"', () => {
     render(<DetalheDoTicket ticket={null} filtros={filtros} emPagina={false} />)
     expect(screen.getByText('Escolha um ticket')).toBeInTheDocument()
