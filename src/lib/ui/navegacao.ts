@@ -10,6 +10,7 @@ import {
   Rocket,
   Server,
   Settings,
+  Ticket,
 } from 'lucide-react'
 
 export interface ItemDeNavegacao {
@@ -48,6 +49,13 @@ export const GRUPOS_DE_NAVEGACAO: readonly GrupoDeNavegacao[] = [
         href: '/demandas',
         icone: Inbox,
         descricao: 'Demandas dos projetos',
+      },
+      {
+        rotulo: 'Tickets',
+        href: '/tickets',
+        icone: Ticket,
+        descricao: 'O que os usuários mandaram pelos apps',
+        modulo: 'tickets',
       },
       {
         rotulo: 'Publicação',

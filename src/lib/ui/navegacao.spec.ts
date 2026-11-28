@@ -10,10 +10,11 @@ import {
   Rocket,
   Server,
   Settings,
+  Ticket,
 } from 'lucide-react'
 
 describe('navegacao', () => {
-  it('grupo Trabalho: Início, Decidir, Demandas, Publicação, Fábrica; Cadastro com os itens e hrefs na ordem', () => {
+  it('grupo Trabalho: Início, Decidir, Demandas, Tickets, Publicação, Fábrica; Cadastro com os itens e hrefs na ordem', () => {
     expect(
       GRUPOS_DE_NAVEGACAO.map((g) => [g.rotulo, g.itens.map((i) => [i.rotulo, i.href])]),
     ).toEqual([
@@ -23,6 +24,7 @@ describe('navegacao', () => {
           ['Início', '/'],
           ['Decidir', '/decidir'],
           ['Demandas', '/demandas'],
+          ['Tickets', '/tickets'],
           ['Publicação', '/publicacao'],
           ['Fábrica', '/fabrica'],
         ],
@@ -41,6 +43,7 @@ describe('navegacao', () => {
       LayoutDashboard,
       MessageSquareMore,
       Inbox,
+      Ticket,
       Rocket,
       Bot,
       Building2,
@@ -72,6 +75,7 @@ describe('navegacao', () => {
     expect(itemAtivo('/demandas')?.rotulo).toBe('Demandas')
     expect(itemAtivo('/demandas/x')?.rotulo).toBe('Demandas')
     expect(itemAtivo('/demandasx')).toBeUndefined()
+    expect(itemAtivo('/tickets/abc')?.rotulo).toBe('Tickets')
     expect(itemAtivo('/fabrica')?.rotulo).toBe('Fábrica')
     expect(itemAtivo('/fabrica/avisos')?.rotulo).toBe('Fábrica')
     expect(itemAtivo('/clientes')?.rotulo).toBe('Clientes')
