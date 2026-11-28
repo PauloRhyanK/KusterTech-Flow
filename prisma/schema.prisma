@@ -48,6 +48,8 @@ model Usuario {
   cartoesConfirmados        CartaoDeFecho[]
   fontesDeDemandasCriadas   FonteDeDemandas[]
   buscasDeDemandas          BuscaDeDemandas[]
+  revisoesAprovadas         RevisaoDoPlano[]        @relation("RevisaoAprovadaPor")
+  workersCriados            WorkerDaFabrica[]       @relation("WorkerCriadoPor")
 }
 
 // Atenção: no Postgres NULLs são distintos no UNIQUE, então dois (usuario, ADMIN, NULL) passariam no banco.
@@ -222,6 +224,7 @@ model RepositorioGitHub {
   pedidosDePublicacao        PedidoDePublicacao[]
   consertosDePublicacao      PedidoDeConserto[]
   sistemasConectados         SistemaConectado[]
+  etapasOperacionais         EtapaOperacional[]
 
   @@index([projetoId])
 }
@@ -1103,55 +1106,58 @@ model EtapaDoModelo {
 }
 
 model Demanda {
-  id               String                @id @default(uuid())
-  projetoId        String
-  repositorioId    String
-  titulo           String
-  descricao        String?
-  tipo             TipoDeDemanda?
-  destino          DestinoDaDemanda?
-  nivel            NivelDeAcompanhamento
-  planejamentoPesado Boolean             @default(false)
-  temTela          Boolean
-  origem           OrigemDaDemanda
-  fonteId          String?
-  chaveDaFonte     String?
-  criadaPorId      String?
-  modeloId         String?
-  etapas           Json
-  etapaAtual       String
-  concluidas       String[]
-  espera           String?
-  esperaMotivo     String?
-  esperaDesde      DateTime?
-  antesDaTrava     Json?
-  triagem          Json?
-  recusasDoDesenho Int                   @default(0)
-  falhasDoTeste    Int                   @default(0)
-  versaoDoDesenho  Int                   @default(0)
-  desenhoAprovado  Int?
-  planoCaminho     String?
-  planoPrUrl       String?
-  artefatoUrl      String?
-  prs              String[]
-  encerrada        String?
-  entregueEm       DateTime?
-  naoChegouDesde   DateTime?
-  noArEm           DateTime?
-  criadaEm         DateTime              @default(now())
-  atualizadaEm     DateTime              @updatedAt
-  projeto          Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
-  repositorio      RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
-  fonte            FonteDeDemandas?      @relation(fields: [fonteId], references: [id], onDelete: SetNull)
-  criadaPor        Usuario?              @relation(fields: [criadaPorId], references: [id], onDelete: SetNull)
-  eventos          EventoDaDemanda[]
-  arquivos         ArquivoDaDemanda[]
-  pedidos          PedidoDePublicacao[]
-  conversas        Conversa[]
-  partes           ParteDaDemanda[]
-  consertos        PedidoDeConserto[]
-  erros            ErroDoGlitchTip[]     @relation("ErroDaDemanda")
-  relatos          Relato[]
+  id                 String                @id @default(uuid())
+  projetoId          String
+  repositorioId      String
+  titulo             String
+  descricao          String?
+  tipo               TipoDeDemanda?
+  destino            DestinoDaDemanda?
+  nivel              NivelDeAcompanhamento
+  planejamentoPesado Boolean               @default(false)
+  /// Motor responsável pela demanda: `legado` (kit + Warren) ou `v2` (Fábrica 2.0). Nunca os dois.
+  motor              String                @default("legado")
+  temTela            Boolean
+  origem             OrigemDaDemanda
+  fonteId            String?
+  chaveDaFonte       String?
+  criadaPorId        String?
+  modeloId           String?
+  etapas             Json
+  etapaAtual         String
+  concluidas         String[]
+  espera             String?
+  esperaMotivo       String?
+  esperaDesde        DateTime?
+  antesDaTrava       Json?
+  triagem            Json?
+  recusasDoDesenho   Int                   @default(0)
+  falhasDoTeste      Int                   @default(0)
+  versaoDoDesenho    Int                   @default(0)
+  desenhoAprovado    Int?
+  planoCaminho       String?
+  planoPrUrl         String?
+  artefatoUrl        String?
+  prs                String[]
+  encerrada          String?
+  entregueEm         DateTime?
+  naoChegouDesde     DateTime?
+  noArEm             DateTime?
+  criadaEm           DateTime              @default(now())
+  atualizadaEm       DateTime              @updatedAt
+  projeto            Projeto               @relation(fields: [projetoId], references: [id], onDelete: Restrict)
+  repositorio        RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  fonte              FonteDeDemandas?      @relation(fields: [fonteId], references: [id], onDelete: SetNull)
+  criadaPor          Usuario?              @relation(fields: [criadaPorId], references: [id], onDelete: SetNull)
+  eventos            EventoDaDemanda[]
+  arquivos           ArquivoDaDemanda[]
+  pedidos            PedidoDePublicacao[]
+  conversas          Conversa[]
+  partes             ParteDaDemanda[]
+  consertos          PedidoDeConserto[]
+  erros              ErroDoGlitchTip[]     @relation("ErroDaDemanda")
+  relatos            Relato[]
+  planoOperacional   PlanoOperacional?
 
   @@unique([fonteId, chaveDaFonte])
   @@index([encerrada, espera])
@@ -1491,4 +1497,110 @@ model EnvioDeAndamento {
 
   @@unique([relatoId, estado])
   @@index([situacao, proximaTentativaEm])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fábrica 2.0 — estado operacional (módulo `fabrica-operacao`). Regras em src/modules/fabrica-operacao.
+// ---------------------------------------------------------------------------------------------
+
+model PlanoOperacional {
+  id        String           @id @default(uuid())
+  demandaId String           @unique
+  criadoEm  DateTime         @default(now())
+  demanda   Demanda          @relation(fields: [demandaId], references: [id], onDelete: Cascade)
+  revisoes  RevisaoDoPlano[]
+}
+
+model RevisaoDoPlano {
+  id            String             @id @default(uuid())
+  planoId       String
+  numero        Int
+  conteudo      Json
+  /// SHA-256 do conteúdo canônico: a aprovação vale para este conteúdo exato.
+  hash          String
+  aprovadaPorId String?
+  aprovadaEm    DateTime?
+  criadaEm      DateTime           @default(now())
+  plano         PlanoOperacional   @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  aprovadaPor   Usuario?           @relation("RevisaoAprovadaPor", fields: [aprovadaPorId], references: [id], onDelete: SetNull)
+  etapas        EtapaOperacional[]
+
+  @@unique([planoId, numero])
+}
+
+model EtapaOperacional {
+  id                 String                @id @default(uuid())
+  revisaoId          String
+  chave              String
+  /// `implementacao` (no máximo um PR) ou `leitura` (nunca PR).
+  tipo               String
+  /// Papel de quem executa (engenheiro, revisor, qa…).
+  papel              String
+  repositorioId      String
+  arquivos           String[]
+  /// Chaves de outras etapas da mesma revisão.
+  dependeDe          String[]
+  prioridade         Int                   @default(0)
+  estado             String                @default("pendente")
+  falhasTecnicas     Int                   @default(0)
+  correcoes          Int                   @default(0)
+  prUrl              String?
+  motivo             String?
+  proximaTentativaEm DateTime?
+  criadaEm           DateTime              @default(now())
+  atualizadaEm       DateTime              @updatedAt
+  revisao            RevisaoDoPlano        @relation(fields: [revisaoId], references: [id], onDelete: Cascade)
+  repositorio        RepositorioGitHub     @relation(fields: [repositorioId], references: [id], onDelete: Restrict)
+  execucoes          ExecucaoOperacional[]
+
+  @@unique([revisaoId, chave])
+  @@index([estado, proximaTentativaEm])
+}
+
+/// No máximo uma execução aberta por etapa: índice parcial `ExecucaoOperacional_uma_aberta`, escrito à mão
+/// na migration `20261127200000_fabrica_operacao`.
+model ExecucaoOperacional {
+  id              String           @id @default(uuid())
+  etapaId         String
+  tentativa       Int
+  papel           String
+  workerId        String?
+  geracao         Int              @default(0)
+  reservaExpiraEm DateTime?
+  sessao          String?
+  resultado       Json?
+  iniciadaEm      DateTime         @default(now())
+  encerradaEm     DateTime?
+  etapa           EtapaOperacional @relation(fields: [etapaId], references: [id], onDelete: Cascade)
+  worker          WorkerDaFabrica? @relation(fields: [workerId], references: [id], onDelete: SetNull)
+
+  @@unique([etapaId, tentativa])
+  @@index([encerradaEm, reservaExpiraEm])
+}
+
+model WorkerDaFabrica {
+  id            String                @id @default(uuid())
+  nome          String                @unique
+  tokenHash     String                @unique
+  criadoPorId   String
+  criadoEm      DateTime              @default(now())
+  ultimoSinalEm DateTime?
+  pausado       Boolean               @default(false)
+  revogadoEm    DateTime?
+  criadoPor     Usuario               @relation("WorkerCriadoPor", fields: [criadoPorId], references: [id], onDelete: Restrict)
+  execucoes     ExecucaoOperacional[]
+}
+
+/// Trilha idempotente da operação: o mesmo `idExterno` com o mesmo conteúdo é `repetido`.
+model EventoOperacional {
+  seq        BigInt   @id @default(autoincrement())
+  idExterno  String   @unique
+  entidade   String
+  entidadeId String
+  tipo       String
+  origem     String
+  dados      Json
+  em         DateTime @default(now())
+
+  @@index([entidade, entidadeId, seq])
 }

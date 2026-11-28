@@ -1464,3 +1464,140 @@ body,
 .esc-caixa[data-realce='true'] {
   filter: drop-shadow(0 0 4px var(--pixel-tela-acesa)) drop-shadow(0 0 2px var(--pixel-tela-acesa));
 }
+
+/* Operação da Fábrica 2.0 (classes op-*, ver src/app/(app)/fabrica/operacao/painel-de-operacao.tsx).
+   Cores só pelos tokens; cada bloco tem a sua cor de estado em --op-cor. */
+.op-situacao,
+.op-travada,
+.op-pedido {
+  --op-cor: var(--cor-informacao);
+  position: relative;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--op-cor) 45%, var(--border));
+  background:
+    radial-gradient(
+      120% 160% at 0% 0%,
+      color-mix(in srgb, var(--op-cor) 18%, transparent),
+      transparent 55%
+    ),
+    var(--surface);
+}
+.op-situacao[data-tipo='andando'] {
+  --op-cor: var(--cor-sucesso);
+}
+.op-situacao[data-tipo='vazia'] {
+  --op-cor: var(--cor-neutro);
+}
+.op-situacao[data-tipo='travada'],
+.op-travada {
+  --op-cor: var(--cor-atencao);
+}
+.op-pedido {
+  overflow: hidden;
+  border-color: var(--border);
+  background:
+    radial-gradient(
+      120% 100% at 100% 0%,
+      color-mix(in srgb, var(--op-cor) 14%, transparent),
+      transparent 60%
+    ),
+    var(--surface);
+}
+.op-pedido::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--op-cor);
+}
+.op-pedido[data-cor='trabalhando'] {
+  --op-cor: var(--cor-execucao);
+}
+.op-pedido[data-cor='conferindo'] {
+  --op-cor: var(--cor-informacao);
+}
+.op-icone {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 14px;
+  color: var(--op-cor);
+  background: color-mix(in srgb, var(--op-cor) 16%, transparent);
+}
+.op-numero[data-cor='trabalhando'] {
+  color: var(--cor-execucao);
+}
+.op-numero[data-cor='conferindo'] {
+  color: var(--cor-informacao);
+}
+.op-numero[data-cor='no-ar'] {
+  color: var(--cor-sucesso);
+}
+.op-relogio {
+  color: var(--cor-atencao);
+}
+.op-anel-fundo {
+  stroke: var(--border);
+}
+.op-anel {
+  stroke: var(--op-cor);
+}
+.op-avatar {
+  position: relative;
+}
+.op-avatar::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--op-cor);
+  border: 2px solid var(--surface-subtle);
+  animation: op-pulso 1.6s ease-in-out infinite;
+}
+@keyframes op-pulso {
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--op-cor) 25%, transparent);
+  }
+}
+.op-passo {
+  height: 8px;
+  flex: 1;
+  border-radius: 99px;
+  background: var(--border);
+}
+.op-passo[data-estado='feito'] {
+  background: color-mix(in srgb, var(--op-cor) 55%, var(--border));
+}
+.op-passo[data-estado='atual'] {
+  background: var(--op-cor);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--op-cor) 60%, transparent);
+}
+.op-luz {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+}
+.op-luz[data-estado='ocupada'] {
+  background: var(--cor-execucao);
+}
+.op-luz[data-estado='livre'] {
+  background: var(--cor-sucesso);
+}
+.op-luz[data-estado='sem_sinal'] {
+  background: var(--cor-atencao);
+}
+.op-visto {
+  color: var(--cor-sucesso);
+}
+@media (prefers-reduced-motion: reduce) {
+  .op-avatar::after {
+    animation: none;
+  }
+}

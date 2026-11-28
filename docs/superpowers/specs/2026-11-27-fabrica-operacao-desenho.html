@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fábrica → Operação (desenho v2)</title>
+    <style>
+      /* Tokens do tema escuro, copiados de src/app/globals.css. Este arquivo é só o desenho. */
+      :root {
+        --background: #0b1120;
+        --surface: #121a2c;
+        --surface-subtle: #0f1728;
+        --surface-elevated: #1a2338;
+        --text-primary: #e8efff;
+        --text-secondary: #a7b4c9;
+        --text-tertiary: #7e8da6;
+        --border: #26334a;
+        --border-strong: #34445f;
+        --marca-tech: #5b8ff9;
+        --marca-flow: #72d9c3;
+        --sucesso: #72d9a2;
+        --atencao: #f2b85b;
+        --execucao: #b49ae8;
+        --r: 16px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--text-primary);
+        font: 14px/1.45 Inter, system-ui, sans-serif;
+        padding: 28px 16px 64px;
+      }
+      .pagina {
+        max-width: 1120px;
+        margin: 0 auto;
+      }
+      .rotulo {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin: 0 0 12px;
+      }
+      section {
+        margin-bottom: 32px;
+      }
+
+      /* ---------- faixa de situação ---------- */
+      .situacao {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 22px 26px;
+        border-radius: 20px;
+        background: radial-gradient(
+            120% 160% at 0% 0%,
+            rgba(242, 184, 91, 0.22),
+            transparent 55%
+          ),
+          var(--surface);
+        border: 1px solid rgba(242, 184, 91, 0.45);
+        margin-bottom: 28px;
+      }
+      .situacao .icone {
+        width: 56px;
+        height: 56px;
+        flex: none;
+        border-radius: 16px;
+        display: grid;
+        place-items: center;
+        background: rgba(242, 184, 91, 0.16);
+        color: var(--atencao);
+      }
+      .situacao h1 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.15;
+      }
+      .situacao p {
+        margin: 4px 0 0;
+        color: var(--text-secondary);
+        font-size: 15px;
+      }
+      .contadores {
+        margin-left: auto;
+        display: flex;
+        gap: 22px;
+      }
+      .contador {
+        text-align: center;
+      }
+      .contador b {
+        display: block;
+        font-size: 30px;
+        line-height: 1;
+      }
+      .contador span {
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }
+      .contador.roxo b {
+        color: var(--execucao);
+      }
+      .contador.azul b {
+        color: var(--marca-tech);
+      }
+      .contador.verde b {
+        color: var(--sucesso);
+      }
+
+      /* ---------- travada ---------- */
+      .travada {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 18px;
+        padding: 18px 22px;
+        border-radius: var(--r);
+        background: linear-gradient(90deg, rgba(242, 184, 91, 0.14), rgba(242, 184, 91, 0.03));
+        border: 1px solid rgba(242, 184, 91, 0.4);
+      }
+      .travada h3 {
+        margin: 0 0 2px;
+        font-size: 17px;
+      }
+      .travada p {
+        margin: 0;
+        color: var(--text-secondary);
+      }
+      .relogio {
+        text-align: center;
+        padding: 10px 16px;
+        border-radius: 12px;
+        background: var(--surface-subtle);
+        border: 1px solid var(--border-strong);
+      }
+      .relogio b {
+        display: block;
+        font-size: 22px;
+        color: var(--atencao);
+      }
+      .relogio span {
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }
+
+      /* ---------- em andamento ---------- */
+      .grade {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+      }
+      .pedido {
+        position: relative;
+        padding: 20px;
+        border-radius: var(--r);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        overflow: hidden;
+      }
+      .pedido::before {
+        content: '';
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 4px;
+        background: var(--cor);
+      }
+      .pedido.roxo {
+        --cor: var(--execucao);
+        background: radial-gradient(120% 100% at 100% 0%, rgba(180, 154, 232, 0.14), transparent 60%),
+          var(--surface);
+      }
+      .pedido.azul {
+        --cor: var(--marca-tech);
+        background: radial-gradient(120% 100% at 100% 0%, rgba(91, 143, 249, 0.14), transparent 60%),
+          var(--surface);
+      }
+      .topo {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      .anel {
+        flex: none;
+        position: relative;
+        width: 64px;
+        height: 64px;
+      }
+      .anel b {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-size: 15px;
+      }
+      .pedido h3 {
+        margin: 0;
+        font-size: 17px;
+      }
+      .projeto {
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }
+      .agora {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 18px 0 16px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: var(--surface-subtle);
+        border: 1px solid var(--border);
+      }
+      .avatar {
+        width: 38px;
+        height: 38px;
+        flex: none;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: color-mix(in srgb, var(--cor) 22%, transparent);
+        color: var(--cor);
+        position: relative;
+      }
+      .avatar::after {
+        content: '';
+        position: absolute;
+        right: -1px;
+        bottom: -1px;
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: var(--cor);
+        border: 2px solid var(--surface-subtle);
+        animation: pulso 1.6s ease-in-out infinite;
+      }
+      @keyframes pulso {
+        50% {
+          box-shadow: 0 0 0 6px color-mix(in srgb, var(--cor) 25%, transparent);
+        }
+      }
+      .agora strong {
+        display: block;
+        font-size: 15px;
+      }
+      .agora span {
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+      .trilha {
+        display: flex;
+        gap: 6px;
+      }
+      .trilha i {
+        flex: 1;
+        height: 8px;
+        border-radius: 99px;
+        background: var(--border);
+      }
+      .trilha i.feito {
+        background: color-mix(in srgb, var(--cor) 55%, var(--border));
+      }
+      .trilha i.atual {
+        background: var(--cor);
+        box-shadow: 0 0 12px color-mix(in srgb, var(--cor) 60%, transparent);
+      }
+      .passos {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--text-tertiary);
+      }
+
+      /* ---------- máquinas ---------- */
+      .maquinas {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .maquina {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px 18px;
+        border-radius: var(--r);
+        background: var(--surface);
+        border: 1px solid var(--border);
+      }
+      .tela-maquina {
+        width: 46px;
+        height: 46px;
+        flex: none;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: var(--surface-elevated);
+        color: var(--text-secondary);
+        position: relative;
+      }
+      .luz {
+        position: absolute;
+        top: -3px;
+        right: -3px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid var(--surface);
+      }
+      .luz.ocupada {
+        background: var(--execucao);
+      }
+      .luz.livre {
+        background: var(--sucesso);
+      }
+      .maquina strong {
+        display: block;
+      }
+      .maquina span {
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      /* ---------- entregues ---------- */
+      .entregues {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .entregue {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 99px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+      .entregue svg {
+        color: var(--sucesso);
+      }
+
+      /* ---------- celular ---------- */
+      .celular {
+        max-width: 390px;
+        margin-top: 8px;
+        border: 1px solid var(--border-strong);
+        border-radius: 28px;
+        padding: 18px 14px;
+      }
+      .celular .situacao {
+        flex-wrap: wrap;
+        padding: 18px;
+      }
+      .celular .contadores {
+        margin-left: 0;
+        width: 100%;
+        justify-content: space-around;
+      }
+      .celular .travada {
+        grid-template-columns: auto 1fr;
+      }
+      .celular .relogio {
+        grid-column: 1 / -1;
+      }
+      .celular .grade,
+      .celular .maquinas {
+        grid-template-columns: 1fr;
+      }
+      @media (max-width: 760px) {
+        .grade,
+        .maquinas {
+          grid-template-columns: 1fr;
+        }
+        .situacao {
+          flex-wrap: wrap;
+        }
+        .contadores {
+          margin-left: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pagina">
+      <p class="rotulo">1 · Computador — Fábrica → Operação</p>
+
+      <!-- Situação geral: uma frase, cor da situação, contadores -->
+      <div class="situacao">
+        <div class="icone">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+        </div>
+        <div>
+          <h1>Uma coisa travou</h1>
+          <p>O resto está andando. A Fábrica tenta de novo sozinha.</p>
+        </div>
+        <div class="contadores">
+          <div class="contador roxo"><b>2</b><span>trabalhando</span></div>
+          <div class="contador azul"><b>1</b><span>conferindo</span></div>
+          <div class="contador verde"><b>3</b><span>no ar hoje</span></div>
+        </div>
+      </div>
+
+      <section>
+        <p class="rotulo">Travou</p>
+        <div class="travada">
+          <div class="icone" style="width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: rgba(242, 184, 91, 0.16); color: var(--atencao)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </div>
+          <div>
+            <h3>Aviso de versão nova no rodapé</h3>
+            <p>O teste não consegue instalar o que precisa. Já tentou 3 vezes.</p>
+          </div>
+          <div class="relogio"><b>16:40</b><span>próxima tentativa</span></div>
+        </div>
+      </section>
+
+      <section>
+        <p class="rotulo">Em andamento</p>
+        <div class="grade">
+          <div class="pedido roxo">
+            <div class="topo">
+              <div class="anel">
+                <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="#26334a" stroke-width="7" /><circle cx="32" cy="32" r="27" fill="none" stroke="#b49ae8" stroke-width="7" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="67.9" transform="rotate(-90 32 32)" /></svg>
+                <b>60%</b>
+              </div>
+              <div>
+                <h3>Busca de demandas por período</h3>
+                <span class="projeto">Flow</span>
+              </div>
+            </div>
+            <div class="agora">
+              <div class="avatar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              </div>
+              <div>
+                <strong>Revisor conferindo o código</strong>
+                <span>começou há 6 min</span>
+              </div>
+            </div>
+            <div class="trilha"><i class="feito"></i><i class="feito"></i><i class="feito"></i><i class="atual"></i><i></i></div>
+            <div class="passos"><span>Pesquisa</span><span>Banco</span><span>Tela</span><span>Revisão</span><span>Teste</span></div>
+          </div>
+
+          <div class="pedido azul">
+            <div class="topo">
+              <div class="anel">
+                <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="#26334a" stroke-width="7" /><circle cx="32" cy="32" r="27" fill="none" stroke="#5b8ff9" stroke-width="7" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="56.5" transform="rotate(-90 32 32)" /></svg>
+                <b>67%</b>
+              </div>
+              <div>
+                <h3>Exportar relatório de custos</h3>
+                <span class="projeto">Flow</span>
+              </div>
+            </div>
+            <div class="agora">
+              <div class="avatar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8" /></svg>
+              </div>
+              <div>
+                <strong>Testando no navegador</strong>
+                <span>computador e celular · há 2 min</span>
+              </div>
+            </div>
+            <div class="trilha"><i class="feito"></i><i class="feito"></i><i class="atual"></i></div>
+            <div class="passos"><span>Banco</span><span>Botão</span><span>Teste</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="rotulo">Máquinas</p>
+        <div class="maquinas">
+          <div class="maquina">
+            <div class="tela-maquina">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+              <i class="luz ocupada"></i>
+            </div>
+            <div><strong>Oficina 1</strong><span>Revisando a busca</span></div>
+          </div>
+          <div class="maquina">
+            <div class="tela-maquina">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+              <i class="luz ocupada"></i>
+            </div>
+            <div><strong>Oficina 2</strong><span>Testando o relatório</span></div>
+          </div>
+          <div class="maquina">
+            <div class="tela-maquina">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+              <i class="luz livre"></i>
+            </div>
+            <div><strong>Oficina 3</strong><span>Livre</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="rotulo">No ar hoje</p>
+        <div class="entregues">
+          <span class="entregue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="m5 12 5 5 9-10" /></svg>Filtro por cliente</span>
+          <span class="entregue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="m5 12 5 5 9-10" /></svg>Correção do login</span>
+          <span class="entregue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="m5 12 5 5 9-10" /></svg>Ordem da fila</span>
+        </div>
+      </section>
+
+      <p class="rotulo" style="margin-top: 56px">2 · Celular</p>
+      <div class="celular">
+        <div class="situacao">
+          <div class="icone" style="width: 44px; height: 44px">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+          </div>
+          <div><h1 style="font-size: 20px">Uma coisa travou</h1></div>
+          <div class="contadores">
+            <div class="contador roxo"><b>2</b><span>trabalhando</span></div>
+            <div class="contador azul"><b>1</b><span>conferindo</span></div>
+            <div class="contador verde"><b>3</b><span>no ar</span></div>
+          </div>
+        </div>
+        <div class="travada">
+          <div><h3>Aviso de versão nova</h3><p>Teste não instala. 3 tentativas.</p></div>
+          <div class="relogio"><b>16:40</b><span>próxima tentativa</span></div>
+        </div>
+        <div class="grade" style="margin-top: 16px">
+          <div class="pedido roxo">
+            <div class="topo">
+              <div class="anel">
+                <svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" fill="none" stroke="#26334a" stroke-width="7" /><circle cx="32" cy="32" r="27" fill="none" stroke="#b49ae8" stroke-width="7" stroke-linecap="round" stroke-dasharray="169.6" stroke-dashoffset="67.9" transform="rotate(-90 32 32)" /></svg>
+                <b>60%</b>
+              </div>
+              <div><h3>Busca por período</h3><span class="projeto">Revisor conferindo</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

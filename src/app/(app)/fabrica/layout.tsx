@@ -40,6 +40,9 @@ export default async function LayoutDaFabrica({ children }: { children: ReactNod
         rotulo="Seções da Fábrica"
         abas={[
           { rotulo: 'Escritório', href: '/fabrica', disponivel: true },
+          ...(moduloAtivo('fabrica-operacao')
+            ? [{ rotulo: 'Operação', href: '/fabrica/operacao', disponivel: true }]
+            : []),
           {
             rotulo: 'Avisos',
             href: '/fabrica/avisos',
