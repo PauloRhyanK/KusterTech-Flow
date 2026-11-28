@@ -52,6 +52,18 @@ class ClienteFlowTest(unittest.TestCase):
         self.assertEqual(c.enviar_resultado("e1", envio), "conflito")
         self.assertEqual(t.chamadas[0][3], envio)
 
+    def test_resultado_recusado_pelo_flow_e_definitivo(self):
+        for status in (404, 413, 422):
+            with self.subTest(status=status):
+                c, _ = cliente((status, {"erro": "x"}))
+                with self.assertRaises(flow.ResultadoRecusado):
+                    c.enviar_resultado("e1", {"idExterno": "r1"})
+        for r in ((401, {}), (429, {}), (408, {}), (503, {})):
+            with self.subTest(r=r):
+                c, _ = cliente(r)
+                with self.assertRaises(flow.FlowIndisponivel):
+                    c.enviar_resultado("e1", {"idExterno": "r1"})
+
     def test_rede_5xx_401_e_corpo_invalido_viram_flow_indisponivel(self):
         for r in (OSError("rede"), (500, {"erro": "x"}), (401, {"erro": "x"}), (422, {"erro": "x"})):
             with self.subTest(r=r):

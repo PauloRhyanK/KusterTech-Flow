@@ -46,6 +46,12 @@ class GitHubTest(unittest.TestCase):
         self.assertEqual((metodo, url), ("POST", "https://api.github.com/repos/dono/repo/pulls"))
         self.assertEqual(corpo, {"title": "Título", "head": "fabrica/abc", "base": "main", "body": "Corpo"})
 
+    def test_branch_existe(self):
+        g, t = gh((200, {"name": "fabrica/abc"}), (404, {"message": "Branch not found"}))
+        self.assertTrue(g.branch_existe("dono/repo", "fabrica/abc"))
+        self.assertEqual(t.chamadas[0][1], "https://api.github.com/repos/dono/repo/branches/fabrica%2Fabc")
+        self.assertFalse(g.branch_existe("dono/repo", "fabrica/abc"))
+
     def test_erro_http_nao_vaza_token(self):
         g, _ = gh((403, {"message": "tok proibido"}))
         with self.assertRaises(github.ErroDoGitHub) as ctx:

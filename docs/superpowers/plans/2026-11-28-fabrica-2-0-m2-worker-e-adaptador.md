@@ -81,3 +81,21 @@
 
 - [ ] Testes ponta a ponta com falsos: implementação com mudança → push + PR + `pr_aberto`; sem mudança → `sem_pr`; leitura → `sem_pr` e worktree descartada; `reconciliar` com PR existente → `pr_aberto` sem rodar o agente, sem PR → `falha_tecnica`; heartbeat `obsoleto` → cancela e envia `cancelada`; Flow fora no envio → resultado fica na caixa e sai no próximo ciclo; caixa pendente é enviada antes de pedir tarefa nova. Implementar, commit.
 - [ ] Verificação: suíte do worker + suíte do kit + `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test`; revisão independente; PR.
+
+## Revisão independente do M2a (28/11) — o que foi feito com cada achado
+
+| Achado | Decisão |
+|---|---|
+| Hooks do Git recebiam o token (o `-c http.extraheader` passa aos filhos) e o agente podia instalar hook ou mudar a config do espelho | **corrigido com mudança de desenho:** o agente recebe só os arquivos (sem `.git`); o worker copia o resultado para uma worktree limpa que o agente nunca toca e faz commit/push ali com `core.hooksPath=/dev/null`, `--no-verify` e sem configuração global/sistema; a credencial vai só em `GIT_CONFIG_*` no ambiente do fetch/push, nunca em argumento nem arquivo |
+| Agente e worker no mesmo usuário Unix: o agente pode ler os arquivos de token e o `/proc` do worker | **pré-requisito do M2c, bloqueia ir ao ar:** o agente roda como usuário `fabrica` (sem acesso aos tokens, que ficam com o usuário do worker); até lá o worker só roda em testes |
+| Resultado recusado (4xx) travava a caixa e o worker | corrigido: 4xx (menos 401/408/429) é `ResultadoRecusado`, sai da caixa com registro; `motivo` cortado em unidades UTF-16 |
+| Execução boa cujo texto fala de "rate limit"/"selected model" virava limite/erro | corrigido: só classifica limite e modelo quando a execução falhou |
+| Reserva perdida depois do agente ainda entregava | corrigido: confere o cancelamento antes do push e antes do PR |
+| Git sem prazo | corrigido: 600 s por comando; GitHub já tinha 30 s |
+| Commit feito pelo agente virava `sem_pr` | resolvido pelo novo desenho (o agente não tem `.git`) |
+| `.git` aninhado criado pelo agente | ignorado na cópia |
+| Queda entre o push e o PR | a reconciliação vê a branch e abre o PR sem rodar o agente |
+| Worktree órfã após queda | `limpar_tudo()` no início do worker |
+| Saída com bytes inválidos | leitura com `errors="replace"` |
+| Disco cheio na caixa | segue para o envio direto e registra; a reconciliação cobre |
+| Reconciliar etapa de leitura volta `falha_tecnica` | **aceito**: não há como saber se a leitura terminou; repetir uma leitura é barato e o recuo limita |

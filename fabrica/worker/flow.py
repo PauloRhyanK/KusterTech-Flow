@@ -11,7 +11,14 @@ TIMEOUT_S = 30
 
 
 class FlowIndisponivel(Exception):
-    pass
+    """Transitório: tente de novo depois."""
+
+
+class ResultadoRecusado(Exception):
+    """Definitivo: o Flow recusou o corpo (4xx); reenviar não adianta."""
+
+
+TRANSITORIOS = (401, 408, 429)
 
 
 def _transporte_urllib(metodo, url, headers, corpo):
@@ -29,7 +36,9 @@ class ClienteFlow:
         self._token = token
         self._transporte = transporte or _transporte_urllib
 
-    def _post(self, caminho: str, corpo: dict | None, aceitos: tuple[int, ...]) -> tuple[int, dict]:
+    def _post(
+        self, caminho: str, corpo: dict | None, aceitos: tuple[int, ...], recusa_definitiva: bool = False
+    ) -> tuple[int, dict]:
         headers = {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
         dados = None
         if corpo is not None:
@@ -40,6 +49,8 @@ class ClienteFlow:
         except Exception as erro:  # noqa: BLE001 - rede: só o nome da classe sai daqui
             raise FlowIndisponivel(f"POST {caminho}: {type(erro).__name__}") from None
         if status not in aceitos:
+            if recusa_definitiva and 400 <= status < 500 and status not in TRANSITORIOS:
+                raise ResultadoRecusado(f"POST {caminho}: HTTP {status}")
             raise FlowIndisponivel(f"POST {caminho}: HTTP {status}")
         try:
             resposta = json.loads(bruto or b"{}")
@@ -61,7 +72,9 @@ class ClienteFlow:
         return "renovado" if status == 200 else "obsoleto"
 
     def enviar_resultado(self, execucao_id: str, envio: dict) -> str:
-        _, r = self._post(f"/api/fabrica/operacao/execucoes/{execucao_id}/resultado", envio, (200, 409))
+        _, r = self._post(
+            f"/api/fabrica/operacao/execucoes/{execucao_id}/resultado", envio, (200, 409), recusa_definitiva=True
+        )
         resultado = r.get("resultado")
         if resultado not in ("aplicado", "repetido", "conflito", "obsoleto"):
             raise FlowIndisponivel("resultado inesperado")

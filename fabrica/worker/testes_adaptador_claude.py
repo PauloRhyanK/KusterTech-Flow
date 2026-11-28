@@ -82,6 +82,14 @@ class RodarTest(unittest.TestCase):
         self.assertEqual(s.tipo, "limite_de_uso")
         self.assertEqual(s.retorno_em, "2026-11-28T14:00:00+00:00")
 
+    def test_resultado_ok_que_fala_de_rate_limit_continua_ok(self):
+        s = ad.classificar(0, '{"type":"result","is_error":false,"result":"adicionei rate limit 429 e selected model"}', "", self.agora)
+        self.assertEqual(s.tipo, "ok")
+
+    def test_saida_com_bytes_invalidos_nao_quebra(self):
+        s = ad.classificar(0, '{"type":"result","is_error":false,"result":"ok \udcff"}', "", self.agora)
+        self.assertEqual(s.tipo, "ok")
+
     def test_modelo_invalido_e_erro_de_configuracao(self):
         s = self.rodar("MODELO")
         self.assertEqual(s.tipo, "erro_de_configuracao")

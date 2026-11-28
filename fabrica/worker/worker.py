@@ -38,7 +38,15 @@ def montar_pedido(tarefa: dict) -> str:
 
 
 def _motivo(texto: str) -> str:
-    return (texto or "falha sem descrição")[:LIMITE_DO_MOTIVO]
+    """Cabe no limite do Flow, que conta unidades UTF-16 (um emoji vale 2)."""
+    texto = texto or "falha sem descrição"
+    saida, unidades = [], 0
+    for c in texto:
+        unidades += 2 if ord(c) > 0xFFFF else 1
+        if unidades > LIMITE_DO_MOTIVO:
+            break
+        saida.append(c)
+    return "".join(saida)
 
 
 class Worker:
@@ -54,10 +62,17 @@ class Worker:
 
     # ------------------------------------------------------------ ciclo
 
+    def _enviar(self, execucao_id: str, envio: dict) -> None:
+        """Qualquer resposta final (ou recusa definitiva) encerra o item; Flow fora mantém na caixa."""
+        try:
+            self.flow.enviar_resultado(execucao_id, envio)
+        except flow_.ResultadoRecusado as erro:
+            print(f"resultado {envio['idExterno']} recusado pelo Flow: {erro}", file=sys.stderr)
+        self.caixa.remover(envio["idExterno"])
+
     def _reenviar_caixa(self) -> None:
         for execucao_id, envio in self.caixa.pendentes():
-            self.flow.enviar_resultado(execucao_id, envio)  # qualquer resposta final encerra o item
-            self.caixa.remover(envio["idExterno"])
+            self._enviar(execucao_id, envio)
 
     def ciclo(self) -> str:
         try:
@@ -83,10 +98,12 @@ class Worker:
             self._cancelar_atual = None
 
         envio = {"idExterno": f"{tarefa['execucaoId']}:{tarefa['geracao']}", "geracao": tarefa["geracao"], "resultado": resultado}
-        self.caixa.guardar(tarefa["execucaoId"], envio)
         try:
-            self.flow.enviar_resultado(tarefa["execucaoId"], envio)
-            self.caixa.remover(envio["idExterno"])
+            self.caixa.guardar(tarefa["execucaoId"], envio)
+        except OSError as erro:  # disco cheio: segue para o envio direto; a reconciliação cobre a perda
+            print(f"caixa de saída indisponível: {type(erro).__name__}", file=sys.stderr)
+        try:
+            self._enviar(tarefa["execucaoId"], envio)
         except flow_.FlowIndisponivel:
             pass  # fica na caixa; o próximo ciclo reenvia
         return "executou"
@@ -110,12 +127,16 @@ class Worker:
             pr = self.github.pr_aberto_da_branch(repo, branch)
             if pr:
                 return {"tipo": "pr_aberto", "prUrl": pr}
-            return {"tipo": "falha_tecnica", "motivo": "reconciliação: nenhum PR aberto da branch da etapa"}
+            if tarefa["tipoDaEtapa"] == "implementacao" and self.github.branch_existe(repo, branch):
+                # caiu entre o push e a abertura do PR: termina a entrega sem rodar o agente
+                base = self.github.branch_padrao(repo)
+                return {"tipo": "pr_aberto", "prUrl": self._abrir_pr(tarefa, branch, base)}
+            return {"tipo": "falha_tecnica", "motivo": "reconciliação: nada entregue pela execução anterior"}
 
         base = self.github.branch_padrao(repo)
         url = self.config.url_do_repo.format(repo=repo)
         cabecalho = workspace_.cabecalho_do_token(self.config.token_do_github)
-        pasta = self.workspace.preparar(url, repo, branch, base, tarefa["execucaoId"], cabecalho)
+        copia = self.workspace.preparar(url, repo, branch, base, tarefa["execucaoId"], cabecalho)
         try:
             implementacao = tarefa["tipoDaEtapa"] == "implementacao"
             comando = adaptador_claude.montar_comando(
@@ -125,7 +146,8 @@ class Worker:
                 "escrita" if implementacao else "leitura",
             )
             saida = self.rodar(
-                comando, str(pasta), adaptador_claude.ambiente_do_agente(dict(os.environ)), self.config.prazo_s, cancelar
+                comando, str(copia.agente), adaptador_claude.ambiente_do_agente(dict(os.environ)),
+                self.config.prazo_s, cancelar,
             )
             if saida.tipo == "cancelada":
                 return {"tipo": "cancelada"}
@@ -133,16 +155,22 @@ class Worker:
                 return {"tipo": "limite_de_uso", "retornoEm": saida.retorno_em}
             if saida.tipo in ("erro_de_configuracao", "falha_tecnica"):
                 return {"tipo": saida.tipo, "motivo": _motivo(saida.motivo)}
-            if not implementacao or not self.workspace.tem_mudancas(pasta):
+            if not implementacao or not self.workspace.tem_mudancas(copia):
                 return {"tipo": "sem_pr"}
-            self.workspace.entregar(pasta, branch, f"fabrica: {tarefa['etapaChave']}", url, cabecalho)
-            pr = self.github.abrir_pr(
-                repo, branch, base, f"fabrica: {tarefa['etapaChave']}",
-                f"Etapa `{tarefa['etapaChave']}` entregue pela Fábrica 2.0.\n\n{tarefa['instrucoes'].strip()[:2000]}",
-            )
-            return {"tipo": "pr_aberto", "prUrl": pr}
+            if cancelar.is_set():  # a reserva deixou de ser nossa: outro worker reconcilia
+                return {"tipo": "cancelada"}
+            self.workspace.entregar(copia, branch, f"fabrica: {tarefa['etapaChave']}", url, cabecalho)
+            if cancelar.is_set():
+                return {"tipo": "cancelada"}  # a branch ficou; quem reconcilia abre o PR
+            return {"tipo": "pr_aberto", "prUrl": self._abrir_pr(tarefa, branch, base)}
         finally:
-            self.workspace.limpar(pasta)
+            self.workspace.limpar(copia)
+
+    def _abrir_pr(self, tarefa: dict, branch: str, base: str) -> str:
+        return self.github.abrir_pr(
+            tarefa["repo"], branch, base, f"fabrica: {tarefa['etapaChave']}",
+            f"Etapa `{tarefa['etapaChave']}` entregue pela Fábrica 2.0.\n\n{tarefa['instrucoes'].strip()[:2000]}",
+        )
 
 
 def main() -> int:
@@ -160,6 +188,7 @@ def main() -> int:
         if w._cancelar_atual is not None:
             w._cancelar_atual.set()  # cancela a execução atual; o resultado `cancelada` vai à caixa
 
+    w.workspace.limpar_tudo()
     signal.signal(signal.SIGTERM, encerrar)
     signal.signal(signal.SIGINT, encerrar)
     while not w.parar.is_set():

@@ -42,9 +42,13 @@ class FlowFalso:
 
 
 class GitHubFalso:
-    def __init__(self, pr=None):
+    def __init__(self, pr=None, branch=False):
         self.pr = pr
+        self.branch = branch
         self.abertos = []
+
+    def branch_existe(self, repo, branch):
+        return self.branch
 
     def branch_padrao(self, repo):
         return "main"
@@ -128,6 +132,12 @@ class WorkerTest(unittest.TestCase):
             "resultado": {"tipo": "pr_aberto", "prUrl": "https://github.com/dono/repo/pull/5"},
         })
 
+    def test_reconciliar_com_branch_sem_pr_abre_o_pr(self):
+        f, gh = FlowFalso([tarefa(tipo="reconciliar", geracao=2)]), GitHubFalso(branch=True)
+        self.worker(f, gh).ciclo()
+        self.assertEqual(f.enviados[0][1]["resultado"]["tipo"], "pr_aberto")
+        self.assertEqual(len(gh.abertos), 1)
+
     def test_reconciliar_sem_pr_e_falha_tecnica(self):
         f = FlowFalso([tarefa(tipo="reconciliar", geracao=2)])
         self.worker(f).ciclo()
@@ -138,6 +148,39 @@ class WorkerTest(unittest.TestCase):
         self.worker(f).ciclo()
         self.assertEqual(f.enviados[0][1]["resultado"], {"tipo": "cancelada"})
         self.assertGreaterEqual(f.sinais, 1)
+
+    def test_reserva_perdida_depois_do_agente_nao_entrega(self):
+        f, gh = FlowFalso([tarefa()]), GitHubFalso()
+        w = self.worker(f, gh)
+        original = w.rodar
+
+        def rodar_e_perder_a_reserva(comando, cwd, ambiente, prazo, cancelar):
+            saida = original(comando, cwd, ambiente, prazo, cancelar)
+            cancelar.set()  # o heartbeat recebeu "obsoleto" logo depois do agente terminar
+            return saida
+
+        w.rodar = rodar_e_perder_a_reserva
+        w.ciclo()
+        self.assertEqual(f.enviados[0][1]["resultado"], {"tipo": "cancelada"})
+        self.assertEqual(gh.abertos, [])
+        self.assertNotIn("fabrica/22222222", git("branch", "--list", cwd=self.remoto))
+
+    def test_resultado_recusado_sai_da_caixa_e_nao_trava_o_worker(self):
+        f = FlowFalso([tarefa(instrucoes="nada")])
+
+        def recusa(*a):
+            raise flow.ResultadoRecusado("HTTP 422")
+
+        f.enviar_resultado = recusa
+        w = self.worker(f)
+        w.ciclo()
+        self.assertEqual(self.caixa.pendentes(), [])
+        self.assertEqual(w.ciclo(), "sem_tarefa")
+
+    def test_motivo_cabe_no_limite_do_flow_em_unidades_utf16(self):
+        m = worker._motivo("😀" * 400)
+        self.assertLessEqual(len(m.encode("utf-16-le")) // 2, 500)
+        self.assertEqual(worker._motivo(""), "falha sem descrição")
 
     def test_limite_de_uso_e_erro_de_modelo(self):
         f = FlowFalso([tarefa(instrucoes="LIMITE"), tarefa(instrucoes="MODELO", geracao=2)])

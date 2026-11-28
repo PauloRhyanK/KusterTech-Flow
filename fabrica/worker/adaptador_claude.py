@@ -102,20 +102,24 @@ def classificar(codigo: int, saida: str, erro: str, agora: datetime) -> Saida:
     texto = str((fim or {}).get("result") or "")
     base = {"sessao": sessao, "uso": (fim or {}).get("usage"), "custo_usd": (fim or {}).get("total_cost_usd")}
     mensagem = f"{texto}\n{erro}"
+    falhou = fim is None or bool(fim.get("is_error")) or codigo != 0
+    if not falhou:
+        # o texto de uma execução boa pode falar de "rate limit" ou de "model": não classifica por ele
+        return Saida("ok", texto=texto, **base)
     if _LIMITE.search(mensagem):
         return Saida("limite_de_uso", texto=texto, retorno_em=_retorno(mensagem, agora), **base)
     if _MODELO.search(mensagem):
         return Saida("erro_de_configuracao", texto=texto, motivo=(texto or erro).strip()[:300], **base)
-    if fim is None or fim.get("is_error") or codigo != 0:
-        motivo = (texto or erro).strip()[:300] or f"o Claude terminou com código {codigo}"
-        if fim is None:
-            motivo = f"o Claude terminou com código {codigo} sem resultado"
-        return Saida("falha_tecnica", texto=texto, motivo=motivo, **base)
-    return Saida("ok", texto=texto, **base)
+    motivo = (texto or erro).strip()[:300] or f"o Claude terminou com código {codigo}"
+    if fim is None:
+        motivo = f"o Claude terminou com código {codigo} sem resultado"
+    return Saida("falha_tecnica", texto=texto, motivo=motivo, **base)
 
 
 def rodar(comando, cwd, ambiente, prazo_s, cancelar: threading.Event, agora=lambda: datetime.now(timezone.utc)) -> Saida:
-    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+    with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as out, tempfile.TemporaryFile(
+        "w+", encoding="utf-8", errors="replace"
+    ) as err:
         proc = subprocess.Popen(
             comando, cwd=cwd, env=ambiente, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
             text=True, start_new_session=True,
