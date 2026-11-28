@@ -75,6 +75,22 @@ class WorkspaceTest(unittest.TestCase):
             self.ws.tem_mudancas(c)
         self.assertFalse((c.limpa / "vaza").exists())
 
+    def test_pacote_do_agente_com_git_e_recusado_e_a_limpa_continua_intacta(self):
+        import io
+        import tarfile
+
+        c = self.preparar()
+        pacote = io.BytesIO()
+        with tarfile.open(fileobj=pacote, mode="w") as tar:
+            dados = b"gitdir: /tmp/maligno"
+            info = tarfile.TarInfo(".git")
+            info.size = len(dados)
+            tar.addfile(info, io.BytesIO(dados))
+        self.ws.agente.entregar = lambda _id: pacote.getvalue()
+        with self.assertRaises(Exception):
+            self.ws.tem_mudancas(c)
+        self.assertEqual(self.ws.head(c), git("rev-parse", "main", cwd=self.remoto))
+
     def test_hooks_nao_rodam_na_entrega(self):
         c = self.preparar()
         hooks = pathlib.Path(git("rev-parse", "--git-common-dir", cwd=c.limpa))

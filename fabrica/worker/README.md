@@ -14,9 +14,11 @@ Flow. Desenho e decisões: `docs/superpowers/plans/2026-11-28-fabrica-2-0-m2-*.m
 **O worker nunca percorre a pasta do agente.** Tudo passa pelo auxiliar `/usr/local/sbin/fabrica-agente`
 (`fabrica_agente.py`, dono root), que roda como o agente via `sudo -n -u fabrica`: ele cria a pasta e extrai o
 pacote que o worker manda, roda o Claude dentro dela, devolve um pacote tar no fim e apaga a pasta. O worker
-abre o pacote com o filtro `data` do Python (recusa atalho para fora, `..` e arquivos especiais) numa pasta
-dele e só então copia para a cópia limpa, de onde faz commit e push. Antes e depois de cada execução, o
-auxiliar mata todos os processos do agente.
+abre o pacote com o filtro `data` do Python (recusa atalho para fora, `..`, arquivos especiais e qualquer
+`.git`) numa pasta dele e só então copia para a cópia limpa, de onde faz commit e push com `--git-dir` e
+`--work-tree` explícitos. Cada execução tem uma casa (HOME) descartável com só a credencial do Claude, limite
+de processos e de tamanho de arquivo. Antes e depois de cada execução, o auxiliar mata todos os processos do
+agente (repetindo até não sobrar nenhum) e limpa o que ele deixou em `/tmp`, `/var/tmp` e `/dev/shm`.
 
 ## Instalação na oficina (uma vez)
 
@@ -32,13 +34,12 @@ sudo chown -R root:root /opt/claude && sudo chmod -R go-w /opt/claude
 echo 'devops ALL=(fabrica) NOPASSWD: /usr/local/sbin/fabrica-agente' | sudo tee /etc/sudoers.d/fabrica-worker >/dev/null
 sudo chmod 440 /etc/sudoers.d/fabrica-worker && sudo visudo -c
 
-# 3. o agente não deixa nada rodando entre execuções nem muda a própria configuração
+# 3. o agente não deixa nada rodando entre execuções (a configuração do Claude já é descartável:
+#    cada execução tem uma casa nova com só a credencial)
 echo fabrica | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
 sudo loginctl disable-linger fabrica
-sudo install -o root -g root -m 644 /dev/null /home/fabrica/.claude/CLAUDE.md
-echo '{}' | sudo tee /home/fabrica/.claude/settings.json >/dev/null
-sudo chown root:root /home/fabrica/.claude/settings.json && sudo chmod 644 /home/fabrica/.claude/settings.json
 sysctl fs.protected_hardlinks fs.protected_symlinks   # os dois precisam estar em 1
+python3 -c 'import sys; assert sys.version_info >= (3, 13, 4), sys.version'  # tarfile com as correções de 2025
 
 # 4. clone separado do kit (o legado continua em ~/fabrica/kit, intocado)
 git clone https://github.com/PauloRhyanK/KusterTech-Flow.git ~/fabrica-2/kit

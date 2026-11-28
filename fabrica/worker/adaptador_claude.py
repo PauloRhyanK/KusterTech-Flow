@@ -22,6 +22,7 @@ import esgotados  # noqa: E402  (leitura do horário de retorno, a mesma do kit)
 
 FERRAMENTAS_DE_ESCRITA = ("Edit", "Write", "NotebookEdit", "Bash")
 FERRAMENTAS_PERMITIDAS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
+PREFIXO_DO_PEDIDO = "Pedido da Fábrica:\n"
 AMBIENTE_PERMITIDO = ("PATH", "HOME", "LANG", "TERM", "CLAUDE_CONFIG_DIR")
 ESPERA_DO_SIGKILL_S = 20
 
@@ -44,8 +45,9 @@ class Saida:
 def montar_comando(claude: str, pedido: str, modelo: str, modo: str, sessao: str | None = None) -> list[str]:
     if modo not in ("leitura", "escrita"):
         raise ValueError(f"modo desconhecido: {modo!r}")
-    # o pedido vem logo depois de -p: opções de lista (--allowedTools a b ...) engoliriam um posicional
-    comando = [claude, "-p", pedido, "--model", modelo, "--output-format", "stream-json", "--verbose"]
+    # o pedido vem logo depois de -p (opções de lista engoliriam um posicional no fim) e sempre começa com
+    # um prefixo fixo: instruções que comecem com `--settings=...` nunca viram opção do Claude
+    comando = [claude, "-p", PREFIXO_DO_PEDIDO + pedido, "--model", modelo, "--output-format", "stream-json", "--verbose"]
     if sessao:
         comando += ["--resume", sessao]
     if modo == "leitura":
