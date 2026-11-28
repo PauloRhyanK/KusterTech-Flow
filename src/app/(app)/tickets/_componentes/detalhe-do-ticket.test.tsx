@@ -244,4 +244,30 @@ describe('DetalheDoTicket', () => {
     rerender(<DetalheDoTicket ticket={base} filtros={filtros} emPagina />)
     expect(screen.queryByRole('link', { name: /Abrir em página/ })).toBeNull()
   })
+
+  test('título cortado do texto termina em reticências', () => {
+    const texto = 'x'.repeat(150)
+    render(
+      <DetalheDoTicket
+        ticket={{ ...base, texto, resumo: texto.slice(0, 140) }}
+        filtros={filtros}
+        emPagina={false}
+      />,
+    )
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(`${'x'.repeat(140)}…`)
+  })
+
+  test('app, canal e quem enviou aparecem como etiquetas separadas', () => {
+    render(<DetalheDoTicket ticket={base} filtros={filtros} emPagina={false} />)
+    const etiquetas = screen.getByRole('list', { name: 'Resumo do ticket' })
+    expect(etiquetas.querySelectorAll('li')).toHaveLength(4)
+    expect(etiquetas).toHaveTextContent('CAIS v2appIsabeli · corretorademanda')
+  })
+
+  test('o título da demanda quebra linha (não passa por cima do trilho no celular)', () => {
+    render(<DetalheDoTicket ticket={base} filtros={filtros} emPagina={false} />)
+    const link = screen.getByRole('link', { name: 'Notificação sobre o botão' })
+    expect(link).not.toHaveClass('whitespace-nowrap')
+    expect(link).toHaveClass('break-words')
+  })
 })

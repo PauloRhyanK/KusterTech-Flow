@@ -33,6 +33,19 @@ export function ChipDoResultado({ resultado }: { resultado: ResultadoNaTela }) {
   )
 }
 
+const HORA_CURTA = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: 'America/Sao_Paulo',
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+/** "27/11 12:00": cabe na linha sem cortar o resumo; a data completa fica no `title`. */
+function horaCurta(em: Date): string {
+  return HORA_CURTA.format(em).replace(', ', ' ')
+}
+
 const MIDIA: Record<TipoDeMidia, [string, string]> = {
   imagem: ['imagem', 'imagens'],
   audio: ['áudio', 'áudios'],
@@ -81,9 +94,10 @@ function Linha({
         <ChipDoResultado resultado={ticket.resultado} />
         <time
           dateTime={ticket.em.toISOString()}
-          className="hidden shrink-0 text-xs text-text-tertiary xl:block"
+          title={formatarDataHora(ticket.em)}
+          className="hidden shrink-0 text-xs tabular-nums text-text-tertiary xl:block"
         >
-          {formatarDataHora(ticket.em)}
+          {horaCurta(ticket.em)}
         </time>
       </Link>
     </li>
@@ -108,7 +122,8 @@ export function ListaDeTickets({
       {grupos.map((g) => (
         <section key={g.chave} aria-label={g.rotulo}>
           <h3 className="mb-1.5 text-xs text-text-secondary">
-            {`${g.rotulo} · ${g.tickets.length}`}
+            <span className="font-[550] text-text-primary">{g.rotulo}</span>
+            {` · ${g.tickets.length}`}
           </h3>
           <ul className="overflow-hidden rounded-padrao border border-border bg-surface">
             {g.tickets.map((t) => (

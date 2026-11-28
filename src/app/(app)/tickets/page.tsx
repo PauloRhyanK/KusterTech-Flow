@@ -90,8 +90,8 @@ export default async function PaginaDosTickets({
           {tela.total} tickets no período; mostrando os 300 mais recentes.
         </p>
       )}
-      <div className="grid gap-5 lg:grid-cols-[44fr_56fr]">
-        <div className={comEscolha ? 'hidden lg:block' : undefined}>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,44fr)_minmax(0,56fr)]">
+        <div className={comEscolha ? 'hidden min-w-0 lg:block' : 'min-w-0'}>
           <ListaDeTickets grupos={tela.grupos} filtros={filtros} escolhidoId={filtros.t} />
           {tela.grupos.length === 0 && (
             <Link
@@ -102,7 +102,7 @@ export default async function PaginaDosTickets({
             </Link>
           )}
         </div>
-        <div className="min-w-0">
+        <div className={comEscolha ? 'min-w-0' : 'hidden min-w-0 lg:block'}>
           {comEscolha && (
             <Link
               href={urlDosTickets(filtros, { t: null })}

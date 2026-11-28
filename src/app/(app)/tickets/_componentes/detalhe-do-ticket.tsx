@@ -72,6 +72,12 @@ function Midia({ midia }: { midia: MidiaDoTicket }) {
   )
 }
 
+/** O resumo é o começo do texto (140 caracteres): quando cortou, termina em reticências. */
+function tituloDoTicket(t: TicketDetalhado): string {
+  const cortado = !!t.texto && t.texto.length > t.resumo.length && t.texto.startsWith(t.resumo)
+  return cortado ? `${t.resumo.trimEnd()}…` : t.resumo
+}
+
 function Dado({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
     <>
@@ -113,14 +119,27 @@ export function DetalheDoTicket({
         )}
       </div>
       {!orientado && (
-        <h2 className="mt-1 text-[15px] font-[600] text-text-primary">{ticket.resumo}</h2>
+        <h2 className="mt-1 line-clamp-2 text-[15px] font-[600] text-text-primary">
+          {tituloDoTicket(ticket)}
+        </h2>
       )}
-      <div className="mb-1 mt-1.5 flex flex-wrap gap-1.5 text-xs text-text-secondary">
-        <span>{ticket.sistema.nome}</span>
-        <span>· {ROTULO_DO_CANAL[ticket.canal]}</span>
-        <span>{`· ${ticket.autor.nome} (${ticket.autor.papel})`}</span>
-        <ChipDoResultado resultado={ticket.resultado} />
-      </div>
+      <ul aria-label="Resumo do ticket" className="mb-1 mt-1.5 flex flex-wrap gap-1.5">
+        {[
+          ticket.sistema.nome,
+          ROTULO_DO_CANAL[ticket.canal],
+          `${ticket.autor.nome} · ${ticket.autor.papel}`,
+        ].map((t) => (
+          <li
+            key={t}
+            className="whitespace-nowrap rounded-compacto border border-border px-1.5 py-px text-[11px] text-text-secondary"
+          >
+            {t}
+          </li>
+        ))}
+        <li className="flex">
+          <ChipDoResultado resultado={ticket.resultado} />
+        </li>
+      </ul>
 
       <Secao id="t-enviado" titulo="O que foi enviado">
         {ticket.texto ? (
@@ -174,7 +193,10 @@ export function DetalheDoTicket({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-3 rounded-compacto border border-border bg-surface-subtle px-2.5 py-2">
               <div className="min-w-0">
-                <Link href={`/demandas/${d.id}`} className={`${CLASSE_DO_LINK} whitespace-normal`}>
+                <Link
+                  href={`/demandas/${d.id}`}
+                  className="break-words text-sm font-medium text-text-link hover:underline"
+                >
                   {d.titulo}
                 </Link>
                 <p className="text-xs text-text-secondary">{d.repositorio}</p>

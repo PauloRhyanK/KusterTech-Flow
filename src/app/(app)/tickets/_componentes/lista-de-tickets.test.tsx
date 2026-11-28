@@ -56,7 +56,7 @@ const grupos: GrupoDeTickets[] = [
 describe('ListaDeTickets', () => {
   test('rótulo e contagem do grupo, e a anatomia da linha', () => {
     render(<ListaDeTickets grupos={grupos} filtros={filtros} escolhidoId={null} />)
-    expect(screen.getByText('Hoje · 3')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Hoje · 3' })).toBeInTheDocument()
     expect(screen.getByText('Notificação em cima do botão')).toBeInTheDocument()
     expect(screen.getByText('Isabeli · CAIS v2 · app')).toBeInTheDocument()
     expect(screen.getByText('Isabeli · CAIS v2 · WhatsApp')).toBeInTheDocument()
@@ -87,5 +87,10 @@ describe('ListaDeTickets', () => {
       'href',
       '/tickets?app=s1&periodo=30&t=a1',
     )
+  })
+
+  test('a hora da linha é curta (dia/mês e hora de São Paulo)', () => {
+    render(<ListaDeTickets grupos={grupos} filtros={filtros} escolhidoId={null} />)
+    expect(screen.getAllByText('27/11 12:00')).toHaveLength(3)
   })
 })

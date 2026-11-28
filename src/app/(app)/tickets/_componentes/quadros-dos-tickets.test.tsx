@@ -27,4 +27,16 @@ describe('QuadrosDosTickets', () => {
     )
     expect(screen.getByText('chegaram em todo o período')).toBeInTheDocument()
   })
+
+  test('o número vem antes do rótulo e "sem demanda" acima de zero fica em atenção', () => {
+    const { container } = render(
+      <QuadrosDosTickets
+        quadros={{ chegaram: 23, viraramDemanda: 15, orientados: 6, semDemanda: 2 }}
+        periodo="7"
+      />,
+    )
+    expect(container.textContent).toMatch(/^23chegaram em 7 dias15viraram demanda/)
+    expect(screen.getByText('2')).toHaveClass('text-atencao')
+    expect(screen.getByText('23')).not.toHaveClass('text-atencao')
+  })
 })
