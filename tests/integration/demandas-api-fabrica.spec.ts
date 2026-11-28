@@ -748,3 +748,25 @@ describe('módulo inativo', () => {
     vi.doUnmock('@/lib/modulos')
   })
 })
+
+describe('Fábrica 2.0: o kit legado não vê demandas do motor novo', () => {
+  test('demanda de projeto v2 nasce no motor novo e fica fora do feed do kit', async () => {
+    await db.projeto.update({ where: { id: projetoId }, data: { motorPadrao: 'v2' } })
+    const nova = await novaDemanda('Do motor novo')
+    expect((await db.demanda.findUniqueOrThrow({ where: { id: nova } })).motor).toBe('v2')
+    await db.projeto.update({ where: { id: projetoId }, data: { motorPadrao: 'legado' } })
+    const antiga = await novaDemanda('Do legado')
+    const r = await buscarDemandasParaAFabrica(auth(), null, AGORA)
+    const ids = (r.corpo as { demandas: { id: string }[] }).demandas.map((d) => d.id)
+    expect(ids).toContain(antiga)
+    expect(ids).not.toContain(nova)
+  })
+
+  test('evento do kit para demanda do motor novo é recusado com 409', async () => {
+    const id = await novaDemanda('Trocou de motor')
+    await db.demanda.update({ where: { id }, data: { motor: 'v2' } })
+    const r = await pedirEvento(id, triagem())
+    expect(r.status).toBe(409)
+    expect(await db.eventoDaDemanda.count({ where: { demandaId: id, tipo: 'triagem' } })).toBe(0)
+  })
+})

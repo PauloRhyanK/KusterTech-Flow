@@ -223,7 +223,7 @@ export async function abrirDemanda(
 
   const projeto = await tx.projeto.findUnique({
     where: { id: e.projetoId },
-    select: { nivelPadraoDeDemanda: true },
+    select: { nivelPadraoDeDemanda: true, motorPadrao: true },
   })
   if (!projeto) throw new ErroDeDominio(PROJETO_NAO_ENCONTRADO)
   const repositorio = await tx.repositorioGitHub.findUnique({
@@ -254,6 +254,8 @@ export async function abrirDemanda(
       modeloId: modelo.modeloId,
       etapas: modelo.etapas as unknown as Prisma.InputJsonValue,
       prs: [],
+      // um motor por demanda, decidido na criação pelo projeto (Fábrica 2.0, M3)
+      motor: projeto.motorPadrao === 'v2' ? 'v2' : 'legado',
       ...colunasDoEstado(estado, null, null, agora),
     },
     select: { id: true },

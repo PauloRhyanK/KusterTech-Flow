@@ -67,7 +67,12 @@ export async function buscarConversasParaOAtendente(
     })
 
     const esperando = await db.conversa.findMany({
-      where: { encerradaEm: null, aguardaAgenteDesde: { not: null } },
+      where: {
+        encerradaEm: null,
+        aguardaAgenteDesde: { not: null },
+        // conversas de demandas do motor novo não vão ao atendente do kit legado
+        OR: [{ demandaId: null }, { demanda: { motor: 'legado' } }],
+      },
       orderBy: [{ aguardaAgenteDesde: 'asc' }, { criadaEm: 'asc' }],
     })
     const retrato = (await lerRetratoMaisRecente())?.retrato ?? null
