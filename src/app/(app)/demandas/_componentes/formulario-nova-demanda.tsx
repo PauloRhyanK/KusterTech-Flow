@@ -67,7 +67,7 @@ function Anexos({
         <span className="text-xs text-text-secondary">
           {cheio
             ? `Limite de ${MAXIMO_DE_ANEXOS} anexos.`
-            : 'Ou arraste aqui, ou cole uma imagem nos detalhes. Imagem ou áudio, até 3 de 10 MB.'}
+            : 'Ou arraste aqui, ou cole uma imagem nos detalhes. Imagem, áudio ou vídeo, até 3 de 10 MB.'}
         </span>
         <input
           ref={seletor}

@@ -608,6 +608,13 @@ describe('arquivos', () => {
     expect(CONTEUDOS_ACEITOS.desenho).toContain('text/html')
   })
 
+  test('anexo aceita vídeo MP4, WebM e MOV; captura não', () => {
+    for (const conteudo of ['video/mp4', 'video/webm', 'video/quicktime']) {
+      expect(avaliarArquivo({ ...base, tipo: 'anexo', conteudo, tamanho: 1 }).ok).toBe(true)
+    }
+    expect(avaliarArquivo({ ...base, conteudo: 'video/mp4', tamanho: 1 }).ok).toBe(false)
+  })
+
   test('capturaVencida', () => {
     const entrega = new Date('2026-01-01T00:00:00Z')
     const dias90 = 90 * 24 * 60 * 60_000

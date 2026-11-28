@@ -31,7 +31,7 @@ export function juntarAnexos<T extends ArquivoEscolhido>(
   for (const n of novos) {
     if (arquivos.some((a) => mesmo(a, n))) continue
     if (!CONTEUDOS_ACEITOS.anexo.includes(n.type)) {
-      problemas.push(`${n.name}: só imagem (PNG, JPEG, WebP) ou áudio.`)
+      problemas.push(`${n.name}: só imagem (PNG, JPEG, WebP), áudio ou vídeo (MP4, WebM, MOV).`)
     } else if (n.size > LIMITE_POR_ARQUIVO) {
       problemas.push(`${n.name}: passa de 10 MB.`)
     } else if (arquivos.length >= MAXIMO_DE_ANEXOS) {

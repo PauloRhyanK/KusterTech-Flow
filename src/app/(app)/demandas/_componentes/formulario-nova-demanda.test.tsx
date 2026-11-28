@@ -62,12 +62,12 @@ describe('FormularioNovaDemanda', () => {
     expect(screen.getByRole('option', { name: 'kustertech-exemplo/beta-web' })).toBeInTheDocument()
   })
 
-  test('o campo de arquivo aceita imagem e áudio', () => {
+  test('o campo de arquivo aceita imagem, áudio e vídeo', () => {
     render(<FormularioNovaDemanda projetos={PROJETOS} />)
     const campo = screen.getByLabelText('Anexos')
     expect(campo).toHaveAttribute(
       'accept',
-      'image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/webm,audio/ogg',
+      'image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/webm,audio/ogg,video/mp4,video/webm,video/quicktime',
     )
     expect(campo).toHaveAttribute('multiple')
   })

@@ -21,7 +21,7 @@ describe('juntarAnexos', () => {
     )
     expect(r.arquivos.map((a) => a.name)).toEqual(['ok.jpg'])
     expect(r.erro).toBe(
-      'doc.pdf: só imagem (PNG, JPEG, WebP) ou áudio. grande.png: passa de 10 MB.',
+      'doc.pdf: só imagem (PNG, JPEG, WebP), áudio ou vídeo (MP4, WebM, MOV). grande.png: passa de 10 MB.',
     )
   })
 
